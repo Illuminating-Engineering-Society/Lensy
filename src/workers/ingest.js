@@ -1,181 +1,175 @@
 /**
  * Lucius Ingest Worker
- * Handles PDF ingestion: SharePoint/R2 → parse → embed → Vectorize + D1.
  *
- * Triggered by:
- *   POST /api/ingest  { pdfUrl, standardId, sourceType }
- *   sourceType: 'sharepoint' | 'r2' | 'upload'
+ * IMPORTANT: This Worker does NOT parse PDFs. PDF parsing (pdfjs-dist) requires
+ * Node.js and cannot run in a Cloudflare Worker. The ingestion script
+ * (scripts/ingest-pdfs.js) handles all PDF parsing and sends pre-parsed data here.
  *
- * For the applications database (68-column CSV):
- *   POST /api/ingest/applications  { csv: "<base64>" }
- *   This embeds all 134 application records into Vectorize.
+ * Endpoints:
+ *
+ *   POST /api/ingest
+ *     Accept pre-parsed PDF data from the ingestion script.
+ *     Body: { standardId, metadata, chunks, tables }
+ *
+ *   POST /api/ingest/applications
+ *     Re-embed all D1 application rows into Vectorize.
+ *     Called after scripts/seed-applications.js populates D1.
+ *
+ *   POST /api/ingest/r2-upload-url
+ *     Return a presigned R2 URL for the script to upload the raw PDF.
  */
 
-import { parsePDF } from '../lib/pdf-parser.js';
-import { extractTables } from '../lib/table-extractor.js';
-import { generateEmbeddings } from '../lib/embeddings.js';
-
-const CHUNK_SIZE_TOKENS = 500;
-const TOKENS_PER_WORD = 1.3; // rough estimate
+const EMBED_MODEL = '@cf/baai/bge-base-en-v1.5';
+const EMBED_BATCH = 100;       // Workers AI max per call
+const VECTORIZE_BATCH = 1000;  // Vectorize max per upsert
 
 export async function handleIngest(request, env) {
   const url = new URL(request.url);
-  const subPath = url.pathname.replace('/api/ingest', '');
+  const subPath = url.pathname.replace('/api/ingest', '').replace(/\/$/, '');
 
-  if (subPath === '/applications') {
-    return ingestApplications(request, env);
+  switch (subPath) {
+    case '/applications':
+      return ingestApplications(env);
+    case '/r2-upload-url':
+      return getR2UploadUrl(request, env);
+    case '':
+    default:
+      return ingestParsedPDF(request, env);
   }
-
-  return ingestPDF(request, env);
 }
 
-// ─── PDF Ingestion ─────────────────────────────────────────────────────────────
+// ─── PDF Chunk Ingestion ───────────────────────────────────────────────────────
+// Called by scripts/ingest-pdfs.js after it has parsed the PDF locally.
 
-async function ingestPDF(request, env) {
-  const { pdfUrl, standardId, sourceType = 'sharepoint' } = await request.json();
-
-  if (!standardId) {
-    return jsonResponse({ error: 'standardId is required' }, 400);
+async function ingestParsedPDF(request, env) {
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return jsonResponse({ error: 'Invalid JSON body' }, 400);
   }
 
-  // 1. Fetch PDF bytes
-  let pdfBytes;
-  if (sourceType === 'r2') {
-    const obj = await env.PDFS.get(`standards/${standardId}.pdf`);
-    if (!obj) return jsonResponse({ error: 'PDF not found in R2' }, 404);
-    pdfBytes = await obj.arrayBuffer();
-  } else if (sourceType === 'sharepoint' && pdfUrl) {
-    const response = await fetch(pdfUrl, {
-      headers: { Authorization: `Bearer ${env.SHAREPOINT_TOKEN}` },
-    });
-    if (!response.ok) {
-      return jsonResponse({ error: `Failed to fetch PDF: ${response.status}` }, 502);
+  const { standardId, metadata = {}, chunks = [], tables = [], r2Key = null } = body;
+
+  if (!standardId) return jsonResponse({ error: 'standardId is required' }, 400);
+  if (!Array.isArray(chunks) || chunks.length === 0) {
+    return jsonResponse({ error: 'chunks array is required and must not be empty' }, 400);
+  }
+
+  // Validate chunk shape
+  for (const chunk of chunks.slice(0, 3)) {
+    if (typeof chunk.text !== 'string' || !chunk.text.trim()) {
+      return jsonResponse({ error: 'Each chunk must have a non-empty text field' }, 400);
     }
-    pdfBytes = await response.arrayBuffer();
-    // Cache in R2
-    await env.PDFS.put(`standards/${standardId}.pdf`, pdfBytes);
-  } else {
-    return jsonResponse({ error: 'Provide pdfUrl with sourceType=sharepoint or sourceType=r2' }, 400);
   }
 
-  // 2. Parse PDF
-  const { text, metadata, pages } = await parsePDF(pdfBytes);
+  // ── 1. Generate embeddings for all chunks ──────────────────────────────────
+  const embeddings = await embedInBatches(env.AI, chunks.map(c => c.text));
 
-  // 3. Extract illuminance tables
-  const tables = await extractTables(pdfBytes, pages);
-
-  // 4. Chunk text for embeddings
-  const chunks = chunkText(text, pages, CHUNK_SIZE_TOKENS);
-
-  // 5. Generate embeddings (batched)
-  const embeddings = await generateEmbeddings(env.AI, chunks);
-
-  // 6. Upsert into Vectorize
+  // ── 2. Build Vectorize vectors ─────────────────────────────────────────────
   const vectors = chunks.map((chunk, i) => ({
     id: `${standardId}-chunk-${i}`,
     values: embeddings[i],
     metadata: {
       standard_id: standardId,
-      application_code: null,       // null for PDF chunks (not application rows)
-      page_number: chunk.pageNumber,
-      excerpt_text: chunk.text.substring(0, 300), // truncate for metadata size limit
-      chunk_type: chunk.type,       // 'text' | 'table' | 'figure'
-      indoor_outdoor: null,
+      application_code: null,
       standard_code: standardId,
+      chunk_type: chunk.type || 'text',       // 'text' | 'table' | 'section_heading'
+      page_number: chunk.pageNumber || null,
+      section: chunk.section || null,         // e.g. "3.5" from IES section numbering
+      excerpt_text: chunk.text.substring(0, 500), // metadata size limit ~1KB
+      indoor_outdoor: null,
+      tm24_eligible: null,
     },
   }));
 
-  // Vectorize has a 1000-vector upsert limit per call
-  for (let i = 0; i < vectors.length; i += 1000) {
-    await env.VECTORIZE.upsert(vectors.slice(i, i + 1000));
+  // ── 3. Upsert into Vectorize (batched) ────────────────────────────────────
+  for (let i = 0; i < vectors.length; i += VECTORIZE_BATCH) {
+    await env.VECTORIZE.upsert(vectors.slice(i, i + VECTORIZE_BATCH));
   }
 
-  // 7. Store document metadata in D1
+  // ── 4. Persist standard metadata + tables to D1 ───────────────────────────
+  // Store tables as a compact JSON array (page, header, row count, footnotes)
+  const tablesCompact = (tables || []).map(t => ({
+    pageNumber: t.pageNumber,
+    header: t.header,
+    rowCount: (t.rows || []).length,
+    footnotes: t.footnotes,
+    generalNotes: t.generalNotes,
+  }));
+
   await env.DB.prepare(`
-    INSERT INTO standards (id, title, description, author, year, pages_json, tables_json, indexed_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    INSERT INTO standards
+      (id, title, description, author, year, full_designation, r2_key,
+       tables_json, indexed_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
     ON CONFLICT(id) DO UPDATE SET
-      title = excluded.title,
-      description = excluded.description,
-      author = excluded.author,
-      year = excluded.year,
-      pages_json = excluded.pages_json,
-      tables_json = excluded.tables_json,
-      indexed_at = CURRENT_TIMESTAMP
+      title        = excluded.title,
+      description  = excluded.description,
+      author       = excluded.author,
+      year         = excluded.year,
+      full_designation = excluded.full_designation,
+      r2_key       = COALESCE(excluded.r2_key, standards.r2_key),
+      tables_json  = excluded.tables_json,
+      indexed_at   = CURRENT_TIMESTAMP,
+      updated_at   = CURRENT_TIMESTAMP
   `).bind(
     standardId,
     metadata.title || standardId,
     metadata.subject || null,
     metadata.author || null,
-    metadata.year ? parseInt(metadata.year) : null,
-    JSON.stringify(pages),
-    JSON.stringify(tables),
+    metadata.year ? parseInt(metadata.year, 10) : null,
+    metadata.fullDesignation || null,
+    r2Key || `standards/${standardId}.pdf`,
+    JSON.stringify(tablesCompact),
   ).run();
 
   return jsonResponse({
     success: true,
     standardId,
     chunksIndexed: chunks.length,
-    tablesFound: tables.length,
-    pages: pages.length,
+    tablesFound: (tables || []).length,
+    vectorsUpserted: vectors.length,
   });
 }
 
-// ─── Applications Database Ingestion ──────────────────────────────────────────
-// Embeds all 134 application rows into Vectorize for semantic search.
-// Called once after seeding D1 from the 68-column CSV.
+// ─── Application Embedding ────────────────────────────────────────────────────
+// Re-embeds all D1 application rows into Vectorize.
+// Run after seed-applications.js; safe to re-run (upsert is idempotent).
 
-async function ingestApplications(request, env) {
-  // Fetch all active applications from D1
+async function ingestApplications(env) {
   const result = await env.DB.prepare(
     'SELECT * FROM applications WHERE Active = 1'
   ).all();
 
   const applications = result.results;
   if (applications.length === 0) {
-    return jsonResponse({ error: 'No applications found in D1. Run seed-applications.js first.' }, 400);
+    return jsonResponse({
+      error: 'No applications found in D1. Run `npm run db:seed` first.',
+    }, 400);
   }
 
-  // Build text for embedding from each application's semantic fields
-  const chunks = applications.map(app => ({
-    code: app.code,
-    text: buildApplicationEmbedText(app),
-    indoorOutdoor: app.Indoor_Outdoor,
-    standardCode: app.Standard,
-    tm24Eligible: !!app.TM24_Eligible,
+  const texts = applications.map(buildApplicationEmbedText);
+  const embeddings = await embedInBatches(env.AI, texts);
+
+  const vectors = applications.map((app, i) => ({
+    id: app.code,
+    values: embeddings[i],
+    metadata: {
+      application_code: app.code,
+      standard_id: null,
+      standard_code: app.Standard || '',
+      chunk_type: 'application',
+      page_number: null,
+      section: null,
+      excerpt_text: texts[i].substring(0, 500),
+      indoor_outdoor: app.Indoor_Outdoor || 'Indoor',
+      tm24_eligible: !!app.TM24_Eligible,
+    },
   }));
 
-  // Generate embeddings in batches
-  const batchSize = 100;
-  const vectors = [];
-
-  for (let i = 0; i < chunks.length; i += batchSize) {
-    const batch = chunks.slice(i, i + batchSize);
-    const inputs = batch.map(c => c.text);
-    const response = await env.AI.run('@cf/baai/bge-base-en-v1.5', { text: inputs });
-    const embeddings = response.data;
-
-    for (let j = 0; j < batch.length; j++) {
-      vectors.push({
-        id: batch[j].code,
-        values: embeddings[j],
-        metadata: {
-          application_code: batch[j].code,
-          indoor_outdoor: batch[j].indoorOutdoor || 'Indoor',
-          standard_code: batch[j].standardCode || '',
-          tm24_eligible: batch[j].tm24Eligible,
-          chunk_type: 'application',
-          excerpt_text: batch[j].text.substring(0, 300),
-          page_number: null,
-          standard_id: null,
-        },
-      });
-    }
-  }
-
-  // Upsert in batches of 1000
-  for (let i = 0; i < vectors.length; i += 1000) {
-    await env.VECTORIZE.upsert(vectors.slice(i, i + 1000));
+  for (let i = 0; i < vectors.length; i += VECTORIZE_BATCH) {
+    await env.VECTORIZE.upsert(vectors.slice(i, i + VECTORIZE_BATCH));
   }
 
   return jsonResponse({
@@ -185,68 +179,69 @@ async function ingestApplications(request, env) {
 }
 
 /**
- * Builds the text string used for embedding an application row.
- * Includes all semantic fields so the vector captures meaning, not just keywords.
+ * Build rich semantic text for embedding a 68-column application row.
+ * Includes all meaningful fields so vector captures the full meaning,
+ * not just the hierarchy name.
  */
 function buildApplicationEmbedText(app) {
   const parts = [
-    // Full hierarchy name
+    // Full hierarchy path → primary signal
     [app.App, app.App_s1, app.App_s2, app.App_s3, app.App_s4, app.App_s5, app.App_s6]
       .filter(Boolean).join(' '),
-    // Standard reference
-    app.Standard_Full ? `Standard: ${app.Standard_Full}` : null,
-    // Type context
-    app.Area_or_Task ? `Type: ${app.Area_or_Task} lighting` : null,
-    app.Indoor_Outdoor ? `Location: ${app.Indoor_Outdoor}` : null,
-    // Notes for semantic richness
+
+    // Standard reference for authority signal
+    app.Standard_Full || app.Standard
+      ? `IES standard: ${app.Standard_Full || app.Standard}`
+      : null,
+
+    // Application type adds context (area vs task, indoor vs outdoor)
+    app.Area_or_Task ? `${app.Area_or_Task} lighting application` : null,
+    app.Indoor_Outdoor ? `${app.Indoor_Outdoor} space` : null,
+
+    // Notes contain the richest descriptive text — very valuable for embeddings
     app.App_Notes || null,
     app.General_Notes || null,
+
+    // TM-24 mention for spectral adjustment searches
+    app.TM24_Eligible ? 'TM-24 spectral adjustment applicable' : null,
+
+    // Outdoor zone adds searchable context
+    app.Lighting_Zone ? `Lighting zone ${app.Lighting_Zone}` : null,
   ];
+
   return parts.filter(Boolean).join('. ');
 }
 
-// ─── Text Chunking ─────────────────────────────────────────────────────────────
+// ─── R2 Upload URL ────────────────────────────────────────────────────────────
+// The Node.js script calls this to get a temporary URL for uploading the PDF to R2.
+// Alternative: the script can use `wrangler r2 object put` directly.
 
-function chunkText(fullText, pages, maxTokens) {
-  const chunks = [];
-  const maxWords = Math.floor(maxTokens / TOKENS_PER_WORD);
+async function getR2UploadUrl(request, env) {
+  const { standardId } = await request.json();
+  if (!standardId) return jsonResponse({ error: 'standardId required' }, 400);
 
-  // Split into page-level chunks first, then subdivide large pages
-  for (const page of pages) {
-    const words = page.text.split(/\s+/).filter(Boolean);
-    if (words.length === 0) continue;
+  // R2 presigned URLs are not yet available in Workers (as of early 2025).
+  // Return the R2 key so the script knows where to upload using Cloudflare API.
+  const r2Key = `standards/${standardId}.pdf`;
 
-    // Detect if this page looks like a table
-    const chunkType = isTablePage(page.text) ? 'table' : 'text';
-
-    if (words.length <= maxWords) {
-      chunks.push({
-        text: page.text,
-        pageNumber: page.number,
-        type: chunkType,
-      });
-    } else {
-      // Split into sub-chunks with overlap
-      const overlap = Math.floor(maxWords * 0.1);
-      for (let i = 0; i < words.length; i += maxWords - overlap) {
-        const chunkWords = words.slice(i, i + maxWords);
-        chunks.push({
-          text: chunkWords.join(' '),
-          pageNumber: page.number,
-          type: chunkType,
-        });
-      }
-    }
-  }
-
-  return chunks;
+  return jsonResponse({
+    r2Key,
+    uploadMethod: 'wrangler',
+    command: `wrangler r2 object put ies-standards-pdfs/${r2Key} --file=<path-to-pdf>`,
+    note: 'Upload the PDF to R2 using the command above before running ingestion.',
+  });
 }
 
-function isTablePage(text) {
-  // Heuristic: tables have lots of numbers and short lines
-  const lines = text.split('\n');
-  const numericLines = lines.filter(l => /^\s*\d+/.test(l)).length;
-  return numericLines / lines.length > 0.3;
+// ─── Shared Helpers ───────────────────────────────────────────────────────────
+
+async function embedInBatches(ai, texts) {
+  const embeddings = [];
+  for (let i = 0; i < texts.length; i += EMBED_BATCH) {
+    const batch = texts.slice(i, i + EMBED_BATCH);
+    const response = await ai.run(EMBED_MODEL, { text: batch });
+    embeddings.push(...response.data);
+  }
+  return embeddings;
 }
 
 function jsonResponse(data, status = 200) {
