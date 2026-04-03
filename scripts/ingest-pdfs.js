@@ -41,6 +41,10 @@ import { resolve, basename, extname } from 'path';
 import { execSync } from 'child_process';
 import { parsePDFNode } from '../src/lib/pdf-parser.js';
 import { extractIESTables } from '../src/lib/table-extractor.js';
+import {
+  extractApplicationsFromTables,
+  reportExtractionQuality,
+} from '../src/lib/applications-extractor.js';
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 
@@ -149,7 +153,25 @@ async function ingestFile(filePath, standardId) {
   const tables = extractIESTables(pages);
   console.log(`  Tables found: ${tables.length}`);
 
-  // Step 4: Chunk text with IES section awareness
+  // Step 4: Extract structured application records from tables
+  // This is the "PDFs as source of truth" step — no CSV required.
+  console.log('  Extracting application records...');
+  const standardMeta = {
+    fullDesignation: inferFullDesignation(standardId, metadata.title),
+    year: metadata.year,
+    author: metadata.author,
+  };
+  const applications = extractApplicationsFromTables(tables, standardId, standardMeta);
+  console.log(`  Applications extracted: ${applications.length}`);
+
+  // Show quality report in verbose mode
+  if (CONFIG.verbose && applications.length > 0) {
+    const quality = reportExtractionQuality(applications);
+    console.log(`  Quality score: ${quality.qualityScore}% have horizontal lux values`);
+    for (const w of quality.warnings) console.log(`  ⚠ ${w}`);
+  }
+
+  // Step 5: Chunk text with IES section awareness
   console.log('  Chunking text...');
   const chunks = chunkIESDocument(pages);
   console.log(`  Chunks: ${chunks.length}`);
@@ -162,12 +184,12 @@ async function ingestFile(filePath, standardId) {
   }
 
   if (CONFIG.dryRun) {
-    console.log(`  [DRY RUN] Would send: ${chunks.length} chunks, ${tables.length} tables`);
+    console.log(`  [DRY RUN] Would send: ${chunks.length} chunks, ${tables.length} tables, ${applications.length} applications`);
     return;
   }
 
-  // Step 5: POST pre-parsed data to Worker for embedding + indexing
-  console.log('  Sending to Worker for embedding...');
+  // Step 6: POST everything to Worker for embedding + indexing + D1 upsert
+  console.log('  Sending to Worker for embedding + indexing...');
   const result = await postToWorker('/api/ingest', {
     standardId,
     metadata: {
@@ -175,14 +197,15 @@ async function ingestFile(filePath, standardId) {
       author: metadata.author,
       subject: metadata.subject,
       year: metadata.year,
-      fullDesignation: inferFullDesignation(standardId, metadata.title),
+      fullDesignation: standardMeta.fullDesignation,
     },
     chunks,
     tables,
+    applications,    // ← extracted from PDF tables, written to D1 applications
     r2Key: `standards/${standardId}.pdf`,
   });
 
-  console.log(`  ✓ ${result.chunksIndexed} chunks indexed, ${result.tablesFound} tables stored`);
+  console.log(`  ✓ ${result.chunksIndexed} chunks indexed, ${result.tablesFound} tables stored, ${result.applicationsUpserted || 0} application records upserted`);
 }
 
 // ─── R2 Upload ────────────────────────────────────────────────────────────────

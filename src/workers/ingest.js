@@ -9,14 +9,17 @@
  *
  *   POST /api/ingest
  *     Accept pre-parsed PDF data from the ingestion script.
- *     Body: { standardId, metadata, chunks, tables }
+ *     Body: { standardId, metadata, chunks, tables, applications }
+ *     - chunks:       [{text, pageNumber, section, type}]       → Vectorize
+ *     - tables:       [{pageNumber, title, rows, ...}]          → D1 standards.tables_json
+ *     - applications: [{code, App, Hor_Lux, ...}]  (optional)  → D1 applications (upsert)
  *
  *   POST /api/ingest/applications
  *     Re-embed all D1 application rows into Vectorize.
- *     Called after scripts/seed-applications.js populates D1.
+ *     Can be called after seeding or after PDF-extracted records are in D1.
  *
  *   POST /api/ingest/r2-upload-url
- *     Return a presigned R2 URL for the script to upload the raw PDF.
+ *     Return R2 key and wrangler command for uploading the raw PDF.
  */
 
 const EMBED_MODEL = '@cf/baai/bge-base-en-v1.5';
@@ -49,7 +52,14 @@ async function ingestParsedPDF(request, env) {
     return jsonResponse({ error: 'Invalid JSON body' }, 400);
   }
 
-  const { standardId, metadata = {}, chunks = [], tables = [], r2Key = null } = body;
+  const {
+    standardId,
+    metadata = {},
+    chunks = [],
+    tables = [],
+    applications = [],  // extracted application records from PDF tables
+    r2Key = null,
+  } = body;
 
   if (!standardId) return jsonResponse({ error: 'standardId is required' }, 400);
   if (!Array.isArray(chunks) || chunks.length === 0) {
@@ -124,18 +134,89 @@ async function ingestParsedPDF(request, env) {
     JSON.stringify(tablesCompact),
   ).run();
 
+  // ── 5. Upsert extracted application records into D1 ──────────────────────
+  // This is the "PDFs as source of truth" step: application data comes FROM
+  // the PDF, not from a manually maintained CSV.
+  let applicationsUpserted = 0;
+  if (Array.isArray(applications) && applications.length > 0) {
+    applicationsUpserted = await upsertApplications(env.DB, applications);
+  }
+
   return jsonResponse({
     success: true,
     standardId,
     chunksIndexed: chunks.length,
     tablesFound: (tables || []).length,
     vectorsUpserted: vectors.length,
+    applicationsUpserted,
   });
+}
+
+// ─── D1 Application Upsert ───────────────────────────────────────────────────
+// Writes PDF-extracted application records into D1.
+// Uses ON CONFLICT(code) DO UPDATE so re-ingesting a PDF refreshes the data.
+
+const APP_COLS = [
+  'code', 'App', 'App_s1', 'App_s2', 'App_s3', 'App_s4', 'App_s5', 'App_s6',
+  'Standard', 'Standard_Full', 'Table_Ref', 'Row_Ref', 'Link_Mapping',
+  'Area_or_Task', 'Indoor_Outdoor', 'App_Type',
+  'Hor_Cat', 'Hor_Lux', 'Hor_Fc', 'Hor_Height_m', 'Hor_Height_ft',
+  'Hor_Avg_Max_Min', 'Hor_Uniformity', 'Hor_Notes',
+  'Ver_Cat', 'Ver_Lux', 'Ver_Fc', 'Ver_Height_m', 'Ver_Height_ft',
+  'Ver_Avg_Max_Min', 'Ver_Uniformity', 'Ver_Notes',
+  'Task_Cat', 'Task_Lux', 'Task_Fc', 'Task_Height_m', 'Task_Height_ft',
+  'Task_Avg_Max_Min', 'Task_Uniformity', 'Task_Notes',
+  'TM24_Eligible', 'TM24_Notes',
+  'Lighting_Zone', 'Max_Glare_Rating', 'Max_Uplight', 'Curfew_Dimming',
+  'Spectrum_Guidance', 'Controls_Required',
+  'Footnotes', 'General_Notes', 'App_Notes',
+  'Vitrium_Doc_ID', 'Vitrium_Deep_Link',
+  'Active',
+];
+
+// Build the ON CONFLICT update clause — update everything except code and Vitrium links
+// (Vitrium links are set by sync-metadata.js and should not be overwritten by PDF re-ingest)
+const UPDATE_COLS = APP_COLS.filter(c =>
+  c !== 'code' && c !== 'Vitrium_Doc_ID' && c !== 'Vitrium_Deep_Link'
+);
+
+async function upsertApplications(db, applications) {
+  if (applications.length === 0) return 0;
+
+  const BATCH = 20; // D1 batch insert limit
+  let upserted = 0;
+
+  for (let i = 0; i < applications.length; i += BATCH) {
+    const batch = applications.slice(i, i + BATCH);
+
+    const placeholderRows = batch.map(() =>
+      `(${APP_COLS.map(() => '?').join(', ')})`
+    ).join(', ');
+
+    const setClauses = UPDATE_COLS.map(c => `${c} = excluded.${c}`).join(', ');
+    const sql = `
+      INSERT INTO applications (${APP_COLS.join(', ')})
+      VALUES ${placeholderRows}
+      ON CONFLICT(code) DO UPDATE SET
+        ${setClauses},
+        updated_at = CURRENT_TIMESTAMP
+    `;
+
+    const bindings = batch.flatMap(app => APP_COLS.map(col => {
+      const v = app[col];
+      return (v === undefined || v === '') ? null : v;
+    }));
+
+    await db.prepare(sql).bind(...bindings).run();
+    upserted += batch.length;
+  }
+
+  return upserted;
 }
 
 // ─── Application Embedding ────────────────────────────────────────────────────
 // Re-embeds all D1 application rows into Vectorize.
-// Run after seed-applications.js; safe to re-run (upsert is idempotent).
+// Safe to re-run at any time (upsert is idempotent).
 
 async function ingestApplications(env) {
   const result = await env.DB.prepare(
@@ -145,7 +226,7 @@ async function ingestApplications(env) {
   const applications = result.results;
   if (applications.length === 0) {
     return jsonResponse({
-      error: 'No applications found in D1. Run `npm run db:seed` first.',
+      error: 'No applications in D1 yet. Ingest at least one PDF first, or run `npm run db:seed` with a bootstrap CSV.',
     }, 400);
   }
 

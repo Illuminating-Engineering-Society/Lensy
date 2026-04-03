@@ -1,14 +1,38 @@
 #!/usr/bin/env node
 /**
- * Seed Applications Script
- * Imports the 68-column IES Illuminance Selector database into D1.
+ * Bootstrap Seed Script — ONE-TIME USE ONLY
+ *
+ * Imports a legacy CSV/JSON export of the 68-column Illuminance Selector
+ * database into D1. Use this ONLY for the initial bootstrap if you have
+ * the legacy data available.
+ *
+ * ── IMPORTANT: This is NOT the normal data path ──────────────────────────────
+ *
+ * The system is designed so PDFs are the source of truth.
+ * The normal data pipeline is:
+ *
+ *   node scripts/ingest-pdfs.js --file pdfs/RP-9-20.pdf --id RP-9-20
+ *     → parses PDF tables → writes application records to D1 automatically
+ *
+ * Use THIS script only if:
+ *   a) You have a legacy CSV from the old Illuminance Selector system, AND
+ *   b) You need a quick start before the PDFs are ready to ingest, AND
+ *   c) You understand this data will be OVERWRITTEN when the matching PDF
+ *      is ingested (ON CONFLICT DO UPDATE — PDF data takes precedence)
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
  *
  * Usage:
  *   node scripts/seed-applications.js --source data/applications.csv
  *   node scripts/seed-applications.js --source data/applications.json
+ *   node scripts/seed-applications.js --source data/applications.json --local
  *
- * After seeding D1, run ingest-applications to index into Vectorize:
- *   node scripts/ingest-pdfs.js --applications-only
+ * After seeding, index into Vectorize:
+ *   node scripts/ingest-pdfs.js --applications-only --local
+ *
+ * To validate extracted data against the legacy CSV before ingesting PDFs:
+ *   node scripts/extract-applications-from-pdf.js --file pdfs/RP-9-20.pdf \
+ *     --id RP-9-20 --compare data/applications.csv
  *
  * CSV format: header row with exact column names from standards-schema.json
  * JSON format: array of application objects
