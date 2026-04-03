@@ -1,0 +1,63 @@
+# Lucius - IES AI-Powered Standards Assistant
+# Cloudflare Workers Configuration
+#
+# Before deploying, run these commands to create resources and fill in the IDs below:
+#
+#   wrangler r2 bucket create ies-standards-pdfs
+#   wrangler d1 create ies-metadata          → copy database_id below
+#   wrangler vectorize create ies-standards-vectors --dimensions=768 --metric=cosine
+#   wrangler kv:namespace create ies-sessions  → copy id below
+#
+# Then set secrets (do NOT commit real keys):
+#   wrangler secret put ANTHROPIC_API_KEY
+#   wrangler secret put VITRIUM_API_KEY
+#   wrangler secret put SHAREPOINT_TOKEN
+
+name = "lucius-api"
+main = "src/workers/api.js"
+compatibility_date = "2025-01-01"
+compatibility_flags = ["nodejs_compat"]
+
+# ─── R2: PDF Storage ──────────────────────────────────────────────────────────
+[[r2_buckets]]
+binding = "PDFS"
+bucket_name = "ies-standards-pdfs"
+
+# ─── D1: Structured Data (Applications, Projects) ────────────────────────────
+[[d1_databases]]
+binding = "DB"
+database_name = "ies-metadata"
+database_id = "REPLACE_WITH_D1_DATABASE_ID"
+
+# ─── Vectorize: Semantic Search Index ────────────────────────────────────────
+[[vectorize]]
+binding = "VECTORIZE"
+index_name = "ies-standards-vectors"
+
+# ─── KV: Session & Cache ─────────────────────────────────────────────────────
+[[kv_namespaces]]
+binding = "SESSIONS"
+id = "REPLACE_WITH_KV_NAMESPACE_ID"
+
+# ─── Workers AI: Embeddings ───────────────────────────────────────────────────
+[ai]
+binding = "AI"
+
+# ─── Environment Variables (non-secret) ──────────────────────────────────────
+[vars]
+VITRIUM_API_URL = "https://api.vitrium.com"
+ENVIRONMENT = "production"
+
+# Secrets set via `wrangler secret put`:
+# ANTHROPIC_API_KEY
+# VITRIUM_API_KEY
+# SHAREPOINT_TOKEN
+
+# ─── Routes ───────────────────────────────────────────────────────────────────
+[triggers]
+crons = []  # Add scheduled tasks here if needed
+
+# ─── Development ──────────────────────────────────────────────────────────────
+[dev]
+port = 8787
+local_protocol = "http"

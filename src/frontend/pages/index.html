@@ -1,0 +1,401 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lucius — IES Standards Search</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            'ies-blue': '#003DA5',
+            'ies-gold': '#F5A623',
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    .result-card { transition: box-shadow 0.2s; }
+    .result-card:hover { box-shadow: 0 4px 20px rgba(0,61,165,0.12); }
+    .ai-summary { border-left: 4px solid #003DA5; }
+    .lux-badge { font-variant-numeric: tabular-nums; }
+    @media print {
+      .no-print { display: none !important; }
+      .result-card { break-inside: avoid; }
+    }
+  </style>
+</head>
+<body class="bg-gray-50 min-h-screen">
+
+  <!-- Header -->
+  <header class="bg-ies-blue text-white shadow-md no-print">
+    <div class="max-w-5xl mx-auto px-4 py-4 flex items-center justify-between">
+      <div>
+        <h1 class="text-2xl font-bold tracking-tight">Lucius</h1>
+        <p class="text-blue-200 text-sm">IES Standards Search Assistant</p>
+      </div>
+      <nav class="flex items-center gap-4 text-sm">
+        <a href="/projects" class="text-blue-200 hover:text-white transition">My Projects</a>
+        <a href="https://www.ies.org" target="_blank" rel="noopener" class="text-blue-200 hover:text-white transition">IES.org</a>
+      </nav>
+    </div>
+  </header>
+
+  <!-- Search Section -->
+  <main class="max-w-5xl mx-auto px-4 py-8">
+
+    <!-- Search Box -->
+    <section class="bg-white rounded-xl shadow p-6 mb-6 no-print">
+      <label for="search-input" class="block text-sm font-semibold text-gray-700 mb-2">
+        Search IES Standards
+      </label>
+      <div class="flex gap-2">
+        <input
+          type="text"
+          id="search-input"
+          placeholder="Ask a question or describe your space..."
+          class="flex-1 px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-ies-blue focus:border-transparent text-base"
+          onkeydown="if(event.key==='Enter') performSearch()"
+          autofocus
+        />
+        <button
+          onclick="performSearch()"
+          class="px-6 py-3 bg-ies-blue text-white rounded-lg hover:bg-blue-800 transition font-medium"
+        >
+          Search
+        </button>
+      </div>
+
+      <!-- Filters -->
+      <div class="flex flex-wrap gap-3 mt-4">
+        <select id="filter-location" class="text-sm border border-gray-200 rounded-md px-3 py-1.5 bg-white text-gray-600">
+          <option value="">Indoor & Outdoor</option>
+          <option value="Indoor">Indoor only</option>
+          <option value="Outdoor">Outdoor only</option>
+          <option value="Both">Both</option>
+        </select>
+        <label class="flex items-center gap-2 text-sm text-gray-600">
+          <input type="checkbox" id="filter-tm24" class="rounded">
+          TM-24 Eligible only
+        </label>
+        <label class="flex items-center gap-2 text-sm text-gray-600">
+          <input type="checkbox" id="include-ai" class="rounded">
+          Include AI explanation
+        </label>
+      </div>
+
+      <!-- Example searches -->
+      <div class="mt-4 text-sm text-gray-500">
+        <span class="font-medium">Try:</span>
+        <button onclick="setQuery('spa lighting requirements')" class="ml-2 text-ies-blue hover:underline">spa lighting</button>
+        <span class="mx-1">·</span>
+        <button onclick="setQuery('office conference room how bright')" class="text-ies-blue hover:underline">office meeting rooms</button>
+        <span class="mx-1">·</span>
+        <button onclick="setQuery('outdoor restaurant patio')" class="text-ies-blue hover:underline">outdoor dining</button>
+        <span class="mx-1">·</span>
+        <button onclick="setQuery('parking garage lighting')" class="text-ies-blue hover:underline">parking garage</button>
+      </div>
+    </section>
+
+    <!-- Results Area -->
+    <section id="results-section" class="hidden">
+
+      <!-- AI Summary (conditional) -->
+      <div id="ai-summary-card" class="hidden bg-blue-50 rounded-xl p-6 mb-5 ai-summary">
+        <div class="flex items-start gap-3">
+          <svg class="w-5 h-5 text-ies-blue mt-0.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.347.347a3.5 3.5 0 004.95 4.95l1.414 1.414a7 7 0 10-9.9-9.9l-.347.347z" />
+          </svg>
+          <div class="flex-1">
+            <h3 class="font-semibold text-gray-900 text-sm">AI Explanation</h3>
+            <p id="ai-disclaimer" class="text-xs text-gray-500 mt-0.5 mb-3"></p>
+            <div id="ai-summary-text" class="text-sm text-gray-700 leading-relaxed"></div>
+            <p id="ai-watermark" class="text-xs text-gray-400 mt-3 italic"></p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Results header -->
+      <div class="flex items-center justify-between mb-4 no-print">
+        <div>
+          <h2 class="text-lg font-semibold text-gray-900" id="results-heading">Results</h2>
+          <p class="text-sm text-gray-500" id="results-meta"></p>
+        </div>
+        <button onclick="window.print()" class="text-sm text-gray-500 hover:text-gray-700 flex items-center gap-1">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
+          </svg>
+          Print
+        </button>
+      </div>
+
+      <!-- Result cards -->
+      <div id="results-list"></div>
+
+      <!-- Empty state -->
+      <div id="no-results" class="hidden text-center py-16 text-gray-400">
+        <svg class="w-12 h-12 mx-auto mb-4 opacity-30" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+        </svg>
+        <p class="text-lg font-medium">No results found</p>
+        <p class="text-sm mt-1">Try a different search term or contact <a href="mailto:Standards@ies.org" class="text-ies-blue hover:underline">Standards@ies.org</a></p>
+      </div>
+    </section>
+
+    <!-- Loading state -->
+    <div id="loading" class="hidden text-center py-16 text-gray-400">
+      <div class="inline-block w-8 h-8 border-4 border-ies-blue border-t-transparent rounded-full animate-spin mb-4"></div>
+      <p>Searching IES Standards...</p>
+    </div>
+
+  </main>
+
+  <!-- Footer -->
+  <footer class="text-center text-xs text-gray-400 py-8 no-print">
+    <p>Lucius is powered by IES Standards data. Always refer to the full standard for authoritative guidance.</p>
+    <p class="mt-1">
+      <a href="https://www.ies.org" class="hover:underline">Illuminating Engineering Society</a>
+      · <a href="mailto:Standards@ies.org" class="hover:underline">Standards@ies.org</a>
+    </p>
+  </footer>
+
+  <script src="../utils/api.js"></script>
+  <script>
+    // ─── State ──────────────────────────────────────────────────────────────
+    let lastQuery = '';
+
+    // ─── Search ─────────────────────────────────────────────────────────────
+    function setQuery(text) {
+      document.getElementById('search-input').value = text;
+      performSearch();
+    }
+
+    async function performSearch() {
+      const query = document.getElementById('search-input').value.trim();
+      if (!query) return;
+
+      lastQuery = query;
+      showLoading(true);
+      clearResults();
+
+      const filters = {};
+      const loc = document.getElementById('filter-location').value;
+      if (loc) filters.indoor_outdoor = loc;
+      if (document.getElementById('filter-tm24').checked) filters.tm24_eligible = true;
+
+      const includeAI = document.getElementById('include-ai').checked;
+
+      try {
+        const data = await LuciusAPI.search(query, { filters, includeAISummary: includeAI });
+        renderResults(data);
+      } catch (err) {
+        renderError(err.message);
+      } finally {
+        showLoading(false);
+      }
+    }
+
+    // ─── Rendering ──────────────────────────────────────────────────────────
+    function renderResults(data) {
+      const section = document.getElementById('results-section');
+      section.classList.remove('hidden');
+
+      // Heading
+      document.getElementById('results-heading').textContent =
+        `${data.results.length} Result${data.results.length !== 1 ? 's' : ''}`;
+      document.getElementById('results-meta').textContent =
+        `for "${data.query}"`;
+
+      // AI Summary
+      if (data.aiSummary) {
+        renderAISummary(data.aiSummary);
+      }
+
+      // Result cards
+      const list = document.getElementById('results-list');
+      if (data.results.length === 0) {
+        document.getElementById('no-results').classList.remove('hidden');
+        return;
+      }
+
+      list.innerHTML = data.results.map(renderResultCard).join('');
+    }
+
+    function renderAISummary(summary) {
+      const card = document.getElementById('ai-summary-card');
+      document.getElementById('ai-disclaimer').textContent = summary.disclaimer;
+      document.getElementById('ai-summary-text').textContent = summary.text;
+      if (summary.watermark) {
+        document.getElementById('ai-watermark').textContent = summary.watermark;
+      }
+      card.classList.remove('hidden');
+    }
+
+    function renderResultCard(result) {
+      const app = result.application;
+      const score = result.relevanceScore;
+
+      const hierarchy = [app.category, app.sub1, app.sub2].filter(Boolean).join(' › ');
+
+      const horSection = app.horizontal ? `
+        <div class="mt-3">
+          <h4 class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">Horizontal Illuminance</h4>
+          <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 text-sm">
+            <div class="bg-gray-50 rounded px-2 py-1">
+              <span class="text-xs text-gray-400 block">Category</span>
+              <span class="font-mono font-bold">${app.horizontal.category || '—'}</span>
+            </div>
+            <div class="bg-gray-50 rounded px-2 py-1">
+              <span class="text-xs text-gray-400 block">Maintained</span>
+              <span class="font-semibold lux-badge">${app.horizontal.lux != null ? app.horizontal.lux + ' lux' : '—'}</span>
+              ${app.horizontal.fc != null ? `<span class="text-xs text-gray-400 ml-1">(${app.horizontal.fc} fc)</span>` : ''}
+            </div>
+            <div class="bg-gray-50 rounded px-2 py-1">
+              <span class="text-xs text-gray-400 block">Height</span>
+              <span class="text-sm">${app.horizontal.heightM != null ? app.horizontal.heightM + ' m' : '—'}</span>
+            </div>
+            <div class="bg-gray-50 rounded px-2 py-1">
+              <span class="text-xs text-gray-400 block">Uniformity</span>
+              <span class="text-sm">${app.horizontal.uniformity || '—'}</span>
+            </div>
+          </div>
+        </div>
+      ` : '';
+
+      const verSection = app.vertical ? `
+        <div class="mt-3">
+          <h4 class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">Vertical Illuminance</h4>
+          <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 text-sm">
+            <div class="bg-gray-50 rounded px-2 py-1">
+              <span class="text-xs text-gray-400 block">Category</span>
+              <span class="font-mono font-bold">${app.vertical.category || '—'}</span>
+            </div>
+            <div class="bg-gray-50 rounded px-2 py-1">
+              <span class="text-xs text-gray-400 block">Maintained</span>
+              <span class="font-semibold lux-badge">${app.vertical.lux != null ? app.vertical.lux + ' lux' : '—'}</span>
+              ${app.vertical.fc != null ? `<span class="text-xs text-gray-400 ml-1">(${app.vertical.fc} fc)</span>` : ''}
+            </div>
+            <div class="bg-gray-50 rounded px-2 py-1">
+              <span class="text-xs text-gray-400 block">Height</span>
+              <span class="text-sm">${app.vertical.heightM != null ? app.vertical.heightM + ' m' : '—'}</span>
+            </div>
+            <div class="bg-gray-50 rounded px-2 py-1">
+              <span class="text-xs text-gray-400 block">Uniformity</span>
+              <span class="text-sm">${app.vertical.uniformity || '—'}</span>
+            </div>
+          </div>
+        </div>
+      ` : '';
+
+      const outdoorSection = app.outdoor && app.outdoor.lightingZone ? `
+        <div class="mt-3">
+          <h4 class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">Outdoor Guidance</h4>
+          <div class="grid grid-cols-2 sm:grid-cols-3 gap-2 text-sm">
+            ${app.outdoor.lightingZone ? `<div class="bg-amber-50 rounded px-2 py-1"><span class="text-xs text-gray-400 block">Lighting Zone</span>${app.outdoor.lightingZone}</div>` : ''}
+            ${app.outdoor.maxGlareRating ? `<div class="bg-amber-50 rounded px-2 py-1"><span class="text-xs text-gray-400 block">Max Glare</span>${app.outdoor.maxGlareRating}</div>` : ''}
+            ${app.outdoor.spectrumGuidance ? `<div class="bg-amber-50 rounded px-2 py-1"><span class="text-xs text-gray-400 block">Spectrum</span>${app.outdoor.spectrumGuidance}</div>` : ''}
+          </div>
+        </div>
+      ` : '';
+
+      const notesSection = app.appNotes ? `
+        <div class="mt-3 text-sm text-gray-600 bg-yellow-50 rounded px-3 py-2">
+          <span class="font-medium">Notes: </span>${escapeHtml(app.appNotes)}
+        </div>
+      ` : '';
+
+      const vitriumBtn = result.vitriumLink ? `
+        <a href="${escapeHtml(result.vitriumLink)}" target="_blank" rel="noopener"
+           class="text-sm text-ies-blue hover:underline flex items-center gap-1">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/>
+          </svg>
+          View in Vitrium
+        </a>
+      ` : '';
+
+      return `
+        <article class="result-card bg-white rounded-xl shadow mb-4 p-6">
+          <!-- Header -->
+          <div class="flex items-start justify-between gap-4">
+            <div>
+              <p class="text-xs text-gray-400 font-medium uppercase tracking-wider">${escapeHtml(hierarchy)}</p>
+              <h3 class="text-lg font-bold text-gray-900 mt-0.5">${escapeHtml(app.sub2 || app.sub1 || app.category || app.code)}</h3>
+              <p class="text-sm text-gray-500 mt-1">${escapeHtml(result.citation)}</p>
+            </div>
+            <div class="flex items-center gap-1.5 shrink-0">
+              <span class="text-xs px-2 py-0.5 rounded-full border ${app.indoorOutdoor === 'Outdoor' ? 'border-amber-200 bg-amber-50 text-amber-700' : 'border-blue-100 bg-blue-50 text-blue-700'}">
+                ${escapeHtml(app.indoorOutdoor || 'Indoor')}
+              </span>
+              <span class="text-xs px-2 py-0.5 rounded-full border border-gray-100 bg-gray-50 text-gray-500">
+                ${escapeHtml(app.areaOrTask || 'Area')}
+              </span>
+            </div>
+          </div>
+
+          <!-- Illuminance Data -->
+          ${horSection}
+          ${verSection}
+          ${outdoorSection}
+          ${notesSection}
+
+          <!-- Actions -->
+          <div class="flex items-center justify-between mt-4 pt-4 border-t border-gray-100">
+            <div class="flex items-center gap-3">
+              <button
+                onclick="addToProject(${JSON.stringify(app.code)})"
+                class="text-sm px-3 py-1.5 bg-ies-blue text-white rounded-md hover:bg-blue-800 transition">
+                + Add to Project
+              </button>
+              ${vitriumBtn}
+            </div>
+            ${score > 0 ? `<span class="text-xs text-gray-300">Relevance: ${Math.round(score * 100)}%</span>` : ''}
+          </div>
+        </article>
+      `;
+    }
+
+    function renderError(message) {
+      document.getElementById('results-section').classList.remove('hidden');
+      document.getElementById('results-list').innerHTML = `
+        <div class="bg-red-50 border border-red-200 rounded-lg p-4 text-sm text-red-700">
+          <strong>Error:</strong> ${escapeHtml(message)}
+        </div>
+      `;
+    }
+
+    // ─── UI Helpers ─────────────────────────────────────────────────────────
+    function showLoading(show) {
+      document.getElementById('loading').classList.toggle('hidden', !show);
+    }
+
+    function clearResults() {
+      document.getElementById('results-section').classList.add('hidden');
+      document.getElementById('results-list').innerHTML = '';
+      document.getElementById('ai-summary-card').classList.add('hidden');
+      document.getElementById('no-results').classList.add('hidden');
+    }
+
+    function addToProject(applicationCode) {
+      // Phase 1: simple prompt (Phase 3 will use a proper modal + auth)
+      const projectId = prompt('Enter Project ID (or leave blank to create new):');
+      if (projectId === null) return; // cancelled
+      LuciusAPI.addToProject(applicationCode, projectId || null)
+        .then(() => alert('Added to project!'))
+        .catch(err => alert('Error: ' + err.message));
+    }
+
+    function escapeHtml(str) {
+      if (str == null) return '';
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+    }
+  </script>
+</body>
+</html>
