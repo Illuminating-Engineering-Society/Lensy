@@ -46,7 +46,7 @@ export default {
       }
 
       // ── Ingest (internal/admin only) ─────────────────────────────────────
-      if (path === '/api/ingest' && request.method === 'POST') {
+      if (path.startsWith('/api/ingest') && request.method === 'POST') {
         return withCors(await handleIngest(request, env));
       }
 
