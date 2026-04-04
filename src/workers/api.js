@@ -289,15 +289,43 @@ async function addApplicationToProject(request, env, projectId) {
   // Accepts single object or array for bulk add
   const items = Array.isArray(body) ? body : [body];
 
+  const project = await env.DB.prepare(
+    'SELECT id FROM projects WHERE id = ?'
+  ).bind(projectId).first();
+
+  if (!project) {
+    return json({ error: 'Project not found' }, 404);
+  }
+
   const inserted = [];
+  const skipped = [];
+  const rejected = [];
   for (const item of items) {
     const { application_code, quantity = 1, room_names, custom_notes } = item;
-    if (!application_code) continue;
+    if (!application_code) {
+      rejected.push({ application_code: null, reason: 'Missing application_code' });
+      continue;
+    }
 
     // Snapshot current application data
     const app = await env.DB.prepare(
       'SELECT * FROM applications WHERE code = ?'
     ).bind(application_code).first();
+
+    if (!app) {
+      rejected.push({ application_code, reason: 'Application not found' });
+      continue;
+    }
+
+    // Prevent duplicate rows for the same project/application pair
+    const existing = await env.DB.prepare(
+      'SELECT id FROM project_applications WHERE project_id = ? AND application_code = ?'
+    ).bind(projectId, application_code).first();
+
+    if (existing) {
+      skipped.push({ application_code, reason: 'Already added to project', id: existing.id });
+      continue;
+    }
 
     const result = await env.DB.prepare(`
       INSERT INTO project_applications
@@ -315,7 +343,12 @@ async function addApplicationToProject(request, env, projectId) {
     inserted.push(result.meta.last_row_id);
   }
 
-  return json({ inserted_ids: inserted }, 201);
+  const hasInserts = inserted.length > 0;
+  return json({
+    inserted_ids: inserted,
+    skipped,
+    rejected,
+  }, hasInserts ? 201 : 200);
 }
 
 async function updateApplicationInProject(request, env, appId) {

@@ -102,6 +102,22 @@
 
     <!-- Results Area -->
     <section id="results-section" class="hidden">
+      <div id="bulk-actions" class="hidden bg-white rounded-xl shadow p-4 mb-4 no-print">
+        <div class="flex flex-wrap items-center gap-3 text-sm">
+          <label class="inline-flex items-center gap-2 text-gray-700">
+            <input type="checkbox" id="select-all-results" onchange="toggleSelectAll(this.checked)">
+            Select all results
+          </label>
+          <button
+            id="add-selected-btn"
+            onclick="addSelectedToProject()"
+            class="px-3 py-1.5 bg-ies-blue text-white rounded-md hover:bg-blue-800 transition disabled:opacity-40 disabled:cursor-not-allowed"
+            disabled
+          >
+            Add Selected to Project (0)
+          </button>
+        </div>
+      </div>
 
       <!-- AI Summary (conditional) -->
       <div id="ai-summary-card" class="hidden bg-blue-50 rounded-xl p-6 mb-5 ai-summary">
@@ -166,6 +182,8 @@
   <script>
     // ─── State ──────────────────────────────────────────────────────────────
     let lastQuery = '';
+    let currentResultCodes = [];
+    let selectedApplicationCodes = new Set();
 
     // ─── Search ─────────────────────────────────────────────────────────────
     function setQuery(text) {
@@ -202,6 +220,9 @@
     function renderResults(data) {
       const section = document.getElementById('results-section');
       section.classList.remove('hidden');
+      selectedApplicationCodes = new Set();
+      currentResultCodes = data.results.map(r => r.application.code).filter(Boolean);
+      updateBulkActionsUI();
 
       // Heading
       document.getElementById('results-heading').textContent =
@@ -322,6 +343,15 @@
           <!-- Header -->
           <div class="flex items-start justify-between gap-4">
             <div>
+              <label class="inline-flex items-center gap-2 mb-2 text-sm text-gray-600">
+                <input
+                  type="checkbox"
+                  class="result-checkbox rounded"
+                  value="${escapeHtml(app.code)}"
+                  onchange="toggleSelection(${JSON.stringify(app.code)}, this.checked)"
+                >
+                Select
+              </label>
               <p class="text-xs text-gray-400 font-medium uppercase tracking-wider">${escapeHtml(hierarchy)}</p>
               <h3 class="text-lg font-bold text-gray-900 mt-0.5">${escapeHtml(app.sub2 || app.sub1 || app.category || app.code)}</h3>
               <p class="text-sm text-gray-500 mt-1">${escapeHtml(result.citation)}</p>
@@ -377,6 +407,9 @@
       document.getElementById('results-list').innerHTML = '';
       document.getElementById('ai-summary-card').classList.add('hidden');
       document.getElementById('no-results').classList.add('hidden');
+      currentResultCodes = [];
+      selectedApplicationCodes = new Set();
+      updateBulkActionsUI();
     }
 
     function addToProject(applicationCode) {
@@ -386,6 +419,54 @@
       LuciusAPI.addToProject(applicationCode, projectId || null)
         .then(() => alert('Added to project!'))
         .catch(err => alert('Error: ' + err.message));
+    }
+
+    function toggleSelection(applicationCode, checked) {
+      if (!applicationCode) return;
+      if (checked) selectedApplicationCodes.add(applicationCode);
+      else selectedApplicationCodes.delete(applicationCode);
+      updateBulkActionsUI();
+    }
+
+    function toggleSelectAll(checked) {
+      if (checked) {
+        selectedApplicationCodes = new Set(currentResultCodes);
+      } else {
+        selectedApplicationCodes = new Set();
+      }
+
+      document.querySelectorAll('.result-checkbox').forEach(cb => {
+        cb.checked = checked;
+      });
+      updateBulkActionsUI();
+    }
+
+    async function addSelectedToProject() {
+      if (selectedApplicationCodes.size === 0) return;
+      const projectId = prompt('Enter Project ID (or leave blank to create new):');
+      if (projectId === null) return;
+
+      try {
+        await LuciusAPI.addManyToProject([...selectedApplicationCodes], projectId || null);
+        alert(`Added ${selectedApplicationCodes.size} application(s) to project.`);
+      } catch (err) {
+        alert('Error: ' + err.message);
+      }
+    }
+
+    function updateBulkActionsUI() {
+      const bulkActions = document.getElementById('bulk-actions');
+      const addSelectedBtn = document.getElementById('add-selected-btn');
+      const selectAll = document.getElementById('select-all-results');
+
+      const hasResults = currentResultCodes.length > 0;
+      const selectedCount = selectedApplicationCodes.size;
+      const allSelected = hasResults && selectedCount === currentResultCodes.length;
+
+      bulkActions.classList.toggle('hidden', !hasResults);
+      addSelectedBtn.disabled = selectedCount === 0;
+      addSelectedBtn.textContent = `Add Selected to Project (${selectedCount})`;
+      selectAll.checked = allSelected;
     }
 
     function escapeHtml(str) {

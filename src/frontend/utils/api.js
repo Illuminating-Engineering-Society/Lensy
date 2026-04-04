@@ -104,6 +104,43 @@ const LuciusAPI = {
   },
 
   /**
+   * Add multiple application codes to a project in one request.
+   * @param {string[]} applicationCodes
+   * @param {string|number|null} projectId
+   */
+  async addManyToProject(applicationCodes, projectId) {
+    const codes = Array.isArray(applicationCodes)
+      ? [...new Set(applicationCodes.filter(Boolean))]
+      : [];
+
+    if (codes.length === 0) {
+      throw new Error('No applications selected');
+    }
+
+    if (!projectId) {
+      const name = prompt('New project name:') || `Project ${new Date().toLocaleDateString()}`;
+      const created = await LuciusAPI.createProject({ name, user_id: 1 });
+      projectId = created.project.id;
+    }
+
+    const payload = codes.map(code => ({
+      application_code: code,
+      quantity: 1,
+      room_names: null,
+      custom_notes: null,
+    }));
+
+    const response = await fetch(`${BASE_URL}/projects/${projectId}/applications`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+
+    if (!response.ok) throw new Error('Failed to add selected applications to project');
+    return response.json();
+  },
+
+  /**
    * Export project data as JSON (client renders PDF/Excel from this).
    * @param {string|number} projectId
    */
