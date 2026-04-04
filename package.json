@@ -1,0 +1,32 @@
+{
+  "name": "lucius",
+  "version": "0.1.0",
+  "description": "IES AI-Powered Standards Search Assistant",
+  "private": true,
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "db:migrate": "wrangler d1 migrations apply ies-metadata",
+    "db:migrate:local": "wrangler d1 migrations apply ies-metadata --local",
+    "db:seed": "node scripts/seed-applications.js",
+    "db:seed:help": "echo 'BOOTSTRAP ONLY. Normal data path: npm run ingest -- --file pdfs/RP-X-XX.pdf --id RP-X-XX'",
+    "ingest": "node scripts/ingest-pdfs.js",
+    "ingest:apps": "node scripts/ingest-pdfs.js --applications-only",
+    "extract": "node scripts/extract-applications-from-pdf.js",
+    "sync-metadata": "node scripts/sync-metadata.js",
+    "test:search": "node scripts/test-search.js",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "pdfjs-dist": "^4.9.155"
+  },
+  "devDependencies": {
+    "wrangler": "^3.100.0",
+    "vitest": "^2.1.0",
+    "@cloudflare/vitest-pool-workers": "^0.5.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

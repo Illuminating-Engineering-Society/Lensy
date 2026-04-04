@@ -1,0 +1,16 @@
+{
+  "_comment": "Phrases that must never appear in Lucius AI-generated responses. Checked before returning any Claude API output.",
+  "exact_phrases": [
+    "all rights reserved",
+    "reproduced with permission",
+    "copyright ies",
+    "copyright illuminating engineering society",
+    "reproduction prohibited",
+    "may not be reproduced"
+  ],
+  "patterns": [
+    "\\d+\\s*lux[^\\s]*\\s*\\(\\d+\\.?\\d*\\s*fc\\)",
+    "Table\\s+[A-Z]-\\d+.*Row\\s+\\d+"
+  ],
+  "_note_patterns": "Regex patterns for detecting transcribed table data. If an AI response matches these, use the safe fallback instead."
+}

@@ -1,0 +1,98 @@
+{
+  "_comment": "Metadata structure for IES standards indexed in Lucius. Used for validation and UI display.",
+  "standards": [
+    {
+      "id": "RP-1-24",
+      "full_designation": "ANSI/IES RP-1-24",
+      "title": "Recommended Practice: Lighting Design for Commercial Interiors",
+      "short_title": "Commercial Interiors",
+      "year": 2024,
+      "supersedes": "RP-1-12",
+      "status": "Active",
+      "categories": ["Commercial", "Office", "Retail", "Hospitality"]
+    },
+    {
+      "id": "RP-6-24",
+      "full_designation": "ANSI/IES RP-6-24",
+      "title": "Recommended Practice: Sports and Recreational Area Lighting",
+      "short_title": "Sports Lighting",
+      "year": 2024,
+      "supersedes": "RP-6-22",
+      "status": "Active",
+      "categories": ["Sports", "Recreation", "Outdoor"]
+    },
+    {
+      "id": "RP-8-23",
+      "full_designation": "ANSI/IES RP-8-23",
+      "title": "Recommended Practice: Roadway Lighting",
+      "short_title": "Roadway Lighting",
+      "year": 2023,
+      "supersedes": "RP-8-18",
+      "status": "Active",
+      "categories": ["Outdoor", "Roadway", "Transportation"]
+    },
+    {
+      "id": "RP-9-20",
+      "full_designation": "ANSI/IES RP-9-20",
+      "title": "Recommended Practice: Lighting Healthcare Facilities",
+      "short_title": "Healthcare Lighting",
+      "year": 2020,
+      "supersedes": "RP-9-99",
+      "status": "Active",
+      "categories": ["Healthcare", "Medical", "Wellness"]
+    },
+    {
+      "id": "RP-10-20",
+      "full_designation": "ANSI/IES RP-10-20",
+      "title": "Recommended Practice: Lighting Common Applications",
+      "short_title": "Common Applications",
+      "year": 2020,
+      "supersedes": "RP-10-11",
+      "status": "Active",
+      "categories": ["Commercial", "Office", "Industrial", "Residential"]
+    },
+    {
+      "id": "RP-43-25",
+      "full_designation": "ANSI/IES RP-43-25",
+      "title": "Recommended Practice: Lighting Design for Outdoor Pedestrian Applications",
+      "short_title": "Outdoor Pedestrian Lighting",
+      "year": 2025,
+      "supersedes": "RP-43-22",
+      "status": "Active",
+      "categories": ["Outdoor", "Pedestrian", "Walkways", "Parks"]
+    }
+  ],
+  "application_columns": {
+    "_comment": "The 68 columns from the legacy Illuminance Selector database",
+    "identity": ["id", "code", "App", "App_s1", "App_s2", "App_s3", "App_s4", "App_s5", "App_s6"],
+    "standard_reference": ["Standard", "Standard_Full", "Table_Ref", "Row_Ref", "Link_Mapping"],
+    "application_type": ["Area_or_Task", "Indoor_Outdoor", "App_Type"],
+    "horizontal_illuminance": ["Hor_Cat", "Hor_Lux", "Hor_Fc", "Hor_Height_m", "Hor_Height_ft", "Hor_Avg_Max_Min", "Hor_Uniformity", "Hor_Notes"],
+    "vertical_illuminance": ["Ver_Cat", "Ver_Lux", "Ver_Fc", "Ver_Height_m", "Ver_Height_ft", "Ver_Avg_Max_Min", "Ver_Uniformity", "Ver_Notes"],
+    "task_illuminance": ["Task_Cat", "Task_Lux", "Task_Fc", "Task_Height_m", "Task_Height_ft", "Task_Avg_Max_Min", "Task_Uniformity", "Task_Notes"],
+    "tm24": ["TM24_Eligible", "TM24_Notes"],
+    "outdoor": ["Lighting_Zone", "Max_Glare_Rating", "Max_Uplight", "Curfew_Dimming", "Spectrum_Guidance", "Controls_Required"],
+    "notes": ["Footnotes", "General_Notes", "App_Notes"],
+    "vitrium": ["Vitrium_Doc_ID", "Vitrium_Deep_Link"],
+    "status": ["Active", "Deprecated_By"]
+  },
+  "illuminance_categories": {
+    "_comment": "IES illuminance category definitions A through P",
+    "A": { "range_lux": "20-30", "description": "Public spaces with dark surroundings" },
+    "B": { "range_lux": "50", "description": "Simple orientation for short visits" },
+    "C": { "range_lux": "100", "description": "Working spaces where visual tasks only occasionally performed" },
+    "D": { "range_lux": "200", "description": "Performance of visual tasks of high contrast or large size" },
+    "E": { "range_lux": "500", "description": "Performance of visual tasks of medium contrast or small size" },
+    "F": { "range_lux": "1000", "description": "Performance of visual tasks of low contrast or very small size" },
+    "G": { "range_lux": "2000-3000", "description": "Performance of visual tasks near threshold" },
+    "H": { "range_lux": "5000-7500", "description": "Performance of very prolonged and exacting visual tasks" },
+    "I": { "range_lux": "10000+", "description": "Performance of very special visual tasks" },
+    "J": { "range_lux": "30", "description": "Outdoor, non-task areas" },
+    "K": { "range_lux": "50", "description": "Outdoor pedestrian areas" },
+    "L": { "range_lux": "75", "description": "Outdoor working areas" },
+    "M": { "range_lux": "200", "description": "Outdoor task areas (general)" },
+    "N": { "range_lux": "300", "description": "Outdoor task areas (detailed)" },
+    "O": { "range_lux": "500", "description": "Outdoor precision tasks" },
+    "P": { "range_lux": "1000", "description": "Outdoor high-precision tasks" }
+  }
+}
