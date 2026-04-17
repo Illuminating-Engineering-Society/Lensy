@@ -62,19 +62,23 @@ async function ingestParsedPDF(request, env) {
   } = body;
 
   if (!standardId) return jsonResponse({ error: 'standardId is required' }, 400);
-  if (!Array.isArray(chunks) || chunks.length === 0) {
-    return jsonResponse({ error: 'chunks array is required and must not be empty' }, 400);
+  // chunks can be empty when request is only upserting applications
+  if (!Array.isArray(chunks)) {
+    return jsonResponse({ error: 'chunks must be an array' }, 400);
   }
 
-  // Validate chunk shape
-  for (const chunk of chunks.slice(0, 3)) {
-    if (typeof chunk.text !== 'string' || !chunk.text.trim()) {
-      return jsonResponse({ error: 'Each chunk must have a non-empty text field' }, 400);
+  // ── 1. Generate embeddings for all chunks (skip if none) ──────────────────
+  if (chunks.length > 0) {
+    for (const chunk of chunks.slice(0, 3)) {
+      if (typeof chunk.text !== 'string' || !chunk.text.trim()) {
+        return jsonResponse({ error: 'Each chunk must have a non-empty text field' }, 400);
+      }
     }
   }
 
-  // ── 1. Generate embeddings for all chunks ──────────────────────────────────
-  const embeddings = await embedInBatches(env.AI, chunks.map(c => c.text));
+  const embeddings = chunks.length > 0
+    ? await embedInBatches(env.AI, chunks.map(c => c.text))
+    : [];
 
   // ── 2. Build Vectorize vectors ─────────────────────────────────────────────
   const vectors = chunks.map((chunk, i) => ({
@@ -98,7 +102,7 @@ async function ingestParsedPDF(request, env) {
     await env.VECTORIZE.upsert(vectors.slice(i, i + VECTORIZE_BATCH));
   }
 
-  // ── 4. Persist standard metadata + tables to D1 ───────────────────────────
+  // ── 4. Persist standard metadata + tables to D1 (skip for app-only batches) ─
   // Store tables as a compact JSON array (page, header, row count, footnotes)
   const tablesCompact = (tables || []).map(t => ({
     pageNumber: t.pageNumber,
@@ -108,7 +112,7 @@ async function ingestParsedPDF(request, env) {
     generalNotes: t.generalNotes,
   }));
 
-  await env.DB.prepare(`
+  if (chunks.length > 0 || tables.length > 0 || metadata.title) await env.DB.prepare(`
     INSERT INTO standards
       (id, title, description, author, year, full_designation, r2_key,
        tables_json, indexed_at, updated_at)
@@ -183,7 +187,7 @@ const UPDATE_COLS = APP_COLS.filter(c =>
 async function upsertApplications(db, applications) {
   if (applications.length === 0) return 0;
 
-  const BATCH = 20; // D1 batch insert limit
+  const BATCH = 1; // insert one row at a time to avoid D1 variable limit
   let upserted = 0;
 
   for (let i = 0; i < applications.length; i += BATCH) {

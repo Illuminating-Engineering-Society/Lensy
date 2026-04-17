@@ -1,499 +1,287 @@
 /**
  * IES Applications Extractor
  *
- * Converts raw IES illuminance table data (from table-extractor.js)
- * into structured application records matching the D1 applications schema.
+ * Extracts structured illuminance application records from IES PDF pages.
  *
- * This is the core of the "PDFs as source of truth" architecture:
- * as IES publishes updated standards, re-ingesting the PDF automatically
- * updates the applications table without manual CSV maintenance.
+ * Uses X coordinate (indentation) from pdfjs line data to reconstruct
+ * the hierarchy of IES illuminance tables, which is lost in plain text.
  *
- * ─── How IES Tables Are Structured ────────────────────────────────────────────
- *
- * IES illuminance tables (e.g. Table A-1 in RP-9-20) follow a consistent pattern:
- *
- *   COLUMN HEADERS (2-4 rows):
- *     Row 1: "Application | Horizontal Illuminance | Vertical Illuminance | Notes"
- *     Row 2: "            | Category | Maintained  | Category | Maintained |      "
- *     Row 3: "            | (lux)    | (fc)        | (lux)    | (fc)       |      "
- *
- *   DATA ROWS (hierarchical):
- *     "Healthcare"                               ← category row (depth 0)
- *       "Hospitals and Ambulatory Care"          ← sub-category row (depth 1)
- *         "Patient rooms"    M  300  30  L  150  ← leaf row with data (depth 2+)
- *         "ICU"              O  500  50  N  300
- *         "Operating room"   P 1000 100  P 1000
- *       "Nursing Homes"                          ← sub-category row (depth 1)
- *         "Resident rooms"   L   75   7  K   50
- *
- * The hierarchy depth is determined by indentation level in the PDF text.
- * We track it by monitoring which rows have numeric values vs. which are text-only.
- *
- * ─── Column Mapping ────────────────────────────────────────────────────────────
- *
- * Different IES standards have slightly different column arrangements, but
- * we can identify column purposes from the header text keywords:
- *   - "Category" / "Cat" → illuminance category (letter A-P)
- *   - "Maintained" / "Target" / "lux" → illuminance value in lux
- *   - "fc" / "footcandle" → illuminance in footcandles
- *   - "Horizontal" / "H." → horizontal illuminance block
- *   - "Vertical" / "V." → vertical illuminance block
- *   - "Task" → task illuminance block
- *   - "Height" / "m" / "ft" → measurement height
- *   - "Uniformity" → uniformity ratio
- *   - "Notes" / "Footnote" → notes column
- *   - "Type" / "Area" / "Task" → area-or-task classification
- *
- * ─── Output ────────────────────────────────────────────────────────────────────
- *
- * Each extracted record matches the 68-column D1 applications table.
- * Fields not extractable from the PDF are set to null and can be enriched
- * via sync-metadata.js (Vitrium links) or manual review.
+ * IES Table A-1 structure (x=indentation, approximate):
+ *   x≈69   INTERIORS - COMMON APPLICATIONS  ← section header
+ *   x≈73   Administration                   ← App (depth 0)
+ *   x≈78     Copy rooms, print rooms        ← App_s1 (depth 1)
+ *   x≈82       GeneralAM100 @ 0.00(...)     ← data row (has illuminance)
+ *   x≈82       MachinesTP300 @ TS(...)      ← data row
+ *   x≈82       Printed material             ← App_s2 (no data, sub-header)
+ *   x≈82         THR500 @ TS(...)           ← data row
  */
 
 // ─── Public API ───────────────────────────────────────────────────────────────
 
+export function extractApplicationsFromTables(_tables, _standardId, _meta) {
+  return []; // legacy — use extractApplicationsFromPages instead
+}
+
 /**
- * Extract application records from all tables in a standard.
- *
- * @param {Array} tables        - From extractIESTables()
- * @param {string} standardId   - e.g. "RP-9-20"
- * @param {Object} standardMeta - { fullDesignation, year, author }
- * @returns {Array<ApplicationRecord>}
+ * Main entry: extract application records from parsed PDF pages.
+ * Requires pages with line-level data (x, y, fontSize) from parsePDFNode().
  */
-export function extractApplicationsFromTables(tables, standardId, standardMeta = {}) {
+export function extractApplicationsFromPages(pages, standardId, standardMeta = {}) {
   const fullDesignation = standardMeta.fullDesignation || `ANSI/IES ${standardId}`;
-  const allApplications = [];
-
-  for (const table of tables) {
-    const colMap = buildColumnMap(table.columnHeaders || []);
-    if (!colMap.hasData) {
-      // Not an illuminance table — skip (e.g. bibliography, figure list)
-      continue;
-    }
-
-    const records = extractFromTable(table, colMap, standardId, fullDesignation);
-    allApplications.push(...records);
-  }
-
-  // Deduplicate by generated code (same app may span page breaks)
-  return deduplicate(allApplications);
-}
-
-// ─── Column Map Builder ───────────────────────────────────────────────────────
-
-/**
- * Analyze column header rows to determine what each column position contains.
- *
- * Column headers are multi-row and need to be "projected" per-column:
- *   Col 0 = everything from the leftmost header segments
- *   Col 1 = everything above column 1 in all header rows
- *   etc.
- *
- * We tokenize each header row into cells (2+ space separator) and build
- * a "column fingerprint" — the concatenated header text for each column.
- * Then we pattern-match fingerprints against known field types.
- */
-function buildColumnMap(headerLines) {
-  // Flatten: split each header line into cells
-  const headerGrid = headerLines.map(line =>
-    line.split(/\s{2,}/).map(c => c.trim().toLowerCase()).filter(Boolean)
-  ).filter(row => row.length > 0);
-
-  if (headerGrid.length === 0) return { hasData: false };
-
-  // Determine the approximate number of columns from the widest header row
-  const maxCols = Math.max(...headerGrid.map(r => r.length));
-  if (maxCols < 2) return { hasData: false };
-
-  // Build column fingerprints by collecting header text per column position
-  const fingerprints = [];
-  for (let col = 0; col < maxCols; col++) {
-    const texts = headerGrid
-      .map(row => row[Math.min(col, row.length - 1)])
-      .filter(Boolean)
-      .join(' ');
-    fingerprints.push(texts);
-  }
-
-  // Identify the column range for application name (first col, always text-heavy)
-  const appCol = 0;
-
-  // Now identify illuminance columns by scanning fingerprints
-  const horBlock = findIlluminanceBlock(fingerprints, ['horizontal', 'horiz', 'h.', 'h ']);
-  const verBlock = findIlluminanceBlock(fingerprints, ['vertical', 'vert', 'v.', 'v ']);
-  const taskBlock = findIlluminanceBlock(fingerprints, ['task', 'task ']);
-
-  // If no horizontal block found by name, fall back to positional heuristic:
-  // First numeric column group = horizontal, second = vertical
-  const numericStart = fingerprints.findIndex((fp, i) =>
-    i > 0 && (fp.includes('cat') || fp.includes('lux') || fp.includes('fc') || fp.includes('maintain'))
-  );
-
-  const colMap = {
-    hasData: numericStart >= 0 || horBlock.catCol !== null,
-    appCol,
-    // Horizontal illuminance
-    horCatCol: horBlock.catCol ?? (numericStart >= 0 ? numericStart : null),
-    horLuxCol: horBlock.luxCol ?? (numericStart >= 0 ? numericStart + 1 : null),
-    horFcCol:  horBlock.fcCol  ?? (numericStart >= 0 ? numericStart + 2 : null),
-    horHtCol:  horBlock.htCol  ?? null,
-    horUnifCol: horBlock.unifCol ?? null,
-    // Vertical illuminance
-    verCatCol: verBlock.catCol,
-    verLuxCol: verBlock.luxCol,
-    verFcCol:  verBlock.fcCol,
-    verHtCol:  verBlock.htCol,
-    verUnifCol: verBlock.unifCol,
-    // Task illuminance
-    taskCatCol: taskBlock.catCol,
-    taskLuxCol: taskBlock.luxCol,
-    taskFcCol:  taskBlock.fcCol,
-    // Misc
-    notesCol: findColByKeyword(fingerprints, ['note', 'footnote']),
-    typeCol:  findColByKeyword(fingerprints, ['type', 'area/task']),
-    tmCol:    findColByKeyword(fingerprints, ['tm-24', 'tm24', 'spectral']),
-    totalCols: maxCols,
-  };
-
-  return colMap;
-}
-
-function findIlluminanceBlock(fingerprints, nameKeywords) {
-  // Find the starting column of an illuminance block by its heading keyword
-  const blockStart = fingerprints.findIndex(fp =>
-    nameKeywords.some(kw => fp.includes(kw))
-  );
-  if (blockStart < 0) return { catCol: null, luxCol: null, fcCol: null, htCol: null, unifCol: null };
-
-  // Within the block, find specific sub-columns
-  const blockFPs = fingerprints.slice(blockStart, blockStart + 6);
-  const offset = (kws) => blockFPs.findIndex(fp => kws.some(kw => fp.includes(kw)));
-
-  return {
-    catCol:  blockStart + Math.max(0, offset(['cat', 'categ', 'class'])),
-    luxCol:  blockStart + Math.max(0, offset(['lux', 'maintain', 'target', 'illum'])),
-    fcCol:   blockStart + (offset(['fc', 'footcandle', 'foot-candle']) >= 0 ? offset(['fc', 'footcandle']) : -1),
-    htCol:   blockStart + (offset(['height', 'elev', 'meter', 'm)']) >= 0 ? offset(['height', 'elev']) : -1),
-    unifCol: blockStart + (offset(['uniform', 'ratio']) >= 0 ? offset(['uniform', 'ratio']) : -1),
-  };
-}
-
-function findColByKeyword(fingerprints, keywords) {
-  const idx = fingerprints.findIndex(fp => keywords.some(kw => fp.includes(kw)));
-  return idx >= 0 ? idx : null;
-}
-
-// ─── Table Row Extraction ─────────────────────────────────────────────────────
-
-/**
- * Walk table rows, tracking application hierarchy and extracting leaf records.
- */
-function extractFromTable(table, colMap, standardId, fullDesignation) {
   const records = [];
 
-  // Application name hierarchy stack: [App, App_s1, App_s2, App_s3, App_s4, App_s5, App_s6]
-  // Each level is null or a string. When a new name appears at a depth, it
-  // replaces that level and clears all deeper levels.
-  const hierarchy = [null, null, null, null, null, null, null];
+  // Find pages that contain illuminance table data
+  const tablePages = pages.filter(p => isIlluminancePage(p));
+
+  // Extract across all table pages, preserving hierarchy state between pages
+  const allRecords = extractFromPages(tablePages, standardId, fullDesignation);
+  records.push(...allRecords);
+
+  return deduplicate(records);
+}
+
+// ─── Page Detection ───────────────────────────────────────────────────────────
+
+function isIlluminancePage(page) {
+  // Must have at least 3 lines matching the IES illuminance pattern
+  const ILLUM_RE = /[A-Y]\d{2,4}\s*@\s*[\d.]+|[A-Y]\d{2,4}\s*@\s*TS/;
+  const matches = (page.lines || []).filter(l => ILLUM_RE.test(l.text)).length;
+  return matches >= 2;
+}
+
+// ─── Multi-Page Extractor ─────────────────────────────────────────────────────
+// Processes all table pages together, preserving hierarchy state across page breaks.
+
+function extractFromPages(tablePages, standardId, fullDesignation) {
+  const records = [];
+
+  // Compute baseX once across all table pages (leftmost non-zero x)
+  const allX = tablePages.flatMap(p => (p.lines || []).map(l => l.x)).filter(x => x > 0);
+  const baseX = Math.min(...allX);
+
+  const HEADER_RE = /^(ANSI\/IES|Recommended Practice|Table A-|TS =|Veiling|Light Level|Task.*High|orMed|APPLICATION|MinRatioBasis|TargetEh|TargetEv)/i;
+  const SECTION_RE = /^(INTERIORS?|EXTERIORS?)\s*[-–]?\s*(COMMON|OUTDOOR|SPECIAL)?/i;
+  const DATA_RE = /[A-Y]\d{2,4}\s*@\s*[\d.TS]/;
+
+  // Hierarchy persists across pages
+  const hierarchy = { app: null, s1: null, s2: null, s3: null };
+  let currentSection = 'Indoor';
   let rowIndex = 0;
+  let tableRef = 'Table A-1';
 
-  for (const rawRow of table.rows) {
-    if (!rawRow || rawRow.length === 0) continue;
+  for (const page of tablePages) {
+    // Update tableRef from this page if found
+    const ref = detectTableRef(page.text);
+    if (ref) tableRef = ref;
 
-    const row = rawRow.map(c => (c || '').trim());
-    const appName = row[colMap.appCol] || '';
+    for (const line of (page.lines || [])) {
+      const text = line.text?.trim();
+      if (!text || text.length < 2) continue;
 
-    // Determine hierarchy depth from leading whitespace or indentation level
-    // In the extracted text, depth is inferred by how much of the row is name-only
-    const depth = inferHierarchyDepth(row, colMap);
+      // Skip header/boilerplate
+      if (HEADER_RE.test(text)) continue;
 
-    if (depth === null) continue; // unrecognizable row
+      // Detect section change
+      if (SECTION_RE.test(text)) {
+        currentSection = /EXTERIOR|OUTDOOR/i.test(text) ? 'Outdoor' : 'Indoor';
+        hierarchy.app = null; hierarchy.s1 = null;
+        hierarchy.s2 = null; hierarchy.s3 = null;
+        continue;
+      }
 
-    // Update hierarchy stack
-    hierarchy[depth] = cleanAppName(appName);
-    // Clear deeper levels
-    for (let d = depth + 1; d < hierarchy.length; d++) hierarchy[d] = null;
+      const hasData = DATA_RE.test(text);
+      const xDelta = line.x - baseX;
 
-    // Only emit a record if this row has actual illuminance data
-    if (!hasNumericData(row, colMap)) continue;
+      if (!hasData) {
+        const name = cleanAppName(text);
+        if (name.length < 2) continue;
 
-    const horLux = parseNum(row[colMap.horLuxCol]);
-    const horFc  = parseNum(row[colMap.horFcCol]);
-    const verLux = parseNum(row[colMap.verLuxCol]);
-    const verFc  = parseNum(row[colMap.verFcCol]);
+        if (xDelta <= 12) {
+          hierarchy.app = name; hierarchy.s1 = null;
+          hierarchy.s2 = null; hierarchy.s3 = null;
+        } else if (xDelta <= 17) {
+          hierarchy.s1 = name; hierarchy.s2 = null; hierarchy.s3 = null;
+        } else if (xDelta <= 21) {
+          hierarchy.s2 = name; hierarchy.s3 = null;
+        } else {
+          hierarchy.s3 = name;
+        }
+        continue;
+      }
 
-    // Build a stable code: standardId + table + row index
-    const code = buildCode(standardId, table.tableId || 'A', rowIndex);
+      const appName = extractAppName(text);
+      const cols = parseIlluminanceRow(text);
+      if (cols.length === 0) continue;
 
-    records.push({
-      code,
-      // Hierarchy
-      App:    hierarchy[0] || null,
-      App_s1: hierarchy[1] || null,
-      App_s2: hierarchy[2] || null,
-      App_s3: hierarchy[3] || null,
-      App_s4: hierarchy[4] || null,
-      App_s5: hierarchy[5] || null,
-      App_s6: hierarchy[6] || null,
-      // Standard
-      Standard:      standardId,
-      Standard_Full: fullDesignation,
-      Table_Ref:     table.title ? table.title.split(':')[0].trim() : null,
-      Row_Ref:       `Row ${rowIndex + 1}`,
-      Link_Mapping:  null, // set by sync-metadata.js
-      // Type
-      Area_or_Task:   extractAreaOrTask(row, colMap),
-      Indoor_Outdoor: inferIndoorOutdoor(hierarchy),
-      App_Type:       null,
-      // Horizontal Illuminance
-      Hor_Cat:        row[colMap.horCatCol] || null,
-      Hor_Lux:        horLux,
-      Hor_Fc:         horFc ?? luxToFc(horLux),
-      Hor_Height_m:   parseNum(row[colMap.horHtCol]),
-      Hor_Height_ft:  mToFt(parseNum(row[colMap.horHtCol])),
-      Hor_Avg_Max_Min: inferAvgMaxMin(row),
-      Hor_Uniformity: row[colMap.horUnifCol] || null,
-      Hor_Notes:      null,
-      // Vertical Illuminance
-      Ver_Cat:        row[colMap.verCatCol] || null,
-      Ver_Lux:        verLux,
-      Ver_Fc:         verFc ?? luxToFc(verLux),
-      Ver_Height_m:   parseNum(row[colMap.verHtCol]),
-      Ver_Height_ft:  mToFt(parseNum(row[colMap.verHtCol])),
-      Ver_Avg_Max_Min: inferAvgMaxMin(row),
-      Ver_Uniformity: row[colMap.verUnifCol] || null,
-      Ver_Notes:      null,
-      // Task Illuminance
-      Task_Cat:       row[colMap.taskCatCol] || null,
-      Task_Lux:       parseNum(row[colMap.taskLuxCol]),
-      Task_Fc:        parseNum(row[colMap.taskFcCol]),
-      Task_Height_m:  null,
-      Task_Height_ft: null,
-      Task_Avg_Max_Min: null,
-      Task_Uniformity: null,
-      Task_Notes:     null,
-      // TM-24
-      TM24_Eligible:  row[colMap.tmCol] ? 1 : 0,
-      TM24_Notes:     null,
-      // Outdoor (populated for outdoor applications via post-processing)
-      Lighting_Zone:     null,
-      Max_Glare_Rating:  null,
-      Max_Uplight:       null,
-      Curfew_Dimming:    null,
-      Spectrum_Guidance: null,
-      Controls_Required: null,
-      // Notes
-      Footnotes:    extractFootnoteRefs(appName),
-      General_Notes: null,
-      App_Notes:    row[colMap.notesCol] || null,
-      // Vitrium (filled by sync-metadata.js)
-      Vitrium_Doc_ID:   null,
-      Vitrium_Deep_Link: null,
-      // Status
-      Active:       1,
-      Deprecated_By: null,
-    });
+      const leafName = cleanAppName(appName);
+      const hor = cols[0] || null;
+      const ver = cols[1] || null;
+      const code = `${standardId.replace(/[^A-Z0-9]/gi, '')}_${String(rowIndex).padStart(4, '0')}`;
 
-    rowIndex++;
+      records.push({
+        code,
+        App:    hierarchy.app,
+        App_s1: hierarchy.s1,
+        App_s2: hierarchy.s2,
+        App_s3: hierarchy.s3,
+        App_s4: leafName || null,
+        App_s5: null,
+        App_s6: null,
+        Standard:      standardId,
+        Standard_Full: fullDesignation,
+        Table_Ref:     tableRef,
+        Row_Ref:       `Row ${rowIndex + 1}`,
+        Link_Mapping:  null,
+        Area_or_Task:  hor?.areaOrTask || 'Area',
+        Indoor_Outdoor: currentSection,
+        App_Type:      null,
+        Hor_Cat:        hor?.cat || null,
+        Hor_Lux:        hor?.lux || null,
+        Hor_Fc:         hor?.fc || (hor?.lux ? luxToFc(hor.lux) : null),
+        Hor_Height_m:   hor?.heightM || null,
+        Hor_Height_ft:  hor?.heightFt || (hor?.heightM ? mToFt(hor.heightM) : null),
+        Hor_Avg_Max_Min: hor?.basis || 'Avg',
+        Hor_Uniformity: hor?.uniformity || null,
+        Hor_Notes:      null,
+        Ver_Cat:        ver?.cat || null,
+        Ver_Lux:        ver?.lux || null,
+        Ver_Fc:         ver?.fc || (ver?.lux ? luxToFc(ver.lux) : null),
+        Ver_Height_m:   ver?.heightM || null,
+        Ver_Height_ft:  ver?.heightFt || (ver?.heightM ? mToFt(ver.heightM) : null),
+        Ver_Avg_Max_Min: ver?.basis || 'Avg',
+        Ver_Uniformity: ver?.uniformity || null,
+        Ver_Notes:      null,
+        Task_Cat:       null, Task_Lux: null, Task_Fc: null,
+        Task_Height_m:  null, Task_Height_ft: null,
+        Task_Avg_Max_Min: null, Task_Uniformity: null, Task_Notes: null,
+        TM24_Eligible:  0, TM24_Notes: null,
+        Lighting_Zone: null, Max_Glare_Rating: null, Max_Uplight: null,
+        Curfew_Dimming: null, Spectrum_Guidance: null, Controls_Required: null,
+        Footnotes:     extractFootnoteRefs(appName),
+        General_Notes: null, App_Notes: null,
+        Vitrium_Doc_ID: null, Vitrium_Deep_Link: null,
+        Active: 1,
+      });
+
+      rowIndex++;
+    }
   }
 
   return records;
 }
 
-// ─── Hierarchy Depth Inference ────────────────────────────────────────────────
+// ─── Row Parsers ──────────────────────────────────────────────────────────────
 
-/**
- * Determine the hierarchy depth of a table row.
- *
- * IES tables have 3-4 levels of nesting in the application column:
- *   Depth 0: Top-level category (e.g. "Healthcare")
- *   Depth 1: Sub-category (e.g. "Hospitals and Ambulatory Care")
- *   Depth 2: Application (e.g. "Patient rooms") ← usually has data
- *   Depth 3+: Sub-application (e.g. "General", "Emergency", "Recovery")
- *
- * In extracted text, depth is typically indicated by:
- *   - Leading spaces in the original PDF (lost in extraction)
- *   - The PRESENCE of numeric data (deeper rows have values; category rows don't)
- *   - The number of non-empty cells (category rows often have only 1 non-empty cell)
- *
- * Strategy: use column fill ratio to infer depth
- *   - All-text row with 1 non-empty cell → category header
- *   - 1 text cell + several numeric cells → leaf application (depth 2-3)
- */
-function inferHierarchyDepth(row, colMap) {
-  const appName = (row[colMap.appCol] || '').trim();
-  if (!appName) return null; // blank row
+// Matches one IES illuminance column group:
+// [A/T prefix][Cat letter][Lux]@[height_m]([Fc]@[height_ft])[Avg/Max/Min][ratio]
+const ILLUM_COL_RE = /([AT]?)([A-Y])(\d+(?:\.\d+)?)\s*@\s*([\d.]+|TS)\(([\d.]+(?:\.\d+)?)\s*@\s*([\d.]+|TS)\)(?:(Avg|Max|Min)(?:[3-9]:1)?)?/g;
+const SIMPLE_ILLUM_RE = /([AT]?)([A-Y])(\d{2,4})\(([\d.]+)\)/g;
 
-  const numericCols = countNumericCells(row, colMap);
+function parseIlluminanceRow(line) {
+  const columns = [];
 
-  if (numericCols === 0) {
-    // Text-only row — determine depth from category stack context
-    // We can't always tell depth 0 from depth 1 purely from text,
-    // so we use a simple heuristic: shorter names tend to be higher-level
-    if (appName.length <= 25 && !appName.includes(' and ') && !appName.includes(',')) {
-      return 0;
-    }
-    return 1;
+  ILLUM_COL_RE.lastIndex = 0;
+  let match;
+  while ((match = ILLUM_COL_RE.exec(line)) !== null) {
+    columns.push({
+      areaOrTask: match[1] === 'T' ? 'Task' : 'Area',
+      cat: match[2],
+      lux: parseFloat(match[3]) || null,
+      heightM: match[4] === 'TS' ? null : (parseFloat(match[4]) || null),
+      fc: parseFloat(match[5]) || null,
+      heightFt: match[6] === 'TS' ? null : (parseFloat(match[6]) || null),
+      basis: match[7] || 'Avg',
+      uniformity: null,
+    });
   }
 
-  if (numericCols >= 1) {
-    // Has data — this is a leaf application row
-    // Try to infer sub-depth from number of filled cells
-    return 2;
+  if (columns.length > 0) return columns;
+
+  SIMPLE_ILLUM_RE.lastIndex = 0;
+  while ((match = SIMPLE_ILLUM_RE.exec(line)) !== null) {
+    columns.push({
+      areaOrTask: match[1] === 'T' ? 'Task' : 'Area',
+      cat: match[2],
+      lux: parseFloat(match[3]) || null,
+      heightM: null,
+      fc: parseFloat(match[4]) || null,
+      heightFt: null,
+      basis: 'Avg',
+      uniformity: null,
+    });
   }
 
-  return null;
+  return columns;
 }
 
-function countNumericCells(row, colMap) {
-  const numericColIndices = [
-    colMap.horLuxCol, colMap.horFcCol, colMap.verLuxCol, colMap.verFcCol,
-    colMap.taskLuxCol, colMap.taskFcCol,
-  ].filter(c => c !== null && c !== undefined);
+function extractAppName(line) {
+  ILLUM_COL_RE.lastIndex = 0;
+  const firstMatch = ILLUM_COL_RE.exec(line);
+  ILLUM_COL_RE.lastIndex = 0;
+  if (firstMatch) return line.substring(0, firstMatch.index).trim();
 
-  return numericColIndices.filter(col => {
-    const val = row[col];
-    return val && /^\d/.test(val.trim());
-  }).length;
+  SIMPLE_ILLUM_RE.lastIndex = 0;
+  const simpleMatch = SIMPLE_ILLUM_RE.exec(line);
+  SIMPLE_ILLUM_RE.lastIndex = 0;
+  if (simpleMatch) return line.substring(0, simpleMatch.index).trim();
+
+  return line.trim();
 }
 
-function hasNumericData(row, colMap) {
-  return countNumericCells(row, colMap) > 0;
+// ─── Utilities ────────────────────────────────────────────────────────────────
+
+function detectTableRef(pageText) {
+  const m = pageText?.match(/Table\s+(A-\d+)/i);
+  return m ? `Table ${m[1]}` : 'Table A-1';
 }
 
-// ─── Field Parsers ────────────────────────────────────────────────────────────
+function cleanAppName(name) {
+  return name
+    .replace(/\s*[¹²³⁴⁵⁶⁷⁸⁹⁰]+$/, '')
+    .replace(/\s+\d+$/, '')           // trailing footnote number
+    .replace(/\s*\([a-z]\)$/, '')     // trailing (a), (b)
+    .replace(/^[AT][A-Y]\s*/, '')     // strip leading type+category prefix
+    .trim();
+}
 
-function parseNum(val) {
-  if (val === null || val === undefined || val === '') return null;
-  const str = String(val).replace(/[^\d.]/g, '');
-  const n = parseFloat(str);
-  return isNaN(n) ? null : n;
+function extractFootnoteRefs(text) {
+  const matches = text.match(/\d+$/);
+  return matches ? matches[0] : null;
 }
 
 function luxToFc(lux) {
-  if (lux === null || lux === undefined) return null;
   return Math.round(lux / 10.764 * 10) / 10;
 }
 
 function mToFt(m) {
-  if (m === null || m === undefined) return null;
   return Math.round(m * 3.28084 * 10) / 10;
 }
 
-function cleanAppName(name) {
-  // Remove footnote markers (superscript numbers/letters in extracted text)
-  return name.replace(/\s*[¹²³⁴⁵⁶⁷⁸⁹⁰]+$/, '')
-             .replace(/\s+\d+$/, '')   // trailing digit (footnote ref)
-             .replace(/\s*\([a-z]\)$/, '') // trailing (a), (b), (c)
-             .trim();
-}
-
-function extractFootnoteRefs(text) {
-  const matches = text.match(/[¹²³⁴⁵⁶⁷⁸⁹⁰]+|\[\d+\]|\(\d+\)/g);
-  if (!matches) return null;
-  return matches.join(', ');
-}
-
-function extractAreaOrTask(row, colMap) {
-  if (colMap.typeCol !== null && row[colMap.typeCol]) {
-    const val = row[colMap.typeCol].toLowerCase();
-    if (val.includes('task')) return 'Task';
-    if (val.includes('area')) return 'Area';
-  }
-  // Heuristic: if there's task illuminance data, it's likely a task application
-  if (colMap.taskLuxCol !== null && parseNum(row[colMap.taskLuxCol]) !== null) {
-    return 'Task';
-  }
-  return 'Area';
-}
-
-/**
- * Infer Indoor/Outdoor from application hierarchy.
- * IES standards typically separate indoor and outdoor in their table structure.
- * Keywords in the hierarchy path signal the environment type.
- */
-function inferIndoorOutdoor(hierarchy) {
-  const fullPath = hierarchy.filter(Boolean).join(' ').toLowerCase();
-
-  const outdoorKeywords = [
-    'outdoor', 'exterior', 'parking lot', 'roadway', 'street',
-    'athletic field', 'sports field', 'stadium', 'amphitheater',
-    'pedestrian', 'walkway', 'plaza', 'park', 'landscape',
-  ];
-  const indoorKeywords = [
-    'indoor', 'interior', 'office', 'hospital', 'retail', 'school',
-    'industrial', 'warehouse', 'residential', 'hotel',
-  ];
-
-  if (outdoorKeywords.some(kw => fullPath.includes(kw))) return 'Outdoor';
-  if (indoorKeywords.some(kw => fullPath.includes(kw))) return 'Indoor';
-  return 'Indoor'; // IES tables default to indoor if ambiguous
-}
-
-function inferAvgMaxMin(row) {
-  // Most IES illuminance values are "Average" (maintained average)
-  const rowText = row.join(' ').toLowerCase();
-  if (rowText.includes('max')) return 'Max';
-  if (rowText.includes('min')) return 'Min';
-  return 'Average';
-}
-
-// ─── Code Generation ──────────────────────────────────────────────────────────
-
-/**
- * Generate a stable, unique code for each application record.
- * Format: STANDARDID_TABLEID_ROWINDEX (e.g. "RP-9-20_A-1_045")
- */
-function buildCode(standardId, tableId, rowIndex) {
-  const safeStd = standardId.replace(/[^A-Z0-9-]/gi, '').toUpperCase();
-  const safeTable = (tableId || 'A').replace(/[^A-Z0-9-]/gi, '');
-  const paddedRow = String(rowIndex).padStart(3, '0');
-  return `${safeStd}_${safeTable}_${paddedRow}`;
-}
-
-// ─── Deduplication ────────────────────────────────────────────────────────────
-
 function deduplicate(records) {
   const seen = new Map();
-  for (const record of records) {
-    const key = record.code;
-    if (!seen.has(key)) {
-      seen.set(key, record);
-    }
+  for (const r of records) {
+    if (!seen.has(r.code)) seen.set(r.code, r);
   }
   return [...seen.values()];
 }
 
 // ─── Quality Report ───────────────────────────────────────────────────────────
 
-/**
- * Produce a simple quality summary to help identify extraction issues.
- * @param {Array} records - Extracted application records
- * @returns {Object} summary stats
- */
 export function reportExtractionQuality(records) {
   const total = records.length;
   const withHorLux = records.filter(r => r.Hor_Lux !== null).length;
-  const withVerLux = records.filter(r => r.Ver_Lux !== null).length;
-  const withCategory = records.filter(r => r.App !== null).length;
+  const withApp = records.filter(r => r.App !== null).length;
   const withCat = records.filter(r => r.Hor_Cat !== null).length;
-  const missingDepth1 = records.filter(r => r.App === null).length;
 
   return {
     total,
     withHorLux,
-    withVerLux,
-    withCategory,
+    withApp,
     withIlluminanceCategory: withCat,
-    missingTopLevel: missingDepth1,
-    qualityScore: total > 0
-      ? Math.round((withHorLux / total) * 100)
-      : 0,
+    qualityScore: total > 0 ? Math.round((withHorLux / total) * 100) : 0,
     warnings: [
-      ...(withHorLux < total * 0.7 ? [`Only ${withHorLux}/${total} records have horizontal lux values`] : []),
-      ...(withCat < total * 0.5 ? [`Only ${withCat}/${total} records have illuminance category letters`] : []),
-      ...(missingDepth1 > 0 ? [`${missingDepth1} records missing top-level App category`] : []),
+      ...(withHorLux < total * 0.8 ? [`Only ${withHorLux}/${total} records have horizontal lux`] : []),
+      ...(withApp < total * 0.5 ? [`${total - withApp} records missing App category`] : []),
     ],
   };
 }

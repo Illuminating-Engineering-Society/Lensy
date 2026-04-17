@@ -42,7 +42,7 @@ import { execSync } from 'child_process';
 import { parsePDFNode } from '../src/lib/pdf-parser.js';
 import { extractIESTables } from '../src/lib/table-extractor.js';
 import {
-  extractApplicationsFromTables,
+  extractApplicationsFromPages,
   reportExtractionQuality,
 } from '../src/lib/applications-extractor.js';
 
@@ -133,7 +133,7 @@ async function ingestFile(filePath, standardId) {
 
   if (!existsSync(filePath)) throw new Error(`File not found: ${filePath}`);
 
-  const pdfBytes = readFileSync(filePath);
+  const pdfBytes = new Uint8Array(readFileSync(filePath));
   console.log(`  File size: ${(pdfBytes.length / 1024).toFixed(0)} KB`);
 
   // Step 1: Upload raw PDF to R2 (non-fatal if it fails)
@@ -161,7 +161,7 @@ async function ingestFile(filePath, standardId) {
     year: metadata.year,
     author: metadata.author,
   };
-  const applications = extractApplicationsFromTables(tables, standardId, standardMeta);
+  const applications = extractApplicationsFromPages(pages, standardId, standardMeta);
   console.log(`  Applications extracted: ${applications.length}`);
 
   // Show quality report in verbose mode
@@ -188,7 +188,7 @@ async function ingestFile(filePath, standardId) {
     return;
   }
 
-  // Step 6: POST everything to Worker for embedding + indexing + D1 upsert
+  // Step 6: POST chunks + metadata to Worker (embedding + indexing + D1 standards row)
   console.log('  Sending to Worker for embedding + indexing...');
   const result = await postToWorker('/api/ingest', {
     standardId,
@@ -201,11 +201,29 @@ async function ingestFile(filePath, standardId) {
     },
     chunks,
     tables,
-    applications,    // ← extracted from PDF tables, written to D1 applications
+    applications: [],  // sent separately below to avoid request size limits
     r2Key: `standards/${standardId}.pdf`,
   });
 
-  console.log(`  ✓ ${result.chunksIndexed} chunks indexed, ${result.tablesFound} tables stored, ${result.applicationsUpserted || 0} application records upserted`);
+  // Step 7: POST applications in small batches (avoid D1 variable limits)
+  let applicationsUpserted = 0;
+  if (applications.length > 0) {
+    const APP_BATCH = 20;
+    for (let i = 0; i < applications.length; i += APP_BATCH) {
+      const batch = applications.slice(i, i + APP_BATCH);
+      const appResult = await postToWorker('/api/ingest', {
+        standardId,
+        metadata: {},
+        chunks: [],          // skip re-embedding — only upsert apps
+        tables: [],
+        applications: batch,
+        r2Key: null,
+      });
+      applicationsUpserted += appResult.applicationsUpserted || 0;
+    }
+  }
+
+  console.log(`  ✓ ${result.chunksIndexed} chunks indexed, ${result.tablesFound} tables stored, ${applicationsUpserted} application records upserted`);
 }
 
 // ─── R2 Upload ────────────────────────────────────────────────────────────────

@@ -227,10 +227,16 @@ function buildPageContent(items, viewport, headerFooterSet) {
 // ─── pdfjs-dist Loader ────────────────────────────────────────────────────────
 
 async function loadPdfjs() {
-  // Try ESM build first (pdfjs-dist ≥ 4.x)
+  // pdfjs-dist v4: disable web worker (not available in Node.js)
   try {
     const mod = await import('pdfjs-dist/legacy/build/pdf.mjs');
-    if (mod.GlobalWorkerOptions) mod.GlobalWorkerOptions.workerSrc = '';
+    if (mod.GlobalWorkerOptions) {
+      // Empty string triggers the "no workerSrc" error; use a non-worker path instead
+      mod.GlobalWorkerOptions.workerSrc = new URL(
+        '../../node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs',
+        import.meta.url
+      ).href;
+    }
     return mod;
   } catch { /* fall through */ }
 
@@ -238,7 +244,7 @@ async function loadPdfjs() {
   try {
     const require = createRequire(import.meta.url);
     const mod = require('pdfjs-dist/legacy/build/pdf.js');
-    if (mod.GlobalWorkerOptions) mod.GlobalWorkerOptions.workerSrc = '';
+    if (mod.GlobalWorkerOptions) mod.GlobalWorkerOptions.workerSrc = false;
     return mod;
   } catch (err) {
     throw new Error(

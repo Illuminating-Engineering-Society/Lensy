@@ -30,7 +30,7 @@
  *  7. Text search fallback         (D1 LIKE query)
  *     If vector results < 3, supplement with keyword matching.
  *
- *  8. Optional AI summary          (Claude API, only if requested)
+ *  8. Optional AI summary          (Workers AI, only if requested)
  *     Max 3 paragraphs, copyright-checked, collapsed by default in UI.
  *
  * ─── Request / Response ───────────────────────────────────────────────────────
@@ -116,10 +116,10 @@ export async function handleSearch(request, env) {
 
   // ── Optional AI summary ──────────────────────────────────────────────────────
   let aiSummary = null;
-  if (includeAISummary && allResults.results.length > 0 && env.ANTHROPIC_API_KEY) {
+  if (includeAISummary && allResults.results.length > 0) {
     try {
       aiSummary = await generateResponse(
-        env.ANTHROPIC_API_KEY,
+        env.AI,
         rawQuery,
         allResults.results
       );
@@ -189,6 +189,12 @@ async function runSingleSearch(rawQuery, filters, limit, env) {
   if (results.length < MIN_VECTOR_RESULTS) {
     const fallback = await textFallback(env.DB, cleanQuery(rawQuery), filters, limit, excerptIndex);
     mergeResults(results, fallback);
+  }
+
+  // 8. Chunk fallback: if still no results, surface PDF chunks directly
+  if (results.length === 0 && chunkMatches.length > 0) {
+    const chunkResults = buildChunkResults(chunkMatches.slice(0, limit));
+    results.push(...chunkResults);
   }
 
   return { results, expandedQuery };
@@ -447,6 +453,59 @@ function applyUnits(results, units) {
     }
     return { ...r, application: app };
   });
+}
+
+// ─── Chunk Fallback Builder ───────────────────────────────────────────────────
+// When no structured application records exist yet, surface PDF chunks directly.
+
+function buildChunkResults(chunkMatches) {
+  // Group by standard_id, keep best chunk per standard
+  const byStandard = new Map();
+  for (const match of chunkMatches) {
+    const stdId = match.metadata?.standard_id || match.metadata?.standard_code;
+    if (!stdId) continue;
+    if (!byStandard.has(stdId) || byStandard.get(stdId).score < match.score) {
+      byStandard.set(stdId, match);
+    }
+  }
+
+  return [...byStandard.entries()].map(([stdId, match]) => ({
+    application: {
+      code: match.id,
+      category: stdId,
+      sub1: null,
+      sub2: null,
+      sub3: null,
+      fullName: stdId,
+      standard: stdId,
+      standardFull: match.metadata?.standard_code || stdId,
+      tableRef: null,
+      rowRef: null,
+      areaOrTask: null,
+      indoorOutdoor: match.metadata?.indoor_outdoor || null,
+      horizontal: null,
+      vertical: null,
+      task: null,
+      tm24Eligible: false,
+      tm24Notes: null,
+      outdoor: null,
+      footnotes: null,
+      generalNotes: null,
+      appNotes: null,
+    },
+    relevanceScore: Math.round((match.score || 0) * 1000) / 1000,
+    excerpt: {
+      text: match.metadata?.excerpt_text || '',
+      pageNumber: match.metadata?.page_number || null,
+      section: match.metadata?.section || null,
+      chunkType: match.metadata?.chunk_type || 'text',
+    },
+    citation: match.metadata?.standard_code
+      ? `${match.metadata.standard_code}${match.metadata.page_number ? `, p. ${match.metadata.page_number}` : ''}`
+      : stdId,
+    vitriumLink: null,
+    relatedApplications: [],
+  }));
 }
 
 // ─── Utility Helpers ──────────────────────────────────────────────────────────

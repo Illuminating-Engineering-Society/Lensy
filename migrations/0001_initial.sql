@@ -2,10 +2,10 @@
 -- Migration: 0001_initial
 -- Description: Initial schema for applications, projects, and project_applications
 
--- ─── Applications Table ───────────────────────────────────────────────────────
+-- --- Applications Table ---
 -- Mirrors the existing 68-column Illuminance Selector database.
 -- Populated via scripts/seed-applications.js (import from CSV/JSON export).
--- Do NOT alter column names — they map directly to the legacy data format.
+-- Do NOT alter column names - they map directly to the legacy data format.
 
 CREATE TABLE IF NOT EXISTS applications (
   -- Identity & Hierarchy
@@ -66,11 +66,11 @@ CREATE TABLE IF NOT EXISTS applications (
   TM24_Notes            TEXT,
 
   -- Outdoor Lighting Controls (for outdoor applications)
-  Lighting_Zone         TEXT,                 -- "LZ0" – "LZ4"
+  Lighting_Zone         TEXT,                 -- "LZ0" - "LZ4"
   Max_Glare_Rating      TEXT,                 -- BUG system (e.g. "G2")
   Max_Uplight           TEXT,                 -- BUG system (e.g. "U1")
   Curfew_Dimming        TEXT,                 -- e.g. "50% after 11 PM"
-  Spectrum_Guidance     TEXT,                 -- e.g. "CCT ≤ 3000K"
+  Spectrum_Guidance     TEXT,                 -- e.g. "CCT <= 3000K"
   Controls_Required     TEXT,
 
   -- Footnotes & Notes
@@ -97,7 +97,7 @@ CREATE INDEX IF NOT EXISTS idx_applications_indoor_outdoor ON applications(Indoo
 CREATE INDEX IF NOT EXISTS idx_applications_active ON applications(Active);
 CREATE INDEX IF NOT EXISTS idx_applications_code ON applications(code);
 
--- ─── Standards Table ──────────────────────────────────────────────────────────
+-- --- Standards Table ---
 -- Metadata for each IES standard document.
 -- Populated during PDF ingestion (scripts/ingest-pdfs.js).
 
@@ -124,7 +124,7 @@ CREATE TABLE IF NOT EXISTS standards (
 CREATE INDEX IF NOT EXISTS idx_standards_status ON standards(status);
 CREATE INDEX IF NOT EXISTS idx_standards_year ON standards(year);
 
--- ─── Projects Table ───────────────────────────────────────────────────────────
+-- --- Projects Table ---
 -- User-created project containers for collecting lighting applications.
 
 CREATE TABLE IF NOT EXISTS projects (
@@ -152,7 +152,7 @@ CREATE INDEX IF NOT EXISTS idx_projects_user_id ON projects(user_id);
 CREATE INDEX IF NOT EXISTS idx_projects_status ON projects(status);
 CREATE INDEX IF NOT EXISTS idx_projects_share_token ON projects(share_token);
 
--- ─── Project Applications Table ───────────────────────────────────────────────
+-- --- Project Applications Table ---
 -- Junction table: which applications belong to which project, with customizations.
 
 CREATE TABLE IF NOT EXISTS project_applications (
@@ -176,7 +176,7 @@ CREATE TABLE IF NOT EXISTS project_applications (
 CREATE INDEX IF NOT EXISTS idx_project_apps_project_id ON project_applications(project_id);
 CREATE INDEX IF NOT EXISTS idx_project_apps_code ON project_applications(application_code);
 
--- ─── Triggers: auto-update modified_at on projects ───────────────────────────
+-- --- Triggers: auto-update modified_at on projects ---
 
 CREATE TRIGGER IF NOT EXISTS trg_projects_modified
   AFTER UPDATE ON projects

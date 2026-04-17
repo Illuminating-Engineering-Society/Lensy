@@ -9,7 +9,6 @@
 #   wrangler kv:namespace create ies-sessions  → copy id below
 #
 # Then set secrets (do NOT commit real keys):
-#   wrangler secret put ANTHROPIC_API_KEY
 #   wrangler secret put VITRIUM_API_KEY
 #   wrangler secret put SHAREPOINT_TOKEN
 
@@ -27,7 +26,7 @@ bucket_name = "ies-standards-pdfs"
 [[d1_databases]]
 binding = "DB"
 database_name = "ies-metadata"
-database_id = "REPLACE_WITH_D1_DATABASE_ID"
+database_id = "4b573081-708e-48cf-8e42-a7eef5694530"
 
 # ─── Vectorize: Semantic Search Index ────────────────────────────────────────
 [[vectorize]]
@@ -37,7 +36,7 @@ index_name = "ies-standards-vectors"
 # ─── KV: Session & Cache ─────────────────────────────────────────────────────
 [[kv_namespaces]]
 binding = "SESSIONS"
-id = "REPLACE_WITH_KV_NAMESPACE_ID"
+id = "5092cf65f1874c519003da317095e5f7"
 
 # ─── Workers AI: Embeddings ───────────────────────────────────────────────────
 [ai]
@@ -49,7 +48,6 @@ VITRIUM_API_URL = "https://api.vitrium.com"
 ENVIRONMENT = "production"
 
 # Secrets set via `wrangler secret put`:
-# ANTHROPIC_API_KEY
 # VITRIUM_API_KEY
 # SHAREPOINT_TOKEN
 
@@ -61,3 +59,6 @@ crons = []  # Add scheduled tasks here if needed
 [dev]
 port = 8787
 local_protocol = "http"
+
+[assets]
+directory = "src/frontend"

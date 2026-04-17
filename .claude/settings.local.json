@@ -1,0 +1,38 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm run *)",
+      "Bash(node scripts/ingest-pdfs.js --file pdfs/standards/RP-10-20+E2.pdf --id RP-10-20 --dry-run --verbose)",
+      "Bash(node scripts/ingest-pdfs.js --file pdfs/standards/RP-10-20+E2.pdf --id RP-10-20 --dry-run)",
+      "Bash(node -e \"console.log\\(new URL\\('../../node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs', 'file:///C:/Users/alexi/OneDrive/Escritorio/S-FX%20Projects/Lucius/src/lib/pdf-parser.js'\\).href\\)\")",
+      "Bash(node scripts/ingest-pdfs.js --file pdfs/standards/RP-8-25_FULL.pdf --id RP-8-25 --dry-run --verbose)",
+      "Bash(node scripts/ingest-pdfs.js --file pdfs/standards/RP-10-20+E2.pdf --id RP-10-20 --local)",
+      "Bash(pkill -f \"wrangler dev\")",
+      "Bash(npx wrangler *)",
+      "Read(//tmp/**)",
+      "Bash(curl -s -X POST http://localhost:8787/api/ingest -H 'Content-Type: application/json' -d '{\"standardId\":\"test\",\"chunks\":[{\"text\":\"test chunk for embedding\",\"pageNumber\":1}]}')",
+      "Bash(curl -s http://localhost:8787/api/ingest/debug)",
+      "Bash(curl -s -X POST http://localhost:8787/api/search -H \"Content-Type: application/json\" -d '{\"query\":\"test\"}')",
+      "Bash(LUCIUS_API_URL=https://lucius-api.s-fx-com.workers.dev node scripts/ingest-pdfs.js --file pdfs/standards/RP-10-20+E2.pdf --id RP-10-20)",
+      "Bash(curl -s -X POST https://lucius-api.s-fx-com.workers.dev/api/ingest -H 'Content-Type: application/json' -d '{\"standardId\":\"test\",\"chunks\":[{\"text\":\"test chunk for embedding\",\"pageNumber\":1}]}')",
+      "Bash(LUCIUS_API_URL=https://lucius-api.s-fx-com.workers.dev node --dns-result-order=ipv4first scripts/ingest-pdfs.js --file pdfs/standards/RP-10-20+E2.pdf --id RP-10-20)",
+      "Bash(curl -s -X POST https://lucius-api.s-fx-com.workers.dev/api/search -H 'Content-Type: application/json' -d '{\"query\":\"roadway lighting illuminance requirements\",\"includeAISummary\":false}')",
+      "Bash(python3 -m json.tool)",
+      "Bash(curl -s -X POST https://lucius-api.s-fx-com.workers.dev/api/search -H \"Content-Type: application/json\" -d '{\"query\":\"roadway lighting illuminance requirements\"}')",
+      "Bash(node --input-type=module)",
+      "Bash(2>&1)",
+      "Bash(LUCIUS_API_URL=https://lucius-api.s-fx-com.workers.dev node --dns-result-order=ipv4first scripts/ingest-pdfs.js --dir pdfs/standards/)",
+      "Bash(curl -s -X POST https://lucius-api.s-fx-com.workers.dev/api/ingest -H 'Content-Type: application/json' -d '{\"standardId\":\"dbg1\",\"chunks\":[{\"text\":\"test\",\"pageNumber\":1}],\"applications\":[{\"code\":\"dbg_0001\",\"App\":\"Test Category\",\"App_s1\":\"Sub1\",\"Standard\":\"RP-10-20\",\"Standard_Full\":\"ANSI/IES RP-10-20\",\"Active\":1,\"Hor_Lux\":100,\"Hor_Cat\":\"M\"}]}')",
+      "Bash(curl -s --max-time 15 -X POST https://lucius-api.s-fx-com.workers.dev/api/ingest -H 'Content-Type: application/json' -d '{\"standardId\":\"dbg2\",\"chunks\":[{\"text\":\"test\",\"pageNumber\":1}],\"applications\":[{\"code\":\"dbg_0002\",\"App\":\"Test\",\"Active\":1,\"Hor_Lux\":100}]}')",
+      "Bash(curl -s --max-time 20 -X POST https://lucius-api.s-fx-com.workers.dev/api/ingest -H 'Content-Type: application/json' -d '{\"standardId\":\"RP-10-20\",\"metadata\":{},\"chunks\":[],\"tables\":[],\"applications\":[{\"code\":\"RP1020_0001\",\"App\":\"Administration\",\"App_s1\":\"Copy rooms\",\"App_s2\":null,\"App_s3\":null,\"App_s4\":\"General\",\"App_s5\":null,\"App_s6\":null,\"Standard\":\"RP-10-20\",\"Standard_Full\":\"ANSI/IES RP-10-20+E2\",\"Table_Ref\":\"Table A-1\",\"Row_Ref\":\"Row 1\",\"Link_Mapping\":null,\"Area_or_Task\":\"Area\",\"Indoor_Outdoor\":\"Indoor\",\"App_Type\":null,\"Hor_Cat\":\"M\",\"Hor_Lux\":100,\"Hor_Fc\":9.3,\"Hor_Height_m\":null,\"Hor_Height_ft\":null,\"Hor_Avg_Max_Min\":\"Avg\",\"Hor_Uniformity\":null,\"Hor_Notes\":null,\"Ver_Cat\":\"I\",\"Ver_Lux\":30,\"Ver_Fc\":2.8,\"Ver_Height_m\":1.52,\"Ver_Height_ft\":5,\"Ver_Avg_Max_Min\":\"Avg\",\"Ver_Uniformity\":null,\"Ver_Notes\":null,\"Task_Cat\":null,\"Task_Lux\":null,\"Task_Fc\":null,\"Task_Height_m\":null,\"Task_Height_ft\":null,\"Task_Avg_Max_Min\":null,\"Task_Uniformity\":null,\"Task_Notes\":null,\"TM24_Eligible\":0,\"TM24_Notes\":null,\"Lighting_Zone\":null,\"Max_Glare_Rating\":null,\"Max_Uplight\":null,\"Curfew_Dimming\":null,\"Spectrum_Guidance\":null,\"Controls_Required\":null,\"Footnotes\":null,\"General_Notes\":null,\"App_Notes\":null,\"Vitrium_Doc_ID\":null,\"Vitrium_Deep_Link\":null,\"Active\":1}]}')",
+      "Bash(curl -s --max-time 25 -X POST https://lucius-api.s-fx-com.workers.dev/api/ingest -H 'Content-Type: application/json' --data-binary '{\"standardId\":\"RP-10-20\",\"metadata\":{},\"chunks\":[],\"tables\":[],\"applications\":[{\"code\":\"RP1020_0001\",\"App\":\"Administration\",\"Standard\":\"RP-10-20\",\"Active\":1,\"Hor_Lux\":100,\"Hor_Cat\":\"M\",\"Ver_Lux\":30,\"Ver_Cat\":\"I\"}]}')",
+      "Bash(curl -s --max-time 20 https://lucius-api.s-fx-com.workers.dev/api/standards)",
+      "Bash(LUCIUS_API_URL=https://lucius-api.s-fx-com.workers.dev node --dns-result-order=ipv4first scripts/ingest-pdfs.js --file pdfs/standards/RP-10-20+E2.pdf --id RP-10-20-debug)",
+      "Bash(curl -s --max-time 20 -X POST https://lucius-api.s-fx-com.workers.dev/api/ingest -H 'Content-Type: application/json' -d '{\"standardId\":\"RP-10-20\",\"metadata\":{},\"chunks\":[],\"tables\":[],\"applications\":[{\"code\":\"tst001\",\"App\":\"Test\",\"Active\":1,\"Hor_Lux\":100,\"Hor_Cat\":\"M\",\"Standard\":\"RP-10-20\"}]}')",
+      "Bash(LUCIUS_API_URL=https://lucius-api.s-fx-com.workers.dev node --dns-result-order=ipv4first scripts/ingest-pdfs.js --applications-only)",
+      "Bash(curl -s -X POST https://lucius-api.s-fx-com.workers.dev/api/search -H 'Content-Type: application/json' -d '{\"query\":\"office meeting room lighting\"}')",
+      "Bash(python3 -c \" import sys, json d = json.load\\(sys.stdin\\) print\\('Query:', d['query']\\) print\\('Results:', len\\(d['results']\\)\\) for r in d['results'][:3]: app = r['application'] path = ' > '.join\\(filter\\(None, [app.get\\('category'\\), app.get\\('sub1'\\), app.get\\('sub2'\\), app.get\\('sub3'\\), app.get\\('sub4'\\)]\\)\\) hor = app.get\\('horizontal'\\) or {} print\\(f\\\\\" [{hor.get\\('lux','?'\\)}lx {hor.get\\('category','?'\\)}] {path}\\\\\"\\) print\\(f\\\\\" Citation: {r.get\\('citation'\\)}\\\\\"\\) \")",
+      "Bash(curl -s -X POST https://lucius-api.s-fx-com.workers.dev/api/search -H \"Content-Type: application/json\" -d '{\"query\":\"office meeting room lighting\"}')"
+    ]
+  }
+}

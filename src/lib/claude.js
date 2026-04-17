@@ -1,7 +1,7 @@
 /**
- * Claude API Client
+ * Workers AI Client
  * Generates optional AI summaries for search results.
- * Uses Anthropic claude-sonnet-4-20250514 (Sonnet 4).
+ * Uses Cloudflare Workers AI (@cf/meta/llama-3.3-70b-instruct-fp8-fast).
  *
  * Copyright Rules (CRITICAL — enforced here):
  *   - Never quote more than 15 words from a single source
@@ -13,8 +13,7 @@
 
 import { checkCopyrightViolations } from './citations.js';
 
-const CLAUDE_API_URL = 'https://api.anthropic.com/v1/messages';
-const MODEL = 'claude-sonnet-4-20250514';
+const MODEL = '@cf/meta/llama-3.3-70b-instruct-fp8-fast';
 const MAX_TOKENS = 1000;
 
 const SYSTEM_PROMPT = `You are Lucius, the IES Standards Assistant. Your role is to help lighting professionals explore and understand IES standards through accurate, well-cited responses.
@@ -41,36 +40,23 @@ If you cannot answer confidently from the provided search results, say so clearl
 
 /**
  * Generate an AI summary for search results.
- * @param {string} apiKey - Anthropic API key
+ * @param {object} ai - Cloudflare Workers AI binding (env.AI)
  * @param {string} query - User's original search query
  * @param {Array} searchResults - Formatted search results
  * @returns {Promise<{text: string, watermark: string, disclaimer: string}>}
  */
-export async function generateResponse(apiKey, query, searchResults) {
+export async function generateResponse(ai, query, searchResults) {
   const userPrompt = buildPrompt(query, searchResults);
 
-  const response = await fetch(CLAUDE_API_URL, {
-    method: 'POST',
-    headers: {
-      'x-api-key': apiKey,
-      'anthropic-version': '2023-06-01',
-      'content-type': 'application/json',
-    },
-    body: JSON.stringify({
-      model: MODEL,
-      max_tokens: MAX_TOKENS,
-      system: SYSTEM_PROMPT,
-      messages: [{ role: 'user', content: userPrompt }],
-    }),
+  const response = await ai.run(MODEL, {
+    max_tokens: MAX_TOKENS,
+    messages: [
+      { role: 'system', content: SYSTEM_PROMPT },
+      { role: 'user', content: userPrompt },
+    ],
   });
 
-  if (!response.ok) {
-    const err = await response.text();
-    throw new Error(`Claude API error ${response.status}: ${err}`);
-  }
-
-  const data = await response.json();
-  const text = data.content[0].text;
+  const text = response.response;
 
   // Validate for copyright violations before returning
   const violations = checkCopyrightViolations(text);
