@@ -75,11 +75,12 @@ export async function generateResponse(ai, query, searchResults) {
 function buildPrompt(query, searchResults) {
   const resultsSummary = searchResults.slice(0, 5).map((r, idx) => {
     const app = r.application;
+    const excerptText = r.excerpt?.text ?? (typeof r.excerpt === 'string' ? r.excerpt : null);
     return `[Result ${idx + 1}] ${app.fullName || app.category}
   Standard: ${app.standardFull || app.standard}
   Type: ${app.areaOrTask}, ${app.indoorOutdoor}
   Citation: ${r.citation}
-  ${r.excerpt ? `Excerpt: "${r.excerpt.substring(0, 200)}"` : '(No excerpt available)'}`;
+  ${excerptText ? `Excerpt: "${excerptText.substring(0, 200)}"` : '(No excerpt available)'}`;
   }).join('\n\n');
 
   return `User Query: "${query}"

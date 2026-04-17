@@ -11,183 +11,351 @@
         extend: {
           colors: {
             'ies-blue': '#003DA5',
+            'ies-blue-dark': '#002d7a',
             'ies-gold': '#F5A623',
+          },
+          fontFamily: {
+            sans: ['-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'sans-serif'],
+            mono: ['ui-monospace', 'SFMono-Regular', 'monospace'],
           }
         }
       }
     }
   </script>
   <style>
-    .result-card { transition: box-shadow 0.2s; }
-    .result-card:hover { box-shadow: 0 4px 20px rgba(0,61,165,0.12); }
-    .ai-summary { border-left: 4px solid #003DA5; }
+    .result-card { transition: box-shadow 0.15s, transform 0.15s; }
+    .result-card:hover { box-shadow: 0 4px 24px rgba(0,61,165,0.10); transform: translateY(-1px); }
     .lux-badge { font-variant-numeric: tabular-nums; }
+    .ai-border { border-left: 3px solid #003DA5; }
+    .hero-gradient { background: linear-gradient(135deg, #003DA5 0%, #0052CC 60%, #0066FF 100%); }
+    .search-glow:focus-within { box-shadow: 0 0 0 3px rgba(0,61,165,0.20); }
+    .skeleton { background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%); background-size: 200% 100%; animation: skeleton-loading 1.4s infinite; }
+    @keyframes skeleton-loading { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+    .lux-value { font-size: 1.1rem; font-weight: 700; letter-spacing: -0.02em; }
+    .fade-in { animation: fadeIn 0.25s ease-out; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+    .modal-backdrop { backdrop-filter: blur(4px); }
     @media print {
       .no-print { display: none !important; }
-      .result-card { break-inside: avoid; }
+      .result-card { break-inside: avoid; box-shadow: none; transform: none; }
     }
   </style>
 </head>
-<body class="bg-gray-50 min-h-screen">
+<body class="bg-gray-50 min-h-screen text-gray-900">
 
-  <!-- Header -->
-  <header class="bg-ies-blue text-white shadow-md no-print">
-    <div class="max-w-5xl mx-auto px-4 py-4 flex items-center justify-between">
-      <div>
-        <h1 class="text-2xl font-bold tracking-tight">Lucius</h1>
-        <p class="text-blue-200 text-sm">IES Standards Search Assistant</p>
-      </div>
-      <nav class="flex items-center gap-4 text-sm">
-        <a href="/projects" class="text-blue-200 hover:text-white transition">My Projects</a>
-        <a href="https://www.ies.org" target="_blank" rel="noopener" class="text-blue-200 hover:text-white transition">IES.org</a>
+  <!-- ── Header ───────────────────────────────────────────────────────────── -->
+  <header class="bg-ies-blue text-white shadow-md no-print sticky top-0 z-40">
+    <div class="max-w-5xl mx-auto px-4 py-3 flex items-center justify-between">
+      <a href="/pages/index.html" class="flex items-center gap-3 group">
+        <div class="w-8 h-8 rounded-lg bg-white/15 flex items-center justify-center">
+          <svg class="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M12 3v1m0 16v1M4.22 4.22l.707.707M18.364 18.364l.707.707M3 12H2m20 0h-1M4.927 19.073l.707-.707M18.364 5.636l.707-.707M12 8a4 4 0 100 8 4 4 0 000-8z"/>
+          </svg>
+        </div>
+        <div>
+          <span class="text-xl font-bold tracking-tight">Lucius</span>
+          <span class="hidden sm:inline text-blue-300 text-sm ml-2">IES Standards Assistant</span>
+        </div>
+      </a>
+      <nav class="flex items-center gap-1 text-sm">
+        <a href="/pages/projects.html" id="nav-projects"
+           class="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-blue-200 hover:text-white hover:bg-white/10 transition">
+          <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/>
+          </svg>
+          My Projects
+        </a>
+        <a href="https://www.ies.org" target="_blank" rel="noopener"
+           class="px-3 py-1.5 rounded-md text-blue-200 hover:text-white hover:bg-white/10 transition">
+          IES.org ↗
+        </a>
       </nav>
     </div>
   </header>
 
-  <!-- Search Section -->
-  <main class="max-w-5xl mx-auto px-4 py-8">
+  <!-- ── Hero / Search Section ─────────────────────────────────────────────── -->
+  <div id="hero-section" class="hero-gradient text-white no-print">
+    <div class="max-w-3xl mx-auto px-4 py-12 sm:py-16 text-center">
+      <h2 class="text-3xl sm:text-4xl font-bold mb-3 tracking-tight">
+        Find IES Lighting Standards
+      </h2>
+      <p class="text-blue-200 text-lg mb-8">
+        Ask in plain language — get cited answers from authoritative IES standards.
+      </p>
 
-    <!-- Search Box -->
-    <section class="bg-white rounded-xl shadow p-6 mb-6 no-print">
-      <label for="search-input" class="block text-sm font-semibold text-gray-700 mb-2">
-        Search IES Standards
-      </label>
-      <div class="flex gap-2">
+      <!-- Search box -->
+      <div class="bg-white rounded-xl shadow-lg p-2 flex gap-2 search-glow transition">
         <input
           type="text"
           id="search-input"
-          placeholder="Ask a question or describe your space..."
-          class="flex-1 px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-ies-blue focus:border-transparent text-base"
+          placeholder="e.g. How bright should a skating rink be?"
+          class="flex-1 px-4 py-3 text-gray-900 text-base placeholder-gray-400 bg-transparent outline-none"
           onkeydown="if(event.key==='Enter') performSearch()"
           autofocus
         />
         <button
+          id="search-btn"
           onclick="performSearch()"
-          class="px-6 py-3 bg-ies-blue text-white rounded-lg hover:bg-blue-800 transition font-medium"
+          class="px-5 py-3 bg-ies-blue text-white rounded-lg hover:bg-ies-blue-dark transition font-semibold flex items-center gap-2 shrink-0"
         >
+          <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+          </svg>
           Search
         </button>
       </div>
 
-      <!-- Filters -->
-      <div class="flex flex-wrap gap-3 mt-4">
-        <select id="filter-location" class="text-sm border border-gray-200 rounded-md px-3 py-1.5 bg-white text-gray-600">
-          <option value="">Indoor & Outdoor</option>
-          <option value="Indoor">Indoor only</option>
-          <option value="Outdoor">Outdoor only</option>
-          <option value="Both">Both</option>
+      <!-- Filters row -->
+      <div class="flex flex-wrap justify-center gap-3 mt-4">
+        <select id="filter-location" class="text-sm border border-white/20 rounded-lg px-3 py-2 bg-white/10 text-white backdrop-blur-sm focus:outline-none focus:ring-2 focus:ring-white/40">
+          <option value="" class="text-gray-900">Indoor &amp; Outdoor</option>
+          <option value="Indoor" class="text-gray-900">Indoor only</option>
+          <option value="Outdoor" class="text-gray-900">Outdoor only</option>
+          <option value="Both" class="text-gray-900">Both</option>
         </select>
-        <label class="flex items-center gap-2 text-sm text-gray-600">
-          <input type="checkbox" id="filter-tm24" class="rounded">
-          TM-24 Eligible only
+        <label class="flex items-center gap-2 text-sm text-blue-100 px-3 py-2 rounded-lg bg-white/10 cursor-pointer hover:bg-white/15 transition">
+          <input type="checkbox" id="filter-tm24" class="rounded accent-ies-gold">
+          TM-24 Eligible
         </label>
-        <label class="flex items-center gap-2 text-sm text-gray-600">
-          <input type="checkbox" id="include-ai" class="rounded">
-          Include AI explanation
+        <label class="flex items-center gap-2 text-sm text-blue-100 px-3 py-2 rounded-lg bg-white/10 cursor-pointer hover:bg-white/15 transition">
+          <input type="checkbox" id="include-ai" class="rounded accent-ies-gold">
+          AI Explanation
         </label>
       </div>
 
       <!-- Example searches -->
-      <div class="mt-4 text-sm text-gray-500">
-        <span class="font-medium">Try:</span>
-        <button onclick="setQuery('spa lighting requirements')" class="ml-2 text-ies-blue hover:underline">spa lighting</button>
-        <span class="mx-1">·</span>
-        <button onclick="setQuery('office conference room how bright')" class="text-ies-blue hover:underline">office meeting rooms</button>
-        <span class="mx-1">·</span>
-        <button onclick="setQuery('outdoor restaurant patio')" class="text-ies-blue hover:underline">outdoor dining</button>
-        <span class="mx-1">·</span>
-        <button onclick="setQuery('parking garage lighting')" class="text-ies-blue hover:underline">parking garage</button>
+      <div class="mt-6 flex flex-wrap justify-center gap-2">
+        <span class="text-blue-300 text-sm self-center">Try:</span>
+        <button onclick="setQuery('spa and wellness lighting')" class="text-sm bg-white/10 hover:bg-white/20 text-white px-3 py-1.5 rounded-full transition">Spa &amp; wellness</button>
+        <button onclick="setQuery('office conference room meeting')" class="text-sm bg-white/10 hover:bg-white/20 text-white px-3 py-1.5 rounded-full transition">Meeting rooms</button>
+        <button onclick="setQuery('outdoor restaurant patio dining')" class="text-sm bg-white/10 hover:bg-white/20 text-white px-3 py-1.5 rounded-full transition">Outdoor dining</button>
+        <button onclick="setQuery('parking garage structure')" class="text-sm bg-white/10 hover:bg-white/20 text-white px-3 py-1.5 rounded-full transition">Parking garage</button>
+        <button onclick="setQuery('sports field stadium')" class="text-sm bg-white/10 hover:bg-white/20 text-white px-3 py-1.5 rounded-full transition">Sports field</button>
       </div>
-    </section>
+    </div>
+  </div>
+
+  <!-- ── Compact search bar (shown after first search) ──────────────────────── -->
+  <div id="compact-search" class="hidden no-print bg-white border-b border-gray-200 sticky top-[57px] z-30 shadow-sm">
+    <div class="max-w-5xl mx-auto px-4 py-3 flex gap-2">
+      <input
+        type="text"
+        id="compact-search-input"
+        class="flex-1 px-4 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-ies-blue focus:border-transparent"
+        placeholder="Search IES Standards..."
+        onkeydown="if(event.key==='Enter') performSearchFromCompact()"
+      />
+      <button onclick="performSearchFromCompact()"
+        class="px-4 py-2 bg-ies-blue text-white rounded-lg hover:bg-ies-blue-dark transition text-sm font-medium">
+        Search
+      </button>
+      <select id="compact-filter-location" class="text-sm border border-gray-200 rounded-lg px-2 py-2 bg-white focus:ring-2 focus:ring-ies-blue focus:border-transparent">
+        <option value="">All</option>
+        <option value="Indoor">Indoor</option>
+        <option value="Outdoor">Outdoor</option>
+      </select>
+    </div>
+  </div>
+
+  <!-- ── Main Content ───────────────────────────────────────────────────────── -->
+  <main class="max-w-5xl mx-auto px-4 py-6">
+
+    <!-- Loading skeletons -->
+    <div id="loading" class="hidden space-y-4">
+      <div class="flex items-center gap-3 mb-2">
+        <div class="skeleton h-4 w-32 rounded"></div>
+        <div class="skeleton h-4 w-48 rounded"></div>
+      </div>
+      <div class="skeleton h-44 rounded-xl"></div>
+      <div class="skeleton h-44 rounded-xl"></div>
+      <div class="skeleton h-44 rounded-xl"></div>
+    </div>
 
     <!-- Results Area -->
-    <section id="results-section" class="hidden">
-      <div id="bulk-actions" class="hidden bg-white rounded-xl shadow p-4 mb-4 no-print">
-        <div class="flex flex-wrap items-center gap-3 text-sm">
-          <label class="inline-flex items-center gap-2 text-gray-700">
-            <input type="checkbox" id="select-all-results" onchange="toggleSelectAll(this.checked)">
-            Select all results
-          </label>
-          <button
-            id="add-selected-btn"
-            onclick="addSelectedToProject()"
-            class="px-3 py-1.5 bg-ies-blue text-white rounded-md hover:bg-blue-800 transition disabled:opacity-40 disabled:cursor-not-allowed"
-            disabled
-          >
-            Add Selected to Project (0)
-          </button>
-        </div>
-      </div>
+    <section id="results-section" class="hidden fade-in">
 
-      <!-- AI Summary (conditional) -->
-      <div id="ai-summary-card" class="hidden bg-blue-50 rounded-xl p-6 mb-5 ai-summary">
+      <!-- AI Summary -->
+      <div id="ai-summary-card" class="hidden bg-blue-50 rounded-xl p-5 mb-5 ai-border">
         <div class="flex items-start gap-3">
-          <svg class="w-5 h-5 text-ies-blue mt-0.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.347.347a3.5 3.5 0 004.95 4.95l1.414 1.414a7 7 0 10-9.9-9.9l-.347.347z" />
-          </svg>
-          <div class="flex-1">
-            <h3 class="font-semibold text-gray-900 text-sm">AI Explanation</h3>
-            <p id="ai-disclaimer" class="text-xs text-gray-500 mt-0.5 mb-3"></p>
+          <div class="w-8 h-8 rounded-lg bg-ies-blue/10 flex items-center justify-center shrink-0 mt-0.5">
+            <svg class="w-4 h-4 text-ies-blue" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.347.347a3.5 3.5 0 004.95 4.95l1.414 1.414a7 7 0 10-9.9-9.9l-.347.347z"/>
+            </svg>
+          </div>
+          <div class="flex-1 min-w-0">
+            <div class="flex items-center justify-between mb-1">
+              <h3 class="font-semibold text-gray-900 text-sm">AI Explanation</h3>
+              <span class="text-xs text-gray-400 bg-gray-100 px-2 py-0.5 rounded">Beta</span>
+            </div>
+            <p id="ai-disclaimer" class="text-xs text-gray-500 mb-3"></p>
             <div id="ai-summary-text" class="text-sm text-gray-700 leading-relaxed"></div>
             <p id="ai-watermark" class="text-xs text-gray-400 mt-3 italic"></p>
           </div>
         </div>
       </div>
 
-      <!-- Results header -->
-      <div class="flex items-center justify-between mb-4 no-print">
+      <!-- Results header + bulk actions -->
+      <div class="flex flex-wrap items-center justify-between gap-3 mb-4 no-print">
         <div>
-          <h2 class="text-lg font-semibold text-gray-900" id="results-heading">Results</h2>
-          <p class="text-sm text-gray-500" id="results-meta"></p>
+          <h2 class="text-base font-semibold text-gray-900" id="results-heading">Results</h2>
+          <p class="text-sm text-gray-400" id="results-meta"></p>
         </div>
-        <button onclick="window.print()" class="text-sm text-gray-500 hover:text-gray-700 flex items-center gap-1">
-          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
+        <div class="flex items-center gap-2">
+          <div id="bulk-actions" class="hidden flex items-center gap-2">
+            <label class="flex items-center gap-1.5 text-sm text-gray-600 cursor-pointer">
+              <input type="checkbox" id="select-all-results" onchange="toggleSelectAll(this.checked)" class="rounded accent-ies-blue">
+              All
+            </label>
+            <button
+              id="add-selected-btn"
+              onclick="addSelectedToProject()"
+              disabled
+              class="px-3 py-1.5 bg-ies-blue text-white rounded-lg text-sm font-medium hover:bg-ies-blue-dark transition disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5"
+            >
+              <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/>
+              </svg>
+              <span id="add-selected-label">Add to Project (0)</span>
+            </button>
+          </div>
+          <button onclick="window.print()" class="p-1.5 text-gray-400 hover:text-gray-600 rounded-md hover:bg-gray-100 transition" title="Print">
+            <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <!-- Result cards list -->
+      <div id="results-list" class="space-y-3"></div>
+
+      <!-- Empty state -->
+      <div id="no-results" class="hidden text-center py-16">
+        <div class="w-16 h-16 rounded-full bg-gray-100 flex items-center justify-center mx-auto mb-4">
+          <svg class="w-8 h-8 text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
           </svg>
-          Print
+        </div>
+        <p class="text-gray-600 font-medium">No results found</p>
+        <p class="text-sm text-gray-400 mt-1">
+          Try different keywords or contact
+          <a href="mailto:Standards@ies.org" class="text-ies-blue hover:underline">Standards@ies.org</a>
+        </p>
+      </div>
+    </section>
+  </main>
+
+  <!-- ── Footer ───────────────────────────────────────────────────────────── -->
+  <footer class="text-center text-xs text-gray-400 py-8 mt-8 border-t border-gray-100 no-print">
+    <p class="font-medium text-gray-500">Lucius — IES Standards Search Assistant</p>
+    <p class="mt-1">
+      <a href="https://www.ies.org" class="hover:underline hover:text-gray-600">Illuminating Engineering Society</a>
+      <span class="mx-2">·</span>
+      <a href="mailto:Standards@ies.org" class="hover:underline hover:text-gray-600">Standards@ies.org</a>
+    </p>
+    <p class="mt-2 text-gray-300">Always refer to the full IES Standard for authoritative guidance.</p>
+  </footer>
+
+  <!-- ── Add to Project Modal ───────────────────────────────────────────────── -->
+  <div id="project-modal" class="hidden fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4">
+    <div class="absolute inset-0 bg-black/40 modal-backdrop" onclick="closeProjectModal()"></div>
+    <div class="relative bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 fade-in">
+      <div class="flex items-center justify-between mb-5">
+        <h3 class="text-lg font-bold text-gray-900">Add to Project</h3>
+        <button onclick="closeProjectModal()" class="text-gray-400 hover:text-gray-600 p-1 rounded-md hover:bg-gray-100 transition">
+          <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
+          </svg>
         </button>
       </div>
 
-      <!-- Result cards -->
-      <div id="results-list"></div>
-
-      <!-- Empty state -->
-      <div id="no-results" class="hidden text-center py-16 text-gray-400">
-        <svg class="w-12 h-12 mx-auto mb-4 opacity-30" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
-        </svg>
-        <p class="text-lg font-medium">No results found</p>
-        <p class="text-sm mt-1">Try a different search term or contact <a href="mailto:Standards@ies.org" class="text-ies-blue hover:underline">Standards@ies.org</a></p>
+      <!-- Application summary in modal -->
+      <div id="modal-app-info" class="bg-gray-50 rounded-lg px-4 py-3 mb-5 text-sm">
+        <p class="font-medium text-gray-800" id="modal-app-name"></p>
+        <p class="text-gray-500 text-xs mt-0.5" id="modal-app-citation"></p>
       </div>
-    </section>
 
-    <!-- Loading state -->
-    <div id="loading" class="hidden text-center py-16 text-gray-400">
-      <div class="inline-block w-8 h-8 border-4 border-ies-blue border-t-transparent rounded-full animate-spin mb-4"></div>
-      <p>Searching IES Standards...</p>
+      <!-- Project selection -->
+      <div id="modal-project-select-section">
+        <label class="block text-sm font-medium text-gray-700 mb-2">Select or create project</label>
+        <div id="modal-projects-list" class="space-y-2 max-h-44 overflow-y-auto mb-3">
+          <div class="skeleton h-10 rounded-lg"></div>
+          <div class="skeleton h-10 rounded-lg"></div>
+        </div>
+        <button onclick="showCreateProjectForm()" class="w-full text-sm text-ies-blue border border-ies-blue/30 rounded-lg px-4 py-2.5 hover:bg-blue-50 transition flex items-center justify-center gap-2">
+          <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/>
+          </svg>
+          New project
+        </button>
+      </div>
+
+      <!-- Create project form -->
+      <div id="modal-create-project-form" class="hidden">
+        <button onclick="hideCreateProjectForm()" class="text-sm text-gray-500 hover:text-gray-700 mb-3 flex items-center gap-1">
+          <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7"/>
+          </svg>
+          Back to projects
+        </button>
+        <div class="space-y-3">
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">Project name <span class="text-red-400">*</span></label>
+            <input type="text" id="new-project-name" placeholder="e.g. Downtown Office Renovation"
+              class="w-full px-3 py-2.5 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-ies-blue focus:border-transparent"/>
+          </div>
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">Client</label>
+              <input type="text" id="new-project-client" placeholder="Client name"
+                class="w-full px-3 py-2.5 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-ies-blue focus:border-transparent"/>
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">Location</label>
+              <input type="text" id="new-project-location" placeholder="City, State"
+                class="w-full px-3 py-2.5 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-ies-blue focus:border-transparent"/>
+            </div>
+          </div>
+          <button onclick="createProjectAndAdd()"
+            class="w-full py-2.5 bg-ies-blue text-white rounded-lg text-sm font-semibold hover:bg-ies-blue-dark transition">
+            Create Project &amp; Add
+          </button>
+        </div>
+      </div>
+
+      <p id="modal-error" class="hidden text-xs text-red-600 mt-3"></p>
     </div>
+  </div>
 
-  </main>
-
-  <!-- Footer -->
-  <footer class="text-center text-xs text-gray-400 py-8 no-print">
-    <p>Lucius is powered by IES Standards data. Always refer to the full standard for authoritative guidance.</p>
-    <p class="mt-1">
-      <a href="https://www.ies.org" class="hover:underline">Illuminating Engineering Society</a>
-      · <a href="mailto:Standards@ies.org" class="hover:underline">Standards@ies.org</a>
-    </p>
-  </footer>
+  <!-- ── Toast notification ─────────────────────────────────────────────────── -->
+  <div id="toast" class="fixed bottom-5 left-1/2 -translate-x-1/2 z-50 hidden">
+    <div id="toast-inner" class="flex items-center gap-3 px-4 py-3 rounded-xl shadow-lg text-sm font-medium text-white min-w-[220px]">
+      <svg id="toast-icon" class="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"></svg>
+      <span id="toast-message"></span>
+    </div>
+  </div>
 
   <script src="../utils/api.js"></script>
   <script>
-    // ─── State ──────────────────────────────────────────────────────────────
+    // ── State ────────────────────────────────────────────────────────────────
     let lastQuery = '';
     let currentResultCodes = [];
     let selectedApplicationCodes = new Set();
+    let modalPendingCodes = []; // application codes waiting to be added
+    let projectsCache = null;
 
-    // ─── Search ─────────────────────────────────────────────────────────────
+    // ── Search ───────────────────────────────────────────────────────────────
     function setQuery(text) {
       document.getElementById('search-input').value = text;
+      performSearch();
+    }
+
+    function performSearchFromCompact() {
+      const q = document.getElementById('compact-search-input').value.trim();
+      if (!q) return;
+      document.getElementById('search-input').value = q;
+      const loc = document.getElementById('compact-filter-location').value;
+      document.getElementById('filter-location').value = loc;
       performSearch();
     }
 
@@ -196,6 +364,16 @@
       if (!query) return;
 
       lastQuery = query;
+
+      // Sync compact search bar
+      document.getElementById('compact-search-input').value = query;
+      document.getElementById('hero-section').classList.add('no-print');
+
+      // Shrink hero after first search
+      document.getElementById('hero-section').style.paddingTop = '2rem';
+      document.getElementById('hero-section').style.paddingBottom = '2rem';
+      document.getElementById('compact-search').classList.remove('hidden');
+
       showLoading(true);
       clearResults();
 
@@ -203,7 +381,6 @@
       const loc = document.getElementById('filter-location').value;
       if (loc) filters.indoor_outdoor = loc;
       if (document.getElementById('filter-tm24').checked) filters.tm24_eligible = true;
-
       const includeAI = document.getElementById('include-ai').checked;
 
       try {
@@ -216,190 +393,391 @@
       }
     }
 
-    // ─── Rendering ──────────────────────────────────────────────────────────
+    // ── Rendering ────────────────────────────────────────────────────────────
     function renderResults(data) {
       const section = document.getElementById('results-section');
       section.classList.remove('hidden');
       selectedApplicationCodes = new Set();
-      currentResultCodes = data.results.map(r => r.application.code).filter(Boolean);
+      currentResultCodes = data.results.map(r => r.application?.code).filter(Boolean);
       updateBulkActionsUI();
 
-      // Heading
       document.getElementById('results-heading').textContent =
         `${data.results.length} Result${data.results.length !== 1 ? 's' : ''}`;
-      document.getElementById('results-meta').textContent =
-        `for "${data.query}"`;
+      document.getElementById('results-meta').textContent = `for "${data.query}"`;
 
-      // AI Summary
-      if (data.aiSummary) {
-        renderAISummary(data.aiSummary);
-      }
+      if (data.aiSummary) renderAISummary(data.aiSummary);
 
-      // Result cards
       const list = document.getElementById('results-list');
-      if (data.results.length === 0) {
+      if (!data.results.length) {
         document.getElementById('no-results').classList.remove('hidden');
         return;
       }
-
-      list.innerHTML = data.results.map(renderResultCard).join('');
+      list.innerHTML = data.results.map((r, i) => renderResultCard(r, i)).join('');
     }
 
     function renderAISummary(summary) {
-      const card = document.getElementById('ai-summary-card');
-      document.getElementById('ai-disclaimer').textContent = summary.disclaimer;
-      document.getElementById('ai-summary-text').textContent = summary.text;
-      if (summary.watermark) {
-        document.getElementById('ai-watermark').textContent = summary.watermark;
-      }
-      card.classList.remove('hidden');
+      document.getElementById('ai-disclaimer').textContent = summary.disclaimer || '';
+      document.getElementById('ai-summary-text').textContent = summary.text || '';
+      document.getElementById('ai-watermark').textContent = summary.watermark || '';
+      document.getElementById('ai-summary-card').classList.remove('hidden');
     }
 
-    function renderResultCard(result) {
-      const app = result.application;
-      const score = result.relevanceScore;
+    function renderResultCard(result, index) {
+      const app = result.application || {};
+      const score = result.relevanceScore || 0;
 
-      const hierarchy = [app.category, app.sub1, app.sub2].filter(Boolean).join(' › ');
+      // Hierarchy breadcrumb
+      const crumbs = [app.category, app.sub1, app.sub2, app.sub3].filter(Boolean);
+      const breadcrumb = crumbs.length > 1
+        ? crumbs.slice(0, -1).map(c => `<span>${escapeHtml(c)}</span>`).join('<span class="mx-1 opacity-40">›</span>')
+        : '';
+      const title = crumbs[crumbs.length - 1] || app.code || 'Application';
 
-      const horSection = app.horizontal ? `
-        <div class="mt-3">
-          <h4 class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">Horizontal Illuminance</h4>
-          <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 text-sm">
-            <div class="bg-gray-50 rounded px-2 py-1">
-              <span class="text-xs text-gray-400 block">Category</span>
-              <span class="font-mono font-bold">${app.horizontal.category || '—'}</span>
-            </div>
-            <div class="bg-gray-50 rounded px-2 py-1">
-              <span class="text-xs text-gray-400 block">Maintained</span>
-              <span class="font-semibold lux-badge">${app.horizontal.lux != null ? app.horizontal.lux + ' lux' : '—'}</span>
-              ${app.horizontal.fc != null ? `<span class="text-xs text-gray-400 ml-1">(${app.horizontal.fc} fc)</span>` : ''}
-            </div>
-            <div class="bg-gray-50 rounded px-2 py-1">
-              <span class="text-xs text-gray-400 block">Height</span>
-              <span class="text-sm">${app.horizontal.heightM != null ? app.horizontal.heightM + ' m' : '—'}</span>
-            </div>
-            <div class="bg-gray-50 rounded px-2 py-1">
-              <span class="text-xs text-gray-400 block">Uniformity</span>
-              <span class="text-sm">${app.horizontal.uniformity || '—'}</span>
-            </div>
+      // Indoor/outdoor badge
+      const locationBadge = app.indoorOutdoor ? `
+        <span class="text-xs px-2 py-0.5 rounded-full font-medium ${
+          app.indoorOutdoor === 'Outdoor'
+            ? 'bg-amber-50 text-amber-700 border border-amber-200'
+            : app.indoorOutdoor === 'Both'
+            ? 'bg-purple-50 text-purple-700 border border-purple-200'
+            : 'bg-blue-50 text-blue-700 border border-blue-100'
+        }">${escapeHtml(app.indoorOutdoor)}</span>
+      ` : '';
+
+      const areaTaskBadge = app.areaOrTask ? `
+        <span class="text-xs px-2 py-0.5 rounded-full bg-gray-50 text-gray-500 border border-gray-100">${escapeHtml(app.areaOrTask)}</span>
+      ` : '';
+
+      const tm24Badge = app.tm24Eligible ? `
+        <span class="text-xs px-2 py-0.5 rounded-full bg-green-50 text-green-700 border border-green-200">TM-24</span>
+      ` : '';
+
+      // Illuminance values
+      const luxBlock = buildIlluminanceBlock(app);
+
+      // Outdoor data
+      const outdoorBlock = (app.outdoor && app.outdoor.lightingZone) ? `
+        <div class="mt-3 pt-3 border-t border-gray-50">
+          <p class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Outdoor Controls</p>
+          <div class="flex flex-wrap gap-2 text-xs">
+            ${app.outdoor.lightingZone ? `<span class="bg-amber-50 border border-amber-100 text-amber-800 px-2.5 py-1 rounded-md">Zone ${escapeHtml(String(app.outdoor.lightingZone))}</span>` : ''}
+            ${app.outdoor.maxGlareRating ? `<span class="bg-orange-50 border border-orange-100 text-orange-800 px-2.5 py-1 rounded-md">Glare: ${escapeHtml(String(app.outdoor.maxGlareRating))}</span>` : ''}
+            ${app.outdoor.spectrumGuidance ? `<span class="bg-purple-50 border border-purple-100 text-purple-800 px-2.5 py-1 rounded-md">${escapeHtml(app.outdoor.spectrumGuidance)}</span>` : ''}
           </div>
         </div>
       ` : '';
 
-      const verSection = app.vertical ? `
-        <div class="mt-3">
-          <h4 class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">Vertical Illuminance</h4>
-          <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 text-sm">
-            <div class="bg-gray-50 rounded px-2 py-1">
-              <span class="text-xs text-gray-400 block">Category</span>
-              <span class="font-mono font-bold">${app.vertical.category || '—'}</span>
-            </div>
-            <div class="bg-gray-50 rounded px-2 py-1">
-              <span class="text-xs text-gray-400 block">Maintained</span>
-              <span class="font-semibold lux-badge">${app.vertical.lux != null ? app.vertical.lux + ' lux' : '—'}</span>
-              ${app.vertical.fc != null ? `<span class="text-xs text-gray-400 ml-1">(${app.vertical.fc} fc)</span>` : ''}
-            </div>
-            <div class="bg-gray-50 rounded px-2 py-1">
-              <span class="text-xs text-gray-400 block">Height</span>
-              <span class="text-sm">${app.vertical.heightM != null ? app.vertical.heightM + ' m' : '—'}</span>
-            </div>
-            <div class="bg-gray-50 rounded px-2 py-1">
-              <span class="text-xs text-gray-400 block">Uniformity</span>
-              <span class="text-sm">${app.vertical.uniformity || '—'}</span>
-            </div>
-          </div>
+      // Notes
+      const notesBlock = app.appNotes ? `
+        <div class="mt-3 pt-3 border-t border-gray-50">
+          <p class="text-xs text-gray-500 leading-relaxed"><span class="font-medium text-gray-600">Note:</span> ${escapeHtml(app.appNotes)}</p>
         </div>
       ` : '';
 
-      const outdoorSection = app.outdoor && app.outdoor.lightingZone ? `
-        <div class="mt-3">
-          <h4 class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">Outdoor Guidance</h4>
-          <div class="grid grid-cols-2 sm:grid-cols-3 gap-2 text-sm">
-            ${app.outdoor.lightingZone ? `<div class="bg-amber-50 rounded px-2 py-1"><span class="text-xs text-gray-400 block">Lighting Zone</span>${app.outdoor.lightingZone}</div>` : ''}
-            ${app.outdoor.maxGlareRating ? `<div class="bg-amber-50 rounded px-2 py-1"><span class="text-xs text-gray-400 block">Max Glare</span>${app.outdoor.maxGlareRating}</div>` : ''}
-            ${app.outdoor.spectrumGuidance ? `<div class="bg-amber-50 rounded px-2 py-1"><span class="text-xs text-gray-400 block">Spectrum</span>${app.outdoor.spectrumGuidance}</div>` : ''}
-          </div>
-        </div>
-      ` : '';
-
-      const notesSection = app.appNotes ? `
-        <div class="mt-3 text-sm text-gray-600 bg-yellow-50 rounded px-3 py-2">
-          <span class="font-medium">Notes: </span>${escapeHtml(app.appNotes)}
+      // Excerpts from PDF
+      const excerptBlock = (result.excerpts && result.excerpts.length > 0) ? `
+        <div class="mt-3 pt-3 border-t border-gray-50">
+          <p class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">From the Standard</p>
+          ${result.excerpts.slice(0, 2).map(e => `
+            <div class="text-xs text-gray-600 leading-relaxed mb-2 pl-3 border-l-2 border-gray-200">
+              "${escapeHtml(e.text?.substring(0, 200))}${e.text?.length > 200 ? '…' : ''}"
+              <span class="ml-1 text-gray-400">p. ${e.pageNumber}</span>
+            </div>
+          `).join('')}
         </div>
       ` : '';
 
       const vitriumBtn = result.vitriumLink ? `
         <a href="${escapeHtml(result.vitriumLink)}" target="_blank" rel="noopener"
-           class="text-sm text-ies-blue hover:underline flex items-center gap-1">
-          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/>
+           class="text-xs text-ies-blue hover:underline flex items-center gap-1">
+          <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/>
           </svg>
           View in Vitrium
         </a>
       ` : '';
 
       return `
-        <article class="result-card bg-white rounded-xl shadow mb-4 p-6">
-          <!-- Header -->
-          <div class="flex items-start justify-between gap-4">
-            <div>
-              <label class="inline-flex items-center gap-2 mb-2 text-sm text-gray-600">
-                <input
-                  type="checkbox"
-                  class="result-checkbox rounded"
-                  value="${escapeHtml(app.code)}"
-                  onchange="toggleSelection(${JSON.stringify(app.code)}, this.checked)"
-                >
-                Select
-              </label>
-              <p class="text-xs text-gray-400 font-medium uppercase tracking-wider">${escapeHtml(hierarchy)}</p>
-              <h3 class="text-lg font-bold text-gray-900 mt-0.5">${escapeHtml(app.sub2 || app.sub1 || app.category || app.code)}</h3>
-              <p class="text-sm text-gray-500 mt-1">${escapeHtml(result.citation)}</p>
+        <article class="result-card bg-white rounded-xl border border-gray-100 shadow-sm p-5" style="animation-delay: ${index * 40}ms">
+          <!-- Card header -->
+          <div class="flex items-start justify-between gap-3">
+            <div class="flex items-start gap-3 min-w-0">
+              <input
+                type="checkbox"
+                class="result-checkbox mt-1 rounded accent-ies-blue shrink-0"
+                value="${escapeHtml(app.code || '')}"
+                onchange="toggleSelection(${JSON.stringify(app.code || '')}, this.checked)"
+              />
+              <div class="min-w-0">
+                ${breadcrumb ? `<p class="text-xs text-gray-400 mb-0.5 flex items-center flex-wrap">${breadcrumb}</p>` : ''}
+                <h3 class="font-bold text-gray-900 leading-snug">${escapeHtml(title)}</h3>
+                <p class="text-xs text-gray-400 mt-1">${escapeHtml(result.citation || '')}</p>
+              </div>
             </div>
-            <div class="flex items-center gap-1.5 shrink-0">
-              <span class="text-xs px-2 py-0.5 rounded-full border ${app.indoorOutdoor === 'Outdoor' ? 'border-amber-200 bg-amber-50 text-amber-700' : 'border-blue-100 bg-blue-50 text-blue-700'}">
-                ${escapeHtml(app.indoorOutdoor || 'Indoor')}
-              </span>
-              <span class="text-xs px-2 py-0.5 rounded-full border border-gray-100 bg-gray-50 text-gray-500">
-                ${escapeHtml(app.areaOrTask || 'Area')}
-              </span>
+            <div class="flex items-center gap-1.5 shrink-0 flex-wrap justify-end">
+              ${locationBadge}${areaTaskBadge}${tm24Badge}
             </div>
           </div>
 
-          <!-- Illuminance Data -->
-          ${horSection}
-          ${verSection}
-          ${outdoorSection}
-          ${notesSection}
+          <!-- Illuminance data -->
+          ${luxBlock}
+          ${outdoorBlock}
+          ${notesBlock}
+          ${excerptBlock}
 
           <!-- Actions -->
-          <div class="flex items-center justify-between mt-4 pt-4 border-t border-gray-100">
+          <div class="flex items-center justify-between mt-4 pt-3 border-t border-gray-50">
             <div class="flex items-center gap-3">
               <button
-                onclick="addToProject(${JSON.stringify(app.code)})"
-                class="text-sm px-3 py-1.5 bg-ies-blue text-white rounded-md hover:bg-blue-800 transition">
-                + Add to Project
+                onclick="openProjectModal(${JSON.stringify(app.code || '')}, ${JSON.stringify(title)}, ${JSON.stringify(result.citation || '')})"
+                class="text-xs px-3 py-1.5 bg-ies-blue text-white rounded-lg hover:bg-ies-blue-dark transition font-medium flex items-center gap-1.5">
+                <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/>
+                </svg>
+                Add to Project
               </button>
               ${vitriumBtn}
             </div>
-            ${score > 0 ? `<span class="text-xs text-gray-300">Relevance: ${Math.round(score * 100)}%</span>` : ''}
+            ${score > 0 ? `<span class="text-xs text-gray-300 tabular-nums">Match: ${Math.round(score * 100)}%</span>` : ''}
           </div>
         </article>
+      `;
+    }
+
+    function buildIlluminanceBlock(app) {
+      const hor = app.horizontal;
+      const ver = app.vertical;
+      const task = app.task;
+      if (!hor && !ver && !task) return '';
+
+      const col = (label, value, sub, highlight) => {
+        if (value == null && !sub) return '';
+        return `
+          <div class="bg-gray-50 rounded-lg px-3 py-2.5 ${highlight ? 'ring-1 ring-ies-blue/15' : ''}">
+            <p class="text-xs text-gray-400 mb-1">${label}</p>
+            ${value != null ? `<p class="lux-value text-gray-900 lux-badge">${value}<span class="text-xs font-normal text-gray-400 ml-1">lx</span></p>` : '<p class="text-sm text-gray-400">—</p>'}
+            ${sub ? `<p class="text-xs text-gray-400 mt-0.5">${sub}</p>` : ''}
+          </div>
+        `;
+      };
+
+      const catBadge = (cat) => cat
+        ? `<span class="inline-block font-mono text-xs font-bold text-ies-blue bg-ies-blue/8 px-1.5 py-0.5 rounded mr-1">${escapeHtml(cat)}</span>`
+        : '';
+
+      let sections = [];
+
+      if (hor) {
+        sections.push(`
+          <div>
+            <p class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">
+              ${catBadge(hor.category)}Horizontal
+            </p>
+            <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
+              ${col('Maintained', hor.lux, hor.fc != null ? `${hor.fc} fc` : null, true)}
+              ${col('Height', hor.heightM != null ? hor.heightM + ' m' : null, null, false)}
+              ${col('Uniformity', hor.uniformity, null, false)}
+              ${col('Max:Min', hor.maxMin, null, false)}
+            </div>
+          </div>
+        `);
+      }
+
+      if (ver) {
+        sections.push(`
+          <div>
+            <p class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">
+              ${catBadge(ver.category)}Vertical
+            </p>
+            <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
+              ${col('Maintained', ver.lux, ver.fc != null ? `${ver.fc} fc` : null, true)}
+              ${col('Height', ver.heightM != null ? ver.heightM + ' m' : null, null, false)}
+              ${col('Uniformity', ver.uniformity, null, false)}
+              ${col('Max:Min', ver.maxMin, null, false)}
+            </div>
+          </div>
+        `);
+      }
+
+      if (task) {
+        sections.push(`
+          <div>
+            <p class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">
+              ${catBadge(task.category)}Task
+            </p>
+            <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
+              ${col('Maintained', task.lux, task.fc != null ? `${task.fc} fc` : null, true)}
+              ${col('Height', task.heightM != null ? task.heightM + ' m' : null, null, false)}
+              ${col('Uniformity', task.uniformity, null, false)}
+              ${col('Max:Min', task.maxMin, null, false)}
+            </div>
+          </div>
+        `);
+      }
+
+      if (!sections.length) return '';
+
+      return `
+        <div class="mt-3 pt-3 border-t border-gray-50 space-y-3">
+          ${sections.join('')}
+        </div>
       `;
     }
 
     function renderError(message) {
       document.getElementById('results-section').classList.remove('hidden');
       document.getElementById('results-list').innerHTML = `
-        <div class="bg-red-50 border border-red-200 rounded-lg p-4 text-sm text-red-700">
-          <strong>Error:</strong> ${escapeHtml(message)}
+        <div class="bg-red-50 border border-red-200 rounded-xl p-5 flex items-start gap-3">
+          <svg class="w-5 h-5 text-red-400 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+          </svg>
+          <div>
+            <p class="text-sm font-semibold text-red-700">Search failed</p>
+            <p class="text-sm text-red-600 mt-1">${escapeHtml(message)}</p>
+          </div>
         </div>
       `;
     }
 
-    // ─── UI Helpers ─────────────────────────────────────────────────────────
+    // ── Project Modal ────────────────────────────────────────────────────────
+    async function openProjectModal(applicationCode, appName, citation) {
+      modalPendingCodes = Array.isArray(applicationCode) ? applicationCode : [applicationCode];
+      document.getElementById('modal-app-name').textContent = appName || applicationCode;
+      document.getElementById('modal-app-citation').textContent = citation || '';
+      document.getElementById('modal-error').classList.add('hidden');
+      hideCreateProjectForm();
+      document.getElementById('project-modal').classList.remove('hidden');
+      document.body.style.overflow = 'hidden';
+      await loadProjectsIntoModal();
+    }
+
+    function closeProjectModal() {
+      document.getElementById('project-modal').classList.add('hidden');
+      document.body.style.overflow = '';
+      modalPendingCodes = [];
+    }
+
+    async function addSelectedToProject() {
+      if (selectedApplicationCodes.size === 0) return;
+      const codes = [...selectedApplicationCodes];
+      // Use first selected code's name as the modal title
+      document.getElementById('modal-app-name').textContent = `${codes.length} application${codes.length > 1 ? 's' : ''} selected`;
+      document.getElementById('modal-app-citation').textContent = '';
+      modalPendingCodes = codes;
+      document.getElementById('modal-error').classList.add('hidden');
+      hideCreateProjectForm();
+      document.getElementById('project-modal').classList.remove('hidden');
+      document.body.style.overflow = 'hidden';
+      await loadProjectsIntoModal();
+    }
+
+    async function loadProjectsIntoModal() {
+      const container = document.getElementById('modal-projects-list');
+      container.innerHTML = `<div class="skeleton h-10 rounded-lg"></div><div class="skeleton h-10 rounded-lg mt-2"></div>`;
+
+      try {
+        const data = await LuciusAPI.listProjects(1);
+        projectsCache = data.projects || [];
+
+        if (!projectsCache.length) {
+          container.innerHTML = `<p class="text-sm text-gray-400 text-center py-3">No projects yet. Create one below.</p>`;
+          return;
+        }
+
+        container.innerHTML = projectsCache.map(p => `
+          <button onclick="addToExistingProject(${p.id})"
+            class="w-full text-left flex items-center justify-between px-4 py-2.5 rounded-lg border border-gray-100 hover:border-ies-blue hover:bg-blue-50 transition group">
+            <div>
+              <p class="text-sm font-medium text-gray-800 group-hover:text-ies-blue">${escapeHtml(p.name)}</p>
+              ${p.location ? `<p class="text-xs text-gray-400">${escapeHtml(p.location)}</p>` : ''}
+            </div>
+            <svg class="w-4 h-4 text-gray-300 group-hover:text-ies-blue" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/>
+            </svg>
+          </button>
+        `).join('');
+      } catch (err) {
+        container.innerHTML = `<p class="text-sm text-red-500">Failed to load projects.</p>`;
+      }
+    }
+
+    async function addToExistingProject(projectId) {
+      try {
+        if (modalPendingCodes.length === 1) {
+          await LuciusAPI.addToProject(modalPendingCodes[0], projectId);
+        } else {
+          await LuciusAPI.addManyToProject(modalPendingCodes, projectId);
+        }
+        closeProjectModal();
+        showToast(`Added to project`, 'success');
+      } catch (err) {
+        document.getElementById('modal-error').textContent = err.message;
+        document.getElementById('modal-error').classList.remove('hidden');
+      }
+    }
+
+    function showCreateProjectForm() {
+      document.getElementById('modal-project-select-section').classList.add('hidden');
+      document.getElementById('modal-create-project-form').classList.remove('hidden');
+      document.getElementById('new-project-name').focus();
+    }
+
+    function hideCreateProjectForm() {
+      document.getElementById('modal-project-select-section').classList.remove('hidden');
+      document.getElementById('modal-create-project-form').classList.add('hidden');
+    }
+
+    async function createProjectAndAdd() {
+      const name = document.getElementById('new-project-name').value.trim();
+      if (!name) {
+        document.getElementById('new-project-name').focus();
+        return;
+      }
+      const client = document.getElementById('new-project-client').value.trim();
+      const location = document.getElementById('new-project-location').value.trim();
+
+      try {
+        const created = await LuciusAPI.createProject({ name, client_name: client || null, location: location || null, user_id: 1 });
+        const projectId = created.project.id;
+
+        if (modalPendingCodes.length === 1) {
+          await LuciusAPI.addToProject(modalPendingCodes[0], projectId);
+        } else {
+          await LuciusAPI.addManyToProject(modalPendingCodes, projectId);
+        }
+        closeProjectModal();
+        showToast(`Project "${name}" created`, 'success');
+      } catch (err) {
+        document.getElementById('modal-error').textContent = err.message;
+        document.getElementById('modal-error').classList.remove('hidden');
+      }
+    }
+
+    // ── Toast ────────────────────────────────────────────────────────────────
+    let toastTimeout;
+    function showToast(message, type = 'success') {
+      const toast = document.getElementById('toast');
+      const inner = document.getElementById('toast-inner');
+      const icon = document.getElementById('toast-icon');
+      document.getElementById('toast-message').textContent = message;
+
+      if (type === 'success') {
+        inner.className = inner.className.replace(/bg-\S+/, '') + ' bg-gray-900';
+        icon.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/>';
+      } else {
+        inner.className = inner.className.replace(/bg-\S+/, '') + ' bg-red-600';
+        icon.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>';
+      }
+
+      toast.classList.remove('hidden');
+      clearTimeout(toastTimeout);
+      toastTimeout = setTimeout(() => toast.classList.add('hidden'), 3000);
+    }
+
+    // ── UI Helpers ───────────────────────────────────────────────────────────
     function showLoading(show) {
       document.getElementById('loading').classList.toggle('hidden', !show);
+      document.getElementById('search-btn').disabled = show;
     }
 
     function clearResults() {
@@ -412,15 +790,6 @@
       updateBulkActionsUI();
     }
 
-    function addToProject(applicationCode) {
-      // Phase 1: simple prompt (Phase 3 will use a proper modal + auth)
-      const projectId = prompt('Enter Project ID (or leave blank to create new):');
-      if (projectId === null) return; // cancelled
-      LuciusAPI.addToProject(applicationCode, projectId || null)
-        .then(() => alert('Added to project!'))
-        .catch(err => alert('Error: ' + err.message));
-    }
-
     function toggleSelection(applicationCode, checked) {
       if (!applicationCode) return;
       if (checked) selectedApplicationCodes.add(applicationCode);
@@ -429,54 +798,33 @@
     }
 
     function toggleSelectAll(checked) {
-      if (checked) {
-        selectedApplicationCodes = new Set(currentResultCodes);
-      } else {
-        selectedApplicationCodes = new Set();
-      }
-
-      document.querySelectorAll('.result-checkbox').forEach(cb => {
-        cb.checked = checked;
-      });
+      selectedApplicationCodes = checked ? new Set(currentResultCodes) : new Set();
+      document.querySelectorAll('.result-checkbox').forEach(cb => cb.checked = checked);
       updateBulkActionsUI();
-    }
-
-    async function addSelectedToProject() {
-      if (selectedApplicationCodes.size === 0) return;
-      const projectId = prompt('Enter Project ID (or leave blank to create new):');
-      if (projectId === null) return;
-
-      try {
-        await LuciusAPI.addManyToProject([...selectedApplicationCodes], projectId || null);
-        alert(`Added ${selectedApplicationCodes.size} application(s) to project.`);
-      } catch (err) {
-        alert('Error: ' + err.message);
-      }
     }
 
     function updateBulkActionsUI() {
       const bulkActions = document.getElementById('bulk-actions');
       const addSelectedBtn = document.getElementById('add-selected-btn');
+      const label = document.getElementById('add-selected-label');
       const selectAll = document.getElementById('select-all-results');
-
       const hasResults = currentResultCodes.length > 0;
-      const selectedCount = selectedApplicationCodes.size;
-      const allSelected = hasResults && selectedCount === currentResultCodes.length;
+      const n = selectedApplicationCodes.size;
 
       bulkActions.classList.toggle('hidden', !hasResults);
-      addSelectedBtn.disabled = selectedCount === 0;
-      addSelectedBtn.textContent = `Add Selected to Project (${selectedCount})`;
-      selectAll.checked = allSelected;
+      addSelectedBtn.disabled = n === 0;
+      label.textContent = `Add to Project${n > 0 ? ` (${n})` : ''}`;
+      if (selectAll) selectAll.checked = hasResults && n === currentResultCodes.length;
     }
 
     function escapeHtml(str) {
       if (str == null) return '';
       return String(str)
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;');
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
     }
+
+    // Close modal on Escape
+    document.addEventListener('keydown', e => { if (e.key === 'Escape') closeProjectModal(); });
   </script>
 </body>
 </html>
