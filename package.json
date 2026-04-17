@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "description": "IES AI-Powered Standards Search Assistant",
   "private": true,
+  "type": "module",
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
