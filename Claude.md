@@ -24,7 +24,7 @@ Lucius is an intelligent, conversational assistant that transforms the IES Illum
 │  - Vector DB (Vectorize) - Semantic search              │
 │  - Existing DB (D1) - Structured illuminance data       │
 │  - Query Processing (Workers AI)                        │
-│  - Response Generation (Claude API)                     │
+│  - Response Generation (Workers AI)                     │
 └─────────────────────────────────────────────────────────┘
                            ↓
 ┌──────────────┬──────────────┬──────────────┬───────────┐
@@ -67,7 +67,7 @@ Lucius is an intelligent, conversational assistant that transforms the IES Illum
 
 **AI/ML:**
 - **Workers AI** - Embeddings generation (@cf/baai/bge-base-en-v1.5)
-- **Anthropic Claude API** - Response generation (claude-sonnet-4-6)
+- **Workers AI** - AI summary generation (@cf/meta/llama-3.3-70b-instruct-fp8-fast)
 - **PDF.js** - Client-side PDF parsing/rendering
 
 **Integrations:**
@@ -109,7 +109,7 @@ Lucius is an intelligent, conversational assistant that transforms the IES Illum
 8. Auto-populated product listings from Vitrium metadata
 
 **Technical Requirements:**
-- Claude API integration for summaries (model: `claude-sonnet-4-6`)
+- Workers AI integration for summaries (@cf/meta/llama-3.3-70b-instruct-fp8-fast)
 - Text highlighting algorithm (TF-IDF or attention-based)
 - Table detection and extraction from PDFs
 - Image rendering for formulas/diagrams
@@ -208,7 +208,7 @@ lucius/
 │   │   ├── pdf-parser.js (PDF.js wrapper)
 │   │   ├── table-extractor.js (illuminance table parsing)
 │   │   ├── embeddings.js (Workers AI integration)
-│   │   ├── claude.js (Anthropic API client)
+│   │   ├── ai-summary.js (Workers AI summary client)
 │   │   └── citations.js (citation formatting logic)
 │   └── config/
 │       ├── agent-instructions.txt (AI agent prompt)
@@ -236,7 +236,6 @@ lucius/
 **Prerequisites:**
 - Cloudflare account with Workers, Pages, R2, D1, Vectorize, KV enabled
 - Wrangler CLI installed: `npm install -g wrangler`
-- Anthropic API key
 
 **Initialize Project:**
 ```bash
@@ -285,7 +284,6 @@ id = "<your-kv-id>"
 binding = "AI"
 
 [vars]
-ANTHROPIC_API_KEY = "<your-key>"
 VITRIUM_API_URL = "https://api.vitrium.com"
 VITRIUM_API_KEY = "<vitrium-key>"
 ```
@@ -533,7 +531,7 @@ export async function generateEmbeddings(ai, chunks) {
 
 ```javascript
 import { formatCitation } from '../lib/citations.js';
-import { generateResponse } from '../lib/claude.js';
+import { generateResponse } from '../lib/ai-summary.js';
 
 export default {
   async fetch(request, env) {
@@ -596,7 +594,7 @@ export default {
     // 6. Generate AI summary if requested
     let aiSummary = null;
     if (includeAISummary) {
-      aiSummary = await generateResponse(env.ANTHROPIC_API_KEY, query, formattedResults);
+      aiSummary = await generateResponse(env.AI, query, formattedResults);
     }
     
     return Response.json({
@@ -667,10 +665,10 @@ export function validateCitation(text) {
 }
 ```
 
-**Claude Response Generator** (`src/lib/claude.js`):
+**AI Summary Generator** (`src/lib/ai-summary.js`):
 
 ```javascript
-export async function generateResponse(apiKey, query, searchResults) {
+export async function generateResponse(ai, query, searchResults) {
   const systemPrompt = await loadAgentInstructions();
   
   const userPrompt = `
@@ -692,21 +690,12 @@ Instructions:
 Generate a concise, cited response:
 `;
 
-  const response = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'x-api-key': apiKey,
-      'anthropic-version': '2023-06-01',
-      'content-type': 'application/json',
-    },
-    body: JSON.stringify({
-      model: 'claude-sonnet-4-6',
-      max_tokens: 1000,
-      system: systemPrompt,
-      messages: [
-        { role: 'user', content: userPrompt }
-      ]
-    })
+  const response = await ai.run('@cf/meta/llama-3.3-70b-instruct-fp8-fast', {
+    max_tokens: 1000,
+    messages: [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: userPrompt }
+    ]
   });
   
   const data = await response.json();
@@ -1235,7 +1224,7 @@ Your goal is to help lighting professionals explore and understand IES standards
 ```javascript
 import { describe, it, expect } from 'vitest';
 import { formatCitation, validateCitation } from '../src/lib/citations.js';
-import { checkCopyrightViolations } from '../src/lib/claude.js';
+import { checkCopyrightViolations } from '../src/lib/citations.js';
 
 describe('Citation Formatting', () => {
   it('formats full citation correctly', () => {
@@ -1318,7 +1307,6 @@ node scripts/sync-metadata.js
 Set these in Cloudflare dashboard or via `wrangler secret put`:
 
 ```
-ANTHROPIC_API_KEY=<your-key>
 VITRIUM_API_URL=https://api.vitrium.com
 VITRIUM_API_KEY=<vitrium-key>
 SHAREPOINT_TOKEN=<sharepoint-token>
@@ -1362,7 +1350,7 @@ SHAREPOINT_TOKEN=<sharepoint-token>
 - [Cloudflare Workers Docs](https://developers.cloudflare.com/workers/)
 - [Cloudflare Vectorize](https://developers.cloudflare.com/vectorize/)
 - [Workers AI](https://developers.cloudflare.com/workers-ai/)
-- [Anthropic Claude API](https://docs.anthropic.com/)
+- [Workers AI Models](https://developers.cloudflare.com/workers-ai/models/)
 - [PDF.js Documentation](https://mozilla.github.io/pdf.js/)
 
 ---

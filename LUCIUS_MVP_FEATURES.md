@@ -1088,7 +1088,7 @@ POST   /api/projects/:id/share        # Generate share link
 - Print-optimized views
 
 **Weeks 9-10: AI & Polish**
-- Claude API integration for summaries
+- Workers AI integration for summaries
 - Copyright validation
 - UI/UX refinements
 - Performance optimization

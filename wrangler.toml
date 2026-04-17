@@ -38,7 +38,7 @@ index_name = "ies-standards-vectors"
 binding = "SESSIONS"
 id = "5092cf65f1874c519003da317095e5f7"
 
-# ─── Workers AI: Embeddings ───────────────────────────────────────────────────
+# ─── Workers AI: Embeddings + AI Summaries ───────────────────────────────────
 [ai]
 binding = "AI"
 

@@ -1,7 +1,6 @@
 /**
- * Workers AI Client
- * Generates optional AI summaries for search results.
- * Uses Cloudflare Workers AI (@cf/meta/llama-3.3-70b-instruct-fp8-fast).
+ * AI Summary Client
+ * Generates optional AI summaries for search results using Cloudflare Workers AI.
  *
  * Copyright Rules (CRITICAL — enforced here):
  *   - Never quote more than 15 words from a single source
@@ -58,7 +57,6 @@ export async function generateResponse(ai, query, searchResults) {
 
   const text = response.response;
 
-  // Validate for copyright violations before returning
   const violations = checkCopyrightViolations(text);
   if (violations.length > 0) {
     console.warn('Copyright violations detected, using safe fallback:', violations);

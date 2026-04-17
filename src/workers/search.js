@@ -10,7 +10,7 @@
  *  1. Clean + expand query   (query-expander.js)
  *     "how bright should a spa be?" → "spa wellness relaxation therapeutic..."
  *
- *  2. Embed expanded query   (Workers AI @cf/baai/bge-base-en-v1.5)
+ *  2. Embed expanded query   (@cf/baai/bge-base-en-v1.5)
  *
  *  3. Vector search          (Cloudflare Vectorize, topK=30)
  *     Returns mix of:
@@ -59,7 +59,7 @@
  */
 
 import { prepareQueryForEmbedding, splitMultiQuery, cleanQuery } from '../lib/query-expander.js';
-import { generateResponse } from '../lib/claude.js';
+import { generateResponse } from '../lib/ai-summary.js';
 import { formatCitation } from '../lib/citations.js';
 
 const EMBED_MODEL = '@cf/baai/bge-base-en-v1.5';

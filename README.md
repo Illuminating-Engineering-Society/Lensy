@@ -2,7 +2,7 @@
 
 **Status:** Design Phase  
 **Target Launch:** Q3 2026  
-**Tech Stack:** Cloudflare Workers, Vectorize, D1, Pages + Anthropic Claude API
+**Tech Stack:** Cloudflare Workers, Vectorize, D1, Pages + Cloudflare Workers AI
 
 ---
 
@@ -109,7 +109,7 @@ Read these documents in order, or jump to what you need:
 ### Technology
 - **Cloudflare-native** - Workers, Vectorize, R2, D1, Pages (serverless, edge-deployed)
 - **Workers AI for embeddings** - @cf/baai/bge-base-en-v1.5 model
-- **Anthropic Claude for summaries** - Sonnet 4 with strict copyright guardrails
+- **Workers AI for summaries** - Llama 3.3 with strict copyright guardrails
 - **PDF.js for parsing** - Client-side and server-side PDF processing
 
 ### Scope
@@ -257,7 +257,7 @@ These may come in future phases based on user feedback.
 
 **Project Lead:** Shane Skwarek, S-FX (shane@s-fx.com)  
 **IES Contacts:** Dan (Lighting Library), Colleen Harper, Olga Loukina  
-**Technical Stack:** Cloudflare + Anthropic Claude API  
+**Technical Stack:** Cloudflare + Cloudflare Workers AI  
 
 For feedback on features, priorities, or technical approach, update the relevant document and notify the project lead.
 
