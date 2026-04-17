@@ -143,7 +143,8 @@ Lucius transforms the IES Illuminance Selector from a static lookup tool into an
 
 ### 3. Version Comparison Tool
 - "What changed" functionality between standard versions
-- Show additions, revisions, formatting changes
+- Always show: additions and revisions (with citations)
+- REMOVED content: only shown if user explicitly opts in — present prompt before listing deletions
 - Never expose deprecated standard content except in comparison context
 - Deprecated data excluded from external API
 

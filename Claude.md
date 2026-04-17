@@ -67,7 +67,7 @@ Lucius is an intelligent, conversational assistant that transforms the IES Illum
 
 **AI/ML:**
 - **Workers AI** - Embeddings generation (@cf/baai/bge-base-en-v1.5)
-- **Anthropic Claude API** - Response generation (Sonnet 4)
+- **Anthropic Claude API** - Response generation (claude-sonnet-4-6)
 - **PDF.js** - Client-side PDF parsing/rendering
 
 **Integrations:**
@@ -96,52 +96,61 @@ Lucius is an intelligent, conversational assistant that transforms the IES Illum
 - Return top-k relevant passages with page numbers
 - Format results with proper citations
 
-### Phase 2: Enhanced Results & AI Summaries
+### Phase 2: Enhanced Results, AI Summaries & Licensing
 
 **Deliverables:**
 1. Optional AI-generated natural language summaries
 2. Auto-highlighting of relevant text in excerpts
 3. Screenshot/image extraction for tables and diagrams
 4. Multi-document query support
-5. "What's new" version comparison tool
+5. "What's new" version comparison tool (ADDED / REVISED / REMOVED sections)
+6. Multi-user license purchasing flow (Priority 1 — required for release)
+7. Organizational membership tier checkout
+8. Auto-populated product listings from Vitrium metadata
 
 **Technical Requirements:**
-- Claude API integration for summaries
+- Claude API integration for summaries (model: `claude-sonnet-4-6`)
 - Text highlighting algorithm (TF-IDF or attention-based)
 - Table detection and extraction from PDFs
 - Image rendering for formulas/diagrams
-- Deprecated standard handling (comparison only)
+- Deprecated standard handling for comparison queries only (indexed internally, excluded from external API)
+- Version comparison UI: display ADDED and REVISED automatically; REMOVED only shown if user explicitly opts in
+- SureCart API integration for multi-user licensing
+- License assignment workflow and metadata sync from Vitrium → webstore
+- UI guardrail: discourage copy/paste/print on AI-generated response sections (CSS pointer-events + JS copy event intercept + visible watermark overlay)
 
 ### Phase 3: User Experience & Integrations
 
 **Deliverables:**
 1. User authentication (IES member login)
-2. Wicket integration (section affiliation, committee lookups)
-3. IES.org content indexing (events, eLearning, Leukos)
-4. Bulk query interface (multi-application illuminance lookup)
-5. XFDF annotation export tool
+2. Wicket integration — section affiliation, committee lookups, TC member matching
+3. IES.org content indexing (events calendar, eLearning, LC Study Groups, Leukos, Standards Toolbox, section websites, upcoming webinars and virtual symposia)
+4. Bulk query interface (multi-application illuminance lookup + Excel/CSV upload for Room Schedules and OPRs)
+5. XFDF annotation export tool (convert Vitrium .xfdf annotations to Excel)
 
 **Technical Requirements:**
 - SSO integration with IES auth system
-- Wicket API calls for member data
-- Web scraping/API for IES.org content
-- Batch processing for multiple queries
-- XML parsing for Vitrium .xfdf files
+- Wicket API calls for member data:
+  - Retrieve authenticated user's IES Section affiliation
+  - Query members of Technical Committees (TCs) responsible for referenced standards
+  - Cross-reference: display TC members who share the user's IES Section, with links to their public profile or website
+  - Surface upcoming events for the user's local section
+- IES.org content scraping/API targets: events calendar, eLearning catalog, LC Study Group registration, Leukos journal, Standards Toolbox, section website listings
+- Display non-standards content (events, eLearning) in a "Related Resources" sidebar panel alongside search results
+- Batch processing for multiple queries; Excel/CSV upload parses Room Schedule or OPR columns to run bulk illuminance lookups
+- XML parsing for Vitrium .xfdf annotation files → Excel export with quoted text, page references, and annotation metadata
 
-### Phase 4: Webstore & Licensing
+### Phase 4: Webstore & Staff Tools
 
 **Deliverables:**
-1. Webstore integration (SureCart)
-2. Multi-user license purchasing flow
-3. Organizational membership tier checkout
-4. Bulk account creation tool for staff
-5. Auto-populated product listings from Vitrium metadata
+1. Webstore integration (SureCart) — remaining items beyond Phase 2 multi-user flow
+2. Bulk account creation tool for staff (for time-limited event access: students or audiences acquiring viewing permissions for a one-time event)
+3. Consolidated licensing and provisioning dashboard
 
 **Technical Requirements:**
-- SureCart API integration
-- License assignment workflow
-- User provisioning automation
-- Metadata sync from Vitrium → webstore
+- SureCart API integration (event-scoped licenses distinct from ongoing subscriptions)
+- User provisioning automation with expiry dates for event-based access
+- Staff dashboard for bulk account creation and license management
 
 ### Phase 5: External API (Future)
 
@@ -180,7 +189,10 @@ lucius/
 │   │   │   ├── SearchBar.jsx
 │   │   │   ├── ResultCard.jsx
 │   │   │   ├── IlluminanceTable.jsx
-│   │   │   └── AIResponse.jsx
+│   │   │   ├── AIResponse.jsx         (includes copy/paste guard)
+│   │   │   ├── IESSectionWidget.jsx   (Wicket section + TC member display)
+│   │   │   ├── VersionComparison.jsx  (ADDED/REVISED/REMOVED opt-in UI)
+│   │   │   └── BulkQueryUpload.jsx    (Excel/CSV upload for batch lookup)
 │   │   ├── styles/
 │   │   │   └── main.css (Tailwind)
 │   │   └── utils/
@@ -203,9 +215,10 @@ lucius/
 │       ├── prohibited-phrases.json (copyright guardrails)
 │       └── standards-schema.json (metadata structure)
 ├── scripts/
-│   ├── ingest-pdfs.js (one-time PDF import)
+│   ├── ingest-pdfs.js (one-time PDF import — current + deprecated, tagged by status)
 │   ├── sync-metadata.js (Vitrium metadata sync)
-│   └── test-search.js (search quality testing)
+│   ├── test-search.js (search quality testing)
+│   └── bulk-query.js (batch illuminance lookup from CSV/Excel upload)
 ├── tests/
 │   ├── search.test.js
 │   ├── citations.test.js
@@ -687,7 +700,7 @@ Generate a concise, cited response:
       'content-type': 'application/json',
     },
     body: JSON.stringify({
-      model: 'claude-sonnet-4-20250514',
+      model: 'claude-sonnet-4-6',
       max_tokens: 1000,
       system: systemPrompt,
       messages: [
@@ -912,7 +925,10 @@ function generateSafeResponse(query, searchResults) {
     
     function renderAISummary(summary) {
       return `
-        <div class="bg-blue-50 border-l-4 border-blue-600 p-6 mb-6">
+        <div class="bg-blue-50 border-l-4 border-blue-600 p-6 mb-6 select-none" 
+             oncontextmenu="return false"
+             oncopy="return false"
+             oncut="return false">
           <div class="flex items-start mb-3">
             <svg class="w-6 h-6 text-blue-600 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -923,7 +939,40 @@ function generateSafeResponse(query, searchResults) {
             </div>
           </div>
           <div class="prose text-gray-700">${summary.text}</div>
-          <p class="text-xs text-gray-500 mt-4 italic">${summary.watermark}</p>
+          <p class="text-xs text-gray-500 mt-4 italic">${summary.watermark} — This text may not be copied, reproduced, or distributed.</p>
+        </div>
+      `;
+    }
+
+    function renderIESSectionWidget(userSection) {
+      if (!userSection) return '';
+      return `
+        <div class="bg-green-50 border border-green-200 rounded-lg p-4 mb-6">
+          <h4 class="font-semibold text-green-800 mb-2">Connect with your IES Section</h4>
+          <p class="text-sm text-green-700">You are a member of <a href="${userSection.url}" target="_blank" class="underline font-medium">${userSection.name}</a></p>
+          ${userSection.upcomingEvents?.length ? `
+            <div class="mt-2">
+              <p class="text-xs text-green-600 font-medium">Upcoming section events:</p>
+              <ul class="mt-1 space-y-1">
+                ${userSection.upcomingEvents.map(e => `
+                  <li class="text-xs text-green-700"><a href="${e.url}" target="_blank" class="hover:underline">${e.title} — ${e.date}</a></li>
+                `).join('')}
+              </ul>
+            </div>
+          ` : ''}
+          ${userSection.tcMembers?.length ? `
+            <div class="mt-3">
+              <p class="text-xs text-green-600 font-medium">Technical Committee members in your section:</p>
+              <ul class="mt-1 space-y-1">
+                ${userSection.tcMembers.map(m => `
+                  <li class="text-xs text-green-700">
+                    ${m.profileUrl ? `<a href="${m.profileUrl}" target="_blank" class="underline">${m.name}</a>` : m.name}
+                    — ${m.committee}
+                  </li>
+                `).join('')}
+              </ul>
+            </div>
+          ` : ''}
         </div>
       `;
     }
@@ -1128,6 +1177,30 @@ Keep responses concise while ensuring completeness and clarity.
 - Reserve direct quotes for uniquely phrased insights that lose meaning when paraphrased
 - Keep paraphrased content from any single source to 2-3 sentences maximum
 
+## Version Comparison ("What's New") Protocol
+
+When the user asks "what is new," "what changed," or "what is different" in a specific standard:
+
+1. **Always show:** ADDED content (new sections, applications, guidance) — with citations
+2. **Always show:** REVISED content (updated values, reorganized sections, editorial changes) — with citations
+3. **Only show REMOVED if user explicitly opts in** — present a prompt: "Would you like to see what was removed from the deprecated version?" before listing deletions
+4. **Cite both** the current and deprecated standard when making comparisons
+5. **Never present deleted content as guidance** — frame removals as historical context only
+
+Structured response format for version comparison:
+```
+ANSI/IES [STANDARD-CURRENT] vs. [STANDARD-DEPRECATED]
+
+ADDED in [current]:
+- [Item with citation to current standard section/page]
+
+REVISED in [current]:
+- [Item with citation to current standard section/page]
+
+[REMOVED — only if user opted in]:
+- [Item with note: "This content appeared in [deprecated] but is no longer in the current standard."]
+```
+
 ## Predefined Responses
 
 ### When application not covered in current IES Standards:
@@ -1141,10 +1214,13 @@ Keep responses concise while ensuring completeness and clarity.
 You have access to:
 - Current IES Standards (master PDFs)
 - Document metadata (title, description, authoring committee)
-- [Future: IES.org resources, Section websites, Wicket committee data]
+- Deprecated IES Standards (for version comparison queries ONLY — never cite for current guidance)
+- [Phase 3+: IES.org resources including events, eLearning, LC Study Groups, Leukos, Standards Toolbox, section websites]
+- [Phase 3+: Wicket member and section affiliation data]
 
 You do NOT have access to:
-- Deprecated standards (except for version comparison queries)
+- Deprecated standards for any purpose other than version comparison ("what changed", "what is new")
+- Deprecated standards via external API — these are restricted to internal UI use only
 - Content behind authentication walls
 - Real-time updates or current events
 
@@ -1294,11 +1370,18 @@ SHAREPOINT_TOKEN=<sharepoint-token>
 ## Notes
 
 This architecture prioritizes:
-1. **Authoritative content** over AI generation (excerpts + tables first, AI summary optional)
-2. **Copyright compliance** (strict guardrails on quotation length and frequency)
+1. **Authoritative content** over AI generation (excerpts + tables first, AI summary optional and collapsed by default)
+2. **Copyright compliance** (strict guardrails on quotation length, frequency, and UI copy-guards on AI sections)
 3. **Accurate citations** (always link back to specific pages in standards)
 4. **Scalability** (serverless infrastructure, vector search for semantic matching)
 5. **Future-proof** (designed to support external API licensing layer)
+6. **Privacy of deprecated standards** (indexed internally for version comparison UI; never exposed via external API)
+
+### Deprecated Standards Indexing Policy
+- **Index:** Yes — current AND deprecated PDFs are ingested into Vectorize, tagged with `status: 'deprecated'`
+- **Internal UI:** Deprecated content is accessible for version comparison queries only
+- **External API (Phase 5):** Filter out all deprecated-tagged vectors — never returned to external partners
+- **Agent behavior:** Never cite deprecated standards for current guidance; only reference them when user explicitly asks "what changed" or "what is new"
 
 The Cloudflare stack provides:
 - **Global edge deployment** for low latency

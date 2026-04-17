@@ -800,11 +800,19 @@ Show what changed between editions of the same standard.
 │ • Added calculation examples in Annex B                    │
 │ • 18 new references in bibliography                        │
 │                                                            │
-│ REMOVED (Deprecated in 2024)                               │
+│ REMOVED (Opt-in only)                                      │
 │ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━  │
 │                                                            │
+│ ⚠️ Would you like to see content removed from the         │
+│    deprecated version? This is historical context only     │
+│    and should not be used as current guidance.             │
+│                                                            │
+│ [Show Removed Content]                                     │
+│                                                            │
+│ — Only shown after user clicks [Show Removed Content] —   │
 │ ❌ Dog Racing - Section 5.8                               │
 │    Removed due to declining industry relevance             │
+│    (Appeared in RP-6-22; not in current standard)         │
 │                                                            │
 │ [Export Comparison Report] [View Full Standards]          │
 └────────────────────────────────────────────────────────────┘
