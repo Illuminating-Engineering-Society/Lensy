@@ -506,7 +506,7 @@
                 type="checkbox"
                 class="result-checkbox mt-1 rounded accent-ies-blue shrink-0"
                 value="${escapeHtml(app.code || '')}"
-                onchange="toggleSelection(${JSON.stringify(app.code || '')}, this.checked)"
+                data-code="${escapeHtml(app.code || '')}"
               />
               <div class="min-w-0">
                 ${breadcrumb ? `<p class="text-xs text-gray-400 mb-0.5 flex items-center flex-wrap">${breadcrumb}</p>` : ''}
@@ -529,8 +529,11 @@
           <div class="flex items-center justify-between mt-4 pt-3 border-t border-gray-50">
             <div class="flex items-center gap-3">
               <button
-                onclick="openProjectModal(${JSON.stringify(app.code || '')}, ${JSON.stringify(title)}, ${JSON.stringify(result.citation || '')})"
-                class="text-xs px-3 py-1.5 bg-ies-blue text-white rounded-lg hover:bg-ies-blue-dark transition font-medium flex items-center gap-1.5">
+                class="add-to-project-btn text-xs px-3 py-1.5 bg-ies-blue text-white rounded-lg hover:bg-ies-blue-dark transition font-medium flex items-center gap-1.5"
+                data-code="${escapeHtml(app.code || '')}"
+                data-name="${escapeHtml(title)}"
+                data-citation="${escapeHtml(result.citation || '')}"
+              >
                 <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
                   <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/>
                 </svg>
@@ -822,6 +825,19 @@
       return String(str)
         .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
     }
+
+    // Event delegation for dynamically-generated result cards
+    document.getElementById('results-list').addEventListener('click', e => {
+      const btn = e.target.closest('.add-to-project-btn');
+      if (btn) {
+        openProjectModal(btn.dataset.code, btn.dataset.name, btn.dataset.citation);
+      }
+    });
+
+    document.getElementById('results-list').addEventListener('change', e => {
+      const cb = e.target.closest('.result-checkbox');
+      if (cb) toggleSelection(cb.dataset.code, cb.checked);
+    });
 
     // Close modal on Escape
     document.addEventListener('keydown', e => { if (e.key === 'Escape') closeProjectModal(); });
