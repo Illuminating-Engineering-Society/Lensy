@@ -40,7 +40,7 @@ import { readFileSync, readdirSync, existsSync } from 'fs';
 import { resolve, basename, extname } from 'path';
 import { execSync } from 'child_process';
 import { parsePDFNode } from '../src/lib/pdf-parser.js';
-import { extractIESTables } from '../src/lib/table-extractor.js';
+import { extractIESTables, extractGeneralNotes } from '../src/lib/table-extractor.js';
 import {
   extractApplicationsFromPages,
   reportExtractionQuality,
@@ -171,10 +171,28 @@ async function ingestFile(filePath, standardId) {
     for (const w of quality.warnings) console.log(`  ⚠ ${w}`);
   }
 
+  // Step 4b: Extract standalone "General Notes" / Annex A blocks as citable chunks
+  const generalNotes = extractGeneralNotes(pages);
+  if (generalNotes.length > 0) {
+    console.log(`  General Notes blocks: ${generalNotes.length}`);
+  }
+
   // Step 5: Chunk text with IES section awareness
   console.log('  Chunking text...');
-  const chunks = chunkIESDocument(pages);
-  console.log(`  Chunks: ${chunks.length}`);
+  const textChunks = chunkIESDocument(pages);
+
+  // Promote General Notes blocks into dedicated chunks tagged 'general_notes'
+  // so the search layer can rank them as authoritative governing-criteria text.
+  const noteChunks = generalNotes.map((n) => ({
+    text: `[${n.heading}]\n${n.text}`,
+    pageNumber: n.pageNumber,
+    section: n.heading.replace(/[:.].*/, '').trim(),
+    type: 'general_notes',
+    wordCount: n.text.split(/\s+/).length,
+  }));
+
+  const chunks = [...textChunks, ...noteChunks];
+  console.log(`  Chunks: ${chunks.length} (${textChunks.length} text, ${noteChunks.length} general-notes)`);
 
   if (CONFIG.verbose) {
     for (const [i, chunk] of chunks.entries()) {

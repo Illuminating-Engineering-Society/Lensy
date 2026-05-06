@@ -116,6 +116,45 @@ const SYNONYMS = {
   'church':          'church sanctuary worship religious chapel',
   'museum':          'museum gallery exhibit cultural display',
   'theater':         'theater auditorium performance arts stage',
+
+  // ── IES Technical Terminology (per IlluminanceTables_Reference_260421) ──
+  'veiling':         'veiling reflection contrast specular semi-specular glare task',
+  'veiling reflection': 'veiling reflection specular contrast task surface',
+  'class of play':   'class of play sports skill level competitive recreational broadcast',
+  'uniformity':      'uniformity ratio max min avg coefficient variation distribution',
+  'uniformity ratio': 'uniformity ratio UR max min illuminance distribution',
+  'coefficient of variation': 'coefficient variation CV statistics standard deviation uniformity',
+  'cv':              'coefficient variation CV uniformity standard deviation',
+  'ratio basis':     'ratio basis max avg min uniformity calculation plane',
+  'task surface':    'task surface TS height visual task work plane',
+  'maintained illuminance': 'maintained illuminance target consensus light loss factor LLF',
+  'mesopic':         'mesopic adaptation S/P ratio spectrum low light scotopic photopic',
+  's/p ratio':       'S/P ratio spectrum mesopic TM-24 light source spectrum adjustment',
+  'tm-24':           'TM-24 spectrum adjustment P-Y categories visually demanding tasks',
+  'tm24':            'TM-24 spectrum adjustment P-Y categories visually demanding tasks',
+  'light loss factor': 'light loss factor LLF dirt depreciation maintenance lumen depreciation RP-36',
+  'illuminance category': 'illuminance category A through Y RP-10 Table A-2 letter code',
+  'category':        'illuminance category letter code A B C D E F G H I J K L M N O P Q R S T U V W X Y',
+  'rp-10':           'RP-10 illuminance categories Table A-2 common applications',
+  'lighting zone':   'lighting zone LZ0 LZ1 LZ2 LZ3 LZ4 outdoor environmental ambient',
+  'lz0':             'LZ0 lighting zone no ambient lighting natural darkness',
+  'lz1':             'LZ1 lighting zone low ambient rural residential',
+  'lz2':             'LZ2 lighting zone moderate ambient suburban',
+  'lz3':             'LZ3 lighting zone moderately high ambient urban commercial',
+  'lz4':             'LZ4 lighting zone high ambient downtown entertainment',
+  'glare rating':    'glare rating BUG backlight uplight outdoor luminaire',
+  'uplight':         'uplight skyglow light pollution outdoor BUG',
+  'spectrum':        'spectrum CCT color temperature S/P ratio circadian',
+  'controls':        'controls dimming occupancy daylight tuning curfew',
+  'curfew':          'curfew dimming nighttime outdoor lighting reduction',
+  'annex a':         'Annex A general notes governing criteria maintained illuminance',
+  'general notes':   'general notes governing criteria tolerance age adjustment',
+  'task':            'task visual task work plane localized task lighting',
+  'area':            'area room space general lighting whole space',
+  'older adults':    'older adults seniors over 65 visually impaired RP-28 illuminance double',
+  'seniors':         'seniors older adults over 65 RP-28 illuminance recommendations doubled',
+  'security lighting': 'security lighting G-1 minimum maintained safety vehicular',
+  'tolerance':       'tolerance ±10 percent acceptable design predicted value',
 };
 
 // ─── Multi-Query Detector ─────────────────────────────────────────────────────
@@ -206,6 +245,32 @@ export function expandQuery(query) {
  */
 export function prepareQueryForEmbedding(query) {
   return expandQuery(cleanQuery(query));
+}
+
+// ─── Version-Comparison Intent Detection ──────────────────────────────────────
+
+const VERSION_COMPARE_PATTERNS = [
+  /\bwhat(?:'s|\s+is|\s+has)?\s+new\b/i,
+  /\bwhat\s+(?:has\s+)?changed\b/i,
+  /\bwhat(?:'s|\s+is)?\s+different\b/i,
+  /\bdifference[s]?\s+between\b/i,
+  /\bcompared?\s+(?:to|with|against)\b/i,
+  /\b(?:added|revised|removed)\s+in\b/i,
+  /\bversion\s+comparison\b/i,
+  /\bupdated?\s+(?:from|since)\b/i,
+];
+
+/**
+ * Detect if a user query is asking for a "what's new" / version comparison.
+ * The search layer can use this to:
+ *  - allow indexing of deprecated standards into the result set
+ *  - present ADDED/REVISED automatically and gate REMOVED behind opt-in
+ *
+ * @returns {boolean}
+ */
+export function isVersionComparisonQuery(query) {
+  if (!query) return false;
+  return VERSION_COMPARE_PATTERNS.some(re => re.test(query));
 }
 
 function escapeRegex(str) {

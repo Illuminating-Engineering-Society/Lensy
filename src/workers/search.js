@@ -58,7 +58,7 @@
  *    }
  */
 
-import { prepareQueryForEmbedding, splitMultiQuery, cleanQuery } from '../lib/query-expander.js';
+import { prepareQueryForEmbedding, splitMultiQuery, cleanQuery, isVersionComparisonQuery } from '../lib/query-expander.js';
 import { generateResponse } from '../lib/ai-summary.js';
 import { formatCitation } from '../lib/citations.js';
 
@@ -95,6 +95,10 @@ export async function handleSearch(request, env) {
   // ── Multi-query detection ────────────────────────────────────────────────────
   const subQueries = splitMultiQuery(rawQuery);
   const isMultiQuery = subQueries.length > 1;
+
+  // ── Version-comparison intent ("what's new", "what changed") ─────────────────
+  // Signals to the UI that ADDED/REVISED should be auto-shown and REMOVED gated.
+  const isVersionComparison = isVersionComparisonQuery(rawQuery);
 
   let allResults;
 
@@ -133,6 +137,7 @@ export async function handleSearch(request, env) {
     expandedQuery: allResults.expandedQuery,
     isMultiQuery,
     subQueries: isMultiQuery ? subQueries : undefined,
+    isVersionComparison,
     results: applyUnits(allResults.results, units),
     aiSummary,
     timestamp: new Date().toISOString(),
@@ -368,7 +373,7 @@ function formatApplication(app) {
     sub1:      app.App_s1,
     sub2:      app.App_s2,
     sub3:      app.App_s3,
-    fullName:  [app.App, app.App_s1, app.App_s2, app.App_s3].filter(Boolean).join(' → '),
+    fullName:  [app.App, app.App_s1, app.App_s2, app.App_s3, app.App_s4, app.App_s5, app.App_s6].filter(Boolean).join(' → '),
     // Standard
     standard:      app.Standard,
     standardFull:  app.Standard_Full,
@@ -378,6 +383,12 @@ function formatApplication(app) {
     // Type
     areaOrTask:    app.Area_or_Task,
     indoorOutdoor: app.Indoor_Outdoor,
+    veilingRisk:   app.Veiling_Risk,
+    classOfPlay:   app.Class_of_Play,
+    subCategory:   app.Sub_Category,
+    sub4:          app.App_s4,
+    sub5:          app.App_s5,
+    sub6:          app.App_s6,
     // Horizontal Illuminance
     horizontal: app.Hor_Lux != null ? {
       category:   app.Hor_Cat,
@@ -387,6 +398,8 @@ function formatApplication(app) {
       heightFt:   app.Hor_Height_ft,
       avgMaxMin:  app.Hor_Avg_Max_Min,
       uniformity: app.Hor_Uniformity,
+      cv:         app.Hor_CV,
+      ratioBasis: app.Hor_Ratio_Basis,
       notes:      app.Hor_Notes,
     } : null,
     // Vertical Illuminance
@@ -398,6 +411,8 @@ function formatApplication(app) {
       heightFt:   app.Ver_Height_ft,
       avgMaxMin:  app.Ver_Avg_Max_Min,
       uniformity: app.Ver_Uniformity,
+      cv:         app.Ver_CV,
+      ratioBasis: app.Ver_Ratio_Basis,
       notes:      app.Ver_Notes,
     } : null,
     // Task Illuminance

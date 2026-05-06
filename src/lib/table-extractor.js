@@ -56,17 +56,72 @@ export function extractIESTables(pages) {
   return tables;
 }
 
+/**
+ * Extract standalone "General Notes" / "Annex A" blocks across all pages.
+ * Per the IES table reference, these notes govern the entire table set
+ * (lux/fc tolerances, age adjustments, S/P value variances, etc.) and
+ * deserve their own citable chunk so the search layer can surface them.
+ *
+ * @returns {Array<{pageNumber, heading, text}>}
+ */
+export function extractGeneralNotes(pages) {
+  const blocks = [];
+  const HEADING_RE = /^(General Notes?|Annex\s+[A-Z](?:\s*[:.\s].*)?)$/i;
+
+  for (const page of pages) {
+    const lines = getLines(page);
+    let i = 0;
+    while (i < lines.length) {
+      const line = lines[i].trim();
+      if (HEADING_RE.test(line) || /^(General Notes?|Annex\s+[A-Z])\b/i.test(line)) {
+        const heading = line;
+        const buf = [line];
+        let j = i + 1;
+        // Collect until next table/section heading or end of page
+        while (j < lines.length) {
+          const next = lines[j];
+          if (TABLE_TITLE_RE.test(next) || ANNEX_TITLE_RE.test(next)) break;
+          if (/^\d+\.\d+\s+[A-Z]/.test(next)) break;
+          buf.push(next);
+          j++;
+        }
+        const text = buf.join('\n').trim();
+        if (text.split(/\s+/).length >= 20) {
+          blocks.push({ pageNumber: page.number, heading, text });
+        }
+        i = j;
+      } else {
+        i++;
+      }
+    }
+  }
+
+  return blocks;
+}
+
 // ─── Table Block Detection ────────────────────────────────────────────────────
 
 const TABLE_TITLE_RE = /^Table\s+([A-Z0-9]+-?\d*)\s*[:.]?\s*(.*)/i;
 const ANNEX_TITLE_RE = /^(?:Annex|Appendix)\s+([A-Z])\s*[:.]?\s*(.*)/i;
-// Column header keywords — presence identifies the header rows
+// Column header keywords — presence identifies the header rows.
+// Aligned with the schema in pdfs/Others/IlluminanceTables_Reference_260421.pdf.
 const COL_KEYWORDS = [
+  // General
   'illuminance', 'category', 'maintained', 'lux', 'footcandle', 'fc',
   'horizontal', 'vertical', 'task', 'uniformity', 'height', 'zone',
-  'area', 'application', 'type',
+  'area', 'application', 'type', 'sub category', 'app',
+  // Per-row metadata columns
+  'veiling', 'class of play', 'cv',
+  // Ratio columns
+  'ratio basis', 'max:avg:min', 'max:avg', 'max:min', 'avg:min',
+  'max', 'avg', 'min',
+  // Environmental & Visual (RP-43-25+)
+  'glare', 'uplight', 'controls', 'spectrum',
+  // Heights / units
+  '@ meters', '@ feet', 'meters', 'feet', 'ts',
 ];
-const FOOTNOTE_START_RE = /^(?:\[?\d+\]?|\*+)\s+\w|^Note\s*\d*\s*:|^General Notes?:|^Annex\s+A/i;
+const FOOTNOTE_START_RE = /^(?:\[?\d+\]?|\*+)\s+\w|^Note\s*\d*\s*:|^General Notes?:|^Annex\s+[A-Z]/i;
+const GENERAL_NOTES_RE = /(?:General Notes?|Annex\s+[A-Z])[\s\S]*/i;
 
 function findTableBlocks(lines, pageNumber) {
   const blocks = [];
@@ -146,7 +201,7 @@ function parseTableBlock(block) {
   // Extract footnotes and general notes
   const footnoteLines = footnoteStartIdx >= 0 ? lines.slice(footnoteStartIdx) : [];
   const footnotes = footnoteLines.join('\n').trim();
-  const generalNotesMatch = footnotes.match(/(?:General Notes?|Annex\s+A)[\s\S]*/i);
+  const generalNotesMatch = footnotes.match(GENERAL_NOTES_RE);
   const generalNotes = generalNotesMatch ? generalNotesMatch[0].trim() : '';
 
   return {

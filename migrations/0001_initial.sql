@@ -177,24 +177,10 @@ CREATE INDEX IF NOT EXISTS idx_project_apps_project_id ON project_applications(p
 CREATE INDEX IF NOT EXISTS idx_project_apps_code ON project_applications(application_code);
 
 -- --- Triggers: auto-update modified_at on projects ---
+-- Single-line bodies to keep wrangler's statement splitter happy on D1 remote.
 
-CREATE TRIGGER IF NOT EXISTS trg_projects_modified
-  AFTER UPDATE ON projects
-  FOR EACH ROW
-BEGIN
-  UPDATE projects SET modified_at = CURRENT_TIMESTAMP WHERE id = OLD.id;
-END;
+CREATE TRIGGER IF NOT EXISTS trg_projects_modified AFTER UPDATE ON projects FOR EACH ROW BEGIN UPDATE projects SET modified_at = CURRENT_TIMESTAMP WHERE id = OLD.id; END;
 
-CREATE TRIGGER IF NOT EXISTS trg_projects_app_modified
-  AFTER INSERT ON project_applications
-  FOR EACH ROW
-BEGIN
-  UPDATE projects SET modified_at = CURRENT_TIMESTAMP WHERE id = NEW.project_id;
-END;
+CREATE TRIGGER IF NOT EXISTS trg_projects_app_modified AFTER INSERT ON project_applications FOR EACH ROW BEGIN UPDATE projects SET modified_at = CURRENT_TIMESTAMP WHERE id = NEW.project_id; END;
 
-CREATE TRIGGER IF NOT EXISTS trg_projects_app_delete_modified
-  AFTER DELETE ON project_applications
-  FOR EACH ROW
-BEGIN
-  UPDATE projects SET modified_at = CURRENT_TIMESTAMP WHERE id = OLD.project_id;
-END;
+CREATE TRIGGER IF NOT EXISTS trg_projects_app_delete_modified AFTER DELETE ON project_applications FOR EACH ROW BEGIN UPDATE projects SET modified_at = CURRENT_TIMESTAMP WHERE id = OLD.project_id; END;

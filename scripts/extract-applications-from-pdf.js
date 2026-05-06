@@ -30,7 +30,7 @@ import { resolve, basename } from 'path';
 import { parsePDFNode } from '../src/lib/pdf-parser.js';
 import { extractIESTables } from '../src/lib/table-extractor.js';
 import {
-  extractApplicationsFromTables,
+  extractApplicationsFromPages,
   reportExtractionQuality,
 } from '../src/lib/applications-extractor.js';
 
@@ -62,7 +62,7 @@ async function main() {
 
   // Parse PDF
   console.error('Parsing PDF...');
-  const pdfBytes = readFileSync(filePath);
+  const pdfBytes = new Uint8Array(readFileSync(filePath));
   const { metadata, pages } = await parsePDFNode(pdfBytes);
 
   console.error(`Pages: ${pages.length}`);
@@ -92,7 +92,7 @@ async function main() {
     year: metadata.year,
     author: metadata.author,
   };
-  const applications = extractApplicationsFromTables(tables, standardId, standardMeta);
+  const applications = extractApplicationsFromPages(pages, standardId, standardMeta);
   console.error(`Applications extracted: ${applications.length}\n`);
 
   // Quality report
@@ -100,8 +100,9 @@ async function main() {
   console.error('── Extraction Quality ──────────────────────────────────');
   console.error(`Total records:          ${quality.total}`);
   console.error(`With horizontal lux:    ${quality.withHorLux} (${quality.qualityScore}%)`);
-  console.error(`With vertical lux:      ${quality.withVerLux}`);
   console.error(`With illuminance cat:   ${quality.withIlluminanceCategory}`);
+  console.error(`With ratio basis:       ${quality.withRatioBasis}`);
+  console.error(`With deep hierarchy:    ${quality.withDeepHierarchy} (s4–s6)`);
   if (quality.warnings.length > 0) {
     console.error('\nWarnings:');
     for (const w of quality.warnings) console.error(`  ⚠ ${w}`);
@@ -115,11 +116,16 @@ async function main() {
   // Print sample records
   console.error('── Sample Records (first 5) ─────────────────────────────');
   for (const app of applications.slice(0, 5)) {
+    const path = [app.Sub_Category, app.App, app.App_s1, app.App_s2, app.App_s3, app.App_s4, app.App_s5, app.App_s6].filter(Boolean).join(' › ');
     console.error(`  [${app.code}]`);
-    console.error(`    ${[app.App, app.App_s1, app.App_s2].filter(Boolean).join(' › ')}`);
-    console.error(`    H: Cat=${app.Hor_Cat || '?'} ${app.Hor_Lux || '?'} lux (${app.Hor_Fc || '?'} fc)`);
+    console.error(`    ${path}`);
+    console.error(`    Type: ${app.Area_or_Task}, ${app.Indoor_Outdoor}${app.Veiling_Risk ? `, Veiling=${app.Veiling_Risk}` : ''}${app.Class_of_Play ? `, Class=${app.Class_of_Play}` : ''}`);
+    console.error(`    H: Cat=${app.Hor_Cat || '?'} ${app.Hor_Lux || '?'} lux (${app.Hor_Fc || '?'} fc)${app.Hor_Ratio_Basis ? ` [${app.Hor_Ratio_Basis}]` : ''}`);
     if (app.Ver_Lux) {
-      console.error(`    V: Cat=${app.Ver_Cat || '?'} ${app.Ver_Lux || '?'} lux`);
+      console.error(`    V: Cat=${app.Ver_Cat || '?'} ${app.Ver_Lux} lux${app.Ver_Ratio_Basis ? ` [${app.Ver_Ratio_Basis}]` : ''}`);
+    }
+    if (app.Max_Glare_Rating || app.Max_Uplight || app.Controls_Required || app.Spectrum_Guidance) {
+      console.error(`    E&V: Glare=${app.Max_Glare_Rating || '-'}, Uplight=${app.Max_Uplight || '-'}, Controls=${app.Controls_Required || '-'}, Spectrum=${app.Spectrum_Guidance || '-'}`);
     }
     console.error('');
   }

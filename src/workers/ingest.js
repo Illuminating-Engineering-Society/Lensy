@@ -161,18 +161,30 @@ async function ingestParsedPDF(request, env) {
 // Uses ON CONFLICT(code) DO UPDATE so re-ingesting a PDF refreshes the data.
 
 const APP_COLS = [
-  'code', 'App', 'App_s1', 'App_s2', 'App_s3', 'App_s4', 'App_s5', 'App_s6',
+  'code',
+  // Hierarchy (8 levels per IES Illuminance Table reference 260421)
+  'Sub_Category',
+  'App', 'App_s1', 'App_s2', 'App_s3', 'App_s4', 'App_s5', 'App_s6',
+  // Source
   'Standard', 'Standard_Full', 'Table_Ref', 'Row_Ref', 'Link_Mapping',
+  // Type / classification
   'Area_or_Task', 'Indoor_Outdoor', 'App_Type',
+  'Veiling_Risk', 'Class_of_Play',
+  // Horizontal plane
   'Hor_Cat', 'Hor_Lux', 'Hor_Fc', 'Hor_Height_m', 'Hor_Height_ft',
-  'Hor_Avg_Max_Min', 'Hor_Uniformity', 'Hor_Notes',
+  'Hor_Avg_Max_Min', 'Hor_Uniformity', 'Hor_CV', 'Hor_Ratio_Basis', 'Hor_Notes',
+  // Vertical plane
   'Ver_Cat', 'Ver_Lux', 'Ver_Fc', 'Ver_Height_m', 'Ver_Height_ft',
-  'Ver_Avg_Max_Min', 'Ver_Uniformity', 'Ver_Notes',
+  'Ver_Avg_Max_Min', 'Ver_Uniformity', 'Ver_CV', 'Ver_Ratio_Basis', 'Ver_Notes',
+  // Task plane
   'Task_Cat', 'Task_Lux', 'Task_Fc', 'Task_Height_m', 'Task_Height_ft',
   'Task_Avg_Max_Min', 'Task_Uniformity', 'Task_Notes',
+  // TM-24 spectral adjustment
   'TM24_Eligible', 'TM24_Notes',
+  // Environmental & visual
   'Lighting_Zone', 'Max_Glare_Rating', 'Max_Uplight', 'Curfew_Dimming',
   'Spectrum_Guidance', 'Controls_Required',
+  // Notes & links
   'Footnotes', 'General_Notes', 'App_Notes',
   'Vitrium_Doc_ID', 'Vitrium_Deep_Link',
   'Active',
@@ -270,8 +282,8 @@ async function ingestApplications(env) {
  */
 function buildApplicationEmbedText(app) {
   const parts = [
-    // Full hierarchy path → primary signal
-    [app.App, app.App_s1, app.App_s2, app.App_s3, app.App_s4, app.App_s5, app.App_s6]
+    // Full hierarchy path → primary signal (8 levels)
+    [app.Sub_Category, app.App, app.App_s1, app.App_s2, app.App_s3, app.App_s4, app.App_s5, app.App_s6]
       .filter(Boolean).join(' '),
 
     // Standard reference for authority signal
@@ -283,6 +295,10 @@ function buildApplicationEmbedText(app) {
     app.Area_or_Task ? `${app.Area_or_Task} lighting application` : null,
     app.Indoor_Outdoor ? `${app.Indoor_Outdoor} space` : null,
 
+    // Veiling risk and class of play surface RP-6 / RP-43 vocabulary
+    app.Veiling_Risk ? `Veiling reflection risk ${app.Veiling_Risk}` : null,
+    app.Class_of_Play ? `Class of Play ${app.Class_of_Play}` : null,
+
     // Notes contain the richest descriptive text — very valuable for embeddings
     app.App_Notes || null,
     app.General_Notes || null,
@@ -290,8 +306,10 @@ function buildApplicationEmbedText(app) {
     // TM-24 mention for spectral adjustment searches
     app.TM24_Eligible ? 'TM-24 spectral adjustment applicable' : null,
 
-    // Outdoor zone adds searchable context
+    // Outdoor environmental context
     app.Lighting_Zone ? `Lighting zone ${app.Lighting_Zone}` : null,
+    app.Spectrum_Guidance ? `Spectrum: ${app.Spectrum_Guidance}` : null,
+    app.Controls_Required ? `Controls: ${app.Controls_Required}` : null,
   ];
 
   return parts.filter(Boolean).join('. ');
