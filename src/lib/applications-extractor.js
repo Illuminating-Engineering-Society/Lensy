@@ -149,6 +149,7 @@ function extractFromPages(tablePages, standardId, fullDesignation) {
         Standard_Full: fullDesignation,
         Table_Ref:     tableRef,
         Row_Ref:       `Row ${rowIndex + 1}`,
+        Page_Number:   page.number,
         Link_Mapping:  null,
         Area_or_Task:   parsed.areaOrTask || 'Area',
         Indoor_Outdoor: currentSection,

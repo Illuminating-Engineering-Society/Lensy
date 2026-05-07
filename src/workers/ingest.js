@@ -166,7 +166,7 @@ const APP_COLS = [
   'Sub_Category',
   'App', 'App_s1', 'App_s2', 'App_s3', 'App_s4', 'App_s5', 'App_s6',
   // Source
-  'Standard', 'Standard_Full', 'Table_Ref', 'Row_Ref', 'Link_Mapping',
+  'Standard', 'Standard_Full', 'Table_Ref', 'Row_Ref', 'Page_Number', 'Link_Mapping',
   // Type / classification
   'Area_or_Task', 'Indoor_Outdoor', 'App_Type',
   'Veiling_Risk', 'Class_of_Play',
@@ -276,40 +276,53 @@ async function ingestApplications(env) {
 }
 
 /**
- * Build rich semantic text for embedding a 68-column application row.
- * Includes all meaningful fields so vector captures the full meaning,
- * not just the hierarchy name.
+ * Build the text to embed for one application row.
+ *
+ * Goal: maximize cosine similarity between natural-language queries like
+ * "playground lighting" and the application's vector. Strategy:
+ *
+ *   1. Front-load the *meaningful* hierarchy levels (App, App_s1) and
+ *      strip parenthetical noise like "(if lighting is desired)" — those
+ *      phrases dilute the signal because every Lz row contains them.
+ *   2. Repeat the strongest noun (App_s1 if present, else App) so it
+ *      dominates the bag-of-words. bge-base-en treats repetition as a
+ *      mild boost for the repeated term's neighborhood.
+ *   3. Include free-form text from notes *if* present, but skip the
+ *      mostly-numeric leaf row labels like "Lz1 / Lower limit (avg.)" —
+ *      those are filters, not topics.
+ *   4. Include indoor/outdoor and area/task as plain English — these
+ *      are common query qualifiers.
  */
 function buildApplicationEmbedText(app) {
+  const stripParens = (s) => s ? String(s).replace(/\s*\([^)]*\)\s*/g, ' ').replace(/\s+/g, ' ').trim() : '';
+
+  // Pick the topical noun: App_s1 if it carries content, else App.
+  const primary = stripParens(app.App_s1) || stripParens(app.App) || '';
+  const category = stripParens(app.App) || '';
+  const subCategory = stripParens(app.Sub_Category) || '';
+
+  // Mid-hierarchy subdivisions that may add real topical info
+  // (skip Lz0–Lz4 zone tags and Upper/Lower limit labels — those are filters).
+  const isFilterToken = (s) =>
+    !s || /^Lz\d/i.test(s) || /lower\s+limit|upper\s+limit/i.test(s) ||
+    /^(?:I|II|III|IV)$/.test(s);
+  const subPath = [app.App_s2, app.App_s3, app.App_s4, app.App_s5, app.App_s6]
+    .map(stripParens)
+    .filter(s => s && !isFilterToken(s));
+
   const parts = [
-    // Full hierarchy path → primary signal (8 levels)
-    [app.Sub_Category, app.App, app.App_s1, app.App_s2, app.App_s3, app.App_s4, app.App_s5, app.App_s6]
-      .filter(Boolean).join(' '),
-
-    // Standard reference for authority signal
-    app.Standard_Full || app.Standard
-      ? `IES standard: ${app.Standard_Full || app.Standard}`
-      : null,
-
-    // Application type adds context (area vs task, indoor vs outdoor)
-    app.Area_or_Task ? `${app.Area_or_Task} lighting application` : null,
-    app.Indoor_Outdoor ? `${app.Indoor_Outdoor} space` : null,
-
-    // Veiling risk and class of play surface RP-6 / RP-43 vocabulary
-    app.Veiling_Risk ? `Veiling reflection risk ${app.Veiling_Risk}` : null,
-    app.Class_of_Play ? `Class of Play ${app.Class_of_Play}` : null,
-
-    // Notes contain the richest descriptive text — very valuable for embeddings
+    primary, // strongest signal — repeated below
+    category && category !== primary ? category : null,
+    subPath.length ? subPath.join(' ') : null,
+    subCategory ? subCategory.toLowerCase() : null,
+    primary, // intentional repeat to weight the topic noun
+    app.Indoor_Outdoor ? `${app.Indoor_Outdoor.toLowerCase()} application` : null,
+    app.Area_or_Task === 'T' ? 'task lighting' : app.Area_or_Task === 'A' ? 'area lighting' : null,
+    app.Standard_Full || app.Standard ? `IES ${app.Standard_Full || app.Standard}` : null,
     app.App_Notes || null,
     app.General_Notes || null,
-
-    // TM-24 mention for spectral adjustment searches
-    app.TM24_Eligible ? 'TM-24 spectral adjustment applicable' : null,
-
-    // Outdoor environmental context
-    app.Lighting_Zone ? `Lighting zone ${app.Lighting_Zone}` : null,
-    app.Spectrum_Guidance ? `Spectrum: ${app.Spectrum_Guidance}` : null,
-    app.Controls_Required ? `Controls: ${app.Controls_Required}` : null,
+    app.Class_of_Play ? `class of play ${app.Class_of_Play}` : null,
+    app.TM24_Eligible ? 'TM-24 spectral adjustment' : null,
   ];
 
   return parts.filter(Boolean).join('. ');

@@ -66,6 +66,12 @@ const EMBED_MODEL = '@cf/baai/bge-base-en-v1.5';
 const VECTOR_TOP_K = 40;      // fetch extra; deduplicate down to limit
 const MAX_LIMIT = 20;
 const MIN_VECTOR_RESULTS = 3; // below this, run text fallback
+const STRONG_MATCH_THRESHOLD = 0.68; // top relevanceScore below this → flag noStrongMatch
+
+const NO_STRONG_MATCH_MESSAGE =
+  "There may not be explicit lighting recommendations for that application within the current body of IES Standards. " +
+  "Please review the monthly IES Ignite Newsletter for upcoming public review periods and publications. " +
+  "The results below are the closest matches we found — review them for related guidance, or contact Standards@ies.org for authoritative assistance.";
 
 // ─── Entry Point ──────────────────────────────────────────────────────────────
 
@@ -100,21 +106,32 @@ export async function handleSearch(request, env) {
   // Signals to the UI that ADDED/REVISED should be auto-shown and REMOVED gated.
   const isVersionComparison = isVersionComparisonQuery(rawQuery);
 
+  // ── Structural filter inference from query ───────────────────────────────────
+  // A bare "LZ1 walkways" in the query string should narrow results to that
+  // lighting zone even when the caller didn't pass an explicit filter.
+  const inferred = inferFiltersFromQuery(rawQuery);
+  const mergedFilters = { ...inferred, ...filters };
+
   let allResults;
 
   if (isMultiQuery) {
     // Fan out to individual searches, merge and deduplicate
-    allResults = await runMultiSearch(subQueries, filters, cleanLimit, env);
+    allResults = await runMultiSearch(subQueries, mergedFilters, cleanLimit, env);
   } else {
-    allResults = await runSingleSearch(rawQuery, filters, cleanLimit, env);
+    allResults = await runSingleSearch(rawQuery, mergedFilters, cleanLimit, env);
   }
 
   // ── Related applications (top result only for performance) ───────────────────
+  // Exclude only the seed itself, not the rest of the result list. If we
+  // excluded all results, true sibling rows already shown in the main list
+  // would be filtered out and `related` would fall through to a wider —
+  // less useful — layer (cousins or banner-mates).
   if (allResults.results.length > 0) {
+    const seed = allResults.results[0].application;
     allResults.results[0].relatedApplications = await getRelatedApplications(
       env,
-      allResults.results[0].application,
-      allResults.results.map(r => r.application.code)
+      seed,
+      [seed.code]
     );
   }
 
@@ -132,12 +149,23 @@ export async function handleSearch(request, env) {
     }
   }
 
+  // ── Confidence flag ──────────────────────────────────────────────────────────
+  // The UI uses noStrongMatch to render a yellow advisory banner above the
+  // results. We never filter the list itself — the user still sees the closest
+  // matches we found; we just signal that confidence is low.
+  const topScore = allResults.results.length > 0
+    ? (allResults.results[0].relevanceScore || 0)
+    : 0;
+  const noStrongMatch = topScore < STRONG_MATCH_THRESHOLD;
+
   return jsonResponse({
     query: rawQuery,
     expandedQuery: allResults.expandedQuery,
     isMultiQuery,
     subQueries: isMultiQuery ? subQueries : undefined,
     isVersionComparison,
+    noStrongMatch,
+    noStrongMatchMessage: noStrongMatch ? NO_STRONG_MATCH_MESSAGE : null,
     results: applyUnits(allResults.results, units),
     aiSummary,
     timestamp: new Date().toISOString(),
@@ -190,10 +218,13 @@ async function runSingleSearch(rawQuery, filters, limit, env) {
     buildResult(app, score, chunkMeta, excerptIndex)
   );
 
-  // 7. Text fallback if sparse
+  // 7. Text fallback if sparse — and re-sort the merged list so fallback
+  //    rows interleave by hierarchy/score with the vector hits instead of
+  //    being appended in arbitrary D1 insertion order.
   if (results.length < MIN_VECTOR_RESULTS) {
     const fallback = await textFallback(env.DB, cleanQuery(rawQuery), filters, limit, excerptIndex);
     mergeResults(results, fallback);
+    results.sort(compareResults);
   }
 
   // 8. Chunk fallback: if still no results, surface PDF chunks directly
@@ -248,8 +279,16 @@ async function fetchApplications(db, codes, filters = {}) {
     sql += ' AND Standard = ?';
     bindings.push(filters.standard);
   }
+  if (filters.standard_prefix) {
+    sql += ' AND Standard LIKE ?';
+    bindings.push(`${filters.standard_prefix}-%`);
+  }
   if (filters.tm24_eligible) {
     sql += ' AND TM24_Eligible = 1';
+  }
+  if (filters.lighting_zone) {
+    sql += ' AND Lighting_Zone = ?';
+    bindings.push(filters.lighting_zone);
   }
 
   const result = await db.prepare(sql).bind(...bindings).all();
@@ -259,25 +298,69 @@ async function fetchApplications(db, codes, filters = {}) {
 async function getRelatedApplications(env, application, excludeCodes) {
   if (!application) return [];
 
-  // Strategy 1: same standard, same top-level category, different application
-  const sql = `
-    SELECT code, App, App_s1, App_s2, Standard, Standard_Full, Hor_Lux, Ver_Lux
-    FROM applications
-    WHERE Active = 1
-      AND Standard = ?
-      AND App = ?
-      AND code NOT IN (${excludeCodes.map(() => '?').join(',')})
-    ORDER BY App_s1, App_s2
-    LIMIT 4
-  `;
+  const TARGET = 4;
+  const collected = new Map(); // code → row, preserves insertion order
+  const exclude = new Set(excludeCodes);
 
-  const result = await env.DB.prepare(sql)
-    .bind(application.standard, application.category, ...excludeCodes)
-    .all();
+  /**
+   * Sibling layers, narrowest to widest. Each layer adds rows that share
+   * progressively less hierarchy with the seed application:
+   *
+   *   1. Same App_s1 (true siblings — e.g. other Playground rows)
+   *   2. Same App   (cousins — e.g. Stairs and Ramps under the same category)
+   *   3. Same Standard, same Sub_Category banner (distant relatives)
+   *
+   * We stop as soon as we have TARGET rows.
+   */
+  const layers = [
+    { App: application.category, App_s1: application.sub1 },
+    { App: application.category },
+    { Sub_Category: application.subCategory },
+  ];
 
-  return result.results.map(a => ({
+  for (const filters of layers) {
+    if (collected.size >= TARGET) break;
+
+    const conditions = ['Active = 1', 'Standard = ?'];
+    const bindings = [application.standard];
+    for (const [col, val] of Object.entries(filters)) {
+      if (val == null) { conditions.length = 0; break; } // skip layer if filter value is null
+      conditions.push(`${col} = ?`);
+      bindings.push(val);
+    }
+    if (conditions.length === 0) continue;
+
+    const remaining = TARGET - collected.size;
+    const sql = `
+      SELECT code, App, App_s1, App_s2, App_s3, Standard, Standard_Full,
+             Hor_Lux, Ver_Lux, Row_Ref
+      FROM applications
+      WHERE ${conditions.join(' AND ')}
+      LIMIT ?
+    `;
+    bindings.push(remaining + collected.size + exclude.size);
+
+    const result = await env.DB.prepare(sql).bind(...bindings).all();
+
+    for (const row of result.results) {
+      if (exclude.has(row.code) || collected.has(row.code)) continue;
+      collected.set(row.code, row);
+      if (collected.size >= TARGET) break;
+    }
+  }
+
+  // Order siblings the same way the main result list does (hierarchy + row#)
+  const ordered = [...collected.values()].sort((a, b) => {
+    for (const key of ['App_s1', 'App_s2', 'App_s3']) {
+      const cmp = compareHierarchyField(a[key], b[key]);
+      if (cmp !== 0) return cmp;
+    }
+    return rowRefNumber(a.Row_Ref) - rowRefNumber(b.Row_Ref);
+  });
+
+  return ordered.map(a => ({
     code: a.code,
-    fullName: [a.App, a.App_s1, a.App_s2].filter(Boolean).join(' → '),
+    fullName: [a.App, a.App_s1, a.App_s2, a.App_s3].filter(Boolean).join(' → '),
     standard: a.Standard,
     standardFull: a.Standard_Full,
     horLux: a.Hor_Lux,
@@ -291,11 +374,13 @@ async function textFallback(db, query, filters, limit, excerptIndex) {
   const terms = query.toLowerCase().split(/\s+/).filter(t => t.length >= 3).slice(0, 4);
   if (terms.length === 0) return [];
 
-  // Build LIKE clauses across all hierarchy columns
+  // Build LIKE clauses across all hierarchy columns. Use AND between terms
+  // (each term must match SOME column) so a query like "playground lighting"
+  // does not also surface every row containing the word "lighting" alone.
   const cols = ['App', 'App_s1', 'App_s2', 'App_s3', 'App_Notes'];
   const likeClause = terms.map(() =>
     `(${cols.map(c => `LOWER(${c}) LIKE ?`).join(' OR ')})`
-  ).join(' OR ');
+  ).join(' AND ');
   const likeBindings = terms.flatMap(t => cols.map(() => `%${t}%`));
 
   let sql = `SELECT * FROM applications WHERE Active = 1 AND (${likeClause})`;
@@ -309,8 +394,16 @@ async function textFallback(db, query, filters, limit, excerptIndex) {
     sql += ' AND Standard = ?';
     bindings.push(filters.standard);
   }
+  if (filters.standard_prefix) {
+    sql += ' AND Standard LIKE ?';
+    bindings.push(`${filters.standard_prefix}-%`);
+  }
   if (filters.tm24_eligible) {
     sql += ' AND TM24_Eligible = 1';
+  }
+  if (filters.lighting_zone) {
+    sql += ' AND Lighting_Zone = ?';
+    bindings.push(filters.lighting_zone);
   }
 
   sql += ' LIMIT ?';
@@ -326,11 +419,15 @@ async function textFallback(db, query, filters, limit, excerptIndex) {
 
 function buildResult(app, score, chunkMeta, excerptIndex) {
   const formatted = formatApplication(app);
-  const citation = formatCitation(app);
+  // Pass the application's own page (where its table row lives), not the
+  // excerpt's page — the citation should point at the source row, while
+  // the excerpt's pageNumber stays in the excerpt object.
+  const citation = formatCitation(app, null, app.Page_Number ?? null);
   const vitriumLink = buildVitriumLink(app);
 
-  // Find the best PDF excerpt for this standard
-  const excerpt = excerptIndex[app.Standard] || null;
+  // Find the best PDF excerpt for this application — preferring a chunk
+  // near the application's table page over a globally top-scored chunk.
+  const excerpt = pickExcerptForApp(excerptIndex, app);
 
   return {
     application: formatted,
@@ -347,20 +444,68 @@ function buildResult(app, score, chunkMeta, excerptIndex) {
 }
 
 /**
- * Build a lookup of standardId → best chunk match for attaching
- * PDF excerpts to application results.
+ * Build a lookup of standardId → array of chunk matches (sorted by score).
+ *
+ * Stores ALL chunks per standard rather than only the top-scored one, so
+ * each application result can later pick a chunk from a page near its
+ * table — this avoids attaching the same generic excerpt to every row of
+ * the same standard.
  */
 function buildExcerptIndex(chunkMatches) {
   const index = {};
   for (const match of chunkMatches) {
     const stdId = match.metadata?.standard_id;
     if (!stdId) continue;
-    // Keep highest-scoring chunk per standard
-    if (!index[stdId] || index[stdId].score < match.score) {
-      index[stdId] = { ...match.metadata, score: match.score };
-    }
+    if (!index[stdId]) index[stdId] = [];
+    index[stdId].push({ ...match.metadata, score: match.score });
+  }
+  // Sort each bucket by score desc so the fallback path picks the best chunk.
+  for (const stdId in index) {
+    index[stdId].sort((a, b) => b.score - a.score);
   }
   return index;
+}
+
+/**
+ * Pick the best PDF excerpt for a given application.
+ *
+ *  1. If the app has a Page_Number, prefer chunks within ±5 pages of that
+ *     page. Among those, pick the highest-scoring NON-table chunk first —
+ *     raw table dumps make poor excerpts because they read as truncated
+ *     numbers when shown out of context. Tables are kept only as a last
+ *     resort.
+ *  2. Otherwise (or if no nearby chunk exists), fall back to the highest-
+ *     scoring chunk for the standard, again preferring non-table.
+ *  3. If the standard has no chunk matches at all, return null.
+ */
+function pickExcerptForApp(excerptIndex, app) {
+  const bucket = excerptIndex[app.Standard];
+  if (!bucket || bucket.length === 0) return null;
+
+  const isTable = (c) => c.chunk_type === 'table';
+  const appPage = app.Page_Number;
+
+  if (appPage != null) {
+    const NEAR_RADIUS = 5;
+    const inRadius = bucket.filter(c => c.page_number != null && Math.abs(c.page_number - appPage) <= NEAR_RADIUS);
+    const pickNearest = (pool) => {
+      let best = null, bestDist = Infinity;
+      for (const c of pool) {
+        const dist = Math.abs(c.page_number - appPage);
+        if (dist < bestDist || (dist === bestDist && (!best || c.score > best.score))) {
+          best = c; bestDist = dist;
+        }
+      }
+      return best;
+    };
+    const prose = inRadius.filter(c => !isTable(c));
+    if (prose.length > 0) return pickNearest(prose);
+    if (inRadius.length > 0) return pickNearest(inRadius);
+  }
+
+  // Global fallback: highest-scoring prose chunk; table only if nothing else.
+  const proseAll = bucket.filter(c => !isTable(c));
+  return proseAll[0] || bucket[0];
 }
 
 // ─── Application Formatter ────────────────────────────────────────────────────
@@ -532,7 +677,39 @@ function buildVectorFilter(filters) {
   }
   if (filters.standard) f.standard_code = filters.standard;
   if (filters.tm24_eligible) f.tm24_eligible = true;
+  // Lighting_Zone is not stored in vector metadata today, so we rely on the
+  // D1-level filter applied in fetchApplications/textFallback. Leaving the
+  // vector filter open keeps recall while D1 narrows the final set.
   return Object.keys(f).length > 0 ? f : null;
+}
+
+/**
+ * Infer structural filters from the raw query string.
+ *   - "LZ0".."LZ4" (case-insensitive) → filters.lighting_zone = "LZ<n>"
+ *   - For "what's new in RP-43" / "what changed in TM-24" style queries,
+ *     pin the search to the mentioned standard so unrelated results don't
+ *     drown out the comparison target.
+ *
+ * Caller-supplied filters take precedence (see mergedFilters in handleSearch).
+ */
+function inferFiltersFromQuery(query) {
+  const out = {};
+
+  const lzMatch = /\b(?:lz)\s*([0-4])\b/i.exec(query);
+  if (lzMatch) out.lighting_zone = `LZ${lzMatch[1]}`;
+
+  // Only constrain to a specific standard for version-comparison intent.
+  // Outside that intent, mentioning a standard ID in passing should not
+  // hide adjacent standards from the result list.
+  //
+  // Use standard_prefix (LIKE) rather than standard (=) because users say
+  // "RP-43" but the D1 Standard column carries the year suffix ("RP-43-25").
+  if (isVersionComparisonQuery(query)) {
+    const stdMatch = /\b((?:RP|TM|HB|LM|LP|LS|G)-\d+)\b/i.exec(query);
+    if (stdMatch) out.standard_prefix = stdMatch[1].toUpperCase();
+  }
+
+  return out;
 }
 
 function dedupeByCode(matches) {
@@ -555,7 +732,85 @@ function deduplicateScored(scored) {
       seen.set(code, item);
     }
   }
-  return [...seen.values()].sort((a, b) => b.score - a.score);
+  return [...seen.values()].sort(compareScoredApps);
+}
+
+/**
+ * Tie-break ordering for scored application results.
+ *
+ * Vector search frequently produces near-identical scores for siblings of
+ * the same hierarchy bucket (e.g. all Playground Lz1–Lz4 rows score
+ * ~0.74–0.75). Without a stable tie-break, Vectorize's internal ordering
+ * leaks through and the UI shows Lz1 → Lz1 → Lz4 → Lz3 → ... which is
+ * confusing. We sort ties by hierarchy then by the row number embedded in
+ * Row_Ref so siblings appear in the same order as in the source standard.
+ *
+ * Score equality uses a 0.01 epsilon — anything tighter is treated as a
+ * tie because Vectorize's scores are not meaningfully different at that
+ * resolution.
+ */
+function compareScoredApps(a, b) {
+  const SCORE_EPSILON = 0.01;
+  const scoreDiff = b.score - a.score;
+  if (Math.abs(scoreDiff) > SCORE_EPSILON) return scoreDiff;
+
+  const A = a.app, B = b.app;
+  const hierarchyKeys = ['Sub_Category', 'App', 'App_s1', 'App_s2', 'App_s3', 'App_s4'];
+  for (const key of hierarchyKeys) {
+    const cmp = compareHierarchyField(A[key], B[key]);
+    if (cmp !== 0) return cmp;
+  }
+  return rowRefNumber(A.Row_Ref) - rowRefNumber(B.Row_Ref);
+}
+
+/**
+ * Same tie-break logic as compareScoredApps, but for the formatted
+ * `result` shape returned by buildResult (used after a fallback merge).
+ */
+function compareResults(a, b) {
+  const SCORE_EPSILON = 0.01;
+  const scoreDiff = (b.relevanceScore || 0) - (a.relevanceScore || 0);
+  if (Math.abs(scoreDiff) > SCORE_EPSILON) return scoreDiff;
+
+  const A = a.application, B = b.application;
+  const hierarchyKeys = ['subCategory', 'category', 'sub1', 'sub2', 'sub3', 'sub4'];
+  for (const key of hierarchyKeys) {
+    const cmp = compareHierarchyField(A[key], B[key]);
+    if (cmp !== 0) return cmp;
+  }
+  return rowRefNumber(A.rowRef) - rowRefNumber(B.rowRef);
+}
+
+/**
+ * Compare two hierarchy field values with IES-aware ordering:
+ *   - nulls sort last
+ *   - Lighting-zone strings (Lz0…Lz4) sort numerically
+ *   - "Lower limit" sorts before "Upper limit"
+ *   - everything else falls back to case-insensitive lexicographic
+ */
+function compareHierarchyField(a, b) {
+  if (a == null && b == null) return 0;
+  if (a == null) return 1;
+  if (b == null) return -1;
+
+  const lzA = /^Lz(\d)/i.exec(String(a));
+  const lzB = /^Lz(\d)/i.exec(String(b));
+  if (lzA && lzB) return Number(lzA[1]) - Number(lzB[1]);
+
+  const isLowerA = /lower\s+limit/i.test(a);
+  const isLowerB = /lower\s+limit/i.test(b);
+  const isUpperA = /upper\s+limit/i.test(a);
+  const isUpperB = /upper\s+limit/i.test(b);
+  if (isLowerA && isUpperB) return -1;
+  if (isUpperA && isLowerB) return 1;
+
+  return String(a).toLowerCase().localeCompare(String(b).toLowerCase());
+}
+
+function rowRefNumber(rowRef) {
+  if (!rowRef) return Number.MAX_SAFE_INTEGER;
+  const m = /(\d+)/.exec(String(rowRef));
+  return m ? Number(m[1]) : Number.MAX_SAFE_INTEGER;
 }
 
 function mergeResults(primary, fallback) {

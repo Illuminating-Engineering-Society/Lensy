@@ -37,6 +37,9 @@ const TRAILING_NOISE = [
   /\s+lighting\s+(?:requirements?|recommendations?|standards?|levels?|design)\s*$/i,
   /\s+(?:illuminance|lux|fc|footcandle)\s+(?:levels?|requirements?|values?)\s*$/i,
   /\s+(?:requirements?|recommendations?)\s*$/i,
+  // dangling copula left from "how bright should X be?" patterns
+  /\s+be[\s?.!]*$/i,
+  /[?!.]+\s*$/,
 ];
 
 // ─── IES Synonym Dictionary ───────────────────────────────────────────────────
@@ -83,11 +86,17 @@ const SYNONYMS = {
   'parking lot':     'parking lot surface parking uncovered outdoor',
   'parking':         'parking garage surface lot covered uncovered',
 
-  // ── Outdoor / Pedestrian ──
-  'walkway':         'walkway pedestrian path sidewalk footpath promenade',
-  'outdoor dining':  'outdoor dining restaurant patio terrace alfresco',
-  'plaza':           'plaza outdoor public space pedestrian gathering',
-  'park':            'park recreation outdoor landscape pathway',
+  // ── Outdoor / Pedestrian (RP-43-25 vocabulary) ──
+  'walkway':         'walkway pedestrian path sidewalk footpath promenade common pedestrian',
+  'outdoor dining':  'outdoor dining restaurant patio terrace alfresco features perimeters',
+  'plaza':           'plaza outdoor public space pedestrian gathering features perimeters',
+  'park':            'park recreation outdoor landscape pathway common pedestrian playground',
+  'playground':      'playground play area common pedestrian recreation outdoor children',
+  'pedestrian':      'pedestrian walkway footpath sidewalk common path special',
+  'spectator':       'spectator seating viewing audience stadium arena venue',
+  'amphitheater':    'amphitheater grass area outdoor seating performance venue',
+  'cycling':         'cycling bicycle bike path mixed cycling pedestrian',
+  'mixed-use path':  'mixed cycling pedestrian path bicycle multi-use',
   'building entrance': 'building entrance entry vestibule canopy approach',
 
   // ── Sports ──

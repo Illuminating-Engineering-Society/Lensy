@@ -13,6 +13,12 @@
             'ies-blue': '#003DA5',
             'ies-blue-dark': '#002d7a',
             'ies-gold': '#F5A623',
+            // Sub_Category banner colors per IlluminanceTables_Reference_260421 (Visual)
+            'sub-interior':  '#2E4A62',  // dark blue — INTERIORS banner
+            'sub-exterior':  '#2E4A34',  // dark green — EXTERIORS banner
+            // App banner accents (level 2 in the spec): light fills
+            'app-interior':  '#4F81A1',  // light blue — Sub Sub Category Interior
+            'app-exterior':  '#A3471A',  // brown/red — Application Exterior
           },
           fontFamily: {
             sans: ['-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'sans-serif'],
@@ -425,23 +431,34 @@
     function renderResultCard(result, index) {
       const app = result.application || {};
       const score = result.relevanceScore || 0;
+      const isExterior = app.indoorOutdoor === 'Outdoor';
+      const isInterior = app.indoorOutdoor === 'Indoor';
 
-      // Hierarchy breadcrumb
+      // Sub_Category banner colors per IlluminanceTables_Reference_260421
+      // (Interior = dark blue #2E4A62, Exterior = dark green #2E4A34).
+      // We keep the card neutral but accent the breadcrumb and a left border
+      // stripe so the indoor/outdoor distinction is visible at a glance.
+      const accentHex = isExterior ? '#2E4A34' : isInterior ? '#2E4A62' : '#6B7280';
+
+      // Hierarchy breadcrumb — Sub_Category styled in the contract color when present
       const crumbs = [app.category, app.sub1, app.sub2, app.sub3].filter(Boolean);
       const breadcrumb = crumbs.length > 1
         ? crumbs.slice(0, -1).map(c => `<span>${escapeHtml(c)}</span>`).join('<span class="mx-1 opacity-40">›</span>')
         : '';
       const title = crumbs[crumbs.length - 1] || app.code || 'Application';
 
-      // Indoor/outdoor badge
+      const subCategoryBanner = app.subCategory ? `
+        <span class="inline-block text-[10px] font-bold tracking-wider uppercase px-2 py-0.5 rounded-sm mr-2 align-middle"
+              style="background-color: ${accentHex}; color: #fff;">
+          ${escapeHtml(app.subCategory)}
+        </span>` : '';
+
+      // Indoor/outdoor badge — uses the contract color for stronger branding
       const locationBadge = app.indoorOutdoor ? `
-        <span class="text-xs px-2 py-0.5 rounded-full font-medium ${
-          app.indoorOutdoor === 'Outdoor'
-            ? 'bg-amber-50 text-amber-700 border border-amber-200'
-            : app.indoorOutdoor === 'Both'
-            ? 'bg-purple-50 text-purple-700 border border-purple-200'
-            : 'bg-blue-50 text-blue-700 border border-blue-100'
-        }">${escapeHtml(app.indoorOutdoor)}</span>
+        <span class="text-xs px-2 py-0.5 rounded-full font-medium border"
+              style="background-color: ${accentHex}15; color: ${accentHex}; border-color: ${accentHex}33;">
+          ${escapeHtml(app.indoorOutdoor)}
+        </span>
       ` : '';
 
       const areaTaskBadge = app.areaOrTask ? `
@@ -452,17 +469,45 @@
         <span class="text-xs px-2 py-0.5 rounded-full bg-green-50 text-green-700 border border-green-200">TM-24</span>
       ` : '';
 
+      // Per-row IES classifications: Veiling Risk (L/M/H) and Class of Play (I-IV)
+      // Inline hex avoids the Tailwind JIT missing classes built dynamically in JS.
+      const veilingPalette = {
+        L: { bg: '#ECFDF5', text: '#065F46', border: '#A7F3D0' },
+        M: { bg: '#FFFBEB', text: '#92400E', border: '#FCD34D' },
+        H: { bg: '#FEF2F2', text: '#991B1B', border: '#FECACA' },
+      };
+      const veilingTone = veilingPalette[String(app.veilingRisk || '').toUpperCase()];
+      const veilingBadge = veilingTone ? `
+        <span class="text-xs px-2 py-0.5 rounded-full font-medium border"
+              style="background-color: ${veilingTone.bg}; color: ${veilingTone.text}; border-color: ${veilingTone.border};"
+              title="Veiling reflection risk">
+          Veiling: ${escapeHtml(app.veilingRisk)}
+        </span>
+      ` : '';
+
+      const classOfPlayBadge = app.classOfPlay ? `
+        <span class="text-xs px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200" title="RP-6 Class of Play">
+          Class ${escapeHtml(app.classOfPlay)}
+        </span>
+      ` : '';
+
       // Illuminance values
       const luxBlock = buildIlluminanceBlock(app);
 
-      // Outdoor data
-      const outdoorBlock = (app.outdoor && app.outdoor.lightingZone) ? `
+      // Outdoor data — full set per RP-43-25 spec: Zone, Glare, Uplight, Controls, Spectrum
+      const outdoor = app.outdoor || {};
+      const hasOutdoor = outdoor.lightingZone || outdoor.maxGlareRating || outdoor.maxUplight ||
+                        outdoor.spectrumGuidance || outdoor.controlsRequired;
+      const outdoorBlock = hasOutdoor ? `
         <div class="mt-3 pt-3 border-t border-gray-50">
-          <p class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Outdoor Controls</p>
+          <p class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Environmental &amp; Visual</p>
           <div class="flex flex-wrap gap-2 text-xs">
-            ${app.outdoor.lightingZone ? `<span class="bg-amber-50 border border-amber-100 text-amber-800 px-2.5 py-1 rounded-md">Zone ${escapeHtml(String(app.outdoor.lightingZone))}</span>` : ''}
-            ${app.outdoor.maxGlareRating ? `<span class="bg-orange-50 border border-orange-100 text-orange-800 px-2.5 py-1 rounded-md">Glare: ${escapeHtml(String(app.outdoor.maxGlareRating))}</span>` : ''}
-            ${app.outdoor.spectrumGuidance ? `<span class="bg-purple-50 border border-purple-100 text-purple-800 px-2.5 py-1 rounded-md">${escapeHtml(app.outdoor.spectrumGuidance)}</span>` : ''}
+            ${outdoor.lightingZone ? `<span class="bg-amber-50 border border-amber-100 text-amber-800 px-2.5 py-1 rounded-md">Zone ${escapeHtml(String(outdoor.lightingZone))}</span>` : ''}
+            ${outdoor.maxGlareRating ? `<span class="bg-orange-50 border border-orange-100 text-orange-800 px-2.5 py-1 rounded-md">Glare ≤ ${escapeHtml(String(outdoor.maxGlareRating))}</span>` : ''}
+            ${outdoor.maxUplight ? `<span class="bg-yellow-50 border border-yellow-100 text-yellow-800 px-2.5 py-1 rounded-md">Uplight ≤ ${escapeHtml(String(outdoor.maxUplight))}</span>` : ''}
+            ${outdoor.controlsRequired ? `<span class="bg-sky-50 border border-sky-100 text-sky-800 px-2.5 py-1 rounded-md">Controls: ${escapeHtml(String(outdoor.controlsRequired))}</span>` : ''}
+            ${outdoor.curfewDimming ? `<span class="bg-slate-50 border border-slate-100 text-slate-700 px-2.5 py-1 rounded-md">Curfew: ${escapeHtml(String(outdoor.curfewDimming))}</span>` : ''}
+            ${outdoor.spectrumGuidance ? `<span class="bg-purple-50 border border-purple-100 text-purple-800 px-2.5 py-1 rounded-md">${escapeHtml(outdoor.spectrumGuidance)}</span>` : ''}
           </div>
         </div>
       ` : '';
@@ -474,14 +519,19 @@
         </div>
       ` : '';
 
-      // Excerpts from PDF
-      const excerptBlock = (result.excerpts && result.excerpts.length > 0) ? `
+      // Excerpt from PDF — the search worker returns a single best excerpt
+      // per result (search.js: pickExcerptForApp). Older code expected an
+      // `excerpts` array, which is why "From the Standard" never rendered.
+      const excerpts = Array.isArray(result.excerpts)
+        ? result.excerpts
+        : (result.excerpt ? [result.excerpt] : []);
+      const excerptBlock = excerpts.length > 0 ? `
         <div class="mt-3 pt-3 border-t border-gray-50">
           <p class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">From the Standard</p>
-          ${result.excerpts.slice(0, 2).map(e => `
+          ${excerpts.slice(0, 2).map(e => `
             <div class="text-xs text-gray-600 leading-relaxed mb-2 pl-3 border-l-2 border-gray-200">
-              "${escapeHtml(e.text?.substring(0, 200))}${e.text?.length > 200 ? '…' : ''}"
-              <span class="ml-1 text-gray-400">p. ${e.pageNumber}</span>
+              "${escapeHtml((e.text || '').substring(0, 240))}${(e.text || '').length > 240 ? '…' : ''}"
+              <span class="ml-1 text-gray-400">${e.section ? `§${escapeHtml(e.section)} · ` : ''}p. ${e.pageNumber}</span>
             </div>
           `).join('')}
         </div>
@@ -498,7 +548,8 @@
       ` : '';
 
       return `
-        <article class="result-card bg-white rounded-xl border border-gray-100 shadow-sm p-5" style="animation-delay: ${index * 40}ms">
+        <article class="result-card bg-white rounded-xl border border-gray-100 shadow-sm p-5 relative overflow-hidden"
+                 style="animation-delay: ${index * 40}ms; border-left: 3px solid ${accentHex};">
           <!-- Card header -->
           <div class="flex items-start justify-between gap-3">
             <div class="flex items-start gap-3 min-w-0">
@@ -509,13 +560,14 @@
                 data-code="${escapeHtml(app.code || '')}"
               />
               <div class="min-w-0">
+                ${subCategoryBanner ? `<p class="mb-1">${subCategoryBanner}</p>` : ''}
                 ${breadcrumb ? `<p class="text-xs text-gray-400 mb-0.5 flex items-center flex-wrap">${breadcrumb}</p>` : ''}
                 <h3 class="font-bold text-gray-900 leading-snug">${escapeHtml(title)}</h3>
                 <p class="text-xs text-gray-400 mt-1">${escapeHtml(result.citation || '')}</p>
               </div>
             </div>
             <div class="flex items-center gap-1.5 shrink-0 flex-wrap justify-end">
-              ${locationBadge}${areaTaskBadge}${tm24Badge}
+              ${locationBadge}${areaTaskBadge}${tm24Badge}${veilingBadge}${classOfPlayBadge}
             </div>
           </div>
 
@@ -558,8 +610,19 @@
         return `
           <div class="bg-gray-50 rounded-lg px-3 py-2.5 ${highlight ? 'ring-1 ring-ies-blue/15' : ''}">
             <p class="text-xs text-gray-400 mb-1">${label}</p>
-            ${value != null ? `<p class="lux-value text-gray-900 lux-badge">${value}<span class="text-xs font-normal text-gray-400 ml-1">lx</span></p>` : '<p class="text-sm text-gray-400">—</p>'}
-            ${sub ? `<p class="text-xs text-gray-400 mt-0.5">${sub}</p>` : ''}
+            ${value != null ? `<p class="lux-value text-gray-900 lux-badge">${escapeHtml(String(value))}</p>` : '<p class="text-sm text-gray-400">—</p>'}
+            ${sub ? `<p class="text-xs text-gray-400 mt-0.5">${escapeHtml(String(sub))}</p>` : ''}
+          </div>
+        `;
+      };
+
+      const luxCol = (label, lux, fc, highlight) => {
+        if (lux == null && fc == null) return '';
+        return `
+          <div class="bg-gray-50 rounded-lg px-3 py-2.5 ${highlight ? 'ring-1 ring-ies-blue/15' : ''}">
+            <p class="text-xs text-gray-400 mb-1">${label}</p>
+            <p class="lux-value text-gray-900 lux-badge">${lux ?? '—'}<span class="text-xs font-normal text-gray-400 ml-1">lx</span></p>
+            ${fc != null ? `<p class="text-xs text-gray-400 mt-0.5">${fc} fc</p>` : ''}
           </div>
         `;
       };
@@ -568,55 +631,56 @@
         ? `<span class="inline-block font-mono text-xs font-bold text-ies-blue bg-ies-blue/8 px-1.5 py-0.5 rounded mr-1">${escapeHtml(cat)}</span>`
         : '';
 
-      let sections = [];
+      // Per IlluminanceTables_Reference_260421 (Visual): each plane has its own
+      // header tint — Eh = light blue, Ev = light green, Environmental = light yellow.
+      const planeHeader = (label, cat, tintBg, tintText) => `
+        <p class="text-xs font-semibold uppercase tracking-wider mb-2 px-2 py-1 rounded inline-block"
+           style="background-color: ${tintBg}; color: ${tintText};">
+          ${catBadge(cat)}${label}
+        </p>
+      `;
 
-      if (hor) {
-        sections.push(`
-          <div>
-            <p class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">
-              ${catBadge(hor.category)}Horizontal
-            </p>
-            <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
-              ${col('Maintained', hor.lux, hor.fc != null ? `${hor.fc} fc` : null, true)}
-              ${col('Height', hor.heightM != null ? hor.heightM + ' m' : null, null, false)}
-              ${col('Uniformity', hor.uniformity, null, false)}
-              ${col('Max:Min', hor.maxMin, null, false)}
-            </div>
-          </div>
-        `);
-      }
+      // Build the height label, supporting numeric meters or "TS" (Task Surface).
+      const heightLabel = (m, ft) => {
+        if (m == null && ft == null) return null;
+        if (m === 'TS' || ft === 'TS') return 'TS (Task Surface)';
+        const parts = [];
+        if (m != null) parts.push(`${m} m`);
+        if (ft != null) parts.push(`${ft} ft`);
+        return parts.join(' / ') || null;
+      };
 
-      if (ver) {
-        sections.push(`
+      // Each plane renders the same shape: lux/fc, height, avg|max|min basis,
+      // uniformity ratio, CV, ratio basis. Empty cols simply don't render.
+      // When `uniformity` is null but `ratioBasis` has a value, promote the
+      // basis to the main slot — it describes the maintained value's geometry
+      // (Avg:Min, etc.) rather than being orphan metadata under a "—".
+      const renderPlane = (plane, label, headerBg, headerFg) => {
+        const uniformityValue = plane.uniformity ?? plane.ratioBasis;
+        const uniformitySub = plane.uniformity != null ? plane.ratioBasis : null;
+        const cols = [
+          luxCol('Maintained', plane.lux, plane.fc, true),
+          col('Height (AFF)', heightLabel(plane.heightM, plane.heightFt), null, false),
+          col('Basis', plane.avgMaxMin, null, false),
+          col('Uniformity', uniformityValue, uniformitySub, false),
+          col('CV', plane.cv, null, false),
+        ].filter(Boolean);
+        if (!cols.length) return '';
+        return `
           <div>
-            <p class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">
-              ${catBadge(ver.category)}Vertical
-            </p>
-            <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
-              ${col('Maintained', ver.lux, ver.fc != null ? `${ver.fc} fc` : null, true)}
-              ${col('Height', ver.heightM != null ? ver.heightM + ' m' : null, null, false)}
-              ${col('Uniformity', ver.uniformity, null, false)}
-              ${col('Max:Min', ver.maxMin, null, false)}
+            ${planeHeader(label, plane.category, headerBg, headerFg)}
+            <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
+              ${cols.join('')}
             </div>
+            ${plane.notes ? `<p class="text-xs text-gray-500 mt-2 italic">${escapeHtml(plane.notes)}</p>` : ''}
           </div>
-        `);
-      }
+        `;
+      };
 
-      if (task) {
-        sections.push(`
-          <div>
-            <p class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">
-              ${catBadge(task.category)}Task
-            </p>
-            <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
-              ${col('Maintained', task.lux, task.fc != null ? `${task.fc} fc` : null, true)}
-              ${col('Height', task.heightM != null ? task.heightM + ' m' : null, null, false)}
-              ${col('Uniformity', task.uniformity, null, false)}
-              ${col('Max:Min', task.maxMin, null, false)}
-            </div>
-          </div>
-        `);
-      }
+      const sections = [];
+      if (hor)  sections.push(renderPlane(hor,  'Horizontal (Eₕ)', '#D7E8F4', '#1E4F73'));
+      if (ver)  sections.push(renderPlane(ver,  'Vertical (Eᵥ)',   '#D9F2D0', '#2E4A34'));
+      if (task) sections.push(renderPlane(task, 'Task',                 '#FCF1D8', '#7A4F0E'));
 
       if (!sections.length) return '';
 
