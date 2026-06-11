@@ -22,6 +22,7 @@
 
 import { handleSearch } from './search.js';
 import { handleIngest } from './ingest.js';
+import { handleAdminScanOrphans, handleAdminEnumerateIds, handleAdminDeleteOrphans } from './admin.js';
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
@@ -48,6 +49,17 @@ export default {
       // ── Ingest (internal/admin only) ─────────────────────────────────────
       if (path.startsWith('/api/ingest') && request.method === 'POST') {
         return withCors(await handleIngest(request, env));
+      }
+
+      // ── Admin: orphan vector cleanup (shared-secret protected) ───────────
+      if (path === '/api/admin/scan-orphans' && request.method === 'POST') {
+        return withCors(await handleAdminScanOrphans(request, env));
+      }
+      if (path === '/api/admin/enumerate-ids' && request.method === 'POST') {
+        return withCors(await handleAdminEnumerateIds(request, env));
+      }
+      if (path === '/api/admin/delete-orphans' && request.method === 'POST') {
+        return withCors(await handleAdminDeleteOrphans(request, env));
       }
 
       // ── Applications ─────────────────────────────────────────────────────

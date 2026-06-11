@@ -232,6 +232,18 @@
         </div>
       </div>
 
+      <!-- Low-confidence advisory (shown when API returns noStrongMatch=true) -->
+      <div
+        id="no-strong-match-banner"
+        class="hidden mb-4 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 flex gap-3 no-print"
+        role="status"
+      >
+        <svg class="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/>
+        </svg>
+        <p id="no-strong-match-text" class="text-sm text-amber-900 leading-relaxed"></p>
+      </div>
+
       <!-- Result cards list -->
       <div id="results-list" class="space-y-3"></div>
 
@@ -410,6 +422,20 @@
       document.getElementById('results-heading').textContent =
         `${data.results.length} Result${data.results.length !== 1 ? 's' : ''}`;
       document.getElementById('results-meta').textContent = `for "${data.query}"`;
+
+      // Low-confidence advisory: banner shows above the list when the API
+      // signals no strong match. Results are still rendered — the user just
+      // sees a clear "these are best-effort" notice.
+      const banner = document.getElementById('no-strong-match-banner');
+      const bannerText = document.getElementById('no-strong-match-text');
+      if (data.noStrongMatch && data.results.length > 0) {
+        bannerText.textContent = data.noStrongMatchMessage
+          || 'No strong match found. The results below are the closest available.';
+        banner.classList.remove('hidden');
+      } else {
+        banner.classList.add('hidden');
+        bannerText.textContent = '';
+      }
 
       if (data.aiSummary) renderAISummary(data.aiSummary);
 
@@ -852,6 +878,7 @@
       document.getElementById('results-list').innerHTML = '';
       document.getElementById('ai-summary-card').classList.add('hidden');
       document.getElementById('no-results').classList.add('hidden');
+      document.getElementById('no-strong-match-banner').classList.add('hidden');
       currentResultCodes = [];
       selectedApplicationCodes = new Set();
       updateBulkActionsUI();

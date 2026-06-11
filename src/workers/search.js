@@ -66,7 +66,7 @@ const EMBED_MODEL = '@cf/baai/bge-base-en-v1.5';
 const VECTOR_TOP_K = 40;      // fetch extra; deduplicate down to limit
 const MAX_LIMIT = 20;
 const MIN_VECTOR_RESULTS = 3; // below this, run text fallback
-const STRONG_MATCH_THRESHOLD = 0.68; // top relevanceScore below this → flag noStrongMatch
+const STRONG_MATCH_THRESHOLD = 0.60; // top relevanceScore below this → flag noStrongMatch
 
 const NO_STRONG_MATCH_MESSAGE =
   "There may not be explicit lighting recommendations for that application within the current body of IES Standards. " +
@@ -227,13 +227,33 @@ async function runSingleSearch(rawQuery, filters, limit, env) {
     results.sort(compareResults);
   }
 
-  // 8. Chunk fallback: if still no results, surface PDF chunks directly
+  // 8. Chunk fallback: if still no results, surface PDF chunks directly.
+  //    Filter against the D1 standards table — Vectorize can hold orphan
+  //    chunks from deleted/renamed standards (re-ingests with smaller chunk
+  //    counts leave the tail behind), and we don't want those reaching the UI.
   if (results.length === 0 && chunkMatches.length > 0) {
-    const chunkResults = buildChunkResults(chunkMatches.slice(0, limit));
-    results.push(...chunkResults);
+    const validStandards = await fetchValidStandardIds(env.DB);
+    const liveChunks = chunkMatches.filter(m => {
+      const id = m.metadata?.standard_id || m.metadata?.standard_code;
+      return id && validStandards.has(id);
+    });
+    if (liveChunks.length > 0) {
+      const chunkResults = buildChunkResults(liveChunks.slice(0, limit));
+      results.push(...chunkResults);
+    }
   }
 
   return { results, expandedQuery };
+}
+
+/**
+ * Lookup of every standard_id currently present in the D1 `standards` table.
+ * Used to filter Vectorize chunk fallbacks so orphan vectors from previous
+ * ingests don't surface to users. Runs once per request (small set: ~dozens).
+ */
+async function fetchValidStandardIds(db) {
+  const result = await db.prepare('SELECT id FROM standards').all();
+  return new Set((result.results || []).map(r => r.id));
 }
 
 // ─── Multi-Search ─────────────────────────────────────────────────────────────

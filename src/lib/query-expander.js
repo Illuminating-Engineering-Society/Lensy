@@ -21,15 +21,15 @@
 
 const QUESTION_PATTERNS = [
   // "how bright should a conference room be?"
-  /^how\s+(?:bright|much\s+light|many\s+(?:lux|footcandles?|fc))\s+(?:should|does?|is)\s+(?:a|an|the)?\s*/i,
+  /^how\s+(?:bright|much\s+light|many\s+(?:lux|footcandles?|fc))\s+(?:should|does?|is)\s+(?:(?:an|the|a)\s+)?/i,
   // "what lux/fc/illuminance for an office?"
-  /^what\s+(?:are\s+the\s+)?(?:recommended\s+)?(?:lux|fc|footcandles?|illuminance|light\s+levels?|lighting)\s+(?:levels?\s+)?(?:for|in|at)\s+(?:a|an|the)?\s*/i,
+  /^what\s+(?:are\s+the\s+)?(?:recommended\s+)?(?:lux|fc|footcandles?|illuminance|light\s+levels?|lighting)\s+(?:levels?\s+)?(?:for|in|at)\s+(?:(?:an|the|a)\s+)?/i,
   // "what lighting is recommended for a warehouse?"
-  /^what\s+lighting\s+(?:is\s+)?(?:recommended|required|specified)\s+(?:for|in|at)\s+(?:a|an|the)?\s*/i,
+  /^what\s+lighting\s+(?:is\s+)?(?:recommended|required|specified)\s+(?:for|in|at)\s+(?:(?:an|the|a)\s+)?/i,
   // "IES lighting recommendations/requirements/standards for X"
-  /^(?:ies\s+)?lighting\s+(?:recommendations?|requirements?|standards?|levels?|design)\s+(?:for|in|at|of)\s+(?:a|an|the)?\s*/i,
+  /^(?:ies\s+)?lighting\s+(?:recommendations?|requirements?|standards?|levels?|design)\s+(?:for|in|at|of)\s+(?:(?:an|the|a)\s+)?/i,
   // "recommended illuminance for X" / "required lux for X"
-  /^(?:recommended|required|suggested|typical)\s+(?:illuminance|lux|light\s+levels?)\s+(?:for|in|at)\s+(?:a|an|the)?\s*/i,
+  /^(?:recommended|required|suggested|typical)\s+(?:illuminance|lux|light\s+levels?)\s+(?:for|in|at)\s+(?:(?:an|the|a)\s+)?/i,
   // trailing noise
 ];
 
