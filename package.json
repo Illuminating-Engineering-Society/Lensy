@@ -9,8 +9,6 @@
     "deploy": "wrangler deploy",
     "db:migrate:remote": "wrangler d1 migrations apply ies-metadata --remote",
     "db:migrate:local": "wrangler d1 migrations apply ies-metadata --local",
-    "db:seed": "node scripts/seed-applications.js",
-    "db:seed:help": "echo 'BOOTSTRAP ONLY. Normal data path: npm run ingest -- --file pdfs/RP-X-XX.pdf --id RP-X-XX'",
     "ingest": "node scripts/ingest-pdfs.js",
     "ingest:apps": "node scripts/ingest-pdfs.js --applications-only",
     "extract": "node scripts/extract-applications-from-pdf.js",
