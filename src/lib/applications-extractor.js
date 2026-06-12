@@ -67,15 +67,24 @@ function isIlluminancePage(page) {
 function extractFromPages(tablePages, standardId, fullDesignation) {
   const records = [];
 
-  // Compute baseline X across all candidate hierarchy lines
-  // (skip page header/footer X's by ignoring lines outside the body)
-  const candidateXs = tablePages.flatMap(p =>
-    (p.lines || [])
-      .filter(l => l.x > 50 && l.x < 250 && l.fontSize < 9)
-      .map(l => l.x)
-  );
-  const baseX = candidateXs.length > 0 ? Math.min(...candidateXs) : 60;
-  const X_STEP = 7;  // calibrated from RP-43-25 (74.6 → 81.6 → 88.4)
+  // Derive the table's indentation grid from the actual X positions of body
+  // lines, instead of assuming a fixed pixel step. Each IES standard renders
+  // its hierarchy at slightly different left margins and indent increments
+  // (RP-43 ≈7px, RP-2 ≈8px), so a hard-coded X_STEP=7 drifts and mis-assigns
+  // depth (e.g. App_s3 rounding up to App_s4, leaving the App level empty).
+  // depthForX() snaps a line's X to the nearest derived level → its depth.
+  // The table body (every hierarchy level AND every data row) renders at one
+  // consistent small font in these prototypes (≈7.5pt), while page headers,
+  // table titles and discussion prose on the same pages use larger fonts
+  // (9–10pt). Anchor to the data-row font and ignore lines outside that band
+  // so prose at the left margin can't inject a phantom shallow indent level
+  // (which previously pushed the App level down a rank, leaving App empty).
+  const bodyFont = medianDataFont(tablePages);
+  const levels = deriveIndentLevels(tablePages, bodyFont);
+  const baseX = levels.length > 0 ? levels[0] : 60;
+
+  const offGrid = (line) =>
+    bodyFont != null && Math.abs((line.fontSize ?? bodyFont) - bodyFont) > BODY_FONT_TOLERANCE;
 
   // Boilerplate / header lines to skip
   const SKIP_RE = /^(?:ANSI\/IES|Recommended Practice|Recommended Illuminance|APPLICATION|Target E[hv]|Horizontal Illuminance|Vertical Illuminance|Environmental and Visual|Uniformity|TaskRatio|Lux\s*@|Fc\s*@|@\s*Height|See Notes|TS\s*=|Class of Play|Veiling Risk|Sub Category|Hierarchy|App_s)/i;
@@ -92,6 +101,7 @@ function extractFromPages(tablePages, standardId, fullDesignation) {
   let currentSection = inferSectionFromStandard(standardId);
   let rowIndex = 0;
   let tableRef = 'Table A-1';
+  let pendingLink = null;  // cross-reference captured from a "Refer to ANSI/IES ..." hierarchy line
 
   for (const page of tablePages) {
     const ref = detectTableRef(page.text);
@@ -116,20 +126,32 @@ function extractFromPages(tablePages, standardId, fullDesignation) {
         continue;
       }
 
+      // Off the table-body font (titles, headers, discussion prose) → not a
+      // hierarchy or data node. Sub-category banners were already handled above.
+      if (offGrid(line)) continue;
+
       const parsed = parseDataRow(text);
-      const xDelta = (line.x || baseX) - baseX;
-      const depth = Math.max(0, Math.round(xDelta / X_STEP));
+      const depth = depthForX(line.x ?? baseX, levels);
 
       if (!parsed.hasData) {
-        // Pure hierarchy line — fill the slot at this depth
-        const name = cleanAppName(parsed.label);
+        // Pure hierarchy line — fill the slot at this depth.
+        // Ignore lines that start to the right of the indent grid: those are
+        // stray column-header fragments ("Target Eh @ Height AFF", "Ratio
+        // Basis") that share a Y band with the table but are not hierarchy.
+        const deepestLevel = levels[levels.length - 1] ?? baseX;
+        if ((line.x ?? baseX) > deepestLevel + INDENT_TOLERANCE) continue;
+        const { name, link } = splitNameAndLink(parsed.label);
         if (name.length < 2) continue;
         applyHierarchyAtDepth(hierarchy, depth, name);
+        if (link) pendingLink = link;
         continue;
       }
 
       // Data row — snapshot hierarchy with leaf, build record
-      const leafName = cleanAppName(parsed.label);
+      const { name: leafRaw, link: leafLink } = splitNameAndLink(parsed.label);
+      const leafName = cleanAppName(leafRaw);
+      const rowLink = leafLink || pendingLink;
+      pendingLink = null;
       const snapshot = snapshotHierarchyWithLeaf(hierarchy, depth, leafName);
 
       const tm24 = isTM24EligibleCat(parsed.horCat) || isTM24EligibleCat(parsed.verCat);
@@ -150,7 +172,7 @@ function extractFromPages(tablePages, standardId, fullDesignation) {
         Table_Ref:     tableRef,
         Row_Ref:       `Row ${rowIndex + 1}`,
         Page_Number:   page.number,
-        Link_Mapping:  null,
+        Link_Mapping:  rowLink,
         Area_or_Task:   parsed.areaOrTask || 'Area',
         Indoor_Outdoor: currentSection,
         App_Type:       null,
@@ -216,7 +238,7 @@ function extractFromPages(tablePages, standardId, fullDesignation) {
  *           uniformity, cv, ratioBasis, glareMax, uplightMax, controls,
  *           spectrum, veilingRisk, classOfPlay }
  */
-function parseDataRow(text) {
+export function parseDataRow(text) {
   const result = {
     hasData: false,
     label: text,
@@ -230,127 +252,197 @@ function parseDataRow(text) {
     veilingRisk: null, classOfPlay: null,
   };
 
-  // ─ Lux occurrences (Hor first, Ver second) ─
-  // Pattern: "<n> lx @ <h> m"   with optional T/A prefix glued to the number
-  const LUX_RE = /([AT])?\s*(\d+(?:\.\d+)?)\s*l(?:x|ux)\s*@\s*(\d+(?:\.\d+)?|TS)\s*m/gi;
+  // ── Lux occurrences ───────────────────────────────────────────────────────
+  // Canonical row grammar (verified across RP-2/6/7/9/10/29/43 prototypes):
+  //   "<Cat A-Y> <n> lx @ <TS | n m>"
+  // The illuminance Category is the single letter glued immediately before the
+  // lux value ("A M 100 lx" → Area, Cat M;  "T W 3000 lx" → Task, Cat W). The
+  // height may be "TS" (task surface, no unit), "<n> m", or absent entirely.
+  // First lux match = horizontal plane, second = vertical plane.
+  const LUX_RE = /(?:([A-Y])\s+)?(\d+(?:\.\d+)?)\s*l(?:x|ux)\s*@?\s*(TS|\d+(?:\.\d+)?\s*m)?/gi;
   const luxMatches = [...text.matchAll(LUX_RE)];
   if (luxMatches.length >= 1) {
     const m = luxMatches[0];
-    if (m[1]) result.areaOrTask = m[1].toUpperCase() === 'T' ? 'Task' : 'Area';
+    result.horCat = m[1] ? m[1].toUpperCase() : null;
     result.horLux = parseFloat(m[2]);
-    const h = m[3] === 'TS' ? null : parseFloat(m[3]);
-    result.horHeightM = h === 0 ? null : h;  // "0.00 m" = ground level (no useful AFF info)
+    result.horHeightM = parseHeight(m[3]);
     result.hasData = true;
   }
   if (luxMatches.length >= 2) {
     const m = luxMatches[1];
+    result.verCat = m[1] ? m[1].toUpperCase() : null;
     result.verLux = parseFloat(m[2]);
-    const h = m[3] === 'TS' ? null : parseFloat(m[3]);
-    result.verHeightM = h === 0 ? null : h;
+    result.verHeightM = parseHeight(m[3]);
   }
 
-  // ─ Fc occurrences (older standards only) ─
-  const FC_RE = /([AT])?\s*(\d+(?:\.\d+)?)\s*(?:fc|footcandles?)\s*@\s*(\d+(?:\.\d+)?|TS)\s*ft/gi;
+  // ── Fc occurrences (every prototype carries both lx and fc) ───────────────
+  //   "<n> fc @ <TS | n ft>"
+  const FC_RE = /(\d+(?:\.\d+)?)\s*(?:fc|footcandles?)\s*@?\s*(TS|\d+(?:\.\d+)?\s*ft)?/gi;
   const fcMatches = [...text.matchAll(FC_RE)];
   if (fcMatches.length >= 1) {
-    if (!result.areaOrTask && fcMatches[0][1]) {
-      result.areaOrTask = fcMatches[0][1].toUpperCase() === 'T' ? 'Task' : 'Area';
-    }
-    result.horFc = parseFloat(fcMatches[0][2]);
-    result.horHeightFt = fcMatches[0][3] === 'TS' ? null : parseFloat(fcMatches[0][3]);
+    result.horFc = parseFloat(fcMatches[0][1]);
+    result.horHeightFt = parseHeight(fcMatches[0][2]);
     result.hasData = true;
   }
   if (fcMatches.length >= 2) {
-    result.verFc = parseFloat(fcMatches[1][2]);
-    result.verHeightFt = fcMatches[1][3] === 'TS' ? null : parseFloat(fcMatches[1][3]);
+    result.verFc = parseFloat(fcMatches[1][1]);
+    result.verHeightFt = parseHeight(fcMatches[1][2]);
   }
 
-  // ─ Bare A/T marker before the first lux ─
+  // ── Split the row into horizontal / vertical halves at the 2nd lux value ──
+  // so the basis / uniformity / ratio tokens are parsed against the correct
+  // plane instead of leaking the horizontal values into the vertical block.
+  const firstDataIdx = result.hasData ? firstDataIndex(text, luxMatches, fcMatches) : -1;
+  const splitIdx = luxMatches.length >= 2 ? luxMatches[1].index : text.length;
+  const horTail = sliceMetricsTail(text, luxMatches[0], fcMatches[0], splitIdx);
+  const verTail = luxMatches.length >= 2 ? text.slice(splitIdx) : '';
+
+  const horMetrics = parseHalfMetrics(horTail);
+  result.horBasis = horMetrics.basis;
+  result.uniformity = horMetrics.uniformity;
+  result.cv = horMetrics.cv;
+  result.ratioBasis = horMetrics.ratioBasis;
+
+  if (verTail) {
+    const verMetrics = parseHalfMetrics(verTail);
+    result.verBasis = verMetrics.basis;
+    result.verUniformity = verMetrics.uniformity;
+    result.verCV = verMetrics.cv;
+    result.verRatioBasis = verMetrics.ratioBasis;
+  }
+
+  // ── Area vs Task + Veiling Risk — read the marker tokens that precede the ──
+  // horizontal Category, i.e. the text between the leaf label and the data.
+  // For pure hierarchy lines (no data tokens) the whole line is the label.
+  const prefix = firstDataIdx >= 0 ? text.slice(0, firstDataIdx) : text;
+  const markers = parsePrefixMarkers(prefix);
+  result.areaOrTask = markers.areaOrTask;
+  result.veilingRisk = markers.veilingRisk;
+  result.label = markers.label;
+
+  // Glued A/T fallback for the concatenated RP-43 layout ("…(avg.)A50 lx").
   if (!result.areaOrTask) {
-    const m = text.match(/(^|[^A-Za-z])([AT])(?:\d+(?:\.\d+)?\s*(?:lx|lux|fc))/);
-    if (m) result.areaOrTask = m[2] === 'T' ? 'Task' : 'Area';
+    const glued = text.match(/(?:^|[^A-Za-z])([AT])\s*\d+(?:\.\d+)?\s*l(?:x|ux)/);
+    if (glued) {
+      result.areaOrTask = glued[1] === 'T' ? 'Task' : 'Area';
+      // strip the glued marker from the label tail
+      result.label = result.label.replace(/([AT])\s*$/, '').trim();
+    }
   }
 
-  // ─ Illuminance Category (RP-10 letter A–Y) ─
-  // E.g. "Cat M" or standalone " M " token. Conservative.
-  const catMatch = text.match(/\bCat\s+([A-Y])\b/i);
-  if (catMatch) result.horCat = catMatch[1].toUpperCase();
+  // ── Environmental & Visual Considerations (RP-43-25; spec p.6) ────────────
+  // These columns sit after the vertical block. Parse from the whole row.
+  // CV percentages are explicitly tagged ("CV 3%"); strip them before the
+  // generic glare-percent match so we don't mistake a CV value for glare.
+  const cvAll = text.match(/\bCV\s*[:=]?\s*\d+(?:\.\d+)?\s*%/gi) || [];
+  let envText = text;
+  for (const c of cvAll) envText = envText.replace(c, '');
 
-  // ─ Uniformity Ratio "n:n" — must NOT be followed/preceded by another colon
-  //   (otherwise we eat the first half of "Avg:Min", "Max:Avg:Min", etc.)
-  const urMatch = text.match(/(?<![A-Za-z:])(\d+:\d+)(?![:\d])/);
-  if (urMatch) result.uniformity = urMatch[1];
-
-  // ─ CV "<n>%" — only if explicitly preceded by CV ─
-  const cvMatch = text.match(/\bCV\s*[:=]?\s*(\d+(?:\.\d+)?)\s*%/i);
-  if (cvMatch) result.cv = parseFloat(cvMatch[1]);
-
-  // ─ Ratio Basis ─
-  const rbMatch = text.match(/(Max:Avg:Min|Max:Avg|Max:Min|Avg:Min)/i);
-  if (rbMatch) result.ratioBasis = rbMatch[1];
-
-  // ─ Avg/Max/Min basis token (when not part of Ratio Basis) ─
-  const basisMatch = text.match(/\b(Avg|Max|Min)\b(?!\s*:)/);
-  if (basisMatch && !result.ratioBasis) result.horBasis = basisMatch[1];
-
-  // ─ Glare (max) — trailing "<n>%" not consumed by CV ─
-  // Only assign if a percent token exists outside the CV match.
-  const cleanedForGlare = cvMatch ? text.replace(cvMatch[0], '') : text;
-  const glareMatch = cleanedForGlare.match(/(\d+(?:\.\d+)?)\s*%/);
+  const glareMatch = envText.match(/(\d+(?:\.\d+)?)\s*%/);
   if (glareMatch) result.glareMax = `${glareMatch[1]}%`;
-  // BUG-class glare token (e.g. G2)
   const bugMatch = text.match(/\bG([0-5])\b/);
   if (bugMatch) result.glareMax = `G${bugMatch[1]}`;
 
-  // ─ Uplight: "<n> lm" or "U<n>" ─
   const uplightLm = text.match(/(\d+(?:\.\d+)?)\s*lm\b/);
   if (uplightLm) result.uplightMax = `${uplightLm[1]} lm`;
   const uplightU = text.match(/\bU([0-5])\b/);
   if (uplightU) result.uplightMax = `U${uplightU[1]}`;
 
-  // ─ Controls — common phrases ─
-  const ctrlMatch = text.match(/\b(Off to \d+%|Dim to \d+%|Dimmed|Curfew|Occupancy|Daylight|Auto|Manual)\b/i);
+  // No trailing \b: the "% "-terminated alternatives ("Off to 50%") have no
+  // word boundary after the percent sign, which would defeat the match.
+  const ctrlMatch = text.match(/\b(Off to \d+%|Dim to \d+%|Dimmed|Curfew|Occupancy|Daylight|Auto|Manual)/i);
   if (ctrlMatch) result.controls = ctrlMatch[1];
 
-  // ─ Spectrum: "NNNN K to NNNN K" or "NNNNK to NNNNK" ─
   const specMatch = text.match(/(\d{3,5})\s*K\s*(?:to|–|-)\s*(\d{3,5})\s*K/i);
   if (specMatch) result.spectrum = `${specMatch[1]}K to ${specMatch[2]}K`;
 
-  // ─ Veiling Risk ─
-  const vrMatch = text.match(/\bVeiling(?:\s*Risk)?\s*[:=]?\s*([LMH])\b/i);
-  if (vrMatch) result.veilingRisk = vrMatch[1].toUpperCase();
-
-  // ─ Class of Play ─
+  // ── Class of Play (RP-6 sports: I/II/III/IV) ──────────────────────────────
   const copMatch = text.match(/\bClass\s*(?:of\s*Play)?\s*[:=]?\s*(IV|III|II|I)\b/i);
   if (copMatch) result.classOfPlay = copMatch[1].toUpperCase();
-
-  // ─ Extract a clean leading label (what comes BEFORE first data token) ─
-  const earliest = earliestDataIndex(text, luxMatches, fcMatches);
-  if (earliest > 0) {
-    result.label = text.substring(0, earliest).trim();
-  } else {
-    result.label = text.trim();
-  }
 
   return result;
 }
 
-function earliestDataIndex(text, luxMatches, fcMatches) {
-  const indices = [];
-  if (luxMatches.length > 0) indices.push(luxMatches[0].index);
-  if (fcMatches.length > 0) indices.push(fcMatches[0].index);
-  // Strip the leading A/T marker too if it's right at the data boundary
-  if (indices.length === 0) return -1;
-  const min = Math.min(...indices);
-  // Walk back over an immediately preceding A or T marker
-  let i = min;
-  if (i > 0 && /[AT]/.test(text[i - 1])) i--;
-  return i;
+/** Parse a height token ("TS" | "0.00 m" | "3.0 ft" | undefined) → number|null.
+ *  "0" (ground level / AFF baseline) carries no useful height info → null. */
+function parseHeight(token) {
+  if (!token) return null;
+  const t = token.trim();
+  if (/^TS$/i.test(t)) return null;
+  const n = parseFloat(t);
+  if (Number.isNaN(n) || n === 0) return null;
+  return n;
+}
+
+/** Index in `text` where the data portion (Cat letter / lux / fc) begins. */
+function firstDataIndex(text, luxMatches, fcMatches) {
+  const idxs = [];
+  if (luxMatches.length) idxs.push(luxMatches[0].index);
+  if (fcMatches.length) idxs.push(fcMatches[0].index);
+  return idxs.length ? Math.min(...idxs) : -1;
+}
+
+/** The metrics (basis/uniformity/ratio/CV) for a plane appear AFTER its
+ *  lux/fc values. Slice the horizontal half from the end of its fc/lux match
+ *  up to the start of the vertical block so the leaf label (which may itself
+ *  contain "Min"/"Max", e.g. "Room Min") never pollutes the basis token. */
+function sliceMetricsTail(text, luxMatch, fcMatch, splitIdx) {
+  let start = 0;
+  if (fcMatch) start = Math.max(start, fcMatch.index + fcMatch[0].length);
+  if (luxMatch) start = Math.max(start, luxMatch.index + luxMatch[0].length);
+  return text.slice(start, splitIdx);
+}
+
+/** Parse the basis / uniformity ratio / ratio basis / CV from a plane tail. */
+function parseHalfMetrics(tail) {
+  const out = { basis: null, uniformity: null, ratioBasis: null, cv: null };
+  if (!tail) return out;
+
+  const rb = tail.match(/(Max:Avg:Min|Max:Avg|Max:Min|Avg:Min)/i);
+  if (rb) out.ratioBasis = rb[1];
+
+  // Uniformity "n:n" (e.g. 3:1, 1.2:1) — not part of a Max:Avg:Min chain.
+  const ur = tail.match(/(?<![A-Za-z:])(\d+(?:\.\d+)?:\d+(?:\.\d+)?)(?![:\d])/);
+  if (ur) out.uniformity = ur[1];
+
+  const cv = tail.match(/\bCV\s*[:=]?\s*(\d+(?:\.\d+)?)\s*%/i);
+  if (cv) out.cv = parseFloat(cv[1]);
+
+  // Standalone Avg/Max/Min basis (not the ratio-basis chain).
+  const basis = tail.match(/(?<![:\w])(Avg|Max|Min)(?![:\w])/);
+  if (basis) out.basis = basis[1];
+
+  return out;
+}
+
+/** Given the text BEFORE the data portion (= leaf label + marker letters),
+ *  peel the trailing single-letter Area/Task and Veiling-Risk markers off the
+ *  label. Data layout is "<label> <A|T> [veiling L/M/H]" with the Category
+ *  already consumed by LUX_RE. */
+function parsePrefixMarkers(prefix) {
+  const out = { areaOrTask: null, veilingRisk: null, label: prefix.trim() };
+  const tokens = out.label.split(/\s+/);
+  // Pull off up to two trailing single-letter tokens.
+  for (let n = 0; n < 2 && tokens.length > 1; n++) {
+    const last = tokens[tokens.length - 1];
+    if (/^[AT]$/.test(last)) { out.areaOrTask = last === 'T' ? 'Task' : 'Area'; tokens.pop(); }
+    else if (/^[LMH]$/.test(last)) { out.veilingRisk = last.toUpperCase(); tokens.pop(); }
+    else break;
+  }
+  out.label = tokens.join(' ').trim();
+  return out;
 }
 
 // ─── Hierarchy Helpers ────────────────────────────────────────────────────────
 
 function applyHierarchyAtDepth(h, depth, name) {
+  // Clamp so a hierarchy line can't skip an empty ancestor slot (same nesting
+  // invariant as the leaf snapshot). The source occasionally indents a child
+  // header two levels below its parent with no intermediate row.
+  const chain = [h.subCategory, h.app, h.s1, h.s2, h.s3, h.s4, h.s5, h.s6];
+  let lastFilled = -1;
+  for (let i = 0; i < chain.length; i++) if (chain[i] != null && chain[i] !== '') lastFilled = i;
+  depth = Math.min(depth, lastFilled + 1);
   switch (depth) {
     case 0:
       h.subCategory = name;
@@ -383,6 +475,14 @@ function applyHierarchyAtDepth(h, depth, name) {
 function snapshotHierarchyWithLeaf(h, depth, leafName) {
   const snap = { ...h };
   if (leafName && leafName.length >= 2) {
+    // Clamp the leaf depth so it never skips an empty ancestor slot. A data row
+    // whose X lands two levels below the deepest established hierarchy line
+    // (no intermediate header in the source) would otherwise leave a gap; we
+    // attach it directly beneath the last known ancestor instead.
+    const chain = [h.subCategory, h.app, h.s1, h.s2, h.s3, h.s4, h.s5, h.s6];
+    let lastFilled = -1;
+    for (let i = 0; i < chain.length; i++) if (chain[i] != null && chain[i] !== '') lastFilled = i;
+    depth = Math.min(depth, lastFilled + 1);
     switch (depth) {
       case 0: snap.subCategory = leafName; break;
       case 1: snap.app = leafName; break;
@@ -423,6 +523,121 @@ function extractLightingZone(snapshot) {
     }
   }
   return null;
+}
+
+// ─── Indentation Grid (hierarchy depth) ───────────────────────────────────────
+
+const INDENT_TOLERANCE = 4;      // px; X positions within this are the same level
+const BODY_FONT_TOLERANCE = 1.0; // pt; lines outside this band off the data font are non-table
+
+const DATA_LINE_RE = /\d+\s*(?:lx|lux|fc|footcandle)\b/i;
+
+/** Median font size of the table's data rows — the table-body font anchor. */
+function medianDataFont(tablePages) {
+  const sizes = [];
+  for (const page of tablePages) {
+    for (const line of (page.lines || [])) {
+      if (line.fontSize == null) continue;
+      if (DATA_LINE_RE.test(line.text || '')) sizes.push(line.fontSize);
+    }
+  }
+  if (sizes.length === 0) return null;
+  sizes.sort((a, b) => a - b);
+  return sizes[Math.floor(sizes.length / 2)];
+}
+
+/**
+ * Derive the table's indentation grid from the actual left-edge X positions of
+ * body lines across all table pages. IES tables align each hierarchy level at a
+ * fixed left margin; clustering the observed X values yields the ordered list of
+ * level positions (ascending = shallow→deep). This adapts to each standard's own
+ * indent step instead of assuming a fixed pixel increment.
+ */
+function deriveIndentLevels(tablePages, bodyFont) {
+  const xs = [];
+  for (const page of tablePages) {
+    const pageWidth = page.width || 842;
+    for (const line of (page.lines || [])) {
+      const t = (line.text || '').trim();
+      if (t.length < 2) continue;
+      if (/^\d+$/.test(t)) continue;                 // page numbers / footnote markers
+      const x = line.x;
+      if (x == null) continue;
+      // Only the table-body font defines the grid — headers/titles/prose at the
+      // left margin use larger fonts and would otherwise add phantom levels.
+      if (bodyFont != null && Math.abs((line.fontSize ?? bodyFont) - bodyFont) > BODY_FONT_TOLERANCE) continue;
+      // Hierarchy + data rows live in the left portion of the (landscape) table;
+      // column-header fragments sit far right and must not define a level.
+      if (x > pageWidth * 0.45) continue;
+      const isData = DATA_LINE_RE.test(t);
+      const isShortName = t.length < 70;
+      if (isData || isShortName) xs.push(x);
+    }
+  }
+  if (xs.length === 0) return [];
+
+  // Cluster sorted X values: merge any within INDENT_TOLERANCE of the running
+  // cluster mean. Drop clusters with trivial support (likely stray fragments).
+  xs.sort((a, b) => a - b);
+  const clusters = [];
+  let bucket = [xs[0]];
+  for (let i = 1; i < xs.length; i++) {
+    const mean = bucket.reduce((s, v) => s + v, 0) / bucket.length;
+    if (xs[i] - mean <= INDENT_TOLERANCE) bucket.push(xs[i]);
+    else { clusters.push(bucket); bucket = [xs[i]]; }
+  }
+  clusters.push(bucket);
+
+  // Keep clusters with non-trivial support (kills in-band noise and right-side
+  // header fragments), but ALWAYS keep the shallowest cluster — it is the depth
+  // anchor (top banner / App level). A sparse banner that appears only a couple
+  // of times must not be dropped, or every depth shifts up one rank and the App
+  // level is left permanently empty. `clusters` is already ascending by X.
+  const MIN_SUPPORT = 3;
+  const centers = clusters
+    .filter((b, idx) => idx === 0 || b.length >= MIN_SUPPORT)
+    .map(b => b.reduce((s, v) => s + v, 0) / b.length)
+    .sort((a, b) => a - b);
+
+  if (centers.length === 0) return [];
+
+  // The hierarchy/data grid is a left-anchored run of levels spaced by the
+  // indent step (~7–9px). Multi-row column-header cells render at the body
+  // font too but sit far to the right; they appear as clusters separated from
+  // the grid by a large gap. Trim the level list at the first such gap.
+  const MAX_LEVEL_GAP = 30;
+  const grid = [centers[0]];
+  for (let i = 1; i < centers.length; i++) {
+    if (centers[i] - centers[i - 1] > MAX_LEVEL_GAP) break;
+    grid.push(centers[i]);
+  }
+
+  return grid.slice(0, 9); // schema caps at Sub_Category + App + s1..s6 → 8 levels
+}
+
+/** Snap an X position to the nearest indent level → its depth (0 = shallowest). */
+function depthForX(x, levels) {
+  if (!levels || levels.length === 0) return 0;
+  let best = 0, bestDist = Infinity;
+  for (let i = 0; i < levels.length; i++) {
+    const d = Math.abs(x - levels[i]);
+    if (d < bestDist) { bestDist = d; best = i; }
+  }
+  return best;
+}
+
+/**
+ * Split a hierarchy/leaf label from an inline cross-reference. Per the spec the
+ * "Link" column holds a hyperlinked reference such as
+ * "Refer to ANSI/IES RP-10-20: Table A-3". Returns { name, link }.
+ */
+function splitNameAndLink(raw) {
+  const text = (raw || '').trim();
+  const m = text.match(/\b(Refer to\s+ANSI\/IES.*|See\s+ANSI\/IES.*|ANSI\/IES\s+[A-Z]{1,3}-\d.*)$/i);
+  if (m && m.index > 0) {
+    return { name: text.slice(0, m.index).trim(), link: m[1].trim() };
+  }
+  return { name: text, link: null };
 }
 
 // ─── Utilities ────────────────────────────────────────────────────────────────
@@ -472,11 +687,26 @@ export function reportExtractionQuality(records) {
   const withApp = records.filter(r => r.App !== null).length;
   const withCat = records.filter(r => r.Hor_Cat !== null).length;
   const withRatioBasis = records.filter(r => r.Hor_Ratio_Basis !== null).length;
+  const withVertical = records.filter(r => r.Ver_Lux !== null).length;
   const withDeepHierarchy = records.filter(r => r.App_s4 || r.App_s5 || r.App_s6).length;
   const withEnvVisual = records.filter(r =>
     r.Max_Glare_Rating || r.Max_Uplight || r.Controls_Required || r.Spectrum_Guidance
   ).length;
   const withLightingZone = records.filter(r => r.Lighting_Zone).length;
+
+  // Hierarchy integrity: per the IES schema (reference PDF p.1-2) the levels are
+  // nested. A null *between* two filled levels is a depth-assignment error. A
+  // leading null is fine — Sub_Category is an optional top banner that many
+  // standards omit (the hierarchy then starts at App).
+  const hierarchyGaps = records.filter(r => {
+    const chain = [r.Sub_Category, r.App, r.App_s1, r.App_s2, r.App_s3, r.App_s4, r.App_s5, r.App_s6];
+    const filled = chain.map(v => v != null && v !== '');
+    const first = filled.indexOf(true);
+    const last = filled.lastIndexOf(true);
+    if (first < 0) return false;
+    for (let i = first; i < last; i++) if (!filled[i]) return true; // hole between filled levels
+    return false;
+  }).length;
 
   return {
     total,
@@ -484,14 +714,18 @@ export function reportExtractionQuality(records) {
     withApp,
     withIlluminanceCategory: withCat,
     withRatioBasis,
+    withVertical,
     withDeepHierarchy,
     withEnvVisual,
     withLightingZone,
+    hierarchyGaps,
     qualityScore: total > 0 ? Math.round((withHorLux / total) * 100) : 0,
     warnings: [
       ...(total === 0 ? ['No records extracted'] : []),
       ...(withHorLux < total * 0.8 ? [`Only ${withHorLux}/${total} records have horizontal lux`] : []),
       ...(withApp < total * 0.5 ? [`${total - withApp} records missing App category`] : []),
+      ...(withCat < total * 0.5 ? [`${total - withCat} records missing illuminance Category (expected for RP-43-style tables only)`] : []),
+      ...(hierarchyGaps > 0 ? [`${hierarchyGaps} records have hierarchy gaps (deeper level filled above an empty one)`] : []),
     ],
   };
 }

@@ -112,7 +112,7 @@ async function ingestDirectory(dirPath) {
 
   for (const file of files) {
     const filePath = resolve(dirPath, file);
-    const standardId = basename(file, '.pdf');
+    const standardId = deriveStandardId(file);
     try {
       await ingestFile(filePath, standardId);
       success++;
@@ -418,6 +418,18 @@ async function postToWorker(path, body) {
   }
 
   return response.json();
+}
+
+/**
+ * Derive a clean IES standard ID from a prototype filename, e.g.
+ *   "RP-43-25_v7_Prototype_260420-NEW_TABLE.pdf" → "RP-43-25"
+ *   "RP-3-20+E1 Prototype_260519-NEW_TABLE.pdf"  → "RP-3-20+E1"
+ * Falls back to the first whitespace/underscore token if no match.
+ */
+function deriveStandardId(file) {
+  const stem = basename(file, extname(file));
+  const m = stem.match(/^([A-Z]{1,3}-\d+(?:-\d+)?(?:\+E\d+)?)/i);
+  return m ? m[1] : stem.split(/[_ ]/)[0];
 }
 
 function inferFullDesignation(standardId, title) {

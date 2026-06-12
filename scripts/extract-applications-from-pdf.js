@@ -100,8 +100,11 @@ async function main() {
   console.error('── Extraction Quality ──────────────────────────────────');
   console.error(`Total records:          ${quality.total}`);
   console.error(`With horizontal lux:    ${quality.withHorLux} (${quality.qualityScore}%)`);
+  console.error(`With vertical lux:      ${quality.withVertical}`);
   console.error(`With illuminance cat:   ${quality.withIlluminanceCategory}`);
   console.error(`With ratio basis:       ${quality.withRatioBasis}`);
+  console.error(`With App level set:     ${quality.withApp}`);
+  console.error(`Hierarchy gaps:         ${quality.hierarchyGaps}`);
   console.error(`With deep hierarchy:    ${quality.withDeepHierarchy} (s4–s6)`);
   if (quality.warnings.length > 0) {
     console.error('\nWarnings:');

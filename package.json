@@ -9,7 +9,7 @@
     "deploy": "wrangler deploy",
     "db:migrate:remote": "wrangler d1 migrations apply ies-metadata --remote",
     "db:migrate:local": "wrangler d1 migrations apply ies-metadata --local",
-    "ingest": "node scripts/ingest-pdfs.js",
+    "ingest": "node scripts/ingest-pdfs.js --dir pdfs/",
     "ingest:apps": "node scripts/ingest-pdfs.js --applications-only",
     "extract": "node scripts/extract-applications-from-pdf.js",
     "sync-metadata": "node scripts/sync-metadata.js",
