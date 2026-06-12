@@ -1,5 +1,5 @@
 /**
- * Lucius Admin Endpoints
+ * Lensy Admin Endpoints
  *
  * Operations that touch Vectorize directly. Vectorize has no public "list
  * vectors" API; the Worker is the only context with a binding, so anything

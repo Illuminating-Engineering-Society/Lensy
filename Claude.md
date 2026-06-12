@@ -1,10 +1,10 @@
-# Lucius: IES AI-Powered Standards Assistant
+# Lensy: IES AI-Powered Standards Assistant
 
 ## Project Overview
 
-Lucius is an intelligent, conversational assistant that transforms the IES Illuminance Selector from a static lookup tool into a natural language interface for exploring, understanding, and applying IES lighting standards. Named after the Latin word for "light," Lucius helps lighting professionals navigate the IES Lighting Library through context-aware search and citation-backed responses.
+Lensy is an intelligent, conversational assistant that transforms the IES Illuminance Selector from a static lookup tool into a natural language interface for exploring, understanding, and applying IES lighting standards. Named after the Latin word for "light," Lensy helps lighting professionals navigate the IES Lighting Library through context-aware search and citation-backed responses.
 
-**Key Principle:** Lucius prioritizes authoritative source material over generative responses. Users see annotated excerpts, screenshots of illuminance tables, and deep links to standards—with optional AI-generated summaries as supplementary context.
+**Key Principle:** Lensy prioritizes authoritative source material over generative responses. Users see annotated excerpts, screenshots of illuminance tables, and deep links to standards—with optional AI-generated summaries as supplementary context.
 
 ---
 
@@ -20,7 +20,7 @@ Lucius is an intelligent, conversational assistant that transforms the IES Illum
 └─────────────────────────────────────────────────────────┘
                            ↓
 ┌─────────────────────────────────────────────────────────┐
-│                 Lucius Search Layer                      │
+│                 Lensy Search Layer                      │
 │  - Vector DB (Vectorize) - Semantic search              │
 │  - Existing DB (D1) - Structured illuminance data       │
 │  - Query Processing (Workers AI)                        │
@@ -43,7 +43,7 @@ Lucius is an intelligent, conversational assistant that transforms the IES Illum
 - Standard references and mappings
 - Application notes and links
 
-**Lucius enhances this with:**
+**Lensy enhances this with:**
 - Natural language search interface
 - Semantic matching via vector embeddings
 - Full-text context from PDF standards
@@ -710,14 +710,14 @@ Generate a concise, cited response:
   
   return {
     text,
-    watermark: 'IES Lucius AI-Generated Summary - Not for reproduction',
+    watermark: 'IES Lensy AI-Generated Summary - Not for reproduction',
     disclaimer: 'This AI-generated response is for informational purposes only and may contain errors. Always refer to the full IES Standards for authoritative guidance.'
   };
 }
 
 async function loadAgentInstructions() {
   // Load from config/agent-instructions.txt
-  return `You are Lucius, the IES Standards Assistant. Your role is to help lighting professionals explore and understand IES standards through accurate, well-cited responses.
+  return `You are Lensy, the IES Standards Assistant. Your role is to help lighting professionals explore and understand IES standards through accurate, well-cited responses.
 
 Core Principles:
 1. Always cite specific IES standards with full designation, section, and page number
@@ -809,13 +809,13 @@ function generateSafeResponse(query, searchResults) {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Lucius - IES Standards Search</title>
+  <title>Lensy - IES Standards Search</title>
   <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body class="bg-gray-50">
   <div class="container mx-auto px-4 py-8 max-w-4xl">
     <header class="mb-8">
-      <h1 class="text-3xl font-bold text-blue-900">Lucius</h1>
+      <h1 class="text-3xl font-bold text-blue-900">Lensy</h1>
       <p class="text-gray-600">IES Standards Search</p>
     </header>
     
@@ -1035,10 +1035,10 @@ function generateSafeResponse(query, searchResults) {
 **Agent Instructions File** (`src/config/agent-instructions.txt`):
 
 ```
-# Lucius AI Agent Instructions
+# Lensy AI Agent Instructions
 
 ## Core Identity
-You are Lucius, the Illuminating Engineering Society's (IES) AI assistant for navigating lighting standards. Your name derives from the Latin word for "light," representing both the foundation of illumination science and modern, intuitive access to IES knowledge.
+You are Lensy, the Illuminating Engineering Society's (IES) AI assistant for navigating lighting standards. Your name derives from the Latin word for "light," representing both the foundation of illumination science and modern, intuitive access to IES knowledge.
 
 ## Primary Function
 Direct users to the most relevant IES Standards with emphasis on:

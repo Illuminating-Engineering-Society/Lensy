@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>My Projects — Lucius</title>
+  <title>My Projects — Lensy</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
     tailwind.config = {
@@ -45,7 +45,7 @@
           </svg>
         </div>
         <div>
-          <span class="text-xl font-bold tracking-tight">Lucius</span>
+          <span class="text-xl font-bold tracking-tight">Lensy</span>
           <span class="hidden sm:inline text-blue-300 text-sm ml-2">IES Standards Assistant</span>
         </div>
       </a>
@@ -256,7 +256,7 @@
 
     async function loadProjects() {
       try {
-        const data = await LuciusAPI.listProjects(1);
+        const data = await LensyAPI.listProjects(1);
         allProjects = data.projects || [];
         renderProjectsGrid();
       } catch (err) {
@@ -340,7 +340,7 @@
       document.getElementById('detail-apps-content').classList.add('hidden');
 
       try {
-        const data = await LuciusAPI.getProject(projectId);
+        const data = await LensyAPI.getProject(projectId);
         currentProject = data.project;
         renderProjectDetail(data);
       } catch (err) {
@@ -444,7 +444,7 @@
       if (!confirm(`Remove "${applicationCode}" from this project?`)) return;
       try {
         await fetch(`/api/projects/${projectId}/applications/${encodeURIComponent(applicationCode)}`, { method: 'DELETE' });
-        const data = await LuciusAPI.getProject(projectId);
+        const data = await LensyAPI.getProject(projectId);
         renderProjectDetail(data);
         showToast('Application removed');
       } catch (err) {
@@ -467,7 +467,7 @@
 
     function exportProjectCSV() {
       if (!currentProject) return;
-      LuciusAPI.exportProject(currentProject.id).then(data => {
+      LensyAPI.exportProject(currentProject.id).then(data => {
         const apps = data.applications || [];
         if (!apps.length) { showToast('No applications to export', 'error'); return; }
 
@@ -533,7 +533,7 @@
         user_id: 1,
       };
       try {
-        const result = await LuciusAPI.createProject(payload);
+        const result = await LensyAPI.createProject(payload);
         allProjects.unshift(result.project);
         closeProjectModal();
         renderProjectsGrid();

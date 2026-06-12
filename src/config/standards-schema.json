@@ -1,5 +1,5 @@
 {
-  "_comment": "Metadata structure for IES standards indexed in Lucius. Used for validation and UI display.",
+  "_comment": "Metadata structure for IES standards indexed in Lensy. Used for validation and UI display.",
   "standards": [
     {
       "id": "RP-1-24",

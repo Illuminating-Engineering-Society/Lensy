@@ -1,5 +1,5 @@
 {
-  "_comment": "Phrases that must never appear in Lucius AI-generated responses. Checked before returning any AI output.",
+  "_comment": "Phrases that must never appear in Lensy AI-generated responses. Checked before returning any AI output.",
   "exact_phrases": [
     "all rights reserved",
     "reproduced with permission",

@@ -1,5 +1,5 @@
 /**
- * Lucius Search Worker
+ * Lensy Search Worker
  *
  * Handles all search requests against the IES standards database.
  *

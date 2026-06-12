@@ -15,7 +15,7 @@ import { checkCopyrightViolations } from './citations.js';
 const MODEL = '@cf/meta/llama-3.3-70b-instruct-fp8-fast';
 const MAX_TOKENS = 1000;
 
-const SYSTEM_PROMPT = `You are Lucius, the IES Standards Assistant. Your role is to help lighting professionals explore and understand IES (Illuminating Engineering Society) standards through accurate, well-cited responses.
+const SYSTEM_PROMPT = `You are Lensy, the IES Standards Assistant. Your role is to help lighting professionals explore and understand IES (Illuminating Engineering Society) standards through accurate, well-cited responses.
 
 ═══════════════════════════════════════════════════════════════
 CORE PRINCIPLES
@@ -126,7 +126,7 @@ export async function generateResponse(ai, query, searchResults) {
 
   return {
     text,
-    watermark: 'IES Lucius AI-Generated Summary — Not for reproduction',
+    watermark: 'IES Lensy AI-Generated Summary — Not for reproduction',
     disclaimer: 'This AI-generated response is for informational purposes only and may contain errors. Always refer to the full IES Standards for authoritative guidance.',
   };
 }

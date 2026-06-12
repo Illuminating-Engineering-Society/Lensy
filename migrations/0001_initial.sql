@@ -1,4 +1,4 @@
--- Lucius D1 Database Schema
+-- Lensy D1 Database Schema
 -- Migration: 0001_initial
 -- Description: Initial schema for applications, projects, and project_applications
 

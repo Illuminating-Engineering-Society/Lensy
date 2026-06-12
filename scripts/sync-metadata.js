@@ -24,7 +24,7 @@ if (!VITRIUM_API_KEY) {
 }
 
 async function main() {
-  console.log(`\nLucius — Vitrium Metadata Sync`);
+  console.log(`\nLensy — Vitrium Metadata Sync`);
   console.log(`API: ${VITRIUM_API_URL}`);
   console.log(`Mode: ${DRY_RUN ? 'Dry Run (no writes)' : 'Live'}\n`);
 

@@ -1,5 +1,5 @@
 /**
- * Lucius Ingest Worker
+ * Lensy Ingest Worker
  *
  * IMPORTANT: This Worker does NOT parse PDFs. PDF parsing (pdfjs-dist) requires
  * Node.js and cannot run in a Cloudflare Worker. The ingestion script

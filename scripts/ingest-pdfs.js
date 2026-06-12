@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Lucius PDF Ingestion Script
+ * Lensy PDF Ingestion Script
  * Runs in Node.js. Parses IES standard PDFs and sends pre-parsed data
  * to the Cloudflare Worker for embedding + indexing.
  *
@@ -70,7 +70,7 @@ const idArg = args.indexOf('--id');
 // ─── Entry Point ──────────────────────────────────────────────────────────────
 
 async function main() {
-  console.log(`\nLucius — PDF Ingestion Pipeline`);
+  console.log(`\nLensy — PDF Ingestion Pipeline`);
   console.log(`${'─'.repeat(50)}`);
   console.log(`Target: ${CONFIG.apiUrl}`);
   console.log(`Mode:   ${CONFIG.dryRun ? 'DRY RUN (no network calls)' : 'Live'}\n`);

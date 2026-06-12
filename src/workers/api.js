@@ -1,5 +1,5 @@
 /**
- * Lucius API — Main Router
+ * Lensy API — Main Router
  * Cloudflare Worker entry point. Routes all /api/* requests.
  *
  * Endpoints:

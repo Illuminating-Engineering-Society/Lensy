@@ -1,4 +1,4 @@
--- Lucius D1 Schema — Migration 0002
+-- Lensy D1 Schema — Migration 0002
 -- Adds columns required by the new IES table structure (260420+).
 -- Reference: pdfs/Others/IlluminanceTables_Reference_260421.pdf
 --

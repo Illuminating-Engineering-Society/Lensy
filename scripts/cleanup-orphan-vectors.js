@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Lucius — Vectorize Orphan Cleanup
+ * Lensy — Vectorize Orphan Cleanup
  *
  * Walks the Vectorize index (via the /api/admin/* endpoints) to find chunk
  * vectors whose `standard_id` is no longer present in the D1 standards

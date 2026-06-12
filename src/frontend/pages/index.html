@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Lucius — IES Standards Search</title>
+  <title>Lensy — IES Standards Search</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
     tailwind.config = {
@@ -59,7 +59,7 @@
           </svg>
         </div>
         <div>
-          <span class="text-xl font-bold tracking-tight">Lucius</span>
+          <span class="text-xl font-bold tracking-tight">Lensy</span>
           <span class="hidden sm:inline text-blue-300 text-sm ml-2">IES Standards Assistant</span>
         </div>
       </a>
@@ -265,7 +265,7 @@
 
   <!-- ── Footer ───────────────────────────────────────────────────────────── -->
   <footer class="text-center text-xs text-gray-400 py-8 mt-8 border-t border-gray-100 no-print">
-    <p class="font-medium text-gray-500">Lucius — IES Standards Search Assistant</p>
+    <p class="font-medium text-gray-500">Lensy — IES Standards Search Assistant</p>
     <p class="mt-1">
       <a href="https://www.ies.org" class="hover:underline hover:text-gray-600">Illuminating Engineering Society</a>
       <span class="mx-2">·</span>
@@ -402,7 +402,7 @@
       const includeAI = document.getElementById('include-ai').checked;
 
       try {
-        const data = await LuciusAPI.search(query, { filters, includeAISummary: includeAI });
+        const data = await LensyAPI.search(query, { filters, includeAISummary: includeAI });
         renderResults(data);
       } catch (err) {
         renderError(err.message);
@@ -769,7 +769,7 @@
       container.innerHTML = `<div class="skeleton h-10 rounded-lg"></div><div class="skeleton h-10 rounded-lg mt-2"></div>`;
 
       try {
-        const data = await LuciusAPI.listProjects(1);
+        const data = await LensyAPI.listProjects(1);
         projectsCache = data.projects || [];
 
         if (!projectsCache.length) {
@@ -797,9 +797,9 @@
     async function addToExistingProject(projectId) {
       try {
         if (modalPendingCodes.length === 1) {
-          await LuciusAPI.addToProject(modalPendingCodes[0], projectId);
+          await LensyAPI.addToProject(modalPendingCodes[0], projectId);
         } else {
-          await LuciusAPI.addManyToProject(modalPendingCodes, projectId);
+          await LensyAPI.addManyToProject(modalPendingCodes, projectId);
         }
         closeProjectModal();
         showToast(`Added to project`, 'success');
@@ -830,13 +830,13 @@
       const location = document.getElementById('new-project-location').value.trim();
 
       try {
-        const created = await LuciusAPI.createProject({ name, client_name: client || null, location: location || null, user_id: 1 });
+        const created = await LensyAPI.createProject({ name, client_name: client || null, location: location || null, user_id: 1 });
         const projectId = created.project.id;
 
         if (modalPendingCodes.length === 1) {
-          await LuciusAPI.addToProject(modalPendingCodes[0], projectId);
+          await LensyAPI.addToProject(modalPendingCodes[0], projectId);
         } else {
-          await LuciusAPI.addManyToProject(modalPendingCodes, projectId);
+          await LensyAPI.addManyToProject(modalPendingCodes, projectId);
         }
         closeProjectModal();
         showToast(`Project "${name}" created`, 'success');

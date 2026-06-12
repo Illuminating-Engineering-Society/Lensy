@@ -1,4 +1,4 @@
--- Lucius D1 Schema — Migration 0003
+-- Lensy D1 Schema — Migration 0003
 -- Adds Page_Number to applications so that the search layer can attach
 -- a page-relevant PDF excerpt to each application result, instead of
 -- attaching a single global top-scored chunk per standard.

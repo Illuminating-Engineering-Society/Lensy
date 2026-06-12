@@ -1,11 +1,11 @@
 /**
- * Lucius API Client
- * Frontend utility for communicating with the Lucius Worker API.
+ * Lensy API Client
+ * Frontend utility for communicating with the Lensy Worker API.
  */
 
 const BASE_URL = '/api';
 
-const LuciusAPI = {
+const LensyAPI = {
 
   /**
    * Search IES standards.
@@ -86,7 +86,7 @@ const LuciusAPI = {
   async addToProject(applicationCode, projectId, meta = {}) {
     if (!projectId) {
       const name = prompt('New project name:') || `Project ${new Date().toLocaleDateString()}`;
-      const created = await LuciusAPI.createProject({ name, user_id: 1 });
+      const created = await LensyAPI.createProject({ name, user_id: 1 });
       projectId = created.project.id;
     }
     const response = await fetch(`${BASE_URL}/projects/${projectId}/applications`, {
@@ -119,7 +119,7 @@ const LuciusAPI = {
 
     if (!projectId) {
       const name = prompt('New project name:') || `Project ${new Date().toLocaleDateString()}`;
-      const created = await LuciusAPI.createProject({ name, user_id: 1 });
+      const created = await LensyAPI.createProject({ name, user_id: 1 });
       projectId = created.project.id;
     }
 
@@ -153,5 +153,5 @@ const LuciusAPI = {
 
 // Make available globally for inline event handlers
 if (typeof window !== 'undefined') {
-  window.LuciusAPI = LuciusAPI;
+  window.LensyAPI = LensyAPI;
 }

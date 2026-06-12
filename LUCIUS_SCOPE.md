@@ -1,8 +1,8 @@
-# Lucius: IES AI-Powered Standards Assistant
+# Lensy: IES AI-Powered Standards Assistant
 ## Project Scope Document
 
 ### Executive Summary
-Lucius transforms the IES Illuminance Selector from a static lookup tool into an intelligent, conversational assistant that helps members explore, understand, and apply IES standards through natural language interaction.
+Lensy transforms the IES Illuminance Selector from a static lookup tool into an intelligent, conversational assistant that helps members explore, understand, and apply IES standards through natural language interaction.
 
 ---
 
@@ -19,7 +19,7 @@ Lucius transforms the IES Illuminance Selector from a static lookup tool into an
 
 ### Three-Tier System
 
-1. **AI Search Layer ("Lucius" / IES StandardSearch)**
+1. **AI Search Layer ("Lensy" / IES StandardSearch)**
    - Vector database indexing IES master PDFs from SharePoint
    - Natural language query processing
    - Context-aware response generation
@@ -216,7 +216,7 @@ Lucius transforms the IES Illuminance Selector from a static lookup tool into an
 ```
 SharePoint (Master PDFs)
     ↓
-Vector Database ← Lucius AI Layer
+Vector Database ← Lensy AI Layer
     ↓
 Search Results → Vitrium Deep Links
 ```
@@ -426,7 +426,7 @@ Search Results → Vitrium Deep Links
 - Mobile app development (web-responsive only)
 - Integration with non-IES standards databases
 - Automated design calculations or photometric modeling
-- Direct PDF editing or annotation within Lucius
+- Direct PDF editing or annotation within Lensy
 
 ---
 

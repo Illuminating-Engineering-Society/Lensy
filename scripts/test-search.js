@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Lucius — Search & Extraction Quality Tests (real data, not fixtures)
+ * Lensy — Search & Extraction Quality Tests (real data, not fixtures)
  *
  * This script validates the pipeline against the ACTUAL IES prototype PDFs in
  * pdfs/, instead of hard-coded queries that assume applications which may not
@@ -61,7 +61,7 @@ const GATES = {
 const PASS = '✓', FAIL = '✗', WARN = '⚠', SKIP = '·';
 
 async function main() {
-  console.log('\nLucius — Search & Extraction Quality Tests');
+  console.log('\nLensy — Search & Extraction Quality Tests');
   console.log('─'.repeat(62));
 
   const corpus = await runExtractionGate();

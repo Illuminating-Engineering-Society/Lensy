@@ -1,4 +1,4 @@
-# Lucius: IES AI-Powered Standards Assistant
+# Lensy: IES AI-Powered Standards Assistant
 
 **Status:** Design Phase  
 **Target Launch:** Q3 2026  
@@ -6,9 +6,9 @@
 
 ---
 
-## What is Lucius?
+## What is Lensy?
 
-Lucius transforms the IES Illuminance Selector from a static lookup tool into an intelligent, conversational assistant. Named after the Latin word for "light," Lucius helps lighting professionals explore, understand, and apply IES standards through natural language search, contextual explanations, and project-based workflows.
+Lensy transforms the IES Illuminance Selector from a static lookup tool into an intelligent, conversational assistant. Named after the Latin word for "light," Lensy helps lighting professionals explore, understand, and apply IES standards through natural language search, contextual explanations, and project-based workflows.
 
 **Key Innovation:** Search "spa lighting requirements" instead of navigating: Healthcare → Hospitals → Ambulatory Care → Spas
 
@@ -26,7 +26,7 @@ Read these documents in order, or jump to what you need:
 - Business impact and success metrics
 - Next steps
 
-**Start here if:** You need to present Lucius to IES leadership or secure buy-in.
+**Start here if:** You need to present Lensy to IES leadership or secure buy-in.
 
 ---
 
@@ -73,7 +73,7 @@ Read these documents in order, or jump to what you need:
 **[04_ADDENDUM_RealSystem.md](docs/04_ADDENDUM_RealSystem.md)** - Current System Analysis
 - What idt.ies.org actually does today
 - 68-column database structure
-- How Lucius enhances (not replaces) existing features
+- How Lensy enhances (not replaces) existing features
 - Migration considerations
 
 **Start here if:** You need to understand the current Illuminance Selector or legacy constraints.
@@ -167,7 +167,7 @@ Read these documents in order, or jump to what you need:
 - Outdoor lighting guidance (BUG ratings, CCT, LZ)
 - Standard references and mappings
 
-### New for Lucius
+### New for Lensy
 **Projects Table**
 - User projects with metadata (name, location, client, type)
 - Status tracking (Active, Archived, Completed)
@@ -249,7 +249,7 @@ These may come in future phases based on user feedback.
 1. Visit idt.ies.org
 2. Navigate: Healthcare → Hospitals → Spas
 3. Note the current workflow (category browsing, filters, results)
-4. Compare to proposed Lucius workflow in MVP_FEATURES.md
+4. Compare to proposed Lensy workflow in MVP_FEATURES.md
 
 ---
 
