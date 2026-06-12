@@ -17,7 +17,14 @@
  *   POST /api/admin/delete-orphans
  *     Body: { ids: string[] } — exact vector IDs to delete. Caller must
  *     have built this list from a previous scan-orphans run.
+ *
+ *   POST /api/admin/flush-cache
+ *     Bump the corpus data version, invalidating all cached search
+ *     responses. Use after out-of-band data changes (direct D1 writes,
+ *     sync-metadata.js) that bypass the ingest endpoints.
  */
+
+import { bumpDataVersion, getDataVersion } from '../lib/cache.js';
 
 const EMBED_MODEL = '@cf/baai/bge-base-en-v1.5';
 const SCAN_DEFAULT_PASSES = 8;
@@ -166,7 +173,23 @@ export async function handleAdminDeleteOrphans(request, env) {
     deleted += res?.count ?? batch.length;
   }
 
+  // Corpus changed — invalidate all cached search responses.
+  await bumpDataVersion(env.SESSIONS);
+
   return jsonResponse({ requested: ids.length, deleted });
+}
+
+/**
+ * Invalidate all cached search responses by bumping the data version.
+ * Cheap (one KV write); old entries simply stop being read and expire.
+ */
+export async function handleAdminFlushCache(request, env) {
+  if (!checkAuth(request, env)) return jsonResponse({ error: 'Unauthorized' }, 401);
+
+  await bumpDataVersion(env.SESSIONS);
+  const dataVersion = await getDataVersion(env.SESSIONS);
+
+  return jsonResponse({ success: true, dataVersion });
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────

@@ -22,6 +22,8 @@
  *     Return R2 key and wrangler command for uploading the raw PDF.
  */
 
+import { bumpDataVersion } from '../lib/cache.js';
+
 const EMBED_MODEL = '@cf/baai/bge-base-en-v1.5';
 const EMBED_BATCH = 100;       // Workers AI max per call
 const VECTORIZE_BATCH = 1000;  // Vectorize max per upsert
@@ -146,6 +148,9 @@ async function ingestParsedPDF(request, env) {
     applicationsUpserted = await upsertApplications(env.DB, applications);
   }
 
+  // Corpus changed — invalidate all cached search responses.
+  await bumpDataVersion(env.SESSIONS);
+
   return jsonResponse({
     success: true,
     standardId,
@@ -268,6 +273,9 @@ async function ingestApplications(env) {
   for (let i = 0; i < vectors.length; i += VECTORIZE_BATCH) {
     await env.VECTORIZE.upsert(vectors.slice(i, i + VECTORIZE_BATCH));
   }
+
+  // Corpus changed — invalidate all cached search responses.
+  await bumpDataVersion(env.SESSIONS);
 
   return jsonResponse({
     success: true,

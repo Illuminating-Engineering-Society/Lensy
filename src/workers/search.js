@@ -5,12 +5,16 @@
  *
  * ─── Search Pipeline ──────────────────────────────────────────────────────────
  *
+ *  0. Response cache check   (KV, keyed by params + corpus data version)
+ *     On hit, the entire pipeline below is skipped — no Workers AI,
+ *     Vectorize, or D1 usage. Invalidated automatically on ingest.
+ *
  *  For each sub-query (supports comma-separated multi-queries):
  *
  *  1. Clean + expand query   (query-expander.js)
  *     "how bright should a spa be?" → "spa wellness relaxation therapeutic..."
  *
- *  2. Embed expanded query   (@cf/baai/bge-base-en-v1.5)
+ *  2. Embed expanded query   (@cf/baai/bge-base-en-v1.5, KV-cached)
  *
  *  3. Vector search          (Cloudflare Vectorize, topK=30)
  *     Returns mix of:
@@ -61,6 +65,14 @@
 import { prepareQueryForEmbedding, splitMultiQuery, cleanQuery, isVersionComparisonQuery } from '../lib/query-expander.js';
 import { generateResponse } from '../lib/ai-summary.js';
 import { formatCitation } from '../lib/citations.js';
+import {
+  getDataVersion,
+  buildSearchCacheKey,
+  getCachedSearch,
+  putCachedSearch,
+  getCachedEmbedding,
+  putCachedEmbedding,
+} from '../lib/cache.js';
 
 const EMBED_MODEL = '@cf/baai/bge-base-en-v1.5';
 const VECTOR_TOP_K = 40;      // fetch extra; deduplicate down to limit
@@ -75,7 +87,7 @@ const NO_STRONG_MATCH_MESSAGE =
 
 // ─── Entry Point ──────────────────────────────────────────────────────────────
 
-export async function handleSearch(request, env) {
+export async function handleSearch(request, env, ctx) {
   let body;
   try {
     body = await request.json();
@@ -97,6 +109,25 @@ export async function handleSearch(request, env) {
 
   const cleanLimit = Math.min(Math.max(1, Math.floor(limit)), MAX_LIMIT);
   const rawQuery = query.trim().substring(0, 500);
+
+  // ── Response cache ───────────────────────────────────────────────────────────
+  // Identical searches skip the entire pipeline (Workers AI embedding,
+  // Vectorize query, D1 lookups, and the optional 70B AI summary — the
+  // expensive part). The key embeds a corpus "data version" that bumps on
+  // every ingest, so a cache hit can never serve stale standards data.
+  const kv = env.SESSIONS;
+  const dataVersion = await getDataVersion(kv);
+  const cacheKey = await buildSearchCacheKey(dataVersion, {
+    query: rawQuery,
+    filters,
+    limit: cleanLimit,
+    units,
+    includeAISummary,
+  });
+  const cachedPayload = await getCachedSearch(kv, cacheKey);
+  if (cachedPayload) {
+    return jsonResponse({ ...cachedPayload, cached: true });
+  }
 
   // ── Multi-query detection ────────────────────────────────────────────────────
   const subQueries = splitMultiQuery(rawQuery);
@@ -158,7 +189,7 @@ export async function handleSearch(request, env) {
     : 0;
   const noStrongMatch = topScore < STRONG_MATCH_THRESHOLD;
 
-  return jsonResponse({
+  const payload = {
     query: rawQuery,
     expandedQuery: allResults.expandedQuery,
     isMultiQuery,
@@ -169,7 +200,13 @@ export async function handleSearch(request, env) {
     results: applyUnits(allResults.results, units),
     aiSummary,
     timestamp: new Date().toISOString(),
-  });
+  };
+
+  // Store after responding when possible (waitUntil); never blocks the user.
+  const cacheWrite = putCachedSearch(kv, cacheKey, payload);
+  if (ctx?.waitUntil) ctx.waitUntil(cacheWrite); else await cacheWrite;
+
+  return jsonResponse({ ...payload, cached: false });
 }
 
 // ─── Single Search ────────────────────────────────────────────────────────────
@@ -177,9 +214,16 @@ export async function handleSearch(request, env) {
 async function runSingleSearch(rawQuery, filters, limit, env) {
   const expandedQuery = prepareQueryForEmbedding(rawQuery);
 
-  // 1. Embed
-  const embResult = await env.AI.run(EMBED_MODEL, { text: [expandedQuery] });
-  const queryVector = embResult.data[0];
+  // 1. Embed — KV-cached. Embeddings are deterministic per model, so a
+  //    repeated query (or a sub-query of a repeated multi-query) skips the
+  //    Workers AI call entirely. Cache hits here also cover requests that
+  //    miss the response cache only because filters/limit/units differ.
+  let queryVector = await getCachedEmbedding(env.SESSIONS, EMBED_MODEL, expandedQuery);
+  if (!queryVector) {
+    const embResult = await env.AI.run(EMBED_MODEL, { text: [expandedQuery] });
+    queryVector = embResult.data[0];
+    await putCachedEmbedding(env.SESSIONS, EMBED_MODEL, expandedQuery, queryVector);
+  }
 
   // 2. Vector search
   const vectorFilter = buildVectorFilter(filters);
