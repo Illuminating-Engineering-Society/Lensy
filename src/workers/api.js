@@ -22,7 +22,7 @@
 
 import { handleSearch } from './search.js';
 import { handleIngest } from './ingest.js';
-import { handleAdminScanOrphans, handleAdminEnumerateIds, handleAdminDeleteOrphans } from './admin.js';
+import { handleAdminScanOrphans, handleAdminEnumerateIds, handleAdminDeleteOrphans, handleAdminFlushCache } from './admin.js';
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
@@ -43,7 +43,7 @@ export default {
     try {
       // ── Search ──────────────────────────────────────────────────────────────
       if (path === '/api/search' && request.method === 'POST') {
-        return withCors(await handleSearch(request, env));
+        return withCors(await handleSearch(request, env, ctx));
       }
 
       // ── Ingest (internal/admin only) ─────────────────────────────────────
@@ -60,6 +60,9 @@ export default {
       }
       if (path === '/api/admin/delete-orphans' && request.method === 'POST') {
         return withCors(await handleAdminDeleteOrphans(request, env));
+      }
+      if (path === '/api/admin/flush-cache' && request.method === 'POST') {
+        return withCors(await handleAdminFlushCache(request, env));
       }
 
       // ── Applications ─────────────────────────────────────────────────────
