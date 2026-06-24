@@ -17,16 +17,26 @@
  *                                        9. Upsert into Vectorize
  *                                       10. Store metadata in D1
  *
+ * Structure-aware: each PDF is classified as either
+ *   • NEW_TABLE — landscape "Recommended Illuminance Criteria" grid (RP-43-25
+ *     style prototypes). Full pipeline incl. structured application extraction.
+ *   • STANDARD  — ordinary prose document (LP-/LS-/TM- series, older RPs).
+ *     Ingested for semantic text search only; application extraction is skipped
+ *     because these PDFs have no structured illuminance grid to parse.
+ *
  * Usage:
  *   node scripts/ingest-pdfs.js --file pdfs/RP-9-20.pdf --id RP-9-20
- *   node scripts/ingest-pdfs.js --dir pdfs/                  # batch all PDFs
+ *   node scripts/ingest-pdfs.js --dir pdfs/                  # batch all PDFs (recursive)
  *   node scripts/ingest-pdfs.js --applications-only          # re-embed D1 apps
  *
  * Options:
  *   --file <path>      Single PDF file to ingest
- *   --id <standardId>  Standard ID override (default: filename without .pdf)
- *   --dir <path>       Directory of PDFs to ingest in batch
+ *   --id <standardId>  Standard ID override (default: derived from filename)
+ *   --dir <path>       Directory of PDFs to ingest in batch (recurses into
+ *                      subfolders; the "Others" folder is always skipped)
  *   --applications-only  Re-embed all D1 application rows into Vectorize
+ *   --new-table-only   In batch mode, ingest only PDFs detected as NEW_TABLE
+ *   --force-structure <new_table|standard>  Override structure auto-detection
  *   --local            Target local wrangler dev (http://localhost:8787)
  *   --dry-run          Parse and chunk without sending to Worker
  *   --verbose          Print chunk details during processing
@@ -36,15 +46,20 @@
  *   LUCIUS_API_SECRET  Optional shared secret for ingest endpoint auth
  */
 
-import { readFileSync, readdirSync, existsSync } from 'fs';
-import { resolve, basename, extname } from 'path';
+import { readFileSync, readdirSync, existsSync, statSync } from 'fs';
+import { resolve, basename, extname, join, relative } from 'path';
 import { execSync } from 'child_process';
 import { parsePDFNode } from '../src/lib/pdf-parser.js';
 import { extractIESTables, extractGeneralNotes } from '../src/lib/table-extractor.js';
 import {
   extractApplicationsFromPages,
   reportExtractionQuality,
+  detectNewTableStructure,
 } from '../src/lib/applications-extractor.js';
+
+// Directory names skipped during recursive batch ingestion. "Others" holds
+// reference material (e.g. the IlluminanceTables schema doc), not standards.
+const SKIP_DIRS = new Set(['Others']);
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 
@@ -57,6 +72,16 @@ const CONFIG = {
   apiSecret: process.env.LUCIUS_API_SECRET || null,
   dryRun: args.includes('--dry-run'),
   verbose: args.includes('--verbose'),
+  newTableOnly: args.includes('--new-table-only'),
+  forceStructure: (() => {
+    const i = args.indexOf('--force-structure');
+    if (i < 0) return null;
+    const v = (args[i + 1] || '').toLowerCase();
+    if (v !== 'new_table' && v !== 'standard') {
+      throw new Error(`--force-structure expects "new_table" or "standard", got "${args[i + 1]}"`);
+    }
+    return v;
+  })(),
   // Chunking parameters
   chunkTargetWords: 350,   // ~500 tokens at 1.4 words/token
   chunkOverlapWords: 40,   // overlap between adjacent chunks for context continuity
@@ -101,29 +126,52 @@ async function main() {
 async function ingestDirectory(dirPath) {
   if (!existsSync(dirPath)) throw new Error(`Directory not found: ${dirPath}`);
 
-  const files = readdirSync(dirPath)
-    .filter(f => extname(f).toLowerCase() === '.pdf')
-    .sort();
+  const files = collectPdfs(dirPath).sort();
 
-  console.log(`Found ${files.length} PDF(s) in ${dirPath}\n`);
+  console.log(`Found ${files.length} PDF(s) under ${dirPath} (excluding: ${[...SKIP_DIRS].join(', ')})\n`);
 
   let success = 0;
   let failed = 0;
+  const byStructure = { new_table: 0, standard: 0, skipped: 0 };
 
-  for (const file of files) {
-    const filePath = resolve(dirPath, file);
-    const standardId = deriveStandardId(file);
+  for (const filePath of files) {
+    const standardId = deriveStandardId(basename(filePath));
+    const label = relative(dirPath, filePath);
     try {
-      await ingestFile(filePath, standardId);
+      const result = await ingestFile(filePath, standardId);
+      if (result?.skipped) byStructure.skipped++;
+      else if (result?.structure) byStructure[result.structure]++;
       success++;
     } catch (err) {
-      console.error(`  ✗ ${standardId}: ${err.message}`);
+      console.error(`  ✗ ${label} (${standardId}): ${err.message}`);
       failed++;
     }
   }
 
   console.log(`\n${'─'.repeat(50)}`);
-  console.log(`Batch complete: ${success} succeeded, ${failed} failed.\n`);
+  console.log(`Batch complete: ${success} processed, ${failed} failed.`);
+  console.log(`  NEW_TABLE: ${byStructure.new_table}   STANDARD: ${byStructure.standard}   skipped: ${byStructure.skipped}\n`);
+}
+
+/**
+ * Recursively collect .pdf paths under dirPath, skipping any directory whose
+ * name is in SKIP_DIRS (e.g. "Others" — reference material, not standards).
+ */
+function collectPdfs(dirPath) {
+  const out = [];
+  for (const entry of readdirSync(dirPath, { withFileTypes: true })) {
+    const full = join(dirPath, entry.name);
+    if (entry.isDirectory()) {
+      if (SKIP_DIRS.has(entry.name)) {
+        console.log(`  ↷ Skipping directory: ${entry.name}/`);
+        continue;
+      }
+      out.push(...collectPdfs(full));
+    } else if (extname(entry.name).toLowerCase() === '.pdf') {
+      out.push(full);
+    }
+  }
+  return out;
 }
 
 // ─── Single File Ingestion ────────────────────────────────────────────────────
@@ -148,27 +196,54 @@ async function ingestFile(filePath, standardId) {
   const { metadata, pages } = await parsePDFNode(pdfBytes);
   console.log(`  Pages: ${pages.length}, Title: "${metadata.title || '(none)'}"`);
 
+  // Step 2b: Classify the document structure. NEW_TABLE PDFs carry the
+  // landscape "Recommended Illuminance Criteria" grid the application extractor
+  // was built for; STANDARD PDFs are ordinary prose and have no such grid.
+  const detection = detectNewTableStructure(pages);
+  const structure = CONFIG.forceStructure
+    ? CONFIG.forceStructure
+    : (detection.isNewTable ? 'new_table' : 'standard');
+  const isNewTable = structure === 'new_table';
+  console.log(
+    `  Structure: ${structure.toUpperCase()}` +
+    `${CONFIG.forceStructure ? ' (forced)' : ''}` +
+    ` (rows=${detection.rowHits}, criteriaPages=${detection.criteriaPages})`
+  );
+
+  // In --new-table-only batch mode, skip prose standards entirely.
+  if (CONFIG.newTableOnly && !isNewTable) {
+    console.log('  ↷ Skipped (--new-table-only): not a NEW_TABLE document.');
+    return { skipped: true, structure };
+  }
+
   // Step 3: Extract IES illuminance tables
   console.log('  Extracting tables...');
   const tables = extractIESTables(pages);
   console.log(`  Tables found: ${tables.length}`);
 
-  // Step 4: Extract structured application records from tables
-  // This is the "PDFs as source of truth" step — no CSV required.
-  console.log('  Extracting application records...');
+  // Step 4: Extract structured application records — NEW_TABLE only.
+  // Running the extractor over prose standards yields only incidental,
+  // low-quality rows that would pollute D1, so we skip it for STANDARD docs.
+  // Those PDFs are still fully indexed for semantic text search below.
   const standardMeta = {
     fullDesignation: inferFullDesignation(standardId, metadata.title),
     year: metadata.year,
     author: metadata.author,
   };
-  const applications = extractApplicationsFromPages(pages, standardId, standardMeta);
-  console.log(`  Applications extracted: ${applications.length}`);
+  let applications = [];
+  if (isNewTable) {
+    console.log('  Extracting application records...');
+    applications = extractApplicationsFromPages(pages, standardId, standardMeta);
+    console.log(`  Applications extracted: ${applications.length}`);
 
-  // Show quality report in verbose mode
-  if (CONFIG.verbose && applications.length > 0) {
-    const quality = reportExtractionQuality(applications);
-    console.log(`  Quality score: ${quality.qualityScore}% have horizontal lux values`);
-    for (const w of quality.warnings) console.log(`  ⚠ ${w}`);
+    // Show quality report in verbose mode
+    if (CONFIG.verbose && applications.length > 0) {
+      const quality = reportExtractionQuality(applications);
+      console.log(`  Quality score: ${quality.qualityScore}% have horizontal lux values`);
+      for (const w of quality.warnings) console.log(`  ⚠ ${w}`);
+    }
+  } else {
+    console.log('  Application extraction skipped (STANDARD structure — text-only ingest).');
   }
 
   // Step 4b: Extract standalone "General Notes" / Annex A blocks as citable chunks
@@ -203,13 +278,14 @@ async function ingestFile(filePath, standardId) {
 
   if (CONFIG.dryRun) {
     console.log(`  [DRY RUN] Would send: ${chunks.length} chunks, ${tables.length} tables, ${applications.length} applications`);
-    return;
+    return { structure };
   }
 
   // Step 6: POST chunks + metadata to Worker (embedding + indexing + D1 standards row)
   console.log('  Sending to Worker for embedding + indexing...');
   const result = await postToWorker('/api/ingest', {
     standardId,
+    structure,
     metadata: {
       title: metadata.title,
       author: metadata.author,
@@ -242,6 +318,7 @@ async function ingestFile(filePath, standardId) {
   }
 
   console.log(`  ✓ ${result.chunksIndexed} chunks indexed, ${result.tablesFound} tables stored, ${applicationsUpserted} application records upserted`);
+  return { structure };
 }
 
 // ─── R2 Upload ────────────────────────────────────────────────────────────────
@@ -421,15 +498,22 @@ async function postToWorker(path, body) {
 }
 
 /**
- * Derive a clean IES standard ID from a prototype filename, e.g.
+ * Derive a clean IES standard ID from a (prototype) filename, e.g.
  *   "RP-43-25_v7_Prototype_260420-NEW_TABLE.pdf" → "RP-43-25"
  *   "RP-3-20+E1 Prototype_260519-NEW_TABLE.pdf"  → "RP-3-20+E1"
+ *   "RP-8-25 + E2_v1 260527-NEW_TABLE.pdf"       → "RP-8-25+E2"
+ *   "RP-27.1-22.pdf"                              → "RP-27.1-22"
+ *
+ * The errata suffix ("+E1"/"+E2") is preserved (with surrounding spaces
+ * normalized away) so an errata revision never collides with its base — e.g.
+ * "RP-8-25 + E1_Full" (STANDARD) and "RP-8-25 + E2 …NEW_TABLE" stay distinct.
  * Falls back to the first whitespace/underscore token if no match.
  */
 function deriveStandardId(file) {
   const stem = basename(file, extname(file));
-  const m = stem.match(/^([A-Z]{1,3}-\d+(?:-\d+)?(?:\+E\d+)?)/i);
-  return m ? m[1] : stem.split(/[_ ]/)[0];
+  const m = stem.match(/^([A-Z]{1,3}-\d+(?:\.\d+)?(?:-\d+)?)\s*(?:\+\s*(E\d+))?/i);
+  if (!m) return stem.split(/[_ ]/)[0];
+  return m[2] ? `${m[1]}+${m[2]}` : m[1];
 }
 
 function inferFullDesignation(standardId, title) {

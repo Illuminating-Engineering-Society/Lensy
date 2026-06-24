@@ -31,6 +31,52 @@
  * lux→fc conversion: 10:1 (per reference doc, NOT 10.764).
  */
 
+// ─── Structure Detection ──────────────────────────────────────────────────────
+
+/**
+ * Detect whether a PDF uses the "NEW TABLE" Recommended Illuminance Criteria
+ * layout (260420+ prototypes, e.g. RP-43-25) versus a STANDARD prose document
+ * (e.g. RP-1-24, the LP-/LS-/TM- series, and the pre-prototype RPs).
+ *
+ * Why this matters for ingest:
+ *   • NEW_TABLE PDFs render the full application taxonomy as a dense, landscape
+ *     grid of concatenated rows ("30 lx @ 0.00 m 3 fc @ 0.0 ft 5:1 Avg:Min …").
+ *     extractApplicationsFromPages() reconstructs hundreds of structured records
+ *     from these — this is the schema the extractor was built for.
+ *   • STANDARD PDFs have no such grid. They are ordinary prose with occasional
+ *     small inline tables. Running the application extractor over them yields
+ *     only a handful of incidental, low-quality rows that would pollute D1.
+ *     These documents are still fully ingested for semantic text search
+ *     (chunks, general notes, embeddings) — just without application records.
+ *
+ * The discriminator is the concatenated dual-unit row ("<n> lx @ … fc @ …"),
+ * which is unique to the new format. Validated to agree 100% with the
+ * "-NEW_TABLE" filename convention across the current corpus (70 PDFs).
+ *
+ * @param {Array<{number, text, lines, width, height}>} pages
+ * @returns {{ isNewTable: boolean, rowHits: number, criteriaPages: number }}
+ */
+export function detectNewTableStructure(pages) {
+  // "… 30 lx @ 0.00 m 3 fc @ 0.0 ft …" — both units glued on one line.
+  const NEW_TABLE_ROW_RE = /\d+(?:\.\d+)?\s*l(?:x|ux)\s*@.*\bfc\b\s*@/i;
+  const CRITERIA_TITLE_RE = /Recommended Illuminance Criteria/i;
+
+  let rowHits = 0;
+  let criteriaPages = 0;
+
+  for (const page of pages || []) {
+    const landscape = (page.width || 0) > (page.height || 0);
+    const lines = page.lines || [];
+    const pageRowHits = lines.filter((l) => NEW_TABLE_ROW_RE.test(l.text || '')).length;
+    rowHits += pageRowHits;
+    const hasCriteriaTitle = lines.some((l) => CRITERIA_TITLE_RE.test(l.text || ''));
+    if (landscape && (hasCriteriaTitle || pageRowHits >= 3)) criteriaPages++;
+  }
+
+  const isNewTable = rowHits >= 5 && criteriaPages >= 1;
+  return { isNewTable, rowHits, criteriaPages };
+}
+
 // ─── Public API ───────────────────────────────────────────────────────────────
 
 export function extractApplicationsFromTables(_tables, _standardId, _meta) {
