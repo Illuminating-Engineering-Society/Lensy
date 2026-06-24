@@ -16,7 +16,7 @@
  *
  *  2. Embed expanded query   (@cf/baai/bge-base-en-v1.5, KV-cached)
  *
- *  3. Vector search          (Cloudflare Vectorize, topK=30)
+ *  3. Vector search          (Cloudflare Vectorize, topK=50)
  *     Returns mix of:
  *       a. Application vectors  (chunk_type = 'application') → structured D1 data
  *       b. PDF chunk vectors    (chunk_type = 'text'|'table') → excerpt context
@@ -48,7 +48,7 @@
  *      standard:       'RP-9-20',        // exact Standard field value
  *      tm24_eligible:  boolean,
  *    },
- *    limit:            number,           // default 10, max 20
+ *    limit:            number,           // default 10, max 30
  *    units:            'lux'|'fc'|'both' // default 'both'
  *  }
  *
@@ -75,8 +75,8 @@ import {
 } from '../lib/cache.js';
 
 const EMBED_MODEL = '@cf/baai/bge-base-en-v1.5';
-const VECTOR_TOP_K = 40;      // fetch extra; deduplicate down to limit
-const MAX_LIMIT = 20;
+const VECTOR_TOP_K = 50;      // Vectorize caps topK at 50 when returning metadata; fetch the max, dedupe down to limit
+const MAX_LIMIT = 30;         // upper bound on the result pool the UI paginates over (client-side)
 const MIN_VECTOR_RESULTS = 3; // below this, run text fallback
 const STRONG_MATCH_THRESHOLD = 0.60; // top relevanceScore below this → flag noStrongMatch
 

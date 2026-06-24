@@ -362,6 +362,16 @@
     let modalPendingCodes = []; // application codes waiting to be added
     let projectsCache = null;
 
+    // ── Pagination ─────────────────────────────────────────────────────────────
+    // The API returns a single pool of up to POOL_SIZE results (backend
+    // MAX_LIMIT). We page over that pool entirely client-side — no extra
+    // network round-trips on page change, and it stays within one response
+    // cache entry per query.
+    const POOL_SIZE = 30;  // matches backend MAX_LIMIT
+    const PAGE_SIZE = 8;   // results shown per page
+    let allResults = [];
+    let currentPage = 1;
+
     // ── Search ───────────────────────────────────────────────────────────────
     function setQuery(text) {
       document.getElementById('search-input').value = text;
@@ -402,7 +412,7 @@
       const includeAI = document.getElementById('include-ai').checked;
 
       try {
-        const data = await LensyAPI.search(query, { filters, includeAISummary: includeAI });
+        const data = await LensyAPI.search(query, { filters, includeAISummary: includeAI, limit: POOL_SIZE });
         renderResults(data);
       } catch (err) {
         renderError(err.message);
@@ -416,11 +426,11 @@
       const section = document.getElementById('results-section');
       section.classList.remove('hidden');
       selectedApplicationCodes = new Set();
-      currentResultCodes = data.results.map(r => r.application?.code).filter(Boolean);
+      allResults = data.results || [];
+      currentPage = 1;
+      currentResultCodes = allResults.map(r => r.application?.code).filter(Boolean);
       updateBulkActionsUI();
 
-      document.getElementById('results-heading').textContent =
-        `${data.results.length} Result${data.results.length !== 1 ? 's' : ''}`;
       document.getElementById('results-meta').textContent = `for "${data.query}"`;
 
       // Low-confidence advisory: banner shows above the list when the API
@@ -428,7 +438,7 @@
       // sees a clear "these are best-effort" notice.
       const banner = document.getElementById('no-strong-match-banner');
       const bannerText = document.getElementById('no-strong-match-text');
-      if (data.noStrongMatch && data.results.length > 0) {
+      if (data.noStrongMatch && allResults.length > 0) {
         bannerText.textContent = data.noStrongMatchMessage
           || 'No strong match found. The results below are the closest available.';
         banner.classList.remove('hidden');
@@ -439,12 +449,86 @@
 
       if (data.aiSummary) renderAISummary(data.aiSummary);
 
-      const list = document.getElementById('results-list');
-      if (!data.results.length) {
+      if (!allResults.length) {
+        document.getElementById('results-heading').textContent = 'Results';
+        document.getElementById('results-list').innerHTML = '';
         document.getElementById('no-results').classList.remove('hidden');
         return;
       }
-      list.innerHTML = data.results.map((r, i) => renderResultCard(r, i)).join('');
+
+      renderResultsPage();
+    }
+
+    // Render the current page's slice of `allResults` plus pagination controls.
+    function renderResultsPage() {
+      const total = allResults.length;
+      const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+      currentPage = Math.min(Math.max(1, currentPage), totalPages);
+
+      const start = (currentPage - 1) * PAGE_SIZE;
+      const end = Math.min(start + PAGE_SIZE, total);
+      const pageResults = allResults.slice(start, end);
+
+      // Heading reflects the full result count; the range hint sits in the meta line.
+      document.getElementById('results-heading').textContent =
+        `${total} Result${total !== 1 ? 's' : ''}`;
+
+      const list = document.getElementById('results-list');
+      // `start + i` keeps the staggered animation delay aligned to global index.
+      list.innerHTML = pageResults.map((r, i) => renderResultCard(r, start + i)).join('')
+        + renderPaginationControls(totalPages, start + 1, end, total);
+    }
+
+    function renderPaginationControls(totalPages, fromN, toN, total) {
+      if (totalPages <= 1) return '';
+
+      const btn = (label, page, opts = {}) => {
+        const { disabled = false, active = false, aria = label } = opts;
+        const base = 'min-w-[2.25rem] h-9 px-3 inline-flex items-center justify-center rounded-lg text-sm font-medium transition border';
+        if (active) {
+          return `<button class="${base} bg-ies-blue text-white border-ies-blue" aria-current="page" disabled>${label}</button>`;
+        }
+        if (disabled) {
+          return `<button class="${base} text-gray-300 border-gray-100 cursor-not-allowed" disabled aria-label="${aria}">${label}</button>`;
+        }
+        return `<button onclick="goToPage(${page})" class="${base} text-gray-600 border-gray-200 hover:border-ies-blue hover:text-ies-blue bg-white" aria-label="${aria}">${label}</button>`;
+      };
+
+      // Compact page-number window: first, last, current ±1, with ellipses.
+      const pages = [];
+      for (let p = 1; p <= totalPages; p++) {
+        if (p === 1 || p === totalPages || Math.abs(p - currentPage) <= 1) {
+          pages.push(p);
+        } else if (pages[pages.length - 1] !== '…') {
+          pages.push('…');
+        }
+      }
+
+      const numberBtns = pages.map(p =>
+        p === '…'
+          ? `<span class="min-w-[2.25rem] h-9 inline-flex items-center justify-center text-sm text-gray-400">…</span>`
+          : btn(String(p), p, { active: p === currentPage })
+      ).join('');
+
+      return `
+        <nav class="no-print flex flex-col sm:flex-row items-center justify-between gap-3 mt-6 pt-4 border-t border-gray-100" aria-label="Results pagination">
+          <p class="text-xs text-gray-400 tabular-nums">Showing ${fromN}–${toN} of ${total}</p>
+          <div class="flex items-center gap-1.5">
+            ${btn('‹ Prev', currentPage - 1, { disabled: currentPage === 1, aria: 'Previous page' })}
+            ${numberBtns}
+            ${btn('Next ›', currentPage + 1, { disabled: currentPage === totalPages, aria: 'Next page' })}
+          </div>
+        </nav>
+      `;
+    }
+
+    function goToPage(page) {
+      currentPage = page;
+      renderResultsPage();
+      // Bring the top of the list into view so the user isn't stranded mid-page.
+      const section = document.getElementById('results-section');
+      const top = section.getBoundingClientRect().top + window.scrollY - 80;
+      window.scrollTo({ top, behavior: 'smooth' });
     }
 
     function renderAISummary(summary) {
@@ -584,6 +668,7 @@
                 class="result-checkbox mt-1 rounded accent-ies-blue shrink-0"
                 value="${escapeHtml(app.code || '')}"
                 data-code="${escapeHtml(app.code || '')}"
+                ${app.code && selectedApplicationCodes.has(app.code) ? 'checked' : ''}
               />
               <div class="min-w-0">
                 ${subCategoryBanner ? `<p class="mb-1">${subCategoryBanner}</p>` : ''}
@@ -881,6 +966,8 @@
       document.getElementById('no-strong-match-banner').classList.add('hidden');
       currentResultCodes = [];
       selectedApplicationCodes = new Set();
+      allResults = [];
+      currentPage = 1;
       updateBulkActionsUI();
     }
 
