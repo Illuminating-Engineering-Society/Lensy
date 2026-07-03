@@ -545,28 +545,40 @@
       const isInterior = app.indoorOutdoor === 'Indoor';
 
       // Sub_Category banner colors per IlluminanceTables_Reference_260421
-      // (Interior = dark blue #2E4A62, Exterior = dark green #2E4A34).
-      // We keep the card neutral but accent the breadcrumb and a left border
-      // stripe so the indoor/outdoor distinction is visible at a glance.
-      const accentHex = isExterior ? '#2E4A34' : isInterior ? '#2E4A62' : '#6B7280';
+      // (Interior = dark blue #2E4A62, Exterior = dark green #2E4A34). The
+      // banner runs full-width at the top of the card; a left border stripe
+      // reinforces the indoor/outdoor distinction at a glance.
+      const bannerHex = isExterior ? '#2E4A34' : isInterior ? '#2E4A62' : '#374151';
+      // Application-name badge — brown for exterior, blue for interior — so
+      // the application title reads as the most prominent element (request #1).
+      const appBadgeHex = isExterior ? '#8A3B18' : isInterior ? '#2E4A62' : '#4B5563';
 
-      // Hierarchy breadcrumb — Sub_Category styled in the contract color when present
-      const crumbs = [app.category, app.sub1, app.sub2, app.sub3].filter(Boolean);
-      const breadcrumb = crumbs.length > 1
-        ? crumbs.slice(0, -1).map(c => `<span>${escapeHtml(c)}</span>`).join('<span class="mx-1 opacity-40">›</span>')
-        : '';
-      const title = crumbs[crumbs.length - 1] || app.code || 'Application';
-
+      // Green Sub_Category banner (prominent, full-width)
       const subCategoryBanner = app.subCategory ? `
-        <span class="inline-block text-[10px] font-bold tracking-wider uppercase px-2 py-0.5 rounded-sm mr-2 align-middle"
-              style="background-color: ${accentHex}; color: #fff;">
+        <span class="inline-block text-[11px] font-bold tracking-wider uppercase px-2.5 py-1 rounded"
+              style="background-color: ${bannerHex}; color: #fff;">
           ${escapeHtml(app.subCategory)}
         </span>` : '';
 
-      // Indoor/outdoor badge — uses the contract color for stronger branding
+      // Prominent application-name badge = the top-level App name.
+      const appName = app.category || app.fullName || app.code || 'Application';
+      const appBadge = `
+        <span class="inline-block text-sm font-bold text-white px-2.5 py-1 rounded align-middle"
+              style="background-color: ${appBadgeHex};">${escapeHtml(appName)}</span>`;
+
+      // Breadcrumb = the drill-down beneath the App name, ending in the row
+      // descriptor (e.g. "Building Entrances › Lz0 › Lower limit (avg.)").
+      // Including every sub-level restores the "Lower limit (avg.)" that was
+      // missing before (request #2).
+      const crumbs = [app.sub1, app.sub2, app.sub3, app.sub4, app.sub5, app.sub6].filter(Boolean);
+      const breadcrumb = crumbs.length
+        ? crumbs.map(c => escapeHtml(c)).join('<span class="mx-1.5 text-gray-300">›</span>')
+        : '';
+
+      // Indoor/outdoor badge — uses the banner color for stronger branding
       const locationBadge = app.indoorOutdoor ? `
         <span class="text-xs px-2 py-0.5 rounded-full font-medium border"
-              style="background-color: ${accentHex}15; color: ${accentHex}; border-color: ${accentHex}33;">
+              style="background-color: ${bannerHex}15; color: ${bannerHex}; border-color: ${bannerHex}33;">
           ${escapeHtml(app.indoorOutdoor)}
         </span>
       ` : '';
@@ -601,47 +613,73 @@
         </span>
       ` : '';
 
-      // Illuminance values
+      // Illuminance values (Horizontal / Vertical / Task planes, side-by-side)
       const luxBlock = buildIlluminanceBlock(app);
 
-      // Outdoor data — full set per RP-43-25 spec: Zone, Glare, Uplight, Controls, Spectrum
+      // Environmental & Visual Considerations — labeled cards, each with a
+      // sub-label pointing at the guidance type ("Max" / "See Notes"), per
+      // requests #8 and #9. Spectrum now carries an explicit label.
       const outdoor = app.outdoor || {};
-      const hasOutdoor = outdoor.lightingZone || outdoor.maxGlareRating || outdoor.maxUplight ||
-                        outdoor.spectrumGuidance || outdoor.controlsRequired;
-      const outdoorBlock = hasOutdoor ? `
-        <div class="mt-3 pt-3 border-t border-gray-50">
-          <p class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Environmental &amp; Visual</p>
-          <div class="flex flex-wrap gap-2 text-xs">
-            ${outdoor.lightingZone ? `<span class="bg-amber-50 border border-amber-100 text-amber-800 px-2.5 py-1 rounded-md">Zone ${escapeHtml(String(outdoor.lightingZone))}</span>` : ''}
-            ${outdoor.maxGlareRating ? `<span class="bg-orange-50 border border-orange-100 text-orange-800 px-2.5 py-1 rounded-md">Glare ≤ ${escapeHtml(String(outdoor.maxGlareRating))}</span>` : ''}
-            ${outdoor.maxUplight ? `<span class="bg-yellow-50 border border-yellow-100 text-yellow-800 px-2.5 py-1 rounded-md">Uplight ≤ ${escapeHtml(String(outdoor.maxUplight))}</span>` : ''}
-            ${outdoor.controlsRequired ? `<span class="bg-sky-50 border border-sky-100 text-sky-800 px-2.5 py-1 rounded-md">Controls: ${escapeHtml(String(outdoor.controlsRequired))}</span>` : ''}
-            ${outdoor.curfewDimming ? `<span class="bg-slate-50 border border-slate-100 text-slate-700 px-2.5 py-1 rounded-md">Curfew: ${escapeHtml(String(outdoor.curfewDimming))}</span>` : ''}
-            ${outdoor.spectrumGuidance ? `<span class="bg-purple-50 border border-purple-100 text-purple-800 px-2.5 py-1 rounded-md">${escapeHtml(outdoor.spectrumGuidance)}</span>` : ''}
+      const envCards = [
+        { label: 'Lighting Zone', value: outdoor.lightingZone,     sub: null },
+        { label: 'Glare',         value: outdoor.maxGlareRating,    sub: 'Max' },
+        { label: 'Uplight',       value: outdoor.maxUplight,        sub: 'Max' },
+        { label: 'Controls',      value: outdoor.controlsRequired,  sub: 'See Notes' },
+        { label: 'Curfew',        value: outdoor.curfewDimming,     sub: 'See Notes' },
+        { label: 'Spectrum',      value: outdoor.spectrumGuidance,  sub: 'See Notes' },
+      ].filter(c => c.value != null && c.value !== '');
+
+      const envCard = (c) => `
+        <div class="bg-amber-50/60 border border-amber-100 rounded-md px-2.5 py-1.5">
+          <p class="text-[10px] uppercase tracking-wide text-gray-500 leading-tight">${c.label}</p>
+          <p class="text-sm font-bold text-gray-800 leading-tight">${escapeHtml(String(c.value))}</p>
+          ${c.sub ? `<p class="text-[10px] text-gray-400 leading-tight">${c.sub}</p>` : ''}
+        </div>`;
+
+      const outdoorBlock = envCards.length ? `
+        <div class="mt-3 pt-3 border-t border-gray-100">
+          <p class="text-sm font-semibold text-gray-700 mb-2">Environmental and Visual Considerations</p>
+          <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
+            ${envCards.map(envCard).join('')}
           </div>
         </div>
       ` : '';
 
-      // Notes
-      const notesBlock = app.appNotes ? `
-        <div class="mt-3 pt-3 border-t border-gray-50">
-          <p class="text-xs text-gray-500 leading-relaxed"><span class="font-medium text-gray-600">Note:</span> ${escapeHtml(app.appNotes)}</p>
-        </div>
+      // Application Task/Area Notes — footnotes collapsed by default; the user
+      // clicks to expand (matches the proposed layout). Combines App_Notes,
+      // Footnotes and General_Notes into one disclosure.
+      const notesText = [app.appNotes, app.footnotes, app.generalNotes]
+        .filter(Boolean).join('\n\n');
+      const notesBlock = notesText ? `
+        <details class="mt-3 pt-3 border-t border-gray-100 group">
+          <summary class="cursor-pointer text-sm font-semibold text-gray-700 flex items-center gap-2 list-none select-none">
+            <svg class="w-3.5 h-3.5 text-gray-400 transition-transform group-open:rotate-90 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/>
+            </svg>
+            Application Task/Area Notes
+            <span class="text-xs font-normal text-gray-400">— footnotes begin collapsed. Click to display.</span>
+          </summary>
+          <div class="mt-2 pl-5 text-xs text-gray-600 leading-relaxed whitespace-pre-line">${escapeHtml(notesText)}</div>
+        </details>
       ` : '';
 
-      // Excerpt from PDF — the search worker returns a single best excerpt
-      // per result (search.js: pickExcerptForApp). Older code expected an
-      // `excerpts` array, which is why "From the Standard" never rendered.
+      // "From the Standard" — the search worker returns a single best excerpt
+      // (search.js: pickExcerptForApp). Only useful when it shows PROSE context
+      // from the body of the standard; a raw table dump just repeats the data
+      // already shown above, so we suppress it (request #10).
       const excerpts = Array.isArray(result.excerpts)
         ? result.excerpts
         : (result.excerpt ? [result.excerpt] : []);
-      const excerptBlock = excerpts.length > 0 ? `
-        <div class="mt-3 pt-3 border-t border-gray-50">
-          <p class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">From the Standard</p>
-          ${excerpts.slice(0, 2).map(e => `
+      const proseExcerpts = excerpts.filter(e =>
+        e && e.text && e.chunkType !== 'table' && !looksLikeTableDump(e.text)
+      );
+      const excerptBlock = proseExcerpts.length > 0 ? `
+        <div class="mt-3 pt-3 border-t border-gray-100">
+          <p class="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-1.5">From the Standard</p>
+          ${proseExcerpts.slice(0, 2).map(e => `
             <div class="text-xs text-gray-600 leading-relaxed mb-2 pl-3 border-l-2 border-gray-200">
               "${escapeHtml((e.text || '').substring(0, 240))}${(e.text || '').length > 240 ? '…' : ''}"
-              <span class="ml-1 text-gray-400">${e.section ? `§${escapeHtml(e.section)} · ` : ''}p. ${e.pageNumber}</span>
+              <span class="ml-1 text-gray-400">${e.section ? `§${escapeHtml(e.section)} · ` : ''}${e.pageNumber != null ? `p. ${e.pageNumber}` : ''}</span>
             </div>
           `).join('')}
         </div>
@@ -658,43 +696,47 @@
       ` : '';
 
       return `
-        <article class="result-card bg-white rounded-xl border border-gray-100 shadow-sm p-5 relative overflow-hidden"
-                 style="animation-delay: ${index * 40}ms; border-left: 3px solid ${accentHex};">
-          <!-- Card header -->
-          <div class="flex items-start justify-between gap-3">
-            <div class="flex items-start gap-3 min-w-0">
+        <article class="result-card bg-white rounded-xl border border-gray-100 shadow-sm p-4 relative overflow-hidden"
+                 style="animation-delay: ${index * 40}ms; border-left: 3px solid ${bannerHex};">
+          <!-- Banner row: Sub_Category (left) + type badges (right) -->
+          <div class="flex items-start justify-between gap-2 mb-2">
+            <div class="flex items-start gap-2.5 min-w-0">
               <input
                 type="checkbox"
-                class="result-checkbox mt-1 rounded accent-ies-blue shrink-0"
+                class="result-checkbox mt-0.5 rounded accent-ies-blue shrink-0"
                 value="${escapeHtml(app.code || '')}"
                 data-code="${escapeHtml(app.code || '')}"
                 ${app.code && selectedApplicationCodes.has(app.code) ? 'checked' : ''}
               />
-              <div class="min-w-0">
-                ${subCategoryBanner ? `<p class="mb-1">${subCategoryBanner}</p>` : ''}
-                ${breadcrumb ? `<p class="text-xs text-gray-400 mb-0.5 flex items-center flex-wrap">${breadcrumb}</p>` : ''}
-                <h3 class="font-bold text-gray-900 leading-snug">${escapeHtml(title)}</h3>
-                <p class="text-xs text-gray-400 mt-1">${escapeHtml(result.citation || '')}</p>
-              </div>
+              <div class="min-w-0">${subCategoryBanner}</div>
             </div>
             <div class="flex items-center gap-1.5 shrink-0 flex-wrap justify-end">
               ${locationBadge}${areaTaskBadge}${tm24Badge}${veilingBadge}${classOfPlayBadge}
             </div>
           </div>
 
+          <!-- Application name badge + drill-down breadcrumb -->
+          <div class="flex items-baseline flex-wrap gap-x-2 gap-y-1 mb-1 pl-[26px]">
+            ${appBadge}
+            ${breadcrumb ? `<span class="text-sm text-gray-600 font-medium">${breadcrumb}</span>` : ''}
+          </div>
+          <p class="text-xs text-gray-400 mb-1 pl-[26px]">${escapeHtml(result.citation || '')}</p>
+
           <!-- Illuminance data -->
-          ${luxBlock}
-          ${outdoorBlock}
-          ${notesBlock}
-          ${excerptBlock}
+          <div class="pl-[26px]">
+            ${luxBlock}
+            ${outdoorBlock}
+            ${notesBlock}
+            ${excerptBlock}
+          </div>
 
           <!-- Actions -->
-          <div class="flex items-center justify-between mt-4 pt-3 border-t border-gray-50">
+          <div class="flex items-center justify-between mt-3 pt-2.5 border-t border-gray-100 pl-[26px]">
             <div class="flex items-center gap-3">
               <button
                 class="add-to-project-btn text-xs px-3 py-1.5 bg-ies-blue text-white rounded-lg hover:bg-ies-blue-dark transition font-medium flex items-center gap-1.5"
                 data-code="${escapeHtml(app.code || '')}"
-                data-name="${escapeHtml(title)}"
+                data-name="${escapeHtml(appName)}"
                 data-citation="${escapeHtml(result.citation || '')}"
               >
                 <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
@@ -710,93 +752,95 @@
       `;
     }
 
+    // Heuristic for request #10: a "From the Standard" excerpt that is mostly
+    // digits/short tokens is almost certainly a raw table dump (lux/fc values,
+    // ratios, page refs) rather than prose — suppress it since it only repeats
+    // the structured data already displayed above.
+    function looksLikeTableDump(text) {
+      if (!text) return false;
+      const t = String(text);
+      const digitRatio = (t.match(/\d/g) || []).length / t.length;
+      const letterRatio = (t.match(/[a-zA-Z]/g) || []).length / t.length;
+      return digitRatio > 0.22 || letterRatio < 0.45;
+    }
+
     function buildIlluminanceBlock(app) {
       const hor = app.horizontal;
       const ver = app.vertical;
       const task = app.task;
       if (!hor && !ver && !task) return '';
 
-      const col = (label, value, sub, highlight) => {
-        if (value == null && !sub) return '';
+      // Height suffix, appended to the Maintained value so lux/fc and their
+      // measurement height read as one figure ("2 lx @ 0.0 m") per requests
+      // #4 and #7. Supports numeric heights and "TS" (Task Surface).
+      const hSuffix = (val, unit) => {
+        if (val == null || val === '') return '';
+        if (String(val).toUpperCase() === 'TS') return ' @ TS';
+        return ` @ ${val} ${unit}`;
+      };
+
+      // A single data cell inside a plane box.
+      const cell = (label, mainHtml, subText) => `
+        <div class="px-3 py-2">
+          <p class="text-[10px] uppercase tracking-wide text-gray-400 mb-0.5">${label}</p>
+          <p class="text-sm font-bold text-gray-900 leading-tight lux-badge">${mainHtml}</p>
+          ${subText ? `<p class="text-[11px] text-gray-400 mt-0.5">${escapeHtml(String(subText))}</p>` : ''}
+        </div>`;
+
+      // A plane box: a tinted header ("Horizontal (Eₕ) Cat. A") over a compact
+      // grid of Maintained / Basis / Uniformity (+ CV when present). The
+      // category letter is now explicitly labeled "Cat." (request #3).
+      const renderPlaneBox = (plane, label, tintBg, tintFg) => {
+        const catLabel = plane.category != null && plane.category !== ''
+          ? ` <span class="font-bold">Cat. ${escapeHtml(String(plane.category))}</span>` : '';
+
+        const maintMain = plane.lux != null || plane.fc != null
+          ? `${plane.lux ?? '—'}<span class="text-[11px] font-normal text-gray-400 ml-0.5">lx</span>`
+            + `<span class="font-normal text-gray-500">${escapeHtml(hSuffix(plane.heightM, 'm'))}</span>`
+          : null;
+        const maintSub = plane.fc != null
+          ? `${plane.fc} fc${hSuffix(plane.heightFt, 'ft')}`
+          : null;
+
+        // Uniformity: if there's no ratio value, promote the ratio basis to the
+        // main slot; otherwise the basis (e.g. "Avg:Min") sits underneath as the
+        // sub-label so it's shown for every plane, not just vertical (request #5).
+        const uniMain = plane.uniformity ?? plane.ratioBasis;
+        const uniSub = plane.uniformity != null ? plane.ratioBasis : null;
+
+        const cells = [];
+        if (maintMain != null) cells.push(cell('Maintained', maintMain, maintSub));
+        if (plane.avgMaxMin != null) cells.push(cell('Basis', escapeHtml(String(plane.avgMaxMin)), null));
+        if (uniMain != null) cells.push(cell('Uniformity', escapeHtml(String(uniMain)), uniSub));
+        if (plane.cv != null) cells.push(cell('CV', escapeHtml(String(plane.cv)), null));
+        if (!cells.length) return '';
+
         return `
-          <div class="bg-gray-50 rounded-lg px-3 py-2.5 ${highlight ? 'ring-1 ring-ies-blue/15' : ''}">
-            <p class="text-xs text-gray-400 mb-1">${label}</p>
-            ${value != null ? `<p class="lux-value text-gray-900 lux-badge">${escapeHtml(String(value))}</p>` : '<p class="text-sm text-gray-400">—</p>'}
-            ${sub ? `<p class="text-xs text-gray-400 mt-0.5">${escapeHtml(String(sub))}</p>` : ''}
+          <div class="border border-gray-200 rounded-lg overflow-hidden">
+            <div class="px-3 py-1.5 text-xs font-semibold" style="background-color: ${tintBg}; color: ${tintFg};">
+              ${label}${catLabel}
+            </div>
+            <div class="grid divide-x divide-gray-100" style="grid-template-columns: repeat(${cells.length}, minmax(0, 1fr));">
+              ${cells.join('')}
+            </div>
+            ${plane.notes ? `<p class="text-[11px] text-gray-500 italic px-3 py-1.5 border-t border-gray-100">${escapeHtml(plane.notes)}</p>` : ''}
           </div>
         `;
       };
-
-      const luxCol = (label, lux, fc, highlight) => {
-        if (lux == null && fc == null) return '';
-        return `
-          <div class="bg-gray-50 rounded-lg px-3 py-2.5 ${highlight ? 'ring-1 ring-ies-blue/15' : ''}">
-            <p class="text-xs text-gray-400 mb-1">${label}</p>
-            <p class="lux-value text-gray-900 lux-badge">${lux ?? '—'}<span class="text-xs font-normal text-gray-400 ml-1">lx</span></p>
-            ${fc != null ? `<p class="text-xs text-gray-400 mt-0.5">${fc} fc</p>` : ''}
-          </div>
-        `;
-      };
-
-      const catBadge = (cat) => cat
-        ? `<span class="inline-block font-mono text-xs font-bold text-ies-blue bg-ies-blue/8 px-1.5 py-0.5 rounded mr-1">${escapeHtml(cat)}</span>`
-        : '';
 
       // Per IlluminanceTables_Reference_260421 (Visual): each plane has its own
-      // header tint — Eh = light blue, Ev = light green, Environmental = light yellow.
-      const planeHeader = (label, cat, tintBg, tintText) => `
-        <p class="text-xs font-semibold uppercase tracking-wider mb-2 px-2 py-1 rounded inline-block"
-           style="background-color: ${tintBg}; color: ${tintText};">
-          ${catBadge(cat)}${label}
-        </p>
-      `;
-
-      // Build the height label, supporting numeric meters or "TS" (Task Surface).
-      const heightLabel = (m, ft) => {
-        if (m == null && ft == null) return null;
-        if (m === 'TS' || ft === 'TS') return 'TS (Task Surface)';
-        const parts = [];
-        if (m != null) parts.push(`${m} m`);
-        if (ft != null) parts.push(`${ft} ft`);
-        return parts.join(' / ') || null;
-      };
-
-      // Each plane renders the same shape: lux/fc, height, avg|max|min basis,
-      // uniformity ratio, CV, ratio basis. Empty cols simply don't render.
-      // When `uniformity` is null but `ratioBasis` has a value, promote the
-      // basis to the main slot — it describes the maintained value's geometry
-      // (Avg:Min, etc.) rather than being orphan metadata under a "—".
-      const renderPlane = (plane, label, headerBg, headerFg) => {
-        const uniformityValue = plane.uniformity ?? plane.ratioBasis;
-        const uniformitySub = plane.uniformity != null ? plane.ratioBasis : null;
-        const cols = [
-          luxCol('Maintained', plane.lux, plane.fc, true),
-          col('Height (AFF)', heightLabel(plane.heightM, plane.heightFt), null, false),
-          col('Basis', plane.avgMaxMin, null, false),
-          col('Uniformity', uniformityValue, uniformitySub, false),
-          col('CV', plane.cv, null, false),
-        ].filter(Boolean);
-        if (!cols.length) return '';
-        return `
-          <div>
-            ${planeHeader(label, plane.category, headerBg, headerFg)}
-            <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
-              ${cols.join('')}
-            </div>
-            ${plane.notes ? `<p class="text-xs text-gray-500 mt-2 italic">${escapeHtml(plane.notes)}</p>` : ''}
-          </div>
-        `;
-      };
-
+      // header tint — Eh = light blue, Ev = light green, Task = light yellow.
       const sections = [];
-      if (hor)  sections.push(renderPlane(hor,  'Horizontal (Eₕ)', '#D7E8F4', '#1E4F73'));
-      if (ver)  sections.push(renderPlane(ver,  'Vertical (Eᵥ)',   '#D9F2D0', '#2E4A34'));
-      if (task) sections.push(renderPlane(task, 'Task',                 '#FCF1D8', '#7A4F0E'));
+      if (hor)  sections.push(renderPlaneBox(hor,  'Horizontal (Eₕ)', '#D7E8F4', '#1E4F73'));
+      if (ver)  sections.push(renderPlaneBox(ver,  'Vertical (Eᵥ)',   '#D9F2D0', '#2E4A34'));
+      if (task) sections.push(renderPlaneBox(task, 'Task',            '#FCF1D8', '#7A4F0E'));
 
       if (!sections.length) return '';
 
+      // Side-by-side on wider screens (Horizontal + Vertical), stacked on
+      // narrow — condenses the card so more results fit per screen (request #6).
       return `
-        <div class="mt-3 pt-3 border-t border-gray-50 space-y-3">
+        <div class="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3">
           ${sections.join('')}
         </div>
       `;

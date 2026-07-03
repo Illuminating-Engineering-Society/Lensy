@@ -500,6 +500,10 @@ function buildResult(app, score, chunkMeta, excerptIndex) {
       text: excerpt.excerpt_text,
       pageNumber: excerpt.page_number,
       section: excerpt.section,
+      // Surface the chunk type so the UI can hide raw table dumps in the
+      // "From the Standard" panel — that section is only useful when it shows
+      // prose context from the body of the standard, not a repeat of the table.
+      chunkType: excerpt.chunk_type,
     } : null,
     citation,
     vitriumLink,
