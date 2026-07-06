@@ -45,6 +45,10 @@ binding = "AI"
 # ─── Environment Variables (non-secret) ──────────────────────────────────────
 [vars]
 VITRIUM_API_URL = "https://api.vitrium.com"
+# Base URL of the Vitrium web viewer users open documents in.
+# PLACEHOLDER — replace with IES's real Vitrium reader URL (open any standard
+# in Vitrium and copy the origin, e.g. "https://ies.vitrium.com").
+VITRIUM_PORTAL_URL = "https://vitrium.ies.org"
 ENVIRONMENT = "production"
 
 # Secrets set via `wrangler secret put`:

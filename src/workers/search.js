@@ -239,9 +239,14 @@ async function runSingleSearch(rawQuery, filters, limit, env) {
   const appMatches = matches.filter(m => m.metadata?.chunk_type === 'application' && m.metadata?.application_code);
   const chunkMatches = matches.filter(m => m.metadata?.chunk_type !== 'application' && m.metadata?.standard_id);
 
-  // 4. Fetch application records from D1
+  // 4. Fetch application records from D1 (plus the standards index, used
+  //    both for Vitrium doc-ID fallback and to filter orphan chunks in step 8)
   const appCodes = dedupeByCode(appMatches).slice(0, limit * 2).map(m => m.metadata.application_code);
-  const appMap = await fetchApplications(env.DB, appCodes, filters);
+  const [appMap, standardsIndex] = await Promise.all([
+    fetchApplications(env.DB, appCodes, filters),
+    fetchStandardsIndex(env.DB),
+  ]);
+  const linkCtx = { env, standardsIndex };
 
   // 5. Build excerpt index: standardId → best chunk match
   const excerptIndex = buildExcerptIndex(chunkMatches);
@@ -259,31 +264,40 @@ async function runSingleSearch(rawQuery, filters, limit, env) {
   const deduped = deduplicateScored(scored);
 
   let results = deduped.slice(0, limit).map(({ score, app, chunkMeta }) =>
-    buildResult(app, score, chunkMeta, excerptIndex)
+    buildResult(app, score, chunkMeta, excerptIndex, linkCtx)
   );
 
   // 7. Text fallback if sparse — and re-sort the merged list so fallback
   //    rows interleave by hierarchy/score with the vector hits instead of
   //    being appended in arbitrary D1 insertion order.
   if (results.length < MIN_VECTOR_RESULTS) {
-    const fallback = await textFallback(env.DB, cleanQuery(rawQuery), filters, limit, excerptIndex);
+    const fallback = await textFallback(env.DB, cleanQuery(rawQuery), filters, limit, excerptIndex, linkCtx);
     mergeResults(results, fallback);
     results.sort(compareResults);
   }
 
-  // 8. Chunk fallback: if still no results, surface PDF chunks directly.
-  //    Filter against the D1 standards table — Vectorize can hold orphan
-  //    chunks from deleted/renamed standards (re-ingests with smaller chunk
-  //    counts leave the tail behind), and we don't want those reaching the UI.
-  if (results.length === 0 && chunkMatches.length > 0) {
-    const validStandards = await fetchValidStandardIds(env.DB);
+  // 8. Blend PDF-chunk results into the list — not only as a zero-result
+  //    fallback. Application vectors vastly outnumber chunk vectors, so any
+  //    query matches SOME application row; standards without structured
+  //    illuminance tables (LS/LP/TM/LM/G series and prose RPs) would never
+  //    surface if chunks only appeared when the app list came back empty.
+  //    Keep the best chunk per standard, skip standards already represented
+  //    by an application result, and filter against the D1 standards table —
+  //    Vectorize can hold orphan chunks from deleted/renamed standards.
+  //    compareResults handles the final order: score first, and its
+  //    hierarchy tie-break favors application rows on near-equal scores.
+  if (chunkMatches.length > 0) {
     const liveChunks = chunkMatches.filter(m => {
       const id = m.metadata?.standard_id || m.metadata?.standard_code;
-      return id && validStandards.has(id);
+      return id && standardsIndex.has(id);
     });
-    if (liveChunks.length > 0) {
-      const chunkResults = buildChunkResults(liveChunks.slice(0, limit));
+    const represented = new Set(results.map(r => r.application.standard));
+    const chunkResults = buildChunkResults(liveChunks, linkCtx)
+      .filter(r => !represented.has(r.application.standard));
+    if (chunkResults.length > 0) {
       results.push(...chunkResults);
+      results.sort(compareResults);
+      results = results.slice(0, limit);
     }
   }
 
@@ -291,13 +305,20 @@ async function runSingleSearch(rawQuery, filters, limit, env) {
 }
 
 /**
- * Lookup of every standard_id currently present in the D1 `standards` table.
- * Used to filter Vectorize chunk fallbacks so orphan vectors from previous
- * ingests don't surface to users. Runs once per request (small set: ~dozens).
+ * Index of every standard currently present in the D1 `standards` table:
+ * standard id → vitrium_doc_id (null when not yet synced).
+ *
+ * Serves two purposes:
+ *   - Filter Vectorize chunk fallbacks so orphan vectors from previous
+ *     ingests don't surface to users.
+ *   - Provide the standard-level Vitrium doc ID as a fallback when an
+ *     application row has no Vitrium_Doc_ID of its own.
+ *
+ * Runs once per request (small set: ~dozens of rows).
  */
-async function fetchValidStandardIds(db) {
-  const result = await db.prepare('SELECT id FROM standards').all();
-  return new Set((result.results || []).map(r => r.id));
+async function fetchStandardsIndex(db) {
+  const result = await db.prepare('SELECT id, vitrium_doc_id FROM standards').all();
+  return new Map((result.results || []).map(r => [r.id, r.vitrium_doc_id || null]));
 }
 
 // ─── Multi-Search ─────────────────────────────────────────────────────────────
@@ -434,7 +455,7 @@ async function getRelatedApplications(env, application, excludeCodes) {
 
 // ─── Text Fallback ────────────────────────────────────────────────────────────
 
-async function textFallback(db, query, filters, limit, excerptIndex) {
+async function textFallback(db, query, filters, limit, excerptIndex, linkCtx) {
   const terms = query.toLowerCase().split(/\s+/).filter(t => t.length >= 3).slice(0, 4);
   if (terms.length === 0) return [];
 
@@ -475,19 +496,19 @@ async function textFallback(db, query, filters, limit, excerptIndex) {
 
   const result = await db.prepare(sql).bind(...bindings).all();
   return result.results.map(app =>
-    buildResult(app, 0, null, excerptIndex)
+    buildResult(app, 0, null, excerptIndex, linkCtx)
   );
 }
 
 // ─── Result Builder ───────────────────────────────────────────────────────────
 
-function buildResult(app, score, chunkMeta, excerptIndex) {
+function buildResult(app, score, chunkMeta, excerptIndex, linkCtx) {
   const formatted = formatApplication(app);
   // Pass the application's own page (where its table row lives), not the
   // excerpt's page — the citation should point at the source row, while
   // the excerpt's pageNumber stays in the excerpt object.
   const citation = formatCitation(app, null, app.Page_Number ?? null);
-  const vitriumLink = buildVitriumLink(app);
+  const vitriumLink = buildVitriumLink(app, linkCtx);
 
   // Find the best PDF excerpt for this application — preferring a chunk
   // near the application's table page over a globally top-scored chunk.
@@ -686,7 +707,7 @@ function applyUnits(results, units) {
 // ─── Chunk Fallback Builder ───────────────────────────────────────────────────
 // When no structured application records exist yet, surface PDF chunks directly.
 
-function buildChunkResults(chunkMatches) {
+function buildChunkResults(chunkMatches, linkCtx = {}) {
   // Group by standard_id, keep best chunk per standard
   const byStandard = new Map();
   for (const match of chunkMatches) {
@@ -698,6 +719,12 @@ function buildChunkResults(chunkMatches) {
   }
 
   return [...byStandard.entries()].map(([stdId, match]) => ({
+    // Chunk results have no application row, so synthesize the minimal
+    // fields buildVitriumLink needs: standard id + the chunk's page.
+    vitriumLink: buildVitriumLink({
+      Standard: stdId,
+      Page_Number: match.metadata?.page_number ?? null,
+    }, linkCtx),
     application: {
       code: match.id,
       category: stdId,
@@ -731,7 +758,6 @@ function buildChunkResults(chunkMatches) {
     citation: match.metadata?.standard_code
       ? `${match.metadata.standard_code}${match.metadata.page_number ? `, p. ${match.metadata.page_number}` : ''}`
       : stdId,
-    vitriumLink: null,
     relatedApplications: [],
   }));
 }
@@ -891,12 +917,42 @@ function mergeResults(primary, fallback) {
   }
 }
 
-function buildVitriumLink(app) {
+/**
+ * Build the "View in Vitrium" link for an application result.
+ *
+ * Resolution order (most → least specific):
+ *   1. Vitrium_Deep_Link      — full URL curated on the application row
+ *   2. Doc ID + Link_Mapping  — section anchor within the document
+ *   3. Doc ID + Page_Number   — page anchor within the document
+ *   4. Doc ID alone           — document cover page
+ *
+ * The doc ID comes from the application row when present, otherwise falls
+ * back to the standard-level vitrium_doc_id (populated by
+ * scripts/sync-metadata.js into the D1 `standards` table).
+ *
+ * Returns null when no doc ID is known — the UI hides the button.
+ */
+function buildVitriumLink(app, linkCtx = {}) {
   if (app.Vitrium_Deep_Link) return app.Vitrium_Deep_Link;
-  if (app.Vitrium_Doc_ID && app.Link_Mapping) {
-    return `https://vitrium.ies.org/document/${app.Vitrium_Doc_ID}#${app.Link_Mapping}`;
-  }
-  return null;
+
+  const docId = app.Vitrium_Doc_ID
+    || linkCtx.standardsIndex?.get(app.Standard)
+    || null;
+  if (!docId) return null;
+
+  const base = vitriumPortalBase(linkCtx.env);
+  if (app.Link_Mapping) return `${base}/document/${encodeURIComponent(docId)}#${app.Link_Mapping}`;
+  if (app.Page_Number != null) return `${base}/document/${encodeURIComponent(docId)}#page=${app.Page_Number}`;
+  return `${base}/document/${encodeURIComponent(docId)}`;
+}
+
+/**
+ * Base URL of the Vitrium web viewer. Configurable via the
+ * VITRIUM_PORTAL_URL var in wrangler.toml so the placeholder default can be
+ * swapped for IES's real reader URL without touching code.
+ */
+function vitriumPortalBase(env) {
+  return String(env?.VITRIUM_PORTAL_URL || 'https://vitrium.ies.org').replace(/\/+$/, '');
 }
 
 function jsonResponse(data, status = 200) {

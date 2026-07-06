@@ -1,0 +1,6 @@
+{
+  "_comment": "Example mapping for scripts/sync-metadata.js --file. Replace with real Vitrium document IDs (visible in the Vitrium admin portal, or in the URL when opening a document in the web viewer). Either use this simple shape, or an array of {standardId, docId, deepLink} objects when you also want to set a curated deep link.",
+  "RP-9-20": "REPLACE_WITH_VITRIUM_DOC_ID",
+  "RP-6-24": "REPLACE_WITH_VITRIUM_DOC_ID",
+  "RP-43-25": "REPLACE_WITH_VITRIUM_DOC_ID"
+}
