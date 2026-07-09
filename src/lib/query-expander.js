@@ -159,7 +159,11 @@ const SYNONYMS = {
   'annex a':         'Annex A general notes governing criteria maintained illuminance',
   'general notes':   'general notes governing criteria tolerance age adjustment',
   'task':            'task visual task work plane localized task lighting',
-  'area':            'area room space general lighting whole space',
+  // NOTE: no 'area' entry on purpose. "area" appears as a suffix in countless
+  // space names ("social area", "dining area", "seating area") and expanding
+  // it with generic terms (room/space/general/lighting) drowns the actual
+  // topic noun — "social area" stopped matching RP-11's "Social areas" rows
+  // until the expansion was removed (client feedback).
   'older adults':    'older adults seniors over 65 visually impaired RP-28 illuminance double',
   'seniors':         'seniors older adults over 65 RP-28 illuminance recommendations doubled',
   'security lighting': 'security lighting G-1 minimum maintained safety vehicular',

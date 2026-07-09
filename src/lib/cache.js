@@ -35,7 +35,7 @@ const DATA_VERSION_KEY = 'cache:data-version';
 // (result ordering, excerpt attachment, chunk filtering, payload shape...).
 // The data version only tracks corpus changes, so without this stamp a deploy
 // would keep serving responses computed by the previous code for up to a TTL.
-const SEARCH_CACHE_SCHEMA = 'v2';
+const SEARCH_CACHE_SCHEMA = 'v3';
 
 // ─── Hashing ──────────────────────────────────────────────────────────────────
 
