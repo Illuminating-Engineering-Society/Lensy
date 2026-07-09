@@ -324,8 +324,16 @@ function buildApplicationEmbedText(app) {
     subPath.length ? subPath.join(' ') : null,
     subCategory ? subCategory.toLowerCase() : null,
     primary, // intentional repeat to weight the topic noun
+    // Level-1 category repeat: users often query by CATEGORY name ("social
+    // area", "fitting room") rather than the leaf row. Without this second
+    // occurrence the leaf noun (App_s1) dominates the bag-of-words and
+    // category-level queries under-match (client feedback: "social area"
+    // must surface RP-11's Social areas rows the way "gaming" already did).
+    category && category !== primary ? category : null,
     app.Indoor_Outdoor ? `${app.Indoor_Outdoor.toLowerCase()} application` : null,
-    app.Area_or_Task === 'T' ? 'task lighting' : app.Area_or_Task === 'A' ? 'area lighting' : null,
+    // Extractor writes 'Task'/'Area'; legacy CSV rows carry 'T'/'A'.
+    /^T/i.test(app.Area_or_Task || '') ? 'task lighting'
+      : /^A/i.test(app.Area_or_Task || '') ? 'area lighting' : null,
     app.Standard_Full || app.Standard ? `IES ${app.Standard_Full || app.Standard}` : null,
     app.App_Notes || null,
     app.General_Notes || null,

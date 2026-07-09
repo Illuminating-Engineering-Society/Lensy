@@ -126,6 +126,10 @@ export async function handleSearch(request, env, ctx) {
   });
   const cachedPayload = await getCachedSearch(kv, cacheKey);
   if (cachedPayload) {
+    // Cache hits are logged too — staff analytics must see every query, not
+    // only the ones that missed the cache.
+    const logWrite = logSearch(env, cachedPayload, true);
+    if (ctx?.waitUntil) ctx.waitUntil(logWrite); else await logWrite;
     return jsonResponse({ ...cachedPayload, cached: true });
   }
 
@@ -206,9 +210,45 @@ export async function handleSearch(request, env, ctx) {
 
   // Store after responding when possible (waitUntil); never blocks the user.
   const cacheWrite = putCachedSearch(kv, cacheKey, payload);
-  if (ctx?.waitUntil) ctx.waitUntil(cacheWrite); else await cacheWrite;
+  const logWrite = logSearch(env, payload, false);
+  if (ctx?.waitUntil) {
+    ctx.waitUntil(cacheWrite);
+    ctx.waitUntil(logWrite);
+  } else {
+    await cacheWrite;
+    await logWrite;
+  }
 
   return jsonResponse({ ...payload, cached: false });
+}
+
+/**
+ * Append one row to the anonymous search log (D1 search_log table).
+ *
+ * PRIVACY: no user id, no IP, no session — only the query text and what the
+ * response referenced. Staff export it via GET /api/admin/search-log.csv.
+ * Fail-open: a missing table or a D1 hiccup never breaks search.
+ */
+async function logSearch(env, payload, cached) {
+  try {
+    const standards = [
+      ...new Set((payload.results || [])
+        .map(r => r.application?.standard)
+        .filter(Boolean)),
+    ];
+    await env.DB.prepare(`
+      INSERT INTO search_log (query, result_count, standards_referenced, no_strong_match, cached)
+      VALUES (?, ?, ?, ?, ?)
+    `).bind(
+      payload.query,
+      (payload.results || []).length,
+      JSON.stringify(standards),
+      payload.noStrongMatch ? 1 : 0,
+      cached ? 1 : 0
+    ).run();
+  } catch (err) {
+    console.error('search log write failed (non-fatal):', err.message);
+  }
 }
 
 // ─── Single Search ────────────────────────────────────────────────────────────

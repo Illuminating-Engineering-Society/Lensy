@@ -33,6 +33,12 @@
 
 // ─── Structure Detection ──────────────────────────────────────────────────────
 
+// "… 30 lx @ 0.00 m 3 fc @ 0.0 ft …" — both units glued on one line. This is
+// the signature of a criteria-grid DATA row; prose that merely discusses lux
+// values never produces it. Shared by detectNewTableStructure (document-level
+// classification) and isIlluminancePage (page-level selection).
+const NEW_TABLE_ROW_RE = /\d+(?:\.\d+)?\s*l(?:x|ux)\s*@.*\bfc\b\s*@/i;
+
 /**
  * Detect whether a PDF uses the "NEW TABLE" Recommended Illuminance Criteria
  * layout (260420+ prototypes, e.g. RP-43-25) versus a STANDARD prose document
@@ -57,8 +63,6 @@
  * @returns {{ isNewTable: boolean, rowHits: number, criteriaPages: number }}
  */
 export function detectNewTableStructure(pages) {
-  // "… 30 lx @ 0.00 m 3 fc @ 0.0 ft …" — both units glued on one line.
-  const NEW_TABLE_ROW_RE = /\d+(?:\.\d+)?\s*l(?:x|ux)\s*@.*\bfc\b\s*@/i;
   const CRITERIA_TITLE_RE = /Recommended Illuminance Criteria/i;
 
   let rowHits = 0;
@@ -85,24 +89,116 @@ export function extractApplicationsFromTables(_tables, _standardId, _meta) {
 
 export function extractApplicationsFromPages(pages, standardId, standardMeta = {}) {
   const fullDesignation = standardMeta.fullDesignation || `ANSI/IES ${standardId}`;
-  const records = [];
 
   const tablePages = pages.filter(isIlluminancePage);
   const allRecords = extractFromPages(tablePages, standardId, fullDesignation);
-  records.push(...allRecords);
 
-  return deduplicate(records);
+  finalizeFootnotes(allRecords, pages, tablePages);
+
+  // Validation gate: a record with data tokens or prose fragments in its
+  // hierarchy labels is a mis-parse and must never reach D1 — it renders as
+  // the garbled titles the client flagged ("museum", "airport" searches).
+  return deduplicate(allRecords.filter(isValidRecord));
+}
+
+/**
+ * Second-pass footnote resolution, scanning the WHOLE document.
+ *
+ * Two layouts exist across the prototypes:
+ *   • RP-2/RP-30 style: per-row tiny-font refs, notes printed on the data
+ *     pages themselves. Mostly resolved in extractFromPages; refs whose
+ *     definitions live on a different page resolve here.
+ *   • RP-43 style: no recoverable per-row refs (superscripts are lost in
+ *     text extraction) and an "Application Task/Area Notes" section on a
+ *     dedicated page. Those notes govern the whole table, so they attach to
+ *     every record as General_Notes — the UI's collapsed notes disclosure
+ *     then has content for each result (client feedback).
+ */
+function finalizeFootnotes(records, allPages, tablePages) {
+  const bodyFont = medianDataFont(tablePages);
+  const docNotes = new Map();
+  for (const page of allPages) {
+    for (const [n, text] of collectPageNotes(page, bodyFont)) {
+      if (!docNotes.has(n)) docNotes.set(n, text); // first definition wins
+    }
+  }
+
+  let hasRowRefs = records.some(r => r.Footnotes != null);
+  for (const rec of records) {
+    const refs = rec._noteRefs;
+    if (!refs) continue;
+    delete rec._noteRefs;
+    hasRowRefs = true;
+    const resolved = refs
+      .map(n => (docNotes.get(n) ? `${n}. ${docNotes.get(n)}` : null))
+      .filter(Boolean);
+    rec.Footnotes = resolved.length > 0
+      ? resolved.join('\n')
+      : `See Application Task/Area Notes: ${refs.join(', ')}`;
+  }
+
+  if (!hasRowRefs && docNotes.size > 0) {
+    const all = [...docNotes.entries()]
+      .sort((a, b) => a[0] - b[0])
+      .map(([n, t]) => `${n}. ${t}`)
+      .join('\n');
+    const capped = all.length > 2000 ? `${all.slice(0, 2000)}…` : all;
+    for (const rec of records) rec.General_Notes = capped;
+  }
+}
+
+// ─── Record Validation ────────────────────────────────────────────────────────
+
+// Tokens that must never appear inside a hierarchy label — their presence
+// means row data leaked into the name (mis-parsed row) or discussion prose
+// was mistaken for a table line. Note: "@ <n> m" alone is NOT a data token —
+// legitimate names carry it ("Target @ 18.3 m (60 ft)", RP-6 archery).
+const LABEL_DATA_TOKEN_RE =
+  /\d+\s*(?:lx|lux|fc)\b|#\s*\d|\b(?:Max|Avg|Min):(?:Max|Avg|Min)\b|\b\d+(?:\.\d+)?:\d+\b/i;
+// Longest legitimate label observed: RP-2 "Centers, Outdoors (Vehicular
+// traffic restricted; Open-air malls or centers dedicated to shoppers)"
+// at 99 chars — the cap must sit above real names, below prose sentences.
+const MAX_LABEL_LENGTH = 120;
+
+function isCleanHierarchyValue(v) {
+  if (v == null || v === '') return true;
+  const s = String(v).trim();
+  if (s.length > MAX_LABEL_LENGTH) return false; // sentence-length → prose, not a label
+  if (/[a-z]-$/.test(s)) return false;           // hyphenated line-break fragment ("…visi-")
+  if (LABEL_DATA_TOKEN_RE.test(s)) return false; // leaked data tokens
+  return true;
+}
+
+function isValidRecord(r) {
+  const labels = [r.Sub_Category, r.App, r.App_s1, r.App_s2, r.App_s3, r.App_s4, r.App_s5, r.App_s6];
+  if (!labels.every(isCleanHierarchyValue)) return false;
+  // A record must carry SOME name — a row whose whole hierarchy is empty has
+  // no identity the UI could display.
+  if (!labels.some(v => v != null && String(v).trim().length >= 2)) return false;
+  return true;
 }
 
 // ─── Page Detection ───────────────────────────────────────────────────────────
 
 /**
- * Detect a "real" table page: many short lines containing the lux/fc unit
- * tokens that appear in IES illuminance tables.
+ * Detect a "real" criteria-table page.
+ *
+ * "≥3 lines mentioning lux/fc" is NOT enough: discussion prose in standards
+ * like RP-30-25 mentions illuminance values constantly, and running the row
+ * parser over those pages produced dozens of garbage records with sentence
+ * fragments as application names (client feedback: "museum" search). A page
+ * qualifies only when it shows criteria-grid structure:
+ *   • at least one dual-unit data row ("<n> lx @ … <n> fc @ …"), which prose
+ *     never produces, or
+ *   • landscape orientation (the grid layout) with several data lines —
+ *     covers continuation pages whose rows might drop one unit column.
  */
 function isIlluminancePage(page) {
   const lines = page.lines || [];
   if (lines.length < 10) return false;
+  if (lines.some(l => NEW_TABLE_ROW_RE.test(l.text || ''))) return true;
+  const landscape = (page.width || 0) > (page.height || 0);
+  if (!landscape) return false;
   const dataLineRe = /\d+\s*(?:lx|lux|fc|footcandle)\b|\d+\s*lm\b/i;
   const matches = lines.filter(l => dataLineRe.test(l.text)).length;
   return matches >= 3;
@@ -153,10 +249,30 @@ function extractFromPages(tablePages, standardId, fullDesignation) {
     const ref = detectTableRef(page.text);
     if (ref) tableRef = ref;
 
+    // Footnote support (client feedback: associate footnotes with results).
+    // The criteria grid renders each row's note references as a separate
+    // TINY-font line right below the row ("1, 3, 6" at ~4.7pt under a 7.1pt
+    // body), and the note definitions under an "Application Task/Area Notes"
+    // heading at the prose font. Collect the definitions first, attach the
+    // refs to rows as we walk, resolve at end of page.
+    const noteMap = collectPageNotes(page, bodyFont);
+    const pageRecords = [];
+    let lastRecord = null; // most recent data row — target for footnote refs
+
     // Detect a "Sub Category" announce line if present
     for (const line of (page.lines || [])) {
       const text = line.text?.trim();
-      if (!text || text.length < 2) continue;
+      if (!text) continue;
+
+      // Attach tiny-font numeric ref lines BEFORE the generic skips — a bare
+      // single-digit "4" would otherwise be discarded by the length/page-number
+      // checks below.
+      if (lastRecord && isFootnoteRefLine(text, line, bodyFont)) {
+        lastRecord._noteRefs = (lastRecord._noteRefs || []).concat(parseNoteRefs(text));
+        continue;
+      }
+
+      if (text.length < 2) continue;
       if (SKIP_RE.test(text)) continue;
       if (/^Table\s+[A-Z]?-?\d/i.test(text)) continue;
       if (/^\d+$/.test(text)) continue;     // page number
@@ -169,6 +285,7 @@ function extractFromPages(tablePages, standardId, fullDesignation) {
         hierarchy.app = null;
         hierarchy.s1 = hierarchy.s2 = hierarchy.s3 = null;
         hierarchy.s4 = hierarchy.s5 = hierarchy.s6 = null;
+        lastRecord = null;
         continue;
       }
 
@@ -190,6 +307,8 @@ function extractFromPages(tablePages, standardId, fullDesignation) {
         if (name.length < 2) continue;
         applyHierarchyAtDepth(hierarchy, depth, name);
         if (link) pendingLink = link;
+        // A ref line after a header annotates the header, not the last row.
+        lastRecord = null;
         continue;
       }
 
@@ -267,11 +386,80 @@ function extractFromPages(tablePages, standardId, fullDesignation) {
         Active: 1,
       });
 
+      lastRecord = records[records.length - 1];
+      pageRecords.push(lastRecord);
       rowIndex++;
+    }
+
+    // Resolve this page's footnote refs against the page's note definitions.
+    // Unresolved refs stay on the record for a document-level second pass —
+    // some standards print the notes on a separate page (finalizeFootnotes).
+    for (const rec of pageRecords) {
+      const refs = rec._noteRefs;
+      if (!refs || refs.length === 0) continue;
+      const uniq = [...new Set(refs)].sort((a, b) => a - b);
+      const resolved = uniq
+        .map(n => (noteMap.get(n) ? `${n}. ${noteMap.get(n)}` : null))
+        .filter(Boolean);
+      if (resolved.length > 0) {
+        rec.Footnotes = resolved.join('\n');
+        delete rec._noteRefs;
+      } else {
+        rec._noteRefs = uniq;
+      }
     }
   }
 
   return records;
+}
+
+// ─── Footnotes ────────────────────────────────────────────────────────────────
+
+/** A row's footnote references render as a bare numeric list ("4", "1, 3, 6")
+ *  in a visibly smaller font than the table body. Page numbers and data
+ *  fragments render at body size or larger, so the font gap is the signal. */
+function isFootnoteRefLine(text, line, bodyFont) {
+  if (!/^\d{1,2}(?:\s*,\s*\d{1,2})*$/.test(text)) return false;
+  return line.fontSize != null && bodyFont != null && line.fontSize <= bodyFont - 1.5;
+}
+
+function parseNoteRefs(text) {
+  return text.split(',').map(s => parseInt(s.trim(), 10)).filter(Number.isFinite);
+}
+
+const MAX_NOTE_LENGTH = 600;
+
+/**
+ * Collect the "Application Task/Area Notes" definitions printed on a criteria
+ * page: numbered notes ("1 General principles…") at the prose font, with
+ * unnumbered continuation lines appended to the current note. Table-body
+ * lines (data rows sharing the page) are ignored via the font check.
+ */
+function collectPageNotes(page, bodyFont) {
+  const noteMap = new Map();
+  const lines = page.lines || [];
+  const startIdx = lines.findIndex(l => /^Application Task\/Area Notes\b/i.test((l.text || '').trim()));
+  if (startIdx < 0) return noteMap;
+
+  let currentNum = null;
+  for (let i = startIdx + 1; i < lines.length; i++) {
+    const raw = (lines[i].text || '').trim();
+    if (!raw) continue;
+    // Skip lines at the table-body font — they are grid rows, not note text.
+    const fs = lines[i].fontSize;
+    if (bodyFont != null && fs != null && Math.abs(fs - bodyFont) <= BODY_FONT_TOLERANCE) continue;
+    if (/^Table\s/i.test(raw)) break; // next table block — notes are done
+
+    const m = raw.match(/^(\d{1,2})\s+(\S.*)$/);
+    if (m && parseInt(m[1], 10) <= 30) {
+      currentNum = parseInt(m[1], 10);
+      noteMap.set(currentNum, m[2].trim());
+    } else if (currentNum != null) {
+      const merged = `${noteMap.get(currentNum)} ${raw}`.trim();
+      noteMap.set(currentNum, merged.length > MAX_NOTE_LENGTH ? merged.slice(0, MAX_NOTE_LENGTH) : merged);
+    }
+  }
+  return noteMap;
 }
 
 // ─── Row Parser ───────────────────────────────────────────────────────────────
@@ -307,41 +495,58 @@ export function parseDataRow(text) {
   // First lux match = horizontal plane, second = vertical plane.
   const LUX_RE = /(?:([A-Y])\s+)?(\d+(?:\.\d+)?)\s*l(?:x|ux)\s*@?\s*(TS|\d+(?:\.\d+)?\s*m)?/gi;
   const luxMatches = [...text.matchAll(LUX_RE)];
-  if (luxMatches.length >= 1) {
-    const m = luxMatches[0];
-    result.horCat = m[1] ? m[1].toUpperCase() : null;
-    result.horLux = parseFloat(m[2]);
-    result.horHeightM = parseHeight(m[3]);
-    result.hasData = true;
-  }
-  if (luxMatches.length >= 2) {
-    const m = luxMatches[1];
-    result.verCat = m[1] ? m[1].toUpperCase() : null;
-    result.verLux = parseFloat(m[2]);
-    result.verHeightM = parseHeight(m[3]);
-  }
 
-  // ── Fc occurrences (every prototype carries both lx and fc) ───────────────
-  //   "<n> fc @ <TS | n ft>"
+  //   "<n> fc @ <TS | n ft>"  (every prototype carries both lx and fc)
   const FC_RE = /(\d+(?:\.\d+)?)\s*(?:fc|footcandles?)\s*@?\s*(TS|\d+(?:\.\d+)?\s*ft)?/gi;
   const fcMatches = [...text.matchAll(FC_RE)];
-  if (fcMatches.length >= 1) {
-    result.horFc = parseFloat(fcMatches[0][1]);
-    result.horHeightFt = parseHeight(fcMatches[0][2]);
+
+  // ── "#" placeholder targets ────────────────────────────────────────────────
+  // Prototypes print "#" where a plane has no maintained target, e.g.
+  //   "Conference rm, < 50 people T # 0.76 m # 2.5 ft … O 200 lx @ 1.22 m …"
+  // A "#" BEFORE the first real lux value means the horizontal block is a
+  // placeholder and the first real lux/fc pair belongs to the VERTICAL plane.
+  // Without this, the vertical data lands on the horizontal plane and the
+  // "# 0.76 m # 2.5 ft…" fragment leaks into the application title (client
+  // feedback: "airport" search, unexpected data in title).
+  const phMatch = text.match(/#\s*(?:\d+(?:\.\d+)?\s*(?:m|ft)|TS)?/);
+  const horIsPlaceholder = phMatch != null &&
+    (luxMatches.length === 0 || phMatch.index < luxMatches[0].index);
+
+  const horLuxM = horIsPlaceholder ? null : (luxMatches[0] ?? null);
+  const verLuxM = horIsPlaceholder ? (luxMatches[0] ?? null) : (luxMatches[1] ?? null);
+  const horFcM  = horIsPlaceholder ? null : (fcMatches[0] ?? null);
+  const verFcM  = horIsPlaceholder ? (fcMatches[0] ?? null) : (fcMatches[1] ?? null);
+
+  if (horLuxM) {
+    result.horCat = horLuxM[1] ? horLuxM[1].toUpperCase() : null;
+    result.horLux = parseFloat(horLuxM[2]);
+    result.horHeightM = parseHeight(horLuxM[3]);
     result.hasData = true;
   }
-  if (fcMatches.length >= 2) {
-    result.verFc = parseFloat(fcMatches[1][1]);
-    result.verHeightFt = parseHeight(fcMatches[1][2]);
+  if (verLuxM) {
+    result.verCat = verLuxM[1] ? verLuxM[1].toUpperCase() : null;
+    result.verLux = parseFloat(verLuxM[2]);
+    result.verHeightM = parseHeight(verLuxM[3]);
+    result.hasData = true;
+  }
+  if (horFcM) {
+    result.horFc = parseFloat(horFcM[1]);
+    result.horHeightFt = parseHeight(horFcM[2]);
+    result.hasData = true;
+  }
+  if (verFcM) {
+    result.verFc = parseFloat(verFcM[1]);
+    result.verHeightFt = parseHeight(verFcM[2]);
+    result.hasData = true;
   }
 
-  // ── Split the row into horizontal / vertical halves at the 2nd lux value ──
+  // ── Split the row into horizontal / vertical halves at the vertical lux ──
   // so the basis / uniformity / ratio tokens are parsed against the correct
   // plane instead of leaking the horizontal values into the vertical block.
   const firstDataIdx = result.hasData ? firstDataIndex(text, luxMatches, fcMatches) : -1;
-  const splitIdx = luxMatches.length >= 2 ? luxMatches[1].index : text.length;
-  const horTail = sliceMetricsTail(text, luxMatches[0], fcMatches[0], splitIdx);
-  const verTail = luxMatches.length >= 2 ? text.slice(splitIdx) : '';
+  const splitIdx = verLuxM ? verLuxM.index : text.length;
+  const horTail = (horLuxM || horFcM) ? sliceMetricsTail(text, horLuxM, horFcM, splitIdx) : '';
+  const verTail = verLuxM ? text.slice(splitIdx) : '';
 
   const horMetrics = parseHalfMetrics(horTail);
   result.horBasis = horMetrics.basis;
@@ -360,7 +565,11 @@ export function parseDataRow(text) {
   // ── Area vs Task + Veiling Risk — read the marker tokens that precede the ──
   // horizontal Category, i.e. the text between the leaf label and the data.
   // For pure hierarchy lines (no data tokens) the whole line is the label.
-  const prefix = firstDataIdx >= 0 ? text.slice(0, firstDataIdx) : text;
+  // The label always ends at the first data token OR the first "#" placeholder,
+  // whichever comes first — placeholder fragments are never part of a name.
+  let labelEnd = firstDataIdx;
+  if (phMatch && (labelEnd < 0 || phMatch.index < labelEnd)) labelEnd = phMatch.index;
+  const prefix = labelEnd >= 0 ? text.slice(0, labelEnd) : text;
   const markers = parsePrefixMarkers(prefix);
   result.areaOrTask = markers.areaOrTask;
   result.veilingRisk = markers.veilingRisk;
@@ -679,7 +888,10 @@ function depthForX(x, levels) {
  */
 function splitNameAndLink(raw) {
   const text = (raw || '').trim();
-  const m = text.match(/\b(Refer to\s+ANSI\/IES.*|See\s+ANSI\/IES.*|ANSI\/IES\s+[A-Z]{1,3}-\d.*)$/i);
+  // Draft standards are referenced with a BSR/IES prefix ("Refer to BSR/IES
+  // RP-43") — treat them like ANSI/IES so the reference never sticks to the
+  // application name.
+  const m = text.match(/\b(Refer to\s+(?:ANSI|BSR)\/IES.*|See\s+(?:ANSI|BSR)\/IES.*|(?:ANSI|BSR)\/IES\s+[A-Z]{1,3}-\d.*)$/i);
   if (m && m.index > 0) {
     return { name: text.slice(0, m.index).trim(), link: m[1].trim() };
   }

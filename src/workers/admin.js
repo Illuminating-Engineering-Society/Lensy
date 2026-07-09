@@ -22,6 +22,10 @@
  *     Bump the corpus data version, invalidating all cached search
  *     responses. Use after out-of-band data changes (direct D1 writes,
  *     sync-metadata.js) that bypass the ingest endpoints.
+ *
+ *   GET /api/admin/search-log.csv
+ *     Staff-only CSV export of the anonymous search-query log
+ *     (?from=&to=&limit=). No user-identifying data by design.
  */
 
 import { bumpDataVersion, getDataVersion } from '../lib/cache.js';
@@ -177,6 +181,64 @@ export async function handleAdminDeleteOrphans(request, env) {
   await bumpDataVersion(env.SESSIONS);
 
   return jsonResponse({ requested: ids.length, deleted });
+}
+
+/**
+ * Staff-only CSV export of the anonymous search log (client request).
+ *
+ *   GET /api/admin/search-log.csv?from=2026-07-01&to=2026-07-08&limit=10000
+ *
+ * Columns: created_at, query, result_count, standards_referenced,
+ * no_strong_match, cached. The table carries no user-identifying data by
+ * design (privacy requirement) — there is nothing personal to export.
+ */
+export async function handleAdminSearchLog(request, env) {
+  if (!checkAuth(request, env)) return jsonResponse({ error: 'Unauthorized' }, 401);
+
+  const url = new URL(request.url);
+  const from = url.searchParams.get('from');
+  const to = url.searchParams.get('to');
+  const limit = Math.min(50000, Math.max(1, parseInt(url.searchParams.get('limit') || '10000', 10) || 10000));
+
+  let sql = `
+    SELECT created_at, query, result_count, standards_referenced, no_strong_match, cached
+    FROM search_log WHERE 1=1
+  `;
+  const bindings = [];
+  if (from) { sql += ' AND created_at >= ?'; bindings.push(from); }
+  if (to) { sql += ' AND created_at <= ?'; bindings.push(to); }
+  sql += ' ORDER BY created_at DESC LIMIT ?';
+  bindings.push(limit);
+
+  const result = await env.DB.prepare(sql).bind(...bindings).all();
+  const rows = result.results || [];
+
+  const header = 'created_at,query,result_count,standards_referenced,no_strong_match,cached';
+  const csv = [
+    header,
+    ...rows.map(r => [
+      r.created_at, r.query, r.result_count, r.standards_referenced,
+      r.no_strong_match, r.cached,
+    ].map(csvCell).join(',')),
+  ].join('\r\n');
+
+  return new Response(csv, {
+    status: 200,
+    headers: {
+      'Content-Type': 'text/csv; charset=utf-8',
+      'Content-Disposition': 'attachment; filename="lensy-search-log.csv"',
+    },
+  });
+}
+
+/**
+ * CSV-escape one cell. Also neutralizes spreadsheet formula injection —
+ * queries are user-supplied free text, and staff open this file in Excel.
+ */
+function csvCell(v) {
+  let s = v == null ? '' : String(v);
+  if (/^[=+\-@\t\r]/.test(s)) s = `'${s}`;
+  return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 
 /**
