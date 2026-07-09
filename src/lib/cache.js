@@ -31,6 +31,12 @@ const EMBEDDING_TTL_SECONDS = 60 * 60 * 24 * 30; // 30 days — deterministic da
 const SEARCH_TTL_SECONDS = 60 * 60 * 24;         // 24 hours — bounds out-of-band staleness
 const DATA_VERSION_KEY = 'cache:data-version';
 
+// Bump whenever the search pipeline changes what a cached response contains
+// (result ordering, excerpt attachment, chunk filtering, payload shape...).
+// The data version only tracks corpus changes, so without this stamp a deploy
+// would keep serving responses computed by the previous code for up to a TTL.
+const SEARCH_CACHE_SCHEMA = 'v2';
+
 // ─── Hashing ──────────────────────────────────────────────────────────────────
 
 export async function sha256Hex(text) {
@@ -109,7 +115,7 @@ export async function putCachedEmbedding(kv, model, text, vector) {
  */
 export async function buildSearchCacheKey(dataVersion, params) {
   const hash = await sha256Hex(stableStringify(params));
-  return `cache:search:${dataVersion}:${hash}`;
+  return `cache:search:${SEARCH_CACHE_SCHEMA}:${dataVersion}:${hash}`;
 }
 
 export async function getCachedSearch(kv, key) {

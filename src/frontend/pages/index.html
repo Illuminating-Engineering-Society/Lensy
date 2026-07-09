@@ -473,10 +473,37 @@
       document.getElementById('results-heading').textContent =
         `${total} Result${total !== 1 ? 's' : ''}`;
 
+      // Group consecutive sibling rows (same standard + banner + application)
+      // into one card so the application title prints once — client feedback:
+      // don't reprint titles when results come from adjacent table rows.
+      const groups = groupSiblingResults(pageResults);
+
       const list = document.getElementById('results-list');
-      // `start + i` keeps the staggered animation delay aligned to global index.
-      list.innerHTML = pageResults.map((r, i) => renderResultCard(r, start + i)).join('')
+      list.innerHTML = groups.map((g, i) => renderResultCard(g, i)).join('')
         + renderPaginationControls(totalPages, start + 1, end, total);
+    }
+
+    // Cluster consecutive results that belong to the same application block
+    // of the same standard. Only true application rows group (chunk-only
+    // results carry no rowRef and always render as standalone cards).
+    function groupSiblingResults(results) {
+      const keyOf = (r) => {
+        const a = r.application || {};
+        return `${a.standard || ''}|${a.subCategory || ''}|${a.category || ''}`;
+      };
+      const isAppRow = (r) => r.application && r.application.rowRef != null;
+
+      const groups = [];
+      for (const r of results) {
+        const key = keyOf(r);
+        const last = groups[groups.length - 1];
+        if (last && last.key === key && isAppRow(r) && isAppRow(last.members[0])) {
+          last.members.push(r);
+        } else {
+          groups.push({ key, members: [r] });
+        }
+      }
+      return groups;
     }
 
     function renderPaginationControls(totalPages, fromN, toN, total) {
@@ -538,9 +565,11 @@
       document.getElementById('ai-summary-card').classList.remove('hidden');
     }
 
-    function renderResultCard(result, index) {
-      const app = result.application || {};
-      const score = result.relevanceScore || 0;
+    function renderResultCard(group, index) {
+      const members = group.members;
+      const isGrouped = members.length > 1;
+      const primary = members[0];
+      const app = primary.application || {};
       const isExterior = app.indoorOutdoor === 'Outdoor';
       const isInterior = app.indoorOutdoor === 'Indoor';
 
@@ -560,19 +589,30 @@
           ${escapeHtml(app.subCategory)}
         </span>` : '';
 
-      // Prominent application-name badge = the top-level App name.
+      // Prominent application-name badge = the top-level App name. Printed
+      // ONCE per card even when the card holds several adjacent table rows
+      // (client feedback: don't reprint application titles).
       const appName = app.category || app.fullName || app.code || 'Application';
       const appBadge = `
         <span class="inline-block text-sm font-bold text-white px-2.5 py-1 rounded align-middle"
               style="background-color: ${appBadgeHex};">${escapeHtml(appName)}</span>`;
 
-      // Breadcrumb = the drill-down beneath the App name, ending in the row
-      // descriptor (e.g. "Building Entrances › Lz0 › Lower limit (avg.)").
-      // Including every sub-level restores the "Lower limit (avg.)" that was
-      // missing before (request #2).
-      const crumbs = [app.sub1, app.sub2, app.sub3, app.sub4, app.sub5, app.sub6].filter(Boolean);
-      const breadcrumb = crumbs.length
-        ? crumbs.map(c => escapeHtml(c)).join('<span class="mx-1.5 text-gray-300">›</span>')
+      // Hierarchy crumbs shared by EVERY member print once next to the App
+      // badge; each member row then shows only its differentiating tail.
+      const crumbsOf = (a) => [a.sub1, a.sub2, a.sub3, a.sub4, a.sub5, a.sub6].filter(Boolean);
+      const memberCrumbs = members.map(m => crumbsOf(m.application || {}));
+      let prefixLen = memberCrumbs[0].length;
+      if (isGrouped) {
+        for (const crumbs of memberCrumbs) {
+          let i = 0;
+          while (i < prefixLen && i < crumbs.length && crumbs[i] === memberCrumbs[0][i]) i++;
+          prefixLen = i;
+        }
+      }
+      const crumbSep = '<span class="mx-1.5 text-gray-300">›</span>';
+      const sharedCrumbs = memberCrumbs[0].slice(0, prefixLen);
+      const breadcrumb = sharedCrumbs.length
+        ? sharedCrumbs.map(c => escapeHtml(c)).join(crumbSep)
         : '';
 
       // Indoor/outdoor badge — uses the banner color for stronger branding
@@ -583,6 +623,111 @@
         </span>
       ` : '';
 
+      // Excerpt texts already printed in this card — adjacent rows of the
+      // same standard usually share one excerpt; show it once, not per row.
+      const seenExcerpts = new Set();
+
+      const cardShell = (inner) => `
+        <article class="result-card bg-white rounded-xl border border-gray-100 shadow-sm p-3 relative overflow-hidden"
+                 style="animation-delay: ${index * 40}ms; border-left: 3px solid ${bannerHex};">
+          ${inner}
+        </article>
+      `;
+
+      if (isGrouped) {
+        // One shared header, then one compact section per adjacent table row.
+        // Row-level facts (badges, citation, checkbox, actions) live on the
+        // member rows; per-row "Add to Project" sits off to the side.
+        return cardShell(`
+          <div class="flex items-start justify-between gap-2 mb-1.5">
+            <div class="min-w-0">${subCategoryBanner}</div>
+            <div class="flex items-center gap-1.5 shrink-0 flex-wrap justify-end">
+              ${locationBadge}
+            </div>
+          </div>
+          <div class="flex items-baseline flex-wrap gap-x-2 gap-y-1 mb-1">
+            ${appBadge}
+            ${breadcrumb ? `<span class="text-sm text-gray-600 font-medium">${breadcrumb}</span>` : ''}
+          </div>
+          ${members.map((m, i) =>
+            renderMemberSection(m, crumbsOf(m.application || {}).slice(prefixLen), i, appName, crumbSep, seenExcerpts)
+          ).join('')}
+        `);
+      }
+
+      // Single-row card: same layout as before, with the actions (Add to
+      // Project / Vitrium / Match) moved off to the side of the title row —
+      // client feedback: condense vertical white space.
+      return cardShell(`
+        <div class="flex items-start justify-between gap-2 mb-1.5">
+          <div class="flex items-start gap-2.5 min-w-0">
+            <input
+              type="checkbox"
+              class="result-checkbox mt-0.5 rounded accent-ies-blue shrink-0"
+              value="${escapeHtml(app.code || '')}"
+              data-code="${escapeHtml(app.code || '')}"
+              ${app.code && selectedApplicationCodes.has(app.code) ? 'checked' : ''}
+            />
+            <div class="min-w-0">${subCategoryBanner}</div>
+          </div>
+          <div class="flex items-center gap-1.5 shrink-0 flex-wrap justify-end">
+            ${locationBadge}${rowBadges(app)}
+          </div>
+        </div>
+
+        <!-- Application name badge + drill-down breadcrumb | actions off to the side -->
+        <div class="flex items-center justify-between gap-2 flex-wrap mb-1 pl-[26px]">
+          <div class="flex items-baseline flex-wrap gap-x-2 gap-y-1 min-w-0">
+            ${appBadge}
+            ${breadcrumb ? `<span class="text-sm text-gray-600 font-medium">${breadcrumb}</span>` : ''}
+          </div>
+          ${actionsCluster(primary, appName)}
+        </div>
+        <p class="text-xs text-gray-400 mb-1 pl-[26px]">${escapeHtml(primary.citation || '')}</p>
+
+        <div class="pl-[26px]">
+          ${renderDataBlocks(primary, seenExcerpts)}
+        </div>
+      `);
+    }
+
+    // One section of a grouped card = one adjacent table row: header line
+    // (checkbox + differentiator + row badges | actions), citation, data.
+    function renderMemberSection(result, tailCrumbs, i, appName, crumbSep, seenExcerpts) {
+      const app = result.application || {};
+      const label = tailCrumbs.length
+        ? tailCrumbs.map(c => escapeHtml(c)).join(crumbSep)
+        : (app.rowRef ? `Row ${escapeHtml(String(app.rowRef))}` : escapeHtml(app.fullName || app.code || ''));
+      const name = tailCrumbs.length ? `${appName} › ${tailCrumbs.join(' › ')}` : appName;
+
+      return `
+        <div class="${i > 0 ? 'mt-2.5 pt-2.5 border-t border-gray-100' : 'mt-1.5'}">
+          <div class="flex items-center justify-between gap-2 flex-wrap">
+            <div class="flex items-center gap-2 min-w-0 flex-wrap">
+              <input
+                type="checkbox"
+                class="result-checkbox rounded accent-ies-blue shrink-0"
+                value="${escapeHtml(app.code || '')}"
+                data-code="${escapeHtml(app.code || '')}"
+                ${app.code && selectedApplicationCodes.has(app.code) ? 'checked' : ''}
+              />
+              <span class="text-sm font-semibold text-gray-800">${label}</span>
+              ${rowBadges(app)}
+            </div>
+            ${actionsCluster(result, name)}
+          </div>
+          <p class="text-xs text-gray-400 mt-0.5 pl-[26px]">${escapeHtml(result.citation || '')}</p>
+          <div class="pl-[26px]">
+            ${renderDataBlocks(result, seenExcerpts)}
+          </div>
+        </div>
+      `;
+    }
+
+    // Per-row badges: Area/Task, TM-24, Veiling Risk (L/M/H), Class of Play
+    // (I-IV). Row-level facts, so grouped cards print them on each member row.
+    // Inline hex avoids the Tailwind JIT missing classes built dynamically in JS.
+    function rowBadges(app) {
       const areaTaskBadge = app.areaOrTask ? `
         <span class="text-xs px-2 py-0.5 rounded-full bg-gray-50 text-gray-500 border border-gray-100">${escapeHtml(app.areaOrTask)}</span>
       ` : '';
@@ -591,8 +736,6 @@
         <span class="text-xs px-2 py-0.5 rounded-full bg-green-50 text-green-700 border border-green-200">TM-24</span>
       ` : '';
 
-      // Per-row IES classifications: Veiling Risk (L/M/H) and Class of Play (I-IV)
-      // Inline hex avoids the Tailwind JIT missing classes built dynamically in JS.
       const veilingPalette = {
         L: { bg: '#ECFDF5', text: '#065F46', border: '#A7F3D0' },
         M: { bg: '#FFFBEB', text: '#92400E', border: '#FCD34D' },
@@ -613,6 +756,49 @@
         </span>
       ` : '';
 
+      return `${areaTaskBadge}${tm24Badge}${veilingBadge}${classOfPlayBadge}`;
+    }
+
+    // Compact action cluster shown off to the side of a result row:
+    // Match % · Vitrium link · Add to Project.
+    function actionsCluster(result, name) {
+      const app = result.application || {};
+      const score = result.relevanceScore || 0;
+
+      const vitriumBtn = result.vitriumLink ? `
+        <a href="${escapeHtml(result.vitriumLink)}" target="_blank" rel="noopener"
+           class="text-xs text-ies-blue hover:underline flex items-center gap-1" title="View in Vitrium">
+          <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/>
+          </svg>
+          Vitrium
+        </a>
+      ` : '';
+
+      return `
+        <div class="flex items-center gap-2.5 shrink-0 no-print">
+          ${score > 0 ? `<span class="text-xs text-gray-300 tabular-nums">Match: ${Math.round(score * 100)}%</span>` : ''}
+          ${vitriumBtn}
+          <button
+            class="add-to-project-btn text-xs px-2.5 py-1 bg-ies-blue text-white rounded-lg hover:bg-ies-blue-dark transition font-medium flex items-center gap-1"
+            data-code="${escapeHtml(app.code || '')}"
+            data-name="${escapeHtml(name)}"
+            data-citation="${escapeHtml(result.citation || '')}"
+          >
+            <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/>
+            </svg>
+            Add to Project
+          </button>
+        </div>
+      `;
+    }
+
+    // Data blocks for one result row: illuminance planes, environmental
+    // considerations, collapsed footnotes, and the "From the Standard" excerpt.
+    function renderDataBlocks(result, seenExcerpts) {
+      const app = result.application || {};
+
       // Illuminance values (Horizontal / Vertical / Task planes, side-by-side)
       const luxBlock = buildIlluminanceBlock(app);
 
@@ -630,15 +816,15 @@
       ].filter(c => c.value != null && c.value !== '');
 
       const envCard = (c) => `
-        <div class="bg-amber-50/60 border border-amber-100 rounded-md px-2.5 py-1.5">
+        <div class="bg-amber-50/60 border border-amber-100 rounded-md px-2.5 py-1">
           <p class="text-[10px] uppercase tracking-wide text-gray-500 leading-tight">${c.label}</p>
           <p class="text-sm font-bold text-gray-800 leading-tight">${escapeHtml(String(c.value))}</p>
           ${c.sub ? `<p class="text-[10px] text-gray-400 leading-tight">${c.sub}</p>` : ''}
         </div>`;
 
       const outdoorBlock = envCards.length ? `
-        <div class="mt-3 pt-3 border-t border-gray-100">
-          <p class="text-sm font-semibold text-gray-700 mb-2">Environmental and Visual Considerations</p>
+        <div class="mt-2 pt-2 border-t border-gray-100">
+          <p class="text-sm font-semibold text-gray-700 mb-1.5">Environmental and Visual Considerations</p>
           <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
             ${envCards.map(envCard).join('')}
           </div>
@@ -651,7 +837,7 @@
       const notesText = [app.appNotes, app.footnotes, app.generalNotes]
         .filter(Boolean).join('\n\n');
       const notesBlock = notesText ? `
-        <details class="mt-3 pt-3 border-t border-gray-100 group">
+        <details class="mt-2 pt-2 border-t border-gray-100 group">
           <summary class="cursor-pointer text-sm font-semibold text-gray-700 flex items-center gap-2 list-none select-none">
             <svg class="w-3.5 h-3.5 text-gray-400 transition-transform group-open:rotate-90 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
               <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/>
@@ -666,15 +852,18 @@
       // "From the Standard" — the search worker returns a single best excerpt
       // (search.js: pickExcerptForApp). Only useful when it shows PROSE context
       // from the body of the standard; a raw table dump just repeats the data
-      // already shown above, so we suppress it (request #10).
+      // already shown above, so we suppress it (request #10). Within a grouped
+      // card, an excerpt already printed by an earlier row is not repeated.
       const excerpts = Array.isArray(result.excerpts)
         ? result.excerpts
         : (result.excerpt ? [result.excerpt] : []);
       const proseExcerpts = excerpts.filter(e =>
         e && e.text && e.chunkType !== 'table' && !looksLikeTableDump(e.text)
+          && !(seenExcerpts && seenExcerpts.has(e.text))
       );
+      if (seenExcerpts) proseExcerpts.forEach(e => seenExcerpts.add(e.text));
       const excerptBlock = proseExcerpts.length > 0 ? `
-        <div class="mt-3 pt-3 border-t border-gray-100">
+        <div class="mt-2 pt-2 border-t border-gray-100">
           <p class="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-1.5">From the Standard</p>
           ${proseExcerpts.slice(0, 2).map(e => `
             <div class="text-xs text-gray-600 leading-relaxed mb-2 pl-3 border-l-2 border-gray-200">
@@ -685,71 +874,7 @@
         </div>
       ` : '';
 
-      const vitriumBtn = result.vitriumLink ? `
-        <a href="${escapeHtml(result.vitriumLink)}" target="_blank" rel="noopener"
-           class="text-xs text-ies-blue hover:underline flex items-center gap-1">
-          <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/>
-          </svg>
-          View in Vitrium
-        </a>
-      ` : '';
-
-      return `
-        <article class="result-card bg-white rounded-xl border border-gray-100 shadow-sm p-4 relative overflow-hidden"
-                 style="animation-delay: ${index * 40}ms; border-left: 3px solid ${bannerHex};">
-          <!-- Banner row: Sub_Category (left) + type badges (right) -->
-          <div class="flex items-start justify-between gap-2 mb-2">
-            <div class="flex items-start gap-2.5 min-w-0">
-              <input
-                type="checkbox"
-                class="result-checkbox mt-0.5 rounded accent-ies-blue shrink-0"
-                value="${escapeHtml(app.code || '')}"
-                data-code="${escapeHtml(app.code || '')}"
-                ${app.code && selectedApplicationCodes.has(app.code) ? 'checked' : ''}
-              />
-              <div class="min-w-0">${subCategoryBanner}</div>
-            </div>
-            <div class="flex items-center gap-1.5 shrink-0 flex-wrap justify-end">
-              ${locationBadge}${areaTaskBadge}${tm24Badge}${veilingBadge}${classOfPlayBadge}
-            </div>
-          </div>
-
-          <!-- Application name badge + drill-down breadcrumb -->
-          <div class="flex items-baseline flex-wrap gap-x-2 gap-y-1 mb-1 pl-[26px]">
-            ${appBadge}
-            ${breadcrumb ? `<span class="text-sm text-gray-600 font-medium">${breadcrumb}</span>` : ''}
-          </div>
-          <p class="text-xs text-gray-400 mb-1 pl-[26px]">${escapeHtml(result.citation || '')}</p>
-
-          <!-- Illuminance data -->
-          <div class="pl-[26px]">
-            ${luxBlock}
-            ${outdoorBlock}
-            ${notesBlock}
-            ${excerptBlock}
-          </div>
-
-          <!-- Actions -->
-          <div class="flex items-center justify-between mt-3 pt-2.5 border-t border-gray-100 pl-[26px]">
-            <div class="flex items-center gap-3">
-              <button
-                class="add-to-project-btn text-xs px-3 py-1.5 bg-ies-blue text-white rounded-lg hover:bg-ies-blue-dark transition font-medium flex items-center gap-1.5"
-                data-code="${escapeHtml(app.code || '')}"
-                data-name="${escapeHtml(appName)}"
-                data-citation="${escapeHtml(result.citation || '')}"
-              >
-                <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/>
-                </svg>
-                Add to Project
-              </button>
-              ${vitriumBtn}
-            </div>
-            ${score > 0 ? `<span class="text-xs text-gray-300 tabular-nums">Match: ${Math.round(score * 100)}%</span>` : ''}
-          </div>
-        </article>
-      `;
+      return `${luxBlock}${outdoorBlock}${notesBlock}${excerptBlock}`;
     }
 
     // Heuristic for request #10: a "From the Standard" excerpt that is mostly
@@ -779,12 +904,14 @@
         return ` @ ${val} ${unit}`;
       };
 
-      // A single data cell inside a plane box.
+      // A single data cell inside a plane box. Tight vertical padding —
+      // client feedback: condense cell padding so adjacent results are
+      // easier to compare on one screen.
       const cell = (label, mainHtml, subText) => `
-        <div class="px-3 py-2">
-          <p class="text-[10px] uppercase tracking-wide text-gray-400 mb-0.5">${label}</p>
+        <div class="px-2.5 py-1">
+          <p class="text-[10px] uppercase tracking-wide text-gray-400">${label}</p>
           <p class="text-sm font-bold text-gray-900 leading-tight lux-badge">${mainHtml}</p>
-          ${subText ? `<p class="text-[11px] text-gray-400 mt-0.5">${escapeHtml(String(subText))}</p>` : ''}
+          ${subText ? `<p class="text-[11px] text-gray-400 leading-tight">${escapeHtml(String(subText))}</p>` : ''}
         </div>`;
 
       // A plane box: a tinted header ("Horizontal (Eₕ) Cat. A") over a compact
@@ -808,22 +935,24 @@
         const uniMain = plane.uniformity ?? plane.ratioBasis;
         const uniSub = plane.uniformity != null ? plane.ratioBasis : null;
 
+        // Cell order: Maintained → Uniformity → Basis. Client feedback requires
+        // "Basis" to always display after (to the right of) "Uniformity".
         const cells = [];
         if (maintMain != null) cells.push(cell('Maintained', maintMain, maintSub));
-        if (plane.avgMaxMin != null) cells.push(cell('Basis', escapeHtml(String(plane.avgMaxMin)), null));
         if (uniMain != null) cells.push(cell('Uniformity', escapeHtml(String(uniMain)), uniSub));
+        if (plane.avgMaxMin != null) cells.push(cell('Basis', escapeHtml(String(plane.avgMaxMin)), null));
         if (plane.cv != null) cells.push(cell('CV', escapeHtml(String(plane.cv)), null));
         if (!cells.length) return '';
 
         return `
           <div class="border border-gray-200 rounded-lg overflow-hidden">
-            <div class="px-3 py-1.5 text-xs font-semibold" style="background-color: ${tintBg}; color: ${tintFg};">
+            <div class="px-2.5 py-1 text-xs font-semibold" style="background-color: ${tintBg}; color: ${tintFg};">
               ${label}${catLabel}
             </div>
             <div class="grid divide-x divide-gray-100" style="grid-template-columns: repeat(${cells.length}, minmax(0, 1fr));">
               ${cells.join('')}
             </div>
-            ${plane.notes ? `<p class="text-[11px] text-gray-500 italic px-3 py-1.5 border-t border-gray-100">${escapeHtml(plane.notes)}</p>` : ''}
+            ${plane.notes ? `<p class="text-[11px] text-gray-500 italic px-2.5 py-1 border-t border-gray-100">${escapeHtml(plane.notes)}</p>` : ''}
           </div>
         `;
       };
@@ -840,7 +969,7 @@
       // Side-by-side on wider screens (Horizontal + Vertical), stacked on
       // narrow — condenses the card so more results fit per screen (request #6).
       return `
-        <div class="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div class="mt-2 grid grid-cols-1 md:grid-cols-2 gap-2">
           ${sections.join('')}
         </div>
       `;

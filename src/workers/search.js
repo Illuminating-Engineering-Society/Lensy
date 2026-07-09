@@ -183,10 +183,12 @@ export async function handleSearch(request, env, ctx) {
   // ── Confidence flag ──────────────────────────────────────────────────────────
   // The UI uses noStrongMatch to render a yellow advisory banner above the
   // results. We never filter the list itself — the user still sees the closest
-  // matches we found; we just signal that confidence is low.
-  const topScore = allResults.results.length > 0
-    ? (allResults.results[0].relevanceScore || 0)
-    : 0;
+  // matches we found; we just signal that confidence is low. Use the max score
+  // across the list: publication-order clustering can move a lower-scored
+  // sibling row into first position.
+  const topScore = allResults.results.reduce(
+    (max, r) => Math.max(max, r.relevanceScore || 0), 0
+  );
   const noStrongMatch = topScore < STRONG_MATCH_THRESHOLD;
 
   const payload = {
@@ -262,8 +264,18 @@ async function runSingleSearch(rawQuery, filters, limit, env) {
 
   // Deduplicate, keep highest score per application code
   const deduped = deduplicateScored(scored);
+  const top = deduped.slice(0, limit);
 
-  let results = deduped.slice(0, limit).map(({ score, app, chunkMeta }) =>
+  // 6.5 Excerpt backfill — the shared top-50 pool is dominated by application
+  //     vectors, so standards behind the top results often have NO text chunk
+  //     in it and their cards render without a "From the Standard" excerpt
+  //     even though the PDF has relevant prose (client feedback: fitting
+  //     rooms exist in RP-2 pp. 29-31 but no excerpt was shown). For each top
+  //     standard missing prose, run one narrow chunk query pinned to that
+  //     standard and merge the hits into the excerpt index.
+  await backfillExcerpts(env, queryVector, top.map(t => t.app), excerptIndex);
+
+  let results = top.map(({ score, app, chunkMeta }) =>
     buildResult(app, score, chunkMeta, excerptIndex, linkCtx)
   );
 
@@ -291,8 +303,17 @@ async function runSingleSearch(rawQuery, filters, limit, env) {
       const id = m.metadata?.standard_id || m.metadata?.standard_code;
       return id && standardsIndex.has(id);
     });
+    // A chunk-only result has no structured illuminance data — its excerpt IS
+    // the card. Raw table dumps and heading stubs render as an empty card
+    // (client feedback: "transition and circulation space", "elevator"), so
+    // only chunks with real prose are allowed to become standalone results.
+    const displayableChunks = liveChunks.filter(m => {
+      const meta = m.metadata || {};
+      const text = String(meta.excerpt_text || '');
+      return meta.chunk_type !== 'table' && text.trim().length >= 60 && !isTableLike(text);
+    });
     const represented = new Set(results.map(r => r.application.standard));
-    const chunkResults = buildChunkResults(liveChunks, linkCtx)
+    const chunkResults = buildChunkResults(displayableChunks, linkCtx)
       .filter(r => !represented.has(r.application.standard));
     if (chunkResults.length > 0) {
       results.push(...chunkResults);
@@ -301,7 +322,11 @@ async function runSingleSearch(rawQuery, filters, limit, env) {
     }
   }
 
-  return { results, expandedQuery };
+  // 9. Publication-order clustering — sibling rows of the same application
+  //    block print together, ordered as in the source table (client
+  //    feedback: Figure Skating Class I–IV / Recreational must follow the
+  //    standard's row order, not raw vector-score order).
+  return { results: clusterSiblings(results), expandedQuery };
 }
 
 /**
@@ -346,7 +371,48 @@ async function runMultiSearch(subQueries, filters, limitPerQuery, env) {
   }
 
   const expandedQuery = searches.map(s => s.expandedQuery).join(' | ');
-  return { results: merged, expandedQuery };
+  return { results: clusterSiblings(merged), expandedQuery };
+}
+
+/**
+ * Re-cluster the final list so rows of the same application block sit
+ * together in publication (Row_Ref) order.
+ *
+ * Vector scores interleave sibling rows arbitrarily (Class IV before
+ * Recreational before Class I). Groups keep the list position of their
+ * best-scoring member — the list arrives score-sorted, and Map preserves
+ * first-insertion order — so relevance ordering BETWEEN groups is unchanged;
+ * only members WITHIN a group are reordered to match the printed table.
+ * Chunk-only results (no rowRef) never cluster.
+ */
+function clusterSiblings(results) {
+  const groups = new Map();
+  for (const r of results) {
+    const a = r.application || {};
+    const key = a.rowRef != null
+      ? `${a.standard}|${a.tableRef || ''}|${a.subCategory || ''}|${a.category || ''}`
+      : `solo|${a.code}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(r);
+  }
+
+  const out = [];
+  for (const members of groups.values()) {
+    if (members.length > 1) members.sort(comparePublicationOrder);
+    out.push(...members);
+  }
+  return out;
+}
+
+function comparePublicationOrder(a, b) {
+  const A = a.application, B = b.application;
+  const rowDiff = rowRefNumber(A.rowRef) - rowRefNumber(B.rowRef);
+  if (rowDiff !== 0) return rowDiff;
+  for (const key of ['sub1', 'sub2', 'sub3', 'sub4']) {
+    const cmp = compareHierarchyField(A[key], B[key]);
+    if (cmp !== 0) return cmp;
+  }
+  return 0;
 }
 
 // ─── D1 Helpers ───────────────────────────────────────────────────────────────
@@ -556,6 +622,69 @@ function buildExcerptIndex(chunkMatches) {
     index[stdId].sort((a, b) => b.score - a.score);
   }
   return index;
+}
+
+const EXCERPT_BACKFILL_MAX = 5;    // standards backfilled per search
+const EXCERPT_BACKFILL_TOP_K = 10; // chunks fetched per backfilled standard
+
+/**
+ * Ensure the standards behind the top application results have at least one
+ * prose chunk in the excerpt index, so their cards can show a "From the
+ * Standard" excerpt whenever the PDF actually contains relevant prose.
+ *
+ * One extra Vectorize query per missing standard (bounded by
+ * EXCERPT_BACKFILL_MAX), filtered by standard_code so it only returns that
+ * standard's vectors. Fail-open per standard: on error the result simply
+ * renders without an excerpt, as before.
+ */
+async function backfillExcerpts(env, queryVector, apps, excerptIndex) {
+  const targets = [];
+  const seen = new Set();
+  for (const app of apps) {
+    const std = app.Standard;
+    if (!std || seen.has(std)) continue;
+    seen.add(std);
+    const bucket = excerptIndex[std] || [];
+    const hasProse = bucket.some(c => c.chunk_type !== 'table' && !isTableLike(c.excerpt_text));
+    if (!hasProse) targets.push(std);
+    if (targets.length >= EXCERPT_BACKFILL_MAX) break;
+  }
+  if (targets.length === 0) return;
+
+  await Promise.all(targets.map(async (std) => {
+    try {
+      const res = await env.VECTORIZE.query(queryVector, {
+        topK: EXCERPT_BACKFILL_TOP_K,
+        returnMetadata: 'all',
+        filter: { standard_code: std },
+      });
+      for (const m of res.matches || []) {
+        const meta = m.metadata || {};
+        // The filter also matches this standard's application vectors — skip.
+        if (meta.chunk_type === 'application') continue;
+        if (!meta.standard_id || !meta.excerpt_text) continue;
+        if (!excerptIndex[meta.standard_id]) excerptIndex[meta.standard_id] = [];
+        excerptIndex[meta.standard_id].push({ ...meta, score: m.score });
+      }
+      if (excerptIndex[std]) excerptIndex[std].sort((a, b) => b.score - a.score);
+    } catch (err) {
+      console.error(`excerpt backfill failed for ${std} (non-fatal):`, err.message);
+    }
+  }));
+}
+
+/**
+ * Heuristic mirror of the UI's looksLikeTableDump(): text that is mostly
+ * digits (or barely letters) is a raw table dump, not prose. Used to decide
+ * whether a standard still needs an excerpt backfill and to keep chunk-only
+ * results with nothing displayable out of the list. No text = not prose.
+ */
+function isTableLike(text) {
+  if (!text) return true;
+  const t = String(text);
+  const digitRatio = (t.match(/\d/g) || []).length / t.length;
+  const letterRatio = (t.match(/[a-zA-Z]/g) || []).length / t.length;
+  return digitRatio > 0.22 || letterRatio < 0.45;
 }
 
 /**
@@ -769,9 +898,16 @@ function buildChunkResults(chunkMatches, linkCtx = {}) {
 
 function buildVectorFilter(filters) {
   const f = {};
-  if (filters.indoor_outdoor && filters.indoor_outdoor !== 'Both') {
-    f.indoor_outdoor = filters.indoor_outdoor;
-  }
+  // indoor_outdoor is deliberately NOT applied at the vector level:
+  //   - Text chunks are ingested with indoor_outdoor: null (ingest.js), so an
+  //     equality filter silently drops ALL chunk vectors — filtered searches
+  //     lost every excerpt and every prose-only standard (client feedback:
+  //     "church" returned different standards under All vs Indoor/Outdoor).
+  //   - Application rows tagged 'Both' were also excluded, while the D1 layer
+  //     includes them — two filters disagreeing on the same request.
+  // fetchApplications/textFallback apply the authoritative location filter in
+  // D1 (matching the location OR 'Both'); the vector query stays open so the
+  // same pool feeds every location choice consistently.
   if (filters.standard) f.standard_code = filters.standard;
   if (filters.tm24_eligible) f.tm24_eligible = true;
   // Lighting_Zone is not stored in vector metadata today, so we rely on the
