@@ -246,7 +246,7 @@ async function runSingleSearch(rawQuery, filters, limit, env) {
     fetchApplications(env.DB, appCodes, filters),
     fetchStandardsIndex(env.DB),
   ]);
-  const linkCtx = { env, standardsIndex };
+  const linkCtx = { standardsIndex };
 
   // 5. Build excerpt index: standardId → best chunk match
   const excerptIndex = buildExcerptIndex(chunkMatches);
@@ -306,19 +306,22 @@ async function runSingleSearch(rawQuery, filters, limit, env) {
 
 /**
  * Index of every standard currently present in the D1 `standards` table:
- * standard id → vitrium_doc_id (null when not yet synced).
+ * standard id → { docId, webUrl } (fields null when not yet synced).
  *
  * Serves two purposes:
  *   - Filter Vectorize chunk fallbacks so orphan vectors from previous
  *     ingests don't surface to users.
- *   - Provide the standard-level Vitrium doc ID as a fallback when an
- *     application row has no Vitrium_Doc_ID of its own.
+ *   - Provide the standard-level Vitrium web viewer URL used to build the
+ *     "View in Vitrium" link on every result.
  *
  * Runs once per request (small set: ~dozens of rows).
  */
 async function fetchStandardsIndex(db) {
-  const result = await db.prepare('SELECT id, vitrium_doc_id FROM standards').all();
-  return new Map((result.results || []).map(r => [r.id, r.vitrium_doc_id || null]));
+  const result = await db.prepare('SELECT id, vitrium_doc_id, vitrium_web_url FROM standards').all();
+  return new Map((result.results || []).map(r => [
+    r.id,
+    { docId: r.vitrium_doc_id || null, webUrl: r.vitrium_web_url || null },
+  ]));
 }
 
 // ─── Multi-Search ─────────────────────────────────────────────────────────────
@@ -920,39 +923,27 @@ function mergeResults(primary, fallback) {
 /**
  * Build the "View in Vitrium" link for an application result.
  *
- * Resolution order (most → least specific):
- *   1. Vitrium_Deep_Link      — full URL curated on the application row
- *   2. Doc ID + Link_Mapping  — section anchor within the document
- *   3. Doc ID + Page_Number   — page anchor within the document
- *   4. Doc ID alone           — document cover page
+ * Vitrium's web viewer uses opaque short-code URLs
+ * (https://view.protectedpdf.com/XXXXXX) that cannot be constructed from a
+ * doc ID, so the URL comes from data, not string-building:
  *
- * The doc ID comes from the application row when present, otherwise falls
- * back to the standard-level vitrium_doc_id (populated by
- * scripts/sync-metadata.js into the D1 `standards` table).
+ *   1. Vitrium_Deep_Link — full URL curated on the application row, used as-is
+ *   2. Standard-level web viewer URL (standards.vitrium_web_url, populated
+ *      by scripts/sync-metadata.js), plus a best-effort fragment:
+ *      Link_Mapping section anchor, else #page=N from the app's Page_Number.
+ *      If the viewer ignores fragments, the link still opens the document.
  *
- * Returns null when no doc ID is known — the UI hides the button.
+ * Returns null when no URL is known — the UI hides the button.
  */
 function buildVitriumLink(app, linkCtx = {}) {
   if (app.Vitrium_Deep_Link) return app.Vitrium_Deep_Link;
 
-  const docId = app.Vitrium_Doc_ID
-    || linkCtx.standardsIndex?.get(app.Standard)
-    || null;
-  if (!docId) return null;
+  const webUrl = linkCtx.standardsIndex?.get(app.Standard)?.webUrl;
+  if (!webUrl) return null;
 
-  const base = vitriumPortalBase(linkCtx.env);
-  if (app.Link_Mapping) return `${base}/document/${encodeURIComponent(docId)}#${app.Link_Mapping}`;
-  if (app.Page_Number != null) return `${base}/document/${encodeURIComponent(docId)}#page=${app.Page_Number}`;
-  return `${base}/document/${encodeURIComponent(docId)}`;
-}
-
-/**
- * Base URL of the Vitrium web viewer. Configurable via the
- * VITRIUM_PORTAL_URL var in wrangler.toml so the placeholder default can be
- * swapped for IES's real reader URL without touching code.
- */
-function vitriumPortalBase(env) {
-  return String(env?.VITRIUM_PORTAL_URL || 'https://vitrium.ies.org').replace(/\/+$/, '');
+  if (app.Link_Mapping) return `${webUrl}#${app.Link_Mapping}`;
+  if (app.Page_Number != null) return `${webUrl}#page=${app.Page_Number}`;
+  return webUrl;
 }
 
 function jsonResponse(data, status = 200) {

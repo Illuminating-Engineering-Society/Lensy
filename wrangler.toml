@@ -45,10 +45,10 @@ binding = "AI"
 # ─── Environment Variables (non-secret) ──────────────────────────────────────
 [vars]
 VITRIUM_API_URL = "https://api.vitrium.com"
-# Base URL of the Vitrium web viewer users open documents in.
-# PLACEHOLDER — replace with IES's real Vitrium reader URL (open any standard
-# in Vitrium and copy the origin, e.g. "https://ies.vitrium.com").
-VITRIUM_PORTAL_URL = "https://vitrium.ies.org"
+# Viewer links are NOT constructed from a base URL: Vitrium's web viewer uses
+# opaque short-code URLs (https://view.protectedpdf.com/XXXXXX) stored per
+# standard in D1 (standards.vitrium_web_url), populated by
+# scripts/sync-metadata.js --csv from Vitrium's document export.
 ENVIRONMENT = "production"
 
 # Secrets set via `wrangler secret put`:
