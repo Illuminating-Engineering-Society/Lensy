@@ -24,9 +24,20 @@
  *     Ingested for semantic text search only; application extraction is skipped
  *     because these PDFs have no structured illuminance grid to parse.
  *
+ * Deprecated standards: PDFs under a "Deprecated Standards" folder (or passed
+ * with --status deprecated) are indexed for VERSION COMPARISON ONLY:
+ *   - vectors go to the separate deprecated Vectorize index, never the main one
+ *   - no application records are extracted (deprecated values must never be
+ *     served as current guidance)
+ *   - the raw PDF is stored under deprecated/ in R2
+ *   - a file whose ID matches a CURRENT standard is skipped: a reaffirmed
+ *     printing (e.g. LM-63-19 vs current LM-63-19R25) is the same edition,
+ *     not a deprecated one
+ *
  * Usage:
  *   node scripts/ingest-pdfs.js --file pdfs/RP-9-20.pdf --id RP-9-20
  *   node scripts/ingest-pdfs.js --dir pdfs/                  # batch all PDFs (recursive)
+ *   node scripts/ingest-pdfs.js --dir "pdfs/Deprecated Standards"  # deprecated only
  *   node scripts/ingest-pdfs.js --applications-only          # re-embed D1 apps
  *
  * Options:
@@ -34,6 +45,8 @@
  *   --id <standardId>  Standard ID override (default: derived from filename)
  *   --dir <path>       Directory of PDFs to ingest in batch (recurses into
  *                      subfolders; the "Others" folder is always skipped)
+ *   --status <current|deprecated>  Force ingestion status. Default: derived
+ *                      from the file's path ("Deprecated Standards" folder)
  *   --applications-only  Re-embed all D1 application rows into Vectorize
  *   --new-table-only   In batch mode, ingest only PDFs detected as NEW_TABLE
  *   --force-structure <new_table|standard>  Override structure auto-detection
@@ -61,6 +74,9 @@ import {
 // reference material (e.g. the IlluminanceTables schema doc), not standards.
 const SKIP_DIRS = new Set(['Others']);
 
+// Any path segment matching this marks a PDF as a deprecated standard.
+const DEPRECATED_DIR_RE = /^deprecated( standards)?$/i;
+
 // ─── Config ───────────────────────────────────────────────────────────────────
 
 const args = process.argv.slice(2);
@@ -79,6 +95,15 @@ const CONFIG = {
     const v = (args[i + 1] || '').toLowerCase();
     if (v !== 'new_table' && v !== 'standard') {
       throw new Error(`--force-structure expects "new_table" or "standard", got "${args[i + 1]}"`);
+    }
+    return v;
+  })(),
+  forceStatus: (() => {
+    const i = args.indexOf('--status');
+    if (i < 0) return null;
+    const v = (args[i + 1] || '').toLowerCase();
+    if (v !== 'current' && v !== 'deprecated') {
+      throw new Error(`--status expects "current" or "deprecated", got "${args[i + 1]}"`);
     }
     return v;
   })(),
@@ -111,7 +136,7 @@ async function main() {
   if (fileArg >= 0) {
     const filePath = resolve(process.cwd(), args[fileArg + 1]);
     const standardId = idArg >= 0 ? args[idArg + 1] : basename(filePath, '.pdf');
-    return ingestFile(filePath, standardId);
+    return ingestFile(filePath, standardId, statusForPath(filePath));
   }
 
   console.log('Usage:');
@@ -126,9 +151,23 @@ async function main() {
 async function ingestDirectory(dirPath) {
   if (!existsSync(dirPath)) throw new Error(`Directory not found: ${dirPath}`);
 
-  const files = collectPdfs(dirPath).sort();
+  // Current standards first, then deprecated — so the current-ID set is
+  // complete before any deprecated file is checked against it.
+  const files = collectPdfs(dirPath).sort(
+    (a, b) => (statusForPath(a) === 'deprecated') - (statusForPath(b) === 'deprecated') || a.localeCompare(b)
+  );
 
   console.log(`Found ${files.length} PDF(s) under ${dirPath} (excluding: ${[...SKIP_DIRS].join(', ')})\n`);
+
+  // IDs of current standards seen in this batch. A deprecated file whose ID
+  // matches one of these is a reaffirmed printing of the SAME edition, not a
+  // prior edition — ingesting it would overwrite the active standard. The
+  // Worker enforces the same rule against D1 for files outside this batch.
+  const currentIds = new Set(
+    files.filter(f => statusForPath(f) !== 'deprecated')
+         .map(f => deriveStandardId(basename(f)))
+  );
+  const ingestedDeprecated = new Set();
 
   let success = 0;
   let failed = 0;
@@ -136,11 +175,29 @@ async function ingestDirectory(dirPath) {
 
   for (const filePath of files) {
     const standardId = deriveStandardId(basename(filePath));
+    const status = statusForPath(filePath);
     const label = relative(dirPath, filePath);
+
+    if (status === 'deprecated') {
+      if (currentIds.has(standardId)) {
+        console.log(`\n[${standardId}] ${label}`);
+        console.log('  ↷ Skipped: same edition as a CURRENT standard (reaffirmed printing).');
+        byStructure.skipped++;
+        continue;
+      }
+      if (ingestedDeprecated.has(standardId)) {
+        console.log(`\n[${standardId}] ${label}`);
+        console.log('  ↷ Skipped: duplicate copy of an already-ingested deprecated edition.');
+        byStructure.skipped++;
+        continue;
+      }
+    }
+
     try {
-      const result = await ingestFile(filePath, standardId);
+      const result = await ingestFile(filePath, standardId, status);
       if (result?.skipped) byStructure.skipped++;
       else if (result?.structure) byStructure[result.structure]++;
+      if (status === 'deprecated' && !result?.skipped) ingestedDeprecated.add(standardId);
       success++;
     } catch (err) {
       console.error(`  ✗ ${label} (${standardId}): ${err.message}`);
@@ -150,7 +207,19 @@ async function ingestDirectory(dirPath) {
 
   console.log(`\n${'─'.repeat(50)}`);
   console.log(`Batch complete: ${success} processed, ${failed} failed.`);
-  console.log(`  NEW_TABLE: ${byStructure.new_table}   STANDARD: ${byStructure.standard}   skipped: ${byStructure.skipped}\n`);
+  console.log(`  NEW_TABLE: ${byStructure.new_table}   STANDARD: ${byStructure.standard}   skipped: ${byStructure.skipped}`);
+  if (ingestedDeprecated.size > 0) console.log(`  Deprecated standards indexed: ${ingestedDeprecated.size}`);
+  console.log('');
+}
+
+/**
+ * Ingestion status for a PDF: 'deprecated' when any path segment is a
+ * "Deprecated Standards" folder, else 'current'. --status overrides.
+ */
+function statusForPath(filePath) {
+  if (CONFIG.forceStatus) return CONFIG.forceStatus;
+  const segments = resolve(filePath).split(/[\\/]/);
+  return segments.some(s => DEPRECATED_DIR_RE.test(s)) ? 'deprecated' : 'current';
 }
 
 /**
@@ -176,17 +245,29 @@ function collectPdfs(dirPath) {
 
 // ─── Single File Ingestion ────────────────────────────────────────────────────
 
-async function ingestFile(filePath, standardId) {
-  console.log(`\n[${standardId}] ${filePath}`);
+async function ingestFile(filePath, standardId, status = 'current') {
+  const isDeprecated = status === 'deprecated';
+  console.log(`\n[${standardId}] ${filePath}${isDeprecated ? '  (DEPRECATED)' : ''}`);
 
   if (!existsSync(filePath)) throw new Error(`File not found: ${filePath}`);
+
+  // Deprecated standards never carry the NEW_TABLE pipeline — in
+  // --new-table-only mode they are out of scope before parsing.
+  if (CONFIG.newTableOnly && isDeprecated) {
+    console.log('  ↷ Skipped (--new-table-only): deprecated standards are text-only.');
+    return { skipped: true, structure: 'standard' };
+  }
 
   const pdfBytes = new Uint8Array(readFileSync(filePath));
   console.log(`  File size: ${(pdfBytes.length / 1024).toFixed(0)} KB`);
 
+  // Deprecated PDFs live under a separate R2 prefix so they can never be
+  // served from the standards/ namespace (e.g. by a future external API).
+  const r2Key = `${isDeprecated ? 'deprecated' : 'standards'}/${standardId}.pdf`;
+
   // Step 1: Upload raw PDF to R2 (non-fatal if it fails)
   if (!CONFIG.dryRun) {
-    uploadToR2(filePath, standardId);
+    uploadToR2(filePath, r2Key);
   } else {
     console.log('  [DRY RUN] Skipping R2 upload');
   }
@@ -200,9 +281,13 @@ async function ingestFile(filePath, standardId) {
   // landscape "Recommended Illuminance Criteria" grid the application extractor
   // was built for; STANDARD PDFs are ordinary prose and have no such grid.
   const detection = detectNewTableStructure(pages);
-  const structure = CONFIG.forceStructure
-    ? CONFIG.forceStructure
-    : (detection.isNewTable ? 'new_table' : 'standard');
+  // Deprecated docs are always ingested as prose (STANDARD): their
+  // illuminance values must never become structured application records.
+  const structure = isDeprecated
+    ? 'standard'
+    : CONFIG.forceStructure
+      ? CONFIG.forceStructure
+      : (detection.isNewTable ? 'new_table' : 'standard');
   const isNewTable = structure === 'new_table';
   console.log(
     `  Structure: ${structure.toUpperCase()}` +
@@ -286,6 +371,7 @@ async function ingestFile(filePath, standardId) {
   const result = await postToWorker('/api/ingest', {
     standardId,
     structure,
+    status,
     metadata: {
       title: metadata.title,
       author: metadata.author,
@@ -296,7 +382,7 @@ async function ingestFile(filePath, standardId) {
     chunks,
     tables,
     applications: [],  // sent separately below to avoid request size limits
-    r2Key: `standards/${standardId}.pdf`,
+    r2Key,
   });
 
   // Step 7: POST applications in small batches (avoid D1 variable limits)
@@ -323,8 +409,7 @@ async function ingestFile(filePath, standardId) {
 
 // ─── R2 Upload ────────────────────────────────────────────────────────────────
 
-function uploadToR2(filePath, standardId) {
-  const r2Key = `standards/${standardId}.pdf`;
+function uploadToR2(filePath, r2Key) {
   console.log(`  Uploading to R2: ${r2Key}`);
   try {
     execSync(

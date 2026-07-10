@@ -1366,9 +1366,10 @@ This architecture prioritizes:
 6. **Privacy of deprecated standards** (indexed internally for version comparison UI; never exposed via external API)
 
 ### Deprecated Standards Indexing Policy
-- **Index:** Yes — current AND deprecated PDFs are ingested into Vectorize, tagged with `status: 'deprecated'`
-- **Internal UI:** Deprecated content is accessible for version comparison queries only
-- **External API (Phase 5):** Filter out all deprecated-tagged vectors — never returned to external partners
+- **Index:** Yes — deprecated PDFs are ingested into a SEPARATE Vectorize index (`ies-standards-deprecated-vectors`, binding `VECTORIZE_DEPRECATED`), never the main one. Rationale: (a) the deprecated corpus is ~3× the current one and would crowd the shared topK pool, degrading current-standard recall; (b) Vectorize metadata filters only apply to vectors inserted after a metadata index exists, so a `status`-tag filter would have required re-ingesting the entire existing corpus; (c) external-API exclusion becomes structural — only the version-comparison path in `src/workers/search.js` ever queries the deprecated index.
+- **Ingestion:** PDFs under `pdfs/Deprecated Standards/` are auto-detected (or force with `--status deprecated`). No application records are ever extracted from deprecated PDFs; raw PDFs go to the `deprecated/` R2 prefix; the D1 row gets `status = 'Deprecated'` plus a best-effort `superseded_by` pointing at the newest Active edition of the same family. A deprecated file whose ID matches a CURRENT standard (reaffirmed printing, e.g. `LM-63-19` vs `LM-63-19R25`) is refused — it is the same edition, not a prior one.
+- **Internal UI:** Deprecated content surfaces ONLY on version-comparison queries ("what's new in RP-6?") that name a standard; results are flagged `isDeprecated` with a `deprecationNotice` and render with an amber "Deprecated" banner.
+- **External API (Phase 5):** Never bind/query `VECTORIZE_DEPRECATED` — deprecated content is structurally unreachable from the main index.
 - **Agent behavior:** Never cite deprecated standards for current guidance; only reference them when user explicitly asks "what changed" or "what is new"
 
 The Cloudflare stack provides:

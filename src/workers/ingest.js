@@ -9,10 +9,25 @@
  *
  *   POST /api/ingest
  *     Accept pre-parsed PDF data from the ingestion script.
- *     Body: { standardId, metadata, chunks, tables, applications }
+ *     Body: { standardId, status, metadata, chunks, tables, applications }
+ *     - status:       'current' (default) | 'deprecated'
  *     - chunks:       [{text, pageNumber, section, type}]       → Vectorize
  *     - tables:       [{pageNumber, title, rows, ...}]          → D1 standards.tables_json
  *     - applications: [{code, App, Hor_Lux, ...}]  (optional)  → D1 applications (upsert)
+ *
+ *     Deprecated standards (status: 'deprecated'):
+ *     - chunks are upserted into the SEPARATE deprecated Vectorize index
+ *       (env.VECTORIZE_DEPRECATED) — the main search index never sees them,
+ *       so regular searches and any future external API cannot surface them.
+ *       They are only queried for version-comparison searches ("what's new
+ *       in RP-6?"). See IS-AI Prototype_260403.pdf, §6 (p.1) and p.5 notes.
+ *     - application records are rejected: deprecated illuminance values must
+ *       never enter the applications table that serves current guidance.
+ *     - the D1 standards row is written with status='Deprecated' and a
+ *       best-effort superseded_by pointing at the newest Active edition of
+ *       the same standard family.
+ *     - refuses to ingest over an existing Active standard of the same id
+ *       (a reaffirmed printing is the same edition, not a deprecated one).
  *
  *   POST /api/ingest/applications
  *     Re-embed all D1 application rows into Vectorize.
@@ -56,6 +71,7 @@ async function ingestParsedPDF(request, env) {
 
   const {
     standardId,
+    status = 'current',
     metadata = {},
     chunks = [],
     tables = [],
@@ -64,9 +80,41 @@ async function ingestParsedPDF(request, env) {
   } = body;
 
   if (!standardId) return jsonResponse({ error: 'standardId is required' }, 400);
+  if (status !== 'current' && status !== 'deprecated') {
+    return jsonResponse({ error: `status must be "current" or "deprecated", got "${status}"` }, 400);
+  }
   // chunks can be empty when request is only upserting applications
   if (!Array.isArray(chunks)) {
     return jsonResponse({ error: 'chunks must be an array' }, 400);
+  }
+
+  const isDeprecated = status === 'deprecated';
+
+  if (isDeprecated) {
+    // Deprecated values must never be served as current guidance.
+    if (Array.isArray(applications) && applications.length > 0) {
+      return jsonResponse({
+        error: 'Deprecated standards cannot carry application records — they are indexed for version comparison only.',
+      }, 400);
+    }
+    // Same id already Active in D1 → this file is a reaffirmed printing of
+    // the current edition, not a prior edition. Refuse rather than silently
+    // downgrading an active standard.
+    const existing = await env.DB.prepare(
+      'SELECT status FROM standards WHERE id = ?'
+    ).bind(standardId).first();
+    if (existing && existing.status !== 'Deprecated') {
+      return jsonResponse({
+        error: `"${standardId}" is already indexed as a CURRENT standard — refusing to re-ingest it as deprecated. ` +
+               'If this really is a prior edition, give it a distinct id (e.g. include the edition year).',
+      }, 409);
+    }
+    if (!env.VECTORIZE_DEPRECATED) {
+      return jsonResponse({
+        error: 'VECTORIZE_DEPRECATED binding is not configured. Create the index and add the binding to wrangler.toml ' +
+               '(wrangler vectorize create ies-standards-deprecated-vectors --dimensions=768 --metric=cosine).',
+      }, 500);
+    }
   }
 
   // ── 1. Generate embeddings for all chunks (skip if none) ──────────────────
@@ -96,12 +144,15 @@ async function ingestParsedPDF(request, env) {
       excerpt_text: chunk.text.substring(0, 500), // metadata size limit ~1KB
       indoor_outdoor: null,
       tm24_eligible: null,
+      status,                                 // 'current' | 'deprecated'
     },
   }));
 
   // ── 3. Upsert into Vectorize (batched) ────────────────────────────────────
+  // Deprecated chunks go to the dedicated deprecated index, never the main one.
+  const targetIndex = isDeprecated ? env.VECTORIZE_DEPRECATED : env.VECTORIZE;
   for (let i = 0; i < vectors.length; i += VECTORIZE_BATCH) {
-    await env.VECTORIZE.upsert(vectors.slice(i, i + VECTORIZE_BATCH));
+    await targetIndex.upsert(vectors.slice(i, i + VECTORIZE_BATCH));
   }
 
   // ── 4. Persist standard metadata + tables to D1 (skip for app-only batches) ─
@@ -114,11 +165,15 @@ async function ingestParsedPDF(request, env) {
     generalNotes: t.generalNotes,
   }));
 
+  // Deprecated rows point at the newest Active edition of their family
+  // (best-effort) so responses can say "deprecated — replaced by RP-6-24".
+  const supersededBy = isDeprecated ? await findSupersedingStandard(env.DB, standardId) : null;
+
   if (chunks.length > 0 || tables.length > 0 || metadata.title) await env.DB.prepare(`
     INSERT INTO standards
       (id, title, description, author, year, full_designation, r2_key,
-       tables_json, indexed_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+       tables_json, status, superseded_by, indexed_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
     ON CONFLICT(id) DO UPDATE SET
       title        = excluded.title,
       description  = excluded.description,
@@ -127,6 +182,8 @@ async function ingestParsedPDF(request, env) {
       full_designation = excluded.full_designation,
       r2_key       = COALESCE(excluded.r2_key, standards.r2_key),
       tables_json  = excluded.tables_json,
+      status       = excluded.status,
+      superseded_by = COALESCE(excluded.superseded_by, standards.superseded_by),
       indexed_at   = CURRENT_TIMESTAMP,
       updated_at   = CURRENT_TIMESTAMP
   `).bind(
@@ -138,6 +195,8 @@ async function ingestParsedPDF(request, env) {
     metadata.fullDesignation || null,
     r2Key || `standards/${standardId}.pdf`,
     JSON.stringify(tablesCompact),
+    isDeprecated ? 'Deprecated' : 'Active',
+    supersededBy,
   ).run();
 
   // ── 5. Upsert extracted application records into D1 ──────────────────────
@@ -159,6 +218,33 @@ async function ingestParsedPDF(request, env) {
     vectorsUpserted: vectors.length,
     applicationsUpserted,
   });
+}
+
+/**
+ * Best-effort lookup of the Active standard that supersedes a deprecated one.
+ *
+ * Family = the id minus its trailing 2-digit edition year (and any errata
+ * suffix): "RP-6-15" → "RP-6", "RP-27.2-00" → "RP-27.2", "RP-36-20+E2" →
+ * "RP-36". The newest Active edition of that family (by year, then id) is
+ * the superseding standard. Returns null when the family has no Active
+ * edition indexed yet — re-ingesting the deprecated PDF later will fill it.
+ */
+async function findSupersedingStandard(db, standardId) {
+  const m = /^(.+)-\d{2}(?:\+E\d+)?$/.exec(standardId);
+  if (!m) return null;
+  const family = m[1];
+  try {
+    const row = await db.prepare(`
+      SELECT id FROM standards
+      WHERE status = 'Active' AND id LIKE ?
+      ORDER BY year DESC, id DESC
+      LIMIT 1
+    `).bind(`${family}-%`).first();
+    return row?.id || null;
+  } catch (err) {
+    console.error('findSupersedingStandard failed (non-fatal):', err.message);
+    return null;
+  }
 }
 
 // ─── D1 Application Upsert ───────────────────────────────────────────────────

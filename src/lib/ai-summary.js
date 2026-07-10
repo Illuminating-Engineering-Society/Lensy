@@ -132,7 +132,17 @@ export async function generateResponse(ai, query, searchResults) {
 }
 
 function buildPrompt(query, searchResults) {
-  const resultsSummary = searchResults.slice(0, 5).map((r, idx) => {
+  // Deprecated excerpts are appended after current results by the search
+  // worker (version-comparison queries only). Reserve prompt slots for them —
+  // a plain slice(0, 5) would cut off exactly the content the comparison
+  // needs.
+  const current = searchResults.filter(r => !r.isDeprecated);
+  const deprecated = searchResults.filter(r => r.isDeprecated);
+  const picked = deprecated.length > 0
+    ? [...current.slice(0, 3), ...deprecated.slice(0, 2)]
+    : current.slice(0, 5);
+
+  const resultsSummary = picked.map((r, idx) => {
     const app = r.application;
     const excerptText = r.excerpt?.text ?? (typeof r.excerpt === 'string' ? r.excerpt : null);
     const meta = [];
@@ -141,6 +151,10 @@ function buildPrompt(query, searchResults) {
     if (app.veilingRisk)    meta.push(`Veiling Risk: ${app.veilingRisk}`);
     if (app.classOfPlay)    meta.push(`Class of Play: ${app.classOfPlay}`);
     if (app.tm24Eligible)   meta.push('TM-24 eligible (P–Y)');
+    if (r.isDeprecated) {
+      meta.push(`DEPRECATED STANDARD${r.supersededBy ? ` — replaced by ${r.supersededBy}` : ''}. ` +
+        'Cite ONLY to describe what changed between editions; never as current guidance.');
+    }
     return `[Result ${idx + 1}] ${app.fullName || app.category}
   Standard: ${app.standardFull || app.standard}${app.tableRef ? ` (${app.tableRef})` : ''}
   ${meta.join(', ')}

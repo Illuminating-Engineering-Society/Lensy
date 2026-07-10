@@ -6,6 +6,7 @@
 #   wrangler r2 bucket create ies-standards-pdfs
 #   wrangler d1 create ies-metadata          → copy database_id below
 #   wrangler vectorize create ies-standards-vectors --dimensions=768 --metric=cosine
+#   wrangler vectorize create ies-standards-deprecated-vectors --dimensions=768 --metric=cosine
 #   wrangler kv namespace create ies-sessions  → copy id below
 #
 # Then set secrets (do NOT commit real keys):
@@ -32,6 +33,14 @@ database_id = "79936b28-a632-487d-89ee-4e57af330ecd"
 [[vectorize]]
 binding = "VECTORIZE"
 index_name = "ies-standards-vectors"
+
+# Deprecated standards live in a SEPARATE index: they are only queried for
+# version-comparison searches ("what's new in RP-6?"), never crowd the main
+# index's topK pool, and are structurally unreachable from any future
+# external API (which only ever gets the main index).
+[[vectorize]]
+binding = "VECTORIZE_DEPRECATED"
+index_name = "ies-standards-deprecated-vectors"
 
 # ─── KV: Session & Cache ─────────────────────────────────────────────────────
 [[kv_namespaces]]

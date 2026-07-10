@@ -156,6 +156,17 @@ export async function handleSearch(request, env, ctx) {
     allResults = await runSingleSearch(rawQuery, mergedFilters, cleanLimit, env);
   }
 
+  // ── Deprecated content (version-comparison queries ONLY) ─────────────────────
+  // "what's new in RP-6?" may cite the deprecated edition alongside the
+  // current one. This is the single code path that touches the deprecated
+  // Vectorize index; every other query shape never sees deprecated content
+  // (IS-AI Prototype p.1 §6, p.5). Results are flagged so the UI can label
+  // them "deprecated — replaced by <current>".
+  if (isVersionComparison) {
+    const deprecatedResults = await searchDeprecatedForComparison(rawQuery, mergedFilters, env);
+    allResults.results.push(...deprecatedResults);
+  }
+
   // ── Related applications (top result only for performance) ───────────────────
   // Exclude only the seed itself, not the rest of the result list. If we
   // excluded all results, true sibling rows already shown in the main list
@@ -279,7 +290,7 @@ async function runSingleSearch(rawQuery, filters, limit, env) {
 
   // 3. Split matches by type
   const appMatches = matches.filter(m => m.metadata?.chunk_type === 'application' && m.metadata?.application_code);
-  const chunkMatches = matches.filter(m => m.metadata?.chunk_type !== 'application' && m.metadata?.standard_id);
+  let chunkMatches = matches.filter(m => m.metadata?.chunk_type !== 'application' && m.metadata?.standard_id);
 
   // 4. Fetch application records from D1 (plus the standards index, used
   //    both for Vitrium doc-ID fallback and to filter orphan chunks in step 8)
@@ -289,6 +300,18 @@ async function runSingleSearch(rawQuery, filters, limit, env) {
     fetchStandardsIndex(env.DB),
   ]);
   const linkCtx = { standardsIndex };
+
+  // 4b. Deprecated standards NEVER contribute excerpts or chunk results to a
+  //     regular search. Their vectors live in a separate index and should not
+  //     appear here at all — this is defense in depth against vectors tagged
+  //     'deprecated' or D1 rows flipped to Deprecated after ingestion.
+  //     Version-comparison queries pull deprecated content through the
+  //     dedicated searchDeprecatedForComparison() path instead.
+  chunkMatches = chunkMatches.filter(m => {
+    if (m.metadata?.status === 'deprecated') return false;
+    const entry = standardsIndex.get(m.metadata?.standard_id || m.metadata?.standard_code);
+    return !entry || entry.status !== 'Deprecated';
+  });
 
   // 5. Build excerpt index: standardId → best chunk match
   const excerptIndex = buildExcerptIndex(chunkMatches);
@@ -382,11 +405,104 @@ async function runSingleSearch(rawQuery, filters, limit, env) {
  * Runs once per request (small set: ~dozens of rows).
  */
 async function fetchStandardsIndex(db) {
-  const result = await db.prepare('SELECT id, vitrium_doc_id, vitrium_web_url FROM standards').all();
+  const result = await db.prepare(
+    'SELECT id, status, superseded_by, vitrium_doc_id, vitrium_web_url FROM standards'
+  ).all();
   return new Map((result.results || []).map(r => [
     r.id,
-    { docId: r.vitrium_doc_id || null, webUrl: r.vitrium_web_url || null },
+    {
+      docId: r.vitrium_doc_id || null,
+      webUrl: r.vitrium_web_url || null,
+      status: r.status || 'Active',
+      supersededBy: r.superseded_by || null,
+    },
   ]));
+}
+
+// ─── Deprecated Standards (version comparison only) ───────────────────────────
+
+const DEPRECATED_TOP_K = 20;        // pool fetched from the deprecated index
+const MAX_DEPRECATED_RESULTS = 3;   // flagged excerpts appended to the response
+
+/**
+ * Fetch excerpts from DEPRECATED standards for a version-comparison query.
+ *
+ * Only called when isVersionComparisonQuery() matched. Requires the query to
+ * name the standard being compared ("what's new in RP-6?") — an unscoped
+ * comparison has no deprecated edition to pull, so it returns [].
+ *
+ * Deprecated vectors live in their own index (env.VECTORIZE_DEPRECATED);
+ * regular searches and any future external API never query it. Results are
+ * flagged isDeprecated with a supersededBy pointer so both the UI and the
+ * AI summary can frame them strictly as comparison context, never guidance.
+ *
+ * Fail-open: any error returns [] and the comparison proceeds with current
+ * content only.
+ */
+async function searchDeprecatedForComparison(rawQuery, filters, env) {
+  if (!env.VECTORIZE_DEPRECATED) return [];
+
+  // Scope: the standard FAMILY being compared. standard_prefix is already a
+  // family ("RP-6"); an exact filters.standard ("RP-6-24") is reduced to its
+  // family so prior editions (RP-6-15, RP-6-20) match too.
+  let scope = (filters.standard_prefix || '').toUpperCase();
+  if (!scope && filters.standard) {
+    const std = String(filters.standard).toUpperCase();
+    const fam = /^(.+)-\d{2}(?:\+E\d+)?$/.exec(std);
+    scope = fam ? fam[1] : std;
+  }
+  if (!scope) return [];
+
+  try {
+    const expandedQuery = prepareQueryForEmbedding(rawQuery);
+    let queryVector = await getCachedEmbedding(env.SESSIONS, EMBED_MODEL, expandedQuery);
+    if (!queryVector) {
+      const embResult = await env.AI.run(EMBED_MODEL, { text: [expandedQuery] });
+      queryVector = embResult.data[0];
+      await putCachedEmbedding(env.SESSIONS, EMBED_MODEL, expandedQuery, queryVector);
+    }
+
+    const res = await env.VECTORIZE_DEPRECATED.query(queryVector, {
+      topK: DEPRECATED_TOP_K,
+      returnMetadata: 'all',
+    });
+
+    // Keep only chunks of the compared standard family (RP-6 → RP-6-15,
+    // RP-6-20, ...), with displayable prose (same bar as regular chunk results).
+    const scopePrefix = scope.endsWith('-') ? scope : `${scope}-`;
+    const matches = (res.matches || []).filter(m => {
+      const meta = m.metadata || {};
+      const id = String(meta.standard_id || meta.standard_code || '').toUpperCase();
+      if (!id || !(id === scope || id.startsWith(scopePrefix))) return false;
+      const text = String(meta.excerpt_text || '');
+      return meta.chunk_type !== 'table' && text.trim().length >= 60 && !isTableLike(text);
+    });
+    if (matches.length === 0) return [];
+
+    const standardsIndex = await fetchStandardsIndex(env.DB);
+    const linkCtx = { standardsIndex };
+
+    return buildChunkResults(matches, linkCtx)
+      .sort((a, b) => (b.relevanceScore || 0) - (a.relevanceScore || 0))
+      .slice(0, MAX_DEPRECATED_RESULTS)
+      .map(r => {
+        const info = standardsIndex.get(r.application.standard);
+        const supersededBy = info?.supersededBy || null;
+        const name = r.application.standardFull || r.application.standard;
+        return {
+          ...r,
+          isDeprecated: true,
+          supersededBy,
+          deprecationNotice: supersededBy
+            ? `${name} is deprecated and has been replaced by ${supersededBy}.`
+            : `${name} is deprecated.`,
+          citation: `${r.citation} (deprecated)`,
+        };
+      });
+  } catch (err) {
+    console.error('deprecated comparison search failed (non-fatal):', err.message);
+    return [];
+  }
 }
 
 // ─── Multi-Search ─────────────────────────────────────────────────────────────
@@ -978,7 +1094,7 @@ function inferFiltersFromQuery(query) {
   // Use standard_prefix (LIKE) rather than standard (=) because users say
   // "RP-43" but the D1 Standard column carries the year suffix ("RP-43-25").
   if (isVersionComparisonQuery(query)) {
-    const stdMatch = /\b((?:RP|TM|HB|LM|LP|LS|G)-\d+)\b/i.exec(query);
+    const stdMatch = /\b((?:RP|TM|HB|LM|LP|LS|DG|LEM|G)-\d+(?:\.\d+)?)\b/i.exec(query);
     if (stdMatch) out.standard_prefix = stdMatch[1].toUpperCase();
   }
 

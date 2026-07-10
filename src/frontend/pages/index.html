@@ -572,12 +572,17 @@
       const app = primary.application || {};
       const isExterior = app.indoorOutdoor === 'Outdoor';
       const isInterior = app.indoorOutdoor === 'Indoor';
+      // Deprecated-edition excerpts only appear on version-comparison
+      // searches ("what's new in RP-6?"). They must read as historical
+      // context, never as guidance — amber stripe + explicit banner.
+      const isDeprecated = !!primary.isDeprecated;
 
       // Sub_Category banner colors per IlluminanceTables_Reference_260421
       // (Interior = dark blue #2E4A62, Exterior = dark green #2E4A34). The
       // banner runs full-width at the top of the card; a left border stripe
       // reinforces the indoor/outdoor distinction at a glance.
-      const bannerHex = isExterior ? '#2E4A34' : isInterior ? '#2E4A62' : '#374151';
+      const bannerHex = isDeprecated ? '#B45309'
+        : isExterior ? '#2E4A34' : isInterior ? '#2E4A62' : '#374151';
       // Application-name badge — brown for exterior, blue for interior — so
       // the application title reads as the most prominent element (request #1).
       const appBadgeHex = isExterior ? '#8A3B18' : isInterior ? '#2E4A62' : '#4B5563';
@@ -627,9 +632,17 @@
       // same standard usually share one excerpt; show it once, not per row.
       const seenExcerpts = new Set();
 
+      const deprecatedBanner = isDeprecated ? `
+        <div class="flex items-start gap-2 -mx-3 -mt-3 mb-2.5 px-3 py-1.5 bg-amber-50 border-b border-amber-200">
+          <span class="text-[11px] font-bold tracking-wider uppercase text-amber-700 shrink-0 mt-px">Deprecated</span>
+          <span class="text-xs text-amber-800">${escapeHtml(primary.deprecationNotice
+            || 'This edition has been superseded. Shown for version comparison only — refer to the current standard for guidance.')}</span>
+        </div>` : '';
+
       const cardShell = (inner) => `
         <article class="result-card bg-white rounded-xl border border-gray-100 shadow-sm p-3 relative overflow-hidden"
                  style="animation-delay: ${index * 40}ms; border-left: 3px solid ${bannerHex};">
+          ${deprecatedBanner}
           ${inner}
         </article>
       `;
@@ -661,13 +674,13 @@
       return cardShell(`
         <div class="flex items-start justify-between gap-2 mb-1.5">
           <div class="flex items-start gap-2.5 min-w-0">
-            <input
+            ${isDeprecated ? '' : `<input
               type="checkbox"
               class="result-checkbox mt-0.5 rounded accent-ies-blue shrink-0"
               value="${escapeHtml(app.code || '')}"
               data-code="${escapeHtml(app.code || '')}"
               ${app.code && selectedApplicationCodes.has(app.code) ? 'checked' : ''}
-            />
+            />`}
             <div class="min-w-0">${subCategoryBanner}</div>
           </div>
           <div class="flex items-center gap-1.5 shrink-0 flex-wrap justify-end">
