@@ -411,15 +411,29 @@ async function ingestFile(filePath, standardId, status = 'current') {
 
 function uploadToR2(filePath, r2Key) {
   console.log(`  Uploading to R2: ${r2Key}`);
-  try {
-    execSync(
-      `wrangler r2 object put ies-standards-pdfs/${r2Key} --file="${filePath}"`,
-      { stdio: 'pipe' }
-    );
-    console.log('  R2 upload complete.');
-  } catch (err) {
-    // Non-fatal: embedding proceeds even if R2 upload fails
-    console.warn(`  ⚠ R2 upload failed (non-fatal): ${err.message.slice(0, 100)}`);
+  // wrangler v3: r2 object put targets the REAL bucket by default; --local
+  // opts into simulated storage. (wrangler v4 flips this default — if the
+  // project upgrades, remote uploads will need an explicit --remote flag.)
+  const isLocalTarget = CONFIG.apiUrl.includes('localhost') || CONFIG.apiUrl.includes('127.0.0.1');
+  const localFlag = isLocalTarget ? ' --local' : '';
+  const cmd = `wrangler r2 object put ies-standards-pdfs/${r2Key} --file="${filePath}"${localFlag}`;
+  const MAX_ATTEMPTS = 3;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    try {
+      execSync(cmd, { stdio: 'pipe' });
+      console.log('  R2 upload complete.');
+      return;
+    } catch (err) {
+      const stderr = (err.stderr || '').toString().trim();
+      const detail = stderr.split('\n').slice(-3).join(' | ') || err.message;
+      if (attempt < MAX_ATTEMPTS) {
+        console.warn(`  ⚠ R2 upload attempt ${attempt}/${MAX_ATTEMPTS} failed, retrying: ${detail.slice(0, 200)}`);
+        execSync(`node -e "setTimeout(()=>{}, ${attempt * 5000})"`); // backoff
+      } else {
+        // Non-fatal: embedding proceeds even if R2 upload fails
+        console.warn(`  ⚠ R2 upload failed after ${MAX_ATTEMPTS} attempts (non-fatal): ${detail.slice(0, 300)}`);
+      }
+    }
   }
 }
 

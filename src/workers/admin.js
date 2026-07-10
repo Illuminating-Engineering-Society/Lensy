@@ -254,6 +254,71 @@ export async function handleAdminFlushCache(request, env) {
   return jsonResponse({ success: true, dataVersion });
 }
 
+/**
+ * Multipart upload of a large PDF into the PDFS R2 bucket.
+ *
+ * wrangler caps `r2 object put` at 300 MiB; the R2 binding has no such limit
+ * when fed multipart parts. Client: scripts/r2-upload-large.js.
+ *
+ * POST /api/admin/r2-multipart?action=create&key=<key>
+ *   → { uploadId }
+ * POST /api/admin/r2-multipart?action=part&key=<key>&uploadId=<id>&partNumber=<n>
+ *   (raw part bytes as body; all parts equal size except the last, ≥5 MiB)
+ *   → { partNumber, etag }
+ * POST /api/admin/r2-multipart?action=complete&key=<key>
+ *   Body: { uploadId, parts: [{ partNumber, etag }] } → { key, size }
+ * POST /api/admin/r2-multipart?action=abort&key=<key>
+ *   Body: { uploadId } → { aborted: true }
+ */
+export async function handleAdminR2Multipart(request, env) {
+  if (!checkAuth(request, env)) return jsonResponse({ error: 'Unauthorized' }, 401);
+
+  const url = new URL(request.url);
+  const action = url.searchParams.get('action');
+  const key = url.searchParams.get('key') || '';
+
+  // Same namespaces the ingest pipeline writes to — nothing else is writable.
+  if (!/^(standards|deprecated)\/[^/]+\.pdf$/.test(key)) {
+    return jsonResponse({ error: 'key must be standards/<file>.pdf or deprecated/<file>.pdf' }, 400);
+  }
+
+  if (action === 'create') {
+    const upload = await env.PDFS.createMultipartUpload(key);
+    return jsonResponse({ uploadId: upload.uploadId, key });
+  }
+
+  if (action === 'part') {
+    const uploadId = url.searchParams.get('uploadId');
+    const partNumber = parseInt(url.searchParams.get('partNumber'), 10);
+    if (!uploadId || !Number.isInteger(partNumber) || partNumber < 1) {
+      return jsonResponse({ error: 'uploadId and partNumber (≥1) required' }, 400);
+    }
+    const upload = env.PDFS.resumeMultipartUpload(key, uploadId);
+    const part = await upload.uploadPart(partNumber, request.body);
+    return jsonResponse({ partNumber: part.partNumber, etag: part.etag });
+  }
+
+  if (action === 'complete') {
+    const body = await safeJson(request);
+    if (!body.uploadId || !Array.isArray(body.parts)) {
+      return jsonResponse({ error: 'uploadId and parts[] required' }, 400);
+    }
+    const upload = env.PDFS.resumeMultipartUpload(key, body.uploadId);
+    const object = await upload.complete(body.parts);
+    return jsonResponse({ key, size: object.size, etag: object.httpEtag });
+  }
+
+  if (action === 'abort') {
+    const body = await safeJson(request);
+    if (!body.uploadId) return jsonResponse({ error: 'uploadId required' }, 400);
+    const upload = env.PDFS.resumeMultipartUpload(key, body.uploadId);
+    await upload.abort();
+    return jsonResponse({ aborted: true });
+  }
+
+  return jsonResponse({ error: 'action must be create | part | complete | abort' }, 400);
+}
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 async function fetchValidStandardIds(db) {

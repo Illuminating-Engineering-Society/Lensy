@@ -124,7 +124,9 @@ export async function handleSearch(request, env, ctx) {
     units,
     includeAISummary,
   });
-  const cachedPayload = await getCachedSearch(kv, cacheKey);
+  // debug requests bypass the cache entirely: they must observe the live
+  // pipeline, and their _depDbg payload must never be served to real users.
+  const cachedPayload = body.debug ? null : await getCachedSearch(kv, cacheKey);
   if (cachedPayload) {
     // Cache hits are logged too — staff analytics must see every query, not
     // only the ones that missed the cache.
@@ -162,8 +164,17 @@ export async function handleSearch(request, env, ctx) {
   // Vectorize index; every other query shape never sees deprecated content
   // (IS-AI Prototype p.1 §6, p.5). Results are flagged so the UI can label
   // them "deprecated — replaced by <current>".
+  // Diagnostics for the deprecated-comparison path, which is fail-open by
+  // design (errors and empty stages silently yield no deprecated excerpts).
+  // Populated only when the caller passes body.debug.
+  let depDbg = null;
   if (isVersionComparison) {
-    const deprecatedResults = await searchDeprecatedForComparison(rawQuery, mergedFilters, env);
+    depDbg = body.debug ? {} : null;
+    // Topical anchor: the current edition's best excerpt. Embedding the raw
+    // "what's new in X?" phrasing retrieves TOC lines from the deprecated
+    // index ("9.12 New Light Sources . . ."), not substantive provisions.
+    const topicHint = allResults.results[0]?.excerpt?.text || '';
+    const deprecatedResults = await searchDeprecatedForComparison(rawQuery, mergedFilters, env, topicHint, depDbg);
     allResults.results.push(...deprecatedResults);
   }
 
@@ -217,10 +228,11 @@ export async function handleSearch(request, env, ctx) {
     results: applyUnits(allResults.results, units),
     aiSummary,
     timestamp: new Date().toISOString(),
+    _depDbg: depDbg || undefined,
   };
 
   // Store after responding when possible (waitUntil); never blocks the user.
-  const cacheWrite = putCachedSearch(kv, cacheKey, payload);
+  const cacheWrite = body.debug ? Promise.resolve() : putCachedSearch(kv, cacheKey, payload);
   const logWrite = logSearch(env, payload, false);
   if (ctx?.waitUntil) {
     ctx.waitUntil(cacheWrite);
@@ -421,7 +433,7 @@ async function fetchStandardsIndex(db) {
 
 // ─── Deprecated Standards (version comparison only) ───────────────────────────
 
-const DEPRECATED_TOP_K = 20;        // pool fetched from the deprecated index
+const DEPRECATED_TOP_K = 100;       // ids+scores pool from the deprecated index (max without metadata)
 const MAX_DEPRECATED_RESULTS = 3;   // flagged excerpts appended to the response
 
 /**
@@ -439,8 +451,9 @@ const MAX_DEPRECATED_RESULTS = 3;   // flagged excerpts appended to the response
  * Fail-open: any error returns [] and the comparison proceeds with current
  * content only.
  */
-async function searchDeprecatedForComparison(rawQuery, filters, env) {
-  if (!env.VECTORIZE_DEPRECATED) return [];
+async function searchDeprecatedForComparison(rawQuery, filters, env, topicHint = '', dbg = null) {
+  const D = dbg || {};
+  if (!env.VECTORIZE_DEPRECATED) { D.step = 'no-binding'; return []; }
 
   // Scope: the standard FAMILY being compared. standard_prefix is already a
   // family ("RP-6"); an exact filters.standard ("RP-6-24") is reduced to its
@@ -451,33 +464,75 @@ async function searchDeprecatedForComparison(rawQuery, filters, env) {
     const fam = /^(.+)-\d{2}(?:\+E\d+)?$/.exec(std);
     scope = fam ? fam[1] : std;
   }
-  if (!scope) return [];
+  if (!scope) { D.step = 'no-scope'; return []; }
+  D.scope = scope;
+
+  const scopePrefix = scope.endsWith('-') ? scope : `${scope}-`;
 
   try {
-    const expandedQuery = prepareQueryForEmbedding(rawQuery);
-    let queryVector = await getCachedEmbedding(env.SESSIONS, EMBED_MODEL, expandedQuery);
+    // "What's new in X?" is meta-phrasing: embedded as-is it matches TOC
+    // lines ("9.12 New Light Sources . . . .") instead of substantive
+    // content. Anchor the deprecated-index query on the family's TOPIC —
+    // the current edition's best excerpt — so the excerpts pulled for
+    // comparison are real provisions about the same subject.
+    const embedText = topicHint.trim().length >= 60
+      ? `${scope} ${topicHint.slice(0, 400)}`
+      : prepareQueryForEmbedding(rawQuery);
+
+    let queryVector = await getCachedEmbedding(env.SESSIONS, EMBED_MODEL, embedText);
     if (!queryVector) {
-      const embResult = await env.AI.run(EMBED_MODEL, { text: [expandedQuery] });
+      const embResult = await env.AI.run(EMBED_MODEL, { text: [embedText] });
       queryVector = embResult.data[0];
-      await putCachedEmbedding(env.SESSIONS, EMBED_MODEL, expandedQuery, queryVector);
+      await putCachedEmbedding(env.SESSIONS, EMBED_MODEL, embedText, queryVector);
     }
 
+    // The deprecated index has no metadata index (filters only apply to
+    // vectors inserted after one exists), so scoping happens client-side.
+    // With returnMetadata:'all' Vectorize caps topK at 20 — too small a pool
+    // for one family among ~150 deprecated standards. Instead: fetch 100
+    // ids+scores, scope by vector-id prefix (`<standardId>-chunk-<i>`), then
+    // pull metadata for just the scoped hits via getByIds.
     const res = await env.VECTORIZE_DEPRECATED.query(queryVector, {
       topK: DEPRECATED_TOP_K,
-      returnMetadata: 'all',
+      returnMetadata: 'none',
     });
 
     // Keep only chunks of the compared standard family (RP-6 → RP-6-15,
-    // RP-6-20, ...), with displayable prose (same bar as regular chunk results).
-    const scopePrefix = scope.endsWith('-') ? scope : `${scope}-`;
-    const matches = (res.matches || []).filter(m => {
+    // RP-6-20, ...). `RP-6-` never matches RP-60-* since ids are `RP-60-...`.
+    const scoped = (res.matches || []).filter(m =>
+      String(m.id).toUpperCase().startsWith(scopePrefix)
+    ).slice(0, 20);
+
+    let candidates = [];
+    if (scoped.length > 0) {
+      const scoreById = new Map(scoped.map(m => [m.id, m.score]));
+      const fetched = await env.VECTORIZE_DEPRECATED.getByIds(scoped.map(m => m.id));
+      candidates = (fetched || []).map(v => ({
+        id: v.id, score: scoreById.get(v.id) || 0, metadata: v.metadata,
+      }));
+    }
+
+    const proseOnly = (list) => list.filter(m => {
       const meta = m.metadata || {};
-      const id = String(meta.standard_id || meta.standard_code || '').toUpperCase();
-      if (!id || !(id === scope || id.startsWith(scopePrefix))) return false;
       const text = String(meta.excerpt_text || '');
       return meta.chunk_type !== 'table' && text.trim().length >= 60 && !isTableLike(text);
     });
-    if (matches.length === 0) return [];
+
+    let matches = proseOnly(candidates);
+    D.scopedCount = scoped.length;
+    D.globalProse = matches.length;
+
+    // Fallback: the global top-100 pool often misses small families entirely
+    // (or surfaces only their TOC chunks). Vector ids are deterministic
+    // (`<standardId>-chunk-<n>`), so probe the family's chunks directly via
+    // getByIds and rank them against the query vector in-process.
+    if (matches.length === 0) {
+      const probed = await probeDeprecatedFamily(env, scopePrefix, queryVector, D);
+      matches = proseOnly(probed);
+      D.probedRaw = probed.length;
+      D.probedProse = matches.length;
+    }
+    if (matches.length === 0) { D.step = 'all-filtered-out'; return []; }
 
     const standardsIndex = await fetchStandardsIndex(env.DB);
     const linkCtx = { standardsIndex };
@@ -500,9 +555,68 @@ async function searchDeprecatedForComparison(rawQuery, filters, env) {
         };
       });
   } catch (err) {
+    D.step = 'error';
+    D.error = err.message;
     console.error('deprecated comparison search failed (non-fatal):', err.message);
     return [];
   }
+}
+
+// Chunk-probe parameters for the deprecated-family fallback. 300 chunks
+// (~105k words) covers the substantive front of even the largest standards;
+// getByIds rejects batches over 20 ids.
+const PROBE_BATCH = 20;
+const PROBE_MAX_CHUNKS = 300;
+
+/**
+ * Directly fetch a deprecated family's chunk vectors by deterministic id
+ * (`<standardId>-chunk-<n>`) and rank them against the query vector with
+ * in-process cosine similarity. Used when the family is absent from the
+ * global ANN pool — guarantees recall for any indexed family at the cost
+ * of a few getByIds round-trips.
+ */
+async function probeDeprecatedFamily(env, scopePrefix, queryVector, D = {}) {
+  const rows = await env.DB.prepare(
+    "SELECT id FROM standards WHERE status = 'Deprecated' AND id LIKE ?"
+  ).bind(`${scopePrefix}%`).all();
+  const members = (rows.results || []).map(r => r.id);
+  D.probeMembers = members;
+  if (members.length === 0) return [];
+
+  let qNorm = 0;
+  for (const x of queryVector) qNorm += x * x;
+  qNorm = Math.sqrt(qNorm) || 1;
+
+  const scored = [];
+  for (const member of members) {
+    for (let start = 0; start < PROBE_MAX_CHUNKS; start += PROBE_BATCH) {
+      const ids = Array.from({ length: PROBE_BATCH }, (_, j) => `${member}-chunk-${start + j}`);
+      const got = await env.VECTORIZE_DEPRECATED.getByIds(ids);
+      if (!got || got.length === 0) break; // past the end of the document
+      for (const v of got) {
+        // Rank prose chunks only: TOC dot-leader lines and table dumps score
+        // deceptively high on similarity and would crowd out real provisions.
+        const meta = v.metadata || {};
+        const text = String(meta.excerpt_text || '');
+        if (meta.chunk_type === 'table' || text.trim().length < 60 || isTableLike(text)) continue;
+
+        const vals = v.values || [];
+        let dot = 0, norm = 0;
+        for (let k = 0; k < vals.length; k++) {
+          dot += vals[k] * queryVector[k];
+          norm += vals[k] * vals[k];
+        }
+        scored.push({
+          id: v.id,
+          score: dot / (qNorm * (Math.sqrt(norm) || 1)),
+          metadata: v.metadata,
+        });
+      }
+      if (got.length < PROBE_BATCH) break;
+    }
+  }
+
+  return scored.sort((a, b) => b.score - a.score).slice(0, 20);
 }
 
 // ─── Multi-Search ─────────────────────────────────────────────────────────────
