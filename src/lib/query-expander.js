@@ -286,6 +286,36 @@ export function isVersionComparisonQuery(query) {
   return VERSION_COMPARE_PATTERNS.some(re => re.test(query));
 }
 
+// ─── Reference-Seeking Intent Detection ───────────────────────────────────────
+
+// Deliberately narrow: a match REPLACES the user's default content-type
+// selection with references-only, so bare prepositional uses of "reference"
+// ("reference conditions", "the reference standard for X") must not trigger.
+// Each pattern requires either explicit list phrasing, an action verb, or a
+// bibliography-specific noun.
+const REFERENCE_QUERY_PATTERNS = [
+  /\blist\s+of\s+(?:ies\s+)?references?\b/i,
+  /\b(?:show|list|provide|give|find|what)\b[^.?!]{0,60}?\breferences\b/i,
+  /\breferenced\s+(?:documents?|standards?|publications?|research)\b/i,
+  /\bbibliograph(?:y|ies)\b/i,
+  /\bcited\s+(?:documents?|works?|research|studies)\b/i,
+  /\bworks?\s+cited\b/i,
+];
+
+/**
+ * Detect a reference-seeking query ("list of IES references to circadian
+ * science research"). The search layer scopes these to chunks ingested from
+ * the References/Bibliography sections of the standards (chunk_type
+ * 'reference') so the user gets the actual reference entries, not body prose
+ * that happens to mention the topic.
+ *
+ * @returns {boolean}
+ */
+export function isReferenceQuery(query) {
+  if (!query) return false;
+  return REFERENCE_QUERY_PATTERNS.some(re => re.test(query));
+}
+
 function escapeRegex(str) {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }

@@ -64,6 +64,7 @@ import { resolve, basename, extname, join, relative } from 'path';
 import { execSync } from 'child_process';
 import { parsePDFNode } from '../src/lib/pdf-parser.js';
 import { extractIESTables, extractGeneralNotes } from '../src/lib/table-extractor.js';
+import { chunkIESDocument } from '../src/lib/chunker.js';
 import {
   extractApplicationsFromPages,
   reportExtractionQuality,
@@ -337,9 +338,15 @@ async function ingestFile(filePath, standardId, status = 'current') {
     console.log(`  General Notes blocks: ${generalNotes.length}`);
   }
 
-  // Step 5: Chunk text with IES section awareness
+  // Step 5: Chunk text with IES section awareness (src/lib/chunker.js).
+  // References/Bibliography sections are segmented into per-entry chunks
+  // tagged type='reference' — these power the references-only search mode.
   console.log('  Chunking text...');
-  const textChunks = chunkIESDocument(pages);
+  const textChunks = chunkIESDocument(pages, {
+    targetWords: CONFIG.chunkTargetWords,
+    overlapWords: CONFIG.chunkOverlapWords,
+    minWords: CONFIG.minChunkWords,
+  });
 
   // Promote General Notes blocks into dedicated chunks tagged 'general_notes'
   // so the search layer can rank them as authoritative governing-criteria text.
@@ -352,7 +359,23 @@ async function ingestFile(filePath, standardId, status = 'current') {
   }));
 
   const chunks = [...textChunks, ...noteChunks];
-  console.log(`  Chunks: ${chunks.length} (${textChunks.length} text, ${noteChunks.length} general-notes)`);
+  const byType = {};
+  for (const c of chunks) byType[c.type || 'text'] = (byType[c.type || 'text'] || 0) + 1;
+  console.log(`  Chunks: ${chunks.length} (${Object.entries(byType).map(([t, n]) => `${n} ${t}`).join(', ')})`);
+
+  // Indexing-coverage report: which pages produced at least one chunk. Low
+  // coverage means part of the document never reached the index — surface it
+  // HERE, at ingest time, not after a client notices missing results.
+  const coveredPages = new Set(chunks.map(c => c.pageNumber).filter(p => p != null));
+  const coveragePct = pages.length > 0 ? Math.round((coveredPages.size / pages.length) * 100) : 0;
+  console.log(`  Page coverage: ${coveredPages.size}/${pages.length} pages (${coveragePct}%)`);
+  if (coveragePct < 60 && pages.length > 3) {
+    console.warn(`  ⚠ LOW COVERAGE: only ${coveragePct}% of pages produced chunks — inspect this PDF's parse (scripts/inspect-pdf-lines.js).`);
+  }
+  const hasReferencesHeading = pages.some(p => /(?:^|\n)\s*(?:[\d.]+\s+|Annex\s+[A-Z]\s+)?(?:Normative\s+|Informative\s+)?References?\s*(?:\n|$)/i.test(p.text));
+  if (hasReferencesHeading && !byType.reference) {
+    console.warn('  ⚠ A References heading was detected but no reference chunks were produced — reference search will miss this standard.');
+  }
 
   if (CONFIG.verbose) {
     for (const [i, chunk] of chunks.entries()) {
@@ -378,6 +401,7 @@ async function ingestFile(filePath, standardId, status = 'current') {
       subject: metadata.subject,
       year: metadata.year,
       fullDesignation: standardMeta.fullDesignation,
+      pageCount: pages.length,  // → standards.page_count, for coverage reporting
     },
     chunks,
     tables,
@@ -435,131 +459,6 @@ function uploadToR2(filePath, r2Key) {
       }
     }
   }
-}
-
-// ─── IES Section-Aware Chunking ───────────────────────────────────────────────
-
-/**
- * Split document pages into semantically coherent chunks.
- *
- * Strategy:
- *  1. Walk pages line-by-line, tracking current IES section number
- *  2. Start a new chunk at each section heading
- *  3. If a chunk exceeds chunkTargetWords, flush with overlap carry-over
- *  4. Prepend "[Section X.X]" to each continuation chunk for context
- *  5. Tag table page chunks as type='table' for search ranking
- */
-function chunkIESDocument(pages) {
-  const SECTION_RE = /^(?:(?:\d+(?:\.\d+)*)|(?:[A-Z](?:\.\d+)*))\s+[A-Z].{3,}/;
-  const ANNEX_RE = /^(?:Annex|Appendix)\s+[A-Z]/i;
-  const TABLE_PAGE_RE = /^Table\s+[A-Z0-9]-?\d*/im;
-
-  const chunks = [];
-  let currentSection = null;
-  let buffer = [];
-  let bufferPage = null;
-  let bufferWordCount = 0;
-
-  function flushBuffer(type = 'text') {
-    if (buffer.length === 0) return;
-    const text = buffer.join('\n').trim();
-    const wordCount = text.split(/\s+/).filter(Boolean).length;
-    if (wordCount >= CONFIG.minChunkWords) {
-      chunks.push({ text, pageNumber: bufferPage, section: currentSection, type, wordCount });
-    }
-    buffer = [];
-    bufferWordCount = 0;
-  }
-
-  for (const page of pages) {
-    const lines = page.lines
-      ? page.lines.map(l => ({ text: l.text, fontSize: l.fontSize || 10 }))
-      : page.text.split('\n').map(t => ({ text: t, fontSize: 10 }));
-
-    const isTablePage = TABLE_PAGE_RE.test(page.text) ||
-      lines.filter(l => /\d+\s+\d+/.test(l.text)).length > lines.length * 0.25;
-
-    for (const line of lines) {
-      const lineText = line.text.trim();
-      if (!lineText) continue;
-
-      // Detect IES section heading → flush current chunk, start new
-      const isSectionHeading = SECTION_RE.test(lineText) || ANNEX_RE.test(lineText);
-      if (isSectionHeading && lineText.length > 5) {
-        flushBuffer(isTablePage ? 'table' : 'text');
-        const secMatch = lineText.match(/^(\d+(?:\.\d+)*|[A-Z](?:\.\d+)*)/);
-        currentSection = secMatch ? secMatch[1] : (ANNEX_RE.test(lineText) ? 'Annex' : null);
-        bufferPage = bufferPage || page.number;
-      }
-
-      if (bufferPage === null) bufferPage = page.number;
-      buffer.push(lineText);
-      bufferWordCount += lineText.split(/\s+/).length;
-
-      // Flush when chunk is full
-      if (bufferWordCount >= CONFIG.chunkTargetWords) {
-        flushBuffer(isTablePage ? 'table' : 'text');
-
-        // Carry overlap into next chunk with section context prefix
-        const overlapLines = getOverlapLines(buffer, CONFIG.chunkOverlapWords);
-        buffer = currentSection
-          ? [`[Section ${currentSection}]`, ...overlapLines]
-          : overlapLines;
-        bufferWordCount = buffer.join(' ').split(/\s+/).length;
-        bufferPage = page.number;
-      }
-    }
-
-    // Flush at page boundary if significantly buffered
-    if (bufferPage !== page.number && bufferWordCount > CONFIG.minChunkWords) {
-      flushBuffer(isTablePage ? 'table' : 'text');
-      bufferPage = page.number;
-    }
-  }
-
-  flushBuffer();
-
-  // Split any remaining oversized chunks
-  const finalChunks = [];
-  for (const chunk of chunks) {
-    if (chunk.wordCount > CONFIG.chunkTargetWords * 2) {
-      finalChunks.push(...splitLargeChunk(chunk));
-    } else {
-      finalChunks.push(chunk);
-    }
-  }
-
-  return finalChunks;
-}
-
-function getOverlapLines(lines, targetWords) {
-  const result = [];
-  let count = 0;
-  for (let i = lines.length - 1; i >= 0 && count < targetWords; i--) {
-    count += lines[i].split(/\s+/).length;
-    result.unshift(lines[i]);
-  }
-  return result;
-}
-
-function splitLargeChunk(chunk) {
-  const words = chunk.text.split(/\s+/);
-  const step = CONFIG.chunkTargetWords - CONFIG.chunkOverlapWords;
-  const subChunks = [];
-
-  for (let i = 0; i < words.length; i += step) {
-    const sliceWords = words.slice(i, i + CONFIG.chunkTargetWords);
-    if (sliceWords.length < CONFIG.minChunkWords) break;
-    subChunks.push({
-      text: sliceWords.join(' '),
-      pageNumber: chunk.pageNumber,
-      section: chunk.section,
-      type: chunk.type,
-      wordCount: sliceWords.length,
-    });
-  }
-
-  return subChunks.length > 0 ? subChunks : [chunk];
 }
 
 // ─── Applications Re-index ────────────────────────────────────────────────────

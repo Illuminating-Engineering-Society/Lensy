@@ -13,7 +13,9 @@
 import { checkCopyrightViolations } from './citations.js';
 
 const MODEL = '@cf/meta/llama-3.3-70b-instruct-fp8-fast';
-const MAX_TOKENS = 1000;
+// Doubled from 1000 (client feedback: AI Guide answers read as length-capped).
+// The paragraph guidance below was relaxed in step so the budget is usable.
+const MAX_TOKENS = 2000;
 
 const SYSTEM_PROMPT = `You are Lensy, the IES Standards Assistant. Your role is to help lighting professionals explore and understand IES (Illuminating Engineering Society) standards through accurate, well-cited responses.
 
@@ -77,7 +79,7 @@ COPYRIGHT RULES (CRITICAL — strictly enforced)
 - Default to paraphrasing in your own words.
 - NEVER transcribe illuminance values (e.g. "300 lux at 0.76 m") — direct the user to view the table card or PDF excerpt.
 - NEVER reproduce song lyrics, poems, haikus, or substantial article passages.
-- Respond in 3 paragraphs or fewer.
+- Respond in 6 paragraphs or fewer.
 
 ═══════════════════════════════════════════════════════════════
 DEPRECATED STANDARDS POLICY
@@ -168,7 +170,7 @@ Search Results (from IES Standards database):
 ${resultsSummary}
 
 Instructions:
-- Provide a brief, professional summary (max 3 paragraphs) answering the user's query.
+- Provide a professional, well-developed summary (up to 6 paragraphs) answering the user's query — thorough, but never padded beyond what the results support.
 - Use the search results above as your ONLY source of information.
 - Always cite specific standards with full designation, section, and page when available.
 - Never quote more than 15 words from any single source; never repeat a quote from the same source.

@@ -22,12 +22,19 @@
 
 import { handleSearch } from './search.js';
 import { handleIngest } from './ingest.js';
-import { handleAdminScanOrphans, handleAdminEnumerateIds, handleAdminDeleteOrphans, handleAdminFlushCache, handleAdminSearchLog, handleAdminR2Multipart } from './admin.js';
+import { handleAdminScanOrphans, handleAdminEnumerateIds, handleAdminDeleteOrphans, handleAdminFlushCache, handleAdminSearchLog, handleAdminR2Multipart, handleAdminIndexStatus } from './admin.js';
 
+// CORS: the search/read API is public and credential-less; admin/ingest
+// routes require the bearer secret. KNOWN GAP (Phase 1 by design): the
+// /api/projects* routes are anonymous — user_id is a client-supplied
+// placeholder until Phase 3 SSO lands, so project data must be treated as
+// non-confidential until then. Tracked in README "Launch Operations".
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, POST, PATCH, DELETE, OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+  // Defense in depth: JSON responses must never be sniffed into HTML.
+  'X-Content-Type-Options': 'nosniff',
 };
 
 export default {
@@ -67,6 +74,9 @@ export default {
       if (path === '/api/admin/search-log.csv' && request.method === 'GET') {
         return withCors(await handleAdminSearchLog(request, env));
       }
+      if (path === '/api/admin/index-status' && request.method === 'GET') {
+        return withCors(await handleAdminIndexStatus(request, env));
+      }
       if (path === '/api/admin/r2-multipart' && request.method === 'POST') {
         return withCors(await handleAdminR2Multipart(request, env));
       }
@@ -89,7 +99,10 @@ export default {
       return withCors(json({ error: 'Not found' }, 404));
     } catch (err) {
       console.error('API error:', err);
-      return withCors(json({ error: 'Internal server error', detail: err.message }, 500));
+      // Never leak stack/internal details to production clients; the full
+      // error is in the Worker logs (`wrangler tail`).
+      const detail = env.ENVIRONMENT === 'production' ? undefined : err.message;
+      return withCors(json({ error: 'Internal server error', ...(detail ? { detail } : {}) }, 500));
     }
   },
 };

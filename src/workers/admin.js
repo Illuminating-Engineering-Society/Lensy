@@ -26,21 +26,30 @@
  *   GET /api/admin/search-log.csv
  *     Staff-only CSV export of the anonymous search-query log
  *     (?from=&to=&limit=). No user-identifying data by design.
+ *
+ *   GET /api/admin/index-status
+ *     Full-indexing confidence report: per standard, the chunk/page coverage
+ *     stats written at ingest time PLUS a live Vectorize spot-check that the
+ *     first/middle/last chunk vectors actually exist (?verify=0 to skip).
  */
 
 import { bumpDataVersion, getDataVersion } from '../lib/cache.js';
+import { checkAuth } from '../lib/auth.js';
 
 const EMBED_MODEL = '@cf/baai/bge-base-en-v1.5';
 const SCAN_DEFAULT_PASSES = 8;
 const SCAN_TOPK = 100;
 const DELETE_BATCH = 200;
 
-function checkAuth(request, env) {
-  const expected = env.LUCIUS_API_SECRET;
-  if (!expected) return true; // dev mode without a secret — allow
-  const header = request.headers.get('authorization') || '';
-  const token = header.startsWith('Bearer ') ? header.slice(7) : header;
-  return token === expected;
+/**
+ * Shared-secret gate for every admin endpoint. Timing-safe comparison and
+ * fail-closed in production when the secret is missing (lib/auth.js).
+ * Returns a Response to short-circuit with, or null when authorized.
+ */
+async function requireAuth(request, env) {
+  const auth = await checkAuth(request, env);
+  if (auth.ok) return null;
+  return jsonResponse({ error: auth.reason || 'Unauthorized' }, auth.reason ? 503 : 401);
 }
 
 /**
@@ -57,7 +66,8 @@ function checkAuth(request, env) {
  * caller can re-run for higher confidence.
  */
 export async function handleAdminScanOrphans(request, env) {
-  if (!checkAuth(request, env)) return jsonResponse({ error: 'Unauthorized' }, 401);
+  const denied = await requireAuth(request, env);
+  if (denied) return denied;
 
   const body = await safeJson(request);
   const passes = Math.min(32, Math.max(1, body?.passes || SCAN_DEFAULT_PASSES));
@@ -130,7 +140,8 @@ export async function handleAdminScanOrphans(request, env) {
  * Body: { prefixes: string[], maxIndex?: number = 600 }
  */
 export async function handleAdminEnumerateIds(request, env) {
-  if (!checkAuth(request, env)) return jsonResponse({ error: 'Unauthorized' }, 401);
+  const denied = await requireAuth(request, env);
+  if (denied) return denied;
   const body = await safeJson(request);
   const prefixes = Array.isArray(body?.prefixes) ? body.prefixes.filter(p => typeof p === 'string') : [];
   const maxIndex = Math.min(2000, Math.max(0, body?.maxIndex ?? 600));
@@ -164,7 +175,8 @@ export async function handleAdminEnumerateIds(request, env) {
  * `${standardId}-chunk-N` for N in a known range. We don't infer.
  */
 export async function handleAdminDeleteOrphans(request, env) {
-  if (!checkAuth(request, env)) return jsonResponse({ error: 'Unauthorized' }, 401);
+  const denied = await requireAuth(request, env);
+  if (denied) return denied;
 
   const body = await safeJson(request);
   const ids = Array.isArray(body?.ids) ? body.ids.filter(x => typeof x === 'string') : [];
@@ -193,7 +205,8 @@ export async function handleAdminDeleteOrphans(request, env) {
  * design (privacy requirement) — there is nothing personal to export.
  */
 export async function handleAdminSearchLog(request, env) {
-  if (!checkAuth(request, env)) return jsonResponse({ error: 'Unauthorized' }, 401);
+  const denied = await requireAuth(request, env);
+  if (denied) return denied;
 
   const url = new URL(request.url);
   const from = url.searchParams.get('from');
@@ -242,11 +255,121 @@ function csvCell(v) {
 }
 
 /**
+ * Full-indexing confidence report (client requirement: high confidence that
+ * every standard is indexed in its entirety before launch).
+ *
+ *   GET /api/admin/index-status[?verify=0]
+ *
+ * Per standard (from D1, populated at ingest):
+ *   chunkCount / pageCount / pagesWithChunks / coverage % / chunk-type mix /
+ *   application row count / indexed_at
+ * Plus a live Vectorize spot-check (verify=1, default): the first, middle and
+ * last chunk vector ids are fetched from the correct index (main or
+ * deprecated) — any gap means the index and D1 disagree and the standard
+ * needs re-ingesting.
+ *
+ * Warnings flag: missing stats (pre-0006 ingest), page coverage below 60%,
+ * zero application rows for a NEW_TABLE-era standard, failed spot-checks.
+ */
+export async function handleAdminIndexStatus(request, env) {
+  const denied = await requireAuth(request, env);
+  if (denied) return denied;
+
+  const url = new URL(request.url);
+  const verify = url.searchParams.get('verify') !== '0';
+
+  const [standardsRes, appCountsRes] = await Promise.all([
+    env.DB.prepare(`
+      SELECT id, title, full_designation, status, chunk_count, page_count,
+             coverage_json, indexed_at
+      FROM standards ORDER BY id
+    `).all(),
+    env.DB.prepare(`
+      SELECT Standard AS standard, COUNT(*) AS n
+      FROM applications WHERE Active = 1 GROUP BY Standard
+    `).all(),
+  ]);
+
+  const appCounts = new Map((appCountsRes.results || []).map(r => [r.standard, r.n]));
+
+  const report = [];
+  for (const std of standardsRes.results || []) {
+    let coverage = null;
+    try { coverage = std.coverage_json ? JSON.parse(std.coverage_json) : null; } catch { /* ignore */ }
+
+    const row = {
+      id: std.id,
+      title: std.title,
+      status: std.status,
+      indexedAt: std.indexed_at,
+      chunkCount: std.chunk_count,
+      pageCount: std.page_count,
+      pagesWithChunks: coverage?.pagesWithChunks ?? null,
+      pageCoveragePct: (std.page_count && coverage?.pagesWithChunks != null)
+        ? Math.round((coverage.pagesWithChunks / std.page_count) * 100)
+        : null,
+      chunkTypes: coverage?.byType ?? null,
+      applicationRows: appCounts.get(std.id) || 0,
+      vectorSpotCheck: null,
+      warnings: [],
+    };
+
+    if (std.chunk_count == null) {
+      row.warnings.push('No coverage stats — ingested before migration 0006; re-ingest to record them.');
+    }
+    if (row.pageCoveragePct != null && row.pageCoveragePct < 60) {
+      row.warnings.push(`Only ${row.pageCoveragePct}% of pages produced chunks — verify the PDF parsed fully.`);
+    }
+    if ((coverage?.byType?.reference ?? 0) === 0 && std.status !== 'Deprecated' && std.chunk_count != null) {
+      row.warnings.push('No reference chunks — expected if the standard has no References section; otherwise re-ingest.');
+    }
+
+    if (verify && std.chunk_count > 0) {
+      const index = std.status === 'Deprecated' ? env.VECTORIZE_DEPRECATED : env.VECTORIZE;
+      if (index) {
+        const n = std.chunk_count;
+        const probeIdxs = [...new Set([0, Math.floor((n - 1) / 2), n - 1])];
+        try {
+          const got = await index.getByIds(probeIdxs.map(i => `${std.id}-chunk-${i}`));
+          const foundIds = new Set((got || []).map(v => v.id));
+          const missing = probeIdxs
+            .map(i => `${std.id}-chunk-${i}`)
+            .filter(id => !foundIds.has(id));
+          row.vectorSpotCheck = { probed: probeIdxs.length, found: probeIdxs.length - missing.length, missing };
+          if (missing.length > 0) {
+            row.warnings.push(`Vectorize spot-check missing ${missing.length}/${probeIdxs.length} probes — re-ingest this standard.`);
+          }
+        } catch (err) {
+          row.vectorSpotCheck = { error: err.message };
+        }
+      }
+    }
+
+    report.push(row);
+  }
+
+  const withWarnings = report.filter(r => r.warnings.length > 0);
+  return jsonResponse({
+    totals: {
+      standards: report.length,
+      active: report.filter(r => r.status !== 'Deprecated').length,
+      deprecated: report.filter(r => r.status === 'Deprecated').length,
+      totalChunks: report.reduce((s, r) => s + (r.chunkCount || 0), 0),
+      totalApplicationRows: report.reduce((s, r) => s + r.applicationRows, 0),
+      standardsWithWarnings: withWarnings.length,
+    },
+    warnings: withWarnings.map(r => ({ id: r.id, warnings: r.warnings })),
+    standards: report,
+  });
+}
+
+/**
  * Invalidate all cached search responses by bumping the data version.
  * Cheap (one KV write); old entries simply stop being read and expire.
  */
 export async function handleAdminFlushCache(request, env) {
-  if (!checkAuth(request, env)) return jsonResponse({ error: 'Unauthorized' }, 401);
+  const denied = await requireAuth(request, env);
+  if (denied) return denied;
 
   await bumpDataVersion(env.SESSIONS);
   const dataVersion = await getDataVersion(env.SESSIONS);
@@ -271,7 +394,8 @@ export async function handleAdminFlushCache(request, env) {
  *   Body: { uploadId } → { aborted: true }
  */
 export async function handleAdminR2Multipart(request, env) {
-  if (!checkAuth(request, env)) return jsonResponse({ error: 'Unauthorized' }, 401);
+  const denied = await requireAuth(request, env);
+  if (denied) return denied;
 
   const url = new URL(request.url);
   const action = url.searchParams.get('action');

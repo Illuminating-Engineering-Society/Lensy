@@ -62,9 +62,9 @@
  *    }
  */
 
-import { prepareQueryForEmbedding, splitMultiQuery, cleanQuery, isVersionComparisonQuery } from '../lib/query-expander.js';
+import { prepareQueryForEmbedding, splitMultiQuery, cleanQuery, isVersionComparisonQuery, isReferenceQuery } from '../lib/query-expander.js';
 import { generateResponse } from '../lib/ai-summary.js';
-import { formatCitation } from '../lib/citations.js';
+import { formatCitation, composeStandardName } from '../lib/citations.js';
 import {
   getDataVersion,
   buildSearchCacheKey,
@@ -72,13 +72,53 @@ import {
   putCachedSearch,
   getCachedEmbedding,
   putCachedEmbedding,
+  buildAISummaryCacheKey,
+  getCachedAISummary,
+  putCachedAISummary,
 } from '../lib/cache.js';
 
 const EMBED_MODEL = '@cf/baai/bge-base-en-v1.5';
 const VECTOR_TOP_K = 50;      // Vectorize caps topK at 50 when returning metadata; fetch the max, dedupe down to limit
-const MAX_LIMIT = 30;         // upper bound on the result pool the UI paginates over (client-side)
+const MAX_LIMIT = 50;         // upper bound on the result pool the UI paginates over (client-side; 25/page)
 const MIN_VECTOR_RESULTS = 3; // below this, run text fallback
 const STRONG_MATCH_THRESHOLD = 0.60; // top relevanceScore below this → flag noStrongMatch
+
+// Content-type filter (client filter overhaul): independent checkboxes for
+// what KINDS of results appear. Defaults mirror the UI (tables + body on,
+// references off). 'compare' additionally forces version-comparison handling.
+const DEFAULT_CONTENT_TYPES = ['tables', 'body'];
+const VALID_CONTENT_TYPES = new Set(['tables', 'body', 'references', 'compare']);
+
+export function normalizeContentTypes(filters, rawQuery) {
+  const raw = Array.isArray(filters?.content_types) ? filters.content_types : null;
+  const cleaned = (raw || [])
+    .map(t => String(t).toLowerCase())
+    .filter(t => VALID_CONTENT_TYPES.has(t));
+  const ct = new Set(cleaned.length > 0 ? cleaned : DEFAULT_CONTENT_TYPES);
+
+  // 'compare' is a MODIFIER (forces version-comparison handling), not a
+  // content kind — a selection of just ['compare'] still gets the default
+  // kinds, otherwise every content source is disabled and the search is
+  // structurally empty.
+  const substantive = [...ct].filter(t => t !== 'compare');
+  if (substantive.length === 0) { ct.add('tables'); ct.add('body'); }
+
+  // Reference-seeking phrasing ("list of IES references to ...") scopes the
+  // search to References-section entries (client request, references mode) —
+  // but only REPLACES the default tables+body selection. A caller who
+  // customized the checkboxes keeps their choices; references is added, not
+  // swapped in. 'compare' survives either way.
+  if (isReferenceQuery(rawQuery)) {
+    const isDefaultSelection = cleaned.length === 0 ||
+      (ct.has('tables') && ct.has('body') && !ct.has('references') && substantive.length === 2);
+    if (isDefaultSelection) {
+      ct.delete('tables');
+      ct.delete('body');
+    }
+    ct.add('references');
+  }
+  return ct;
+}
 
 const NO_STRONG_MATCH_MESSAGE =
   "There may not be explicit lighting recommendations for that application within the current body of IES Standards. " +
@@ -88,6 +128,21 @@ const NO_STRONG_MATCH_MESSAGE =
 // ─── Entry Point ──────────────────────────────────────────────────────────────
 
 export async function handleSearch(request, env, ctx) {
+  // ── Rate limiting (Workers Rate Limiting binding; fail-open) ──────────────
+  // Protects the Workers AI budget from abusive clients. Keyed by client IP.
+  // If the binding isn't configured (or the limiter errors) search proceeds.
+  if (env.SEARCH_RATE_LIMITER) {
+    try {
+      const key = request.headers.get('cf-connecting-ip') || 'unknown';
+      const { success } = await env.SEARCH_RATE_LIMITER.limit({ key });
+      if (!success) {
+        return jsonResponse({ error: 'Too many searches — please wait a moment and try again.' }, 429);
+      }
+    } catch (err) {
+      console.error('rate limiter error (fail-open):', err.message);
+    }
+  }
+
   let body;
   try {
     body = await request.json();
@@ -139,23 +194,29 @@ export async function handleSearch(request, env, ctx) {
   const subQueries = splitMultiQuery(rawQuery);
   const isMultiQuery = subQueries.length > 1;
 
+  // ── Content types (filter overhaul) ──────────────────────────────────────────
+  // Which result kinds this search returns: illuminance-table rows ('tables'),
+  // document-body excerpts ('body'), References-section entries ('references').
+  const contentTypes = normalizeContentTypes(filters, rawQuery);
+
   // ── Version-comparison intent ("what's new", "what changed") ─────────────────
   // Signals to the UI that ADDED/REVISED should be auto-shown and REMOVED gated.
-  const isVersionComparison = isVersionComparisonQuery(rawQuery);
+  // The "Compare Versions" filter checkbox forces the same handling.
+  const isVersionComparison = isVersionComparisonQuery(rawQuery) || contentTypes.has('compare');
 
   // ── Structural filter inference from query ───────────────────────────────────
   // A bare "LZ1 walkways" in the query string should narrow results to that
   // lighting zone even when the caller didn't pass an explicit filter.
-  const inferred = inferFiltersFromQuery(rawQuery);
+  const inferred = inferFiltersFromQuery(rawQuery, isVersionComparison);
   const mergedFilters = { ...inferred, ...filters };
 
   let allResults;
 
   if (isMultiQuery) {
     // Fan out to individual searches, merge and deduplicate
-    allResults = await runMultiSearch(subQueries, mergedFilters, cleanLimit, env);
+    allResults = await runMultiSearch(subQueries, mergedFilters, cleanLimit, env, contentTypes);
   } else {
-    allResults = await runSingleSearch(rawQuery, mergedFilters, cleanLimit, env);
+    allResults = await runSingleSearch(rawQuery, mergedFilters, cleanLimit, env, contentTypes);
   }
 
   // ── Deprecated content (version-comparison queries ONLY) ─────────────────────
@@ -178,32 +239,43 @@ export async function handleSearch(request, env, ctx) {
     allResults.results.push(...deprecatedResults);
   }
 
-  // ── Related applications (top result only for performance) ───────────────────
-  // Exclude only the seed itself, not the rest of the result list. If we
-  // excluded all results, true sibling rows already shown in the main list
-  // would be filtered out and `related` would fall through to a wider —
-  // less useful — layer (cousins or banner-mates).
-  if (allResults.results.length > 0) {
-    const seed = allResults.results[0].application;
-    allResults.results[0].relatedApplications = await getRelatedApplications(
-      env,
-      seed,
-      [seed.code]
-    );
-  }
+  // ── Related applications + optional AI summary (run concurrently) ────────────
+  // Related apps: top result only, and only for true application rows — chunk
+  // results have no D1 identity to find siblings for. Exclude only the seed
+  // itself, not the rest of the result list: excluding all results would
+  // filter out true sibling rows and `related` would fall through to a wider,
+  // less useful layer (cousins or banner-mates).
+  //
+  // The AI summary is the slowest step in the pipeline (70B model), so it is
+  // KV-cached by (query + result set + corpus version): a repeat of the same
+  // question with different limit/units/filters reuses the generated summary
+  // instead of re-billing the model.
+  const seed = allResults.results[0]?.application;
+  const relatedPromise = (seed && seed.rowRef != null)
+    ? getRelatedApplications(env, seed, [seed.code])
+    : Promise.resolve([]);
 
-  // ── Optional AI summary ──────────────────────────────────────────────────────
-  let aiSummary = null;
-  if (includeAISummary && allResults.results.length > 0) {
-    try {
-      aiSummary = await generateResponse(
-        env.AI,
-        rawQuery,
-        allResults.results
-      );
-    } catch (err) {
-      console.error('AI summary error (non-fatal):', err.message);
-    }
+  const aiPromise = (includeAISummary && allResults.results.length > 0)
+    ? (async () => {
+        try {
+          const resultCodes = allResults.results.slice(0, 5).map(r => r.application?.code).filter(Boolean);
+          const aiKey = await buildAISummaryCacheKey(dataVersion, 'summary', rawQuery, resultCodes);
+          const cached = body.debug ? null : await getCachedAISummary(kv, aiKey);
+          if (cached) return cached;
+          const generated = await generateResponse(env.AI, rawQuery, allResults.results);
+          if (!body.debug && ctx?.waitUntil) ctx.waitUntil(putCachedAISummary(kv, aiKey, generated));
+          else if (!body.debug) await putCachedAISummary(kv, aiKey, generated);
+          return generated;
+        } catch (err) {
+          console.error('AI summary error (non-fatal):', err.message);
+          return null;
+        }
+      })()
+    : Promise.resolve(null);
+
+  const [related, aiSummary] = await Promise.all([relatedPromise, aiPromise]);
+  if (allResults.results.length > 0) {
+    allResults.results[0].relatedApplications = related;
   }
 
   // ── Confidence flag ──────────────────────────────────────────────────────────
@@ -211,11 +283,14 @@ export async function handleSearch(request, env, ctx) {
   // results. We never filter the list itself — the user still sees the closest
   // matches we found; we just signal that confidence is low. Use the max score
   // across the list: publication-order clustering can move a lower-scored
-  // sibling row into first position.
+  // sibling row into first position. References-only searches skip the banner:
+  // reference entries legitimately score lower than application rows, and the
+  // advisory text (about missing lighting recommendations) doesn't apply.
   const topScore = allResults.results.reduce(
     (max, r) => Math.max(max, r.relevanceScore || 0), 0
   );
-  const noStrongMatch = topScore < STRONG_MATCH_THRESHOLD;
+  const referencesOnly = contentTypes.has('references') && !contentTypes.has('tables') && !contentTypes.has('body');
+  const noStrongMatch = !referencesOnly && topScore < STRONG_MATCH_THRESHOLD;
 
   const payload = {
     query: rawQuery,
@@ -223,6 +298,7 @@ export async function handleSearch(request, env, ctx) {
     isMultiQuery,
     subQueries: isMultiQuery ? subQueries : undefined,
     isVersionComparison,
+    contentTypes: [...contentTypes],
     noStrongMatch,
     noStrongMatchMessage: noStrongMatch ? NO_STRONG_MATCH_MESSAGE : null,
     results: applyUnits(allResults.results, units),
@@ -276,8 +352,11 @@ async function logSearch(env, payload, cached) {
 
 // ─── Single Search ────────────────────────────────────────────────────────────
 
-async function runSingleSearch(rawQuery, filters, limit, env) {
+async function runSingleSearch(rawQuery, filters, limit, env, contentTypes = new Set(DEFAULT_CONTENT_TYPES)) {
   const expandedQuery = prepareQueryForEmbedding(rawQuery);
+  const includeTables = contentTypes.has('tables');
+  const includeBody = contentTypes.has('body');
+  const includeRefs = contentTypes.has('references');
 
   // 1. Embed — KV-cached. Embeddings are deterministic per model, so a
   //    repeated query (or a sub-query of a repeated multi-query) skips the
@@ -300,12 +379,45 @@ async function runSingleSearch(rawQuery, filters, limit, env) {
 
   const matches = vectorResults.matches || [];
 
-  // 3. Split matches by type
-  const appMatches = matches.filter(m => m.metadata?.chunk_type === 'application' && m.metadata?.application_code);
-  let chunkMatches = matches.filter(m => m.metadata?.chunk_type !== 'application' && m.metadata?.standard_id);
+  // 3. Split matches by type. Reference-section chunks are handled by their
+  //    own step (11) and never join the general body-chunk pool: they are
+  //    bibliography entries, useful when asked for but noise as excerpts.
+  const appMatches = includeTables
+    ? matches.filter(m => m.metadata?.chunk_type === 'application' && m.metadata?.application_code)
+    : [];
+  let chunkMatches = matches.filter(m =>
+    m.metadata?.chunk_type !== 'application' &&
+    m.metadata?.chunk_type !== 'reference' &&
+    m.metadata?.standard_id
+  );
+  let referenceMatches = matches.filter(m =>
+    m.metadata?.chunk_type === 'reference' && m.metadata?.standard_id
+  );
+
+  // 3b. Body-only searches ("Illuminance Tables" unchecked): the shared
+  //     top-K pool is dominated by application vectors, so the prose share
+  //     can be tiny or empty. Pull text chunks directly with a chunk_type
+  //     filter, mirroring the references-mode query. Fail-open: without the
+  //     metadata index the filtered query errors and the main pool stands.
+  if (includeBody && !includeTables) {
+    try {
+      const bodyQuery = await env.VECTORIZE.query(queryVector, {
+        topK: VECTOR_TOP_K,
+        returnMetadata: 'all',
+        filter: { ...(vectorFilter || {}), chunk_type: 'text' },
+      });
+      const dedupe = new Map(chunkMatches.map(m => [m.id, m]));
+      for (const m of bodyQuery.matches || []) {
+        if (m.metadata?.standard_id) dedupe.set(m.id, m);
+      }
+      chunkMatches = [...dedupe.values()];
+    } catch (err) {
+      console.error('body-scoped vector query failed, using main pool (non-fatal):', err.message);
+    }
+  }
 
   // 4. Fetch application records from D1 (plus the standards index, used
-  //    both for Vitrium doc-ID fallback and to filter orphan chunks in step 8)
+  //    for full-title citations, Vitrium links, and orphan-chunk filtering)
   const appCodes = dedupeByCode(appMatches).slice(0, limit * 2).map(m => m.metadata.application_code);
   const [appMap, standardsIndex] = await Promise.all([
     fetchApplications(env.DB, appCodes, filters),
@@ -319,11 +431,13 @@ async function runSingleSearch(rawQuery, filters, limit, env) {
   //     'deprecated' or D1 rows flipped to Deprecated after ingestion.
   //     Version-comparison queries pull deprecated content through the
   //     dedicated searchDeprecatedForComparison() path instead.
-  chunkMatches = chunkMatches.filter(m => {
+  const notDeprecated = (m) => {
     if (m.metadata?.status === 'deprecated') return false;
     const entry = standardsIndex.get(m.metadata?.standard_id || m.metadata?.standard_code);
     return !entry || entry.status !== 'Deprecated';
-  });
+  };
+  chunkMatches = chunkMatches.filter(notDeprecated);
+  referenceMatches = referenceMatches.filter(notDeprecated);
 
   // 5. Build excerpt index: standardId → best chunk match
   const excerptIndex = buildExcerptIndex(chunkMatches);
@@ -357,7 +471,7 @@ async function runSingleSearch(rawQuery, filters, limit, env) {
   // 7. Text fallback if sparse — and re-sort the merged list so fallback
   //    rows interleave by hierarchy/score with the vector hits instead of
   //    being appended in arbitrary D1 insertion order.
-  if (results.length < MIN_VECTOR_RESULTS) {
+  if (includeTables && results.length < MIN_VECTOR_RESULTS) {
     const fallback = await textFallback(env.DB, cleanQuery(rawQuery), filters, limit, excerptIndex, linkCtx);
     mergeResults(results, fallback);
     results.sort(compareResults);
@@ -368,12 +482,14 @@ async function runSingleSearch(rawQuery, filters, limit, env) {
   //    query matches SOME application row; standards without structured
   //    illuminance tables (LS/LP/TM/LM/G series and prose RPs) would never
   //    surface if chunks only appeared when the app list came back empty.
-  //    Keep the best chunk per standard, skip standards already represented
-  //    by an application result, and filter against the D1 standards table —
-  //    Vectorize can hold orphan chunks from deleted/renamed standards.
+  //    Body excerpts are blended even for standards that ALSO have table hits
+  //    (client feedback: broad conceptual queries like "transition and
+  //    circulation space" returned 30 table rows and zero document-body
+  //    results — the mix matters). Best chunk per standard; the D1 standards
+  //    filter drops orphan vectors from deleted/renamed standards.
   //    compareResults handles the final order: score first, and its
   //    hierarchy tie-break favors application rows on near-equal scores.
-  if (chunkMatches.length > 0) {
+  if (includeBody && chunkMatches.length > 0) {
     const liveChunks = chunkMatches.filter(m => {
       const id = m.metadata?.standard_id || m.metadata?.standard_code;
       return id && standardsIndex.has(id);
@@ -387,11 +503,50 @@ async function runSingleSearch(rawQuery, filters, limit, env) {
       const text = String(meta.excerpt_text || '');
       return meta.chunk_type !== 'table' && text.trim().length >= 60 && !isTableLike(text);
     });
-    const represented = new Set(results.map(r => r.application.standard));
-    const chunkResults = buildChunkResults(displayableChunks, linkCtx)
-      .filter(r => !represented.has(r.application.standard));
+    const chunkResults = buildChunkResults(displayableChunks, linkCtx);
     if (chunkResults.length > 0) {
       results.push(...chunkResults);
+      results.sort(compareResults);
+      results = results.slice(0, limit);
+    }
+  }
+
+  // 11. References mode — surface References/Bibliography entries as results.
+  //     The main pool rarely holds many reference chunks (application vectors
+  //     dominate), so run a dedicated query scoped to chunk_type='reference'
+  //     for real recall. Requires a Vectorize metadata index on chunk_type
+  //     (see wrangler.toml); if the filtered query fails or returns nothing,
+  //     fall back to whatever the main pool surfaced.
+  if (includeRefs) {
+    let refPool = referenceMatches;
+    try {
+      const refQuery = await env.VECTORIZE.query(queryVector, {
+        topK: VECTOR_TOP_K,
+        returnMetadata: 'all',
+        filter: { ...(vectorFilter || {}), chunk_type: 'reference' },
+      });
+      const dedupe = new Map(refPool.map(m => [m.id, m]));
+      for (const m of refQuery.matches || []) {
+        if (m.metadata?.chunk_type === 'reference' && notDeprecated(m)) dedupe.set(m.id, m);
+      }
+      refPool = [...dedupe.values()];
+    } catch (err) {
+      console.error('reference-scoped vector query failed, using main pool (non-fatal):', err.message);
+    }
+    const liveRefs = refPool.filter(m => {
+      const id = m.metadata?.standard_id || m.metadata?.standard_code;
+      return id && standardsIndex.has(id);
+    });
+    // Every reference entry is its own result (perStandard: Infinity) — a
+    // reference listing that collapsed to one entry per standard would be
+    // useless as a bibliography view.
+    const refResults = buildChunkResults(liveRefs, linkCtx, { perStandard: Infinity })
+      .map(r => ({
+        ...r,
+        referenceLink: buildReferenceLink(r.excerpt?.text || '', standardsIndex),
+      }));
+    if (refResults.length > 0) {
+      results.push(...refResults);
       results.sort(compareResults);
       results = results.slice(0, limit);
     }
@@ -402,6 +557,71 @@ async function runSingleSearch(rawQuery, filters, limit, env) {
   //    feedback: Figure Skating Class I–IV / Recreational must follow the
   //    standard's row order, not raw vector-score order).
   return { results: clusterSiblings(results), expandedQuery };
+}
+
+/**
+ * Hyperlink for one References-section entry, in the client-specified
+ * priority order — and NEVER fabricated:
+ *   1. IES standard citation → the standard's Lighting Library (Vitrium) web
+ *      viewer URL, when that standard is indexed and has a known URL
+ *   2. DOI in the text → https://doi.org/<doi>
+ *   3. Bare URL in the text → that URL
+ *   4. Otherwise → null (the UI renders no link)
+ *
+ * @returns {{ url: string, type: 'library'|'doi'|'url' } | null}
+ */
+export function buildReferenceLink(text, standardsIndex) {
+  if (!text) return null;
+
+  // 1. IES standard citation → Lighting Library
+  const stdMatch = /\b(?:ANSI\/|BSR\/)?IES(?:\/NALMCO)?\s+((?:RP|TM|LM|LP|LS|DG|HB|G|LEM)-\d+(?:\.\d+)?)(-\d{2})?(\+E\d+)?/i.exec(text);
+  if (stdMatch && standardsIndex) {
+    const cited = `${stdMatch[1]}${stdMatch[2] || ''}${stdMatch[3] || ''}`.toUpperCase();
+    // Exact edition first ("RP-8-25"), then the newest Active edition of the
+    // family — references often cite editionless ids ("IES TM-30"). The
+    // family is the structural prefix+number from the regex capture, NOT a
+    // suffix-strip: stripping a trailing 2-digit group off "TM-30" would
+    // yield family "TM" and link the citation to an arbitrary TM-* standard.
+    let entry = standardsIndex.get(cited);
+    let entryOk = entry && entry.status !== 'Deprecated' && entry.webUrl;
+    if (!entryOk) {
+      const family = stdMatch[1].toUpperCase();
+      // Candidate ids must be exactly "<family>-<2-digit edition>[+E]".
+      const editionRe = /^-\d{2}(?:\+E\d+)?$/;
+      let bestEdition = -1;
+      let bestId = null;
+      for (const [id, info] of standardsIndex) {
+        const idU = id.toUpperCase();
+        if (!idU.startsWith(family)) continue;
+        const rest = idU.slice(family.length);
+        if (!editionRe.test(rest)) continue;
+        if (info.status === 'Deprecated' || !info.webUrl) continue;
+        const edition = parseInt(rest.slice(1, 3), 10);
+        if (edition > bestEdition || (edition === bestEdition && (!bestId || idU > bestId))) {
+          bestEdition = edition;
+          bestId = idU;
+          entry = info;
+        }
+      }
+      entryOk = bestId != null;
+    }
+    if (entryOk) return { url: entry.webUrl, type: 'library' };
+  }
+
+  // 2. DOI
+  const doiMatch = /\b10\.\d{4,9}\/[^\s"<>]+/.exec(text);
+  if (doiMatch) {
+    const doi = doiMatch[0].replace(/[).,;:\]]+$/, '');
+    return { url: `https://doi.org/${doi}`, type: 'doi' };
+  }
+
+  // 3. Bare URL
+  const urlMatch = /\bhttps?:\/\/[^\s"<>)]+/i.exec(text);
+  if (urlMatch) {
+    return { url: urlMatch[0].replace(/[.,;:\]]+$/, ''), type: 'url' };
+  }
+
+  return null;
 }
 
 /**
@@ -418,7 +638,7 @@ async function runSingleSearch(rawQuery, filters, limit, env) {
  */
 async function fetchStandardsIndex(db) {
   const result = await db.prepare(
-    'SELECT id, status, superseded_by, vitrium_doc_id, vitrium_web_url FROM standards'
+    'SELECT id, title, full_designation, status, superseded_by, vitrium_doc_id, vitrium_web_url FROM standards'
   ).all();
   return new Map((result.results || []).map(r => [
     r.id,
@@ -427,6 +647,11 @@ async function fetchStandardsIndex(db) {
       webUrl: r.vitrium_web_url || null,
       status: r.status || 'Active',
       supersededBy: r.superseded_by || null,
+      // Full-title citations (client requirement): designation + descriptive
+      // title on every result. Title falls back to null when the standard
+      // hasn't been ingested with metadata yet.
+      title: (r.title && r.title !== r.id) ? r.title : null,
+      fullDesignation: r.full_designation || null,
     },
   ]));
 }
@@ -621,11 +846,11 @@ async function probeDeprecatedFamily(env, scopePrefix, queryVector, D = {}) {
 
 // ─── Multi-Search ─────────────────────────────────────────────────────────────
 
-async function runMultiSearch(subQueries, filters, limitPerQuery, env) {
+async function runMultiSearch(subQueries, filters, limitPerQuery, env, contentTypes) {
   // Run all sub-queries in parallel; limit per sub-query = max 5 to keep total reasonable
   const perQueryLimit = Math.min(5, limitPerQuery);
   const searches = await Promise.all(
-    subQueries.map(q => runSingleSearch(q, filters, perQueryLimit, env))
+    subQueries.map(q => runSingleSearch(q, filters, perQueryLimit, env, contentTypes))
   );
 
   const seen = new Set();
@@ -845,8 +1070,11 @@ function buildResult(app, score, chunkMeta, excerptIndex, linkCtx) {
   const formatted = formatApplication(app);
   // Pass the application's own page (where its table row lives), not the
   // excerpt's page — the citation should point at the source row, while
-  // the excerpt's pageNumber stays in the excerpt object.
-  const citation = formatCitation(app, null, app.Page_Number ?? null);
+  // the excerpt's pageNumber stays in the excerpt object. The standard's
+  // descriptive title (from D1) makes the citation carry the FULL name:
+  // "ANSI/IES RP-2-20+E1 Recommended Practice: Lighting Retail Spaces, ...".
+  const stdInfo = linkCtx.standardsIndex?.get(app.Standard);
+  const citation = formatCitation(app, null, app.Page_Number ?? null, stdInfo?.title || null);
   const vitriumLink = buildVitriumLink(app, linkCtx);
 
   // Find the best PDF excerpt for this application — preferring a chunk
@@ -854,6 +1082,7 @@ function buildResult(app, score, chunkMeta, excerptIndex, linkCtx) {
   const excerpt = pickExcerptForApp(excerptIndex, app);
 
   return {
+    resultType: 'application',
     application: formatted,
     relevanceScore: Math.round(score * 1000) / 1000,
     excerpt: excerpt ? {
@@ -931,7 +1160,8 @@ async function backfillExcerpts(env, queryVector, apps, excerptIndex) {
       for (const m of res.matches || []) {
         const meta = m.metadata || {};
         // The filter also matches this standard's application vectors — skip.
-        if (meta.chunk_type === 'application') continue;
+        // Reference entries make poor "From the Standard" excerpts too.
+        if (meta.chunk_type === 'application' || meta.chunk_type === 'reference') continue;
         if (!meta.standard_id || !meta.excerpt_text) continue;
         if (!excerptIndex[meta.standard_id]) excerptIndex[meta.standard_id] = [];
         excerptIndex[meta.standard_id].push({ ...meta, score: m.score });
@@ -1076,9 +1306,24 @@ function formatApplication(app) {
     } : null,
     // Notes
     footnotes:    app.Footnotes,
+    // WHERE each footnote marker attaches in the printed table (see migration
+    // 0006): { levels: { App_s1: [1] }, row: [3] }. The UI uses this to draw
+    // inline superscripts on the exact hierarchy label the source table marks
+    // — header-level notes never print independently on sub-rows.
+    footnoteMarks: parseFootnoteMarks(app.Footnote_Marks),
     generalNotes: app.General_Notes,
     appNotes:     app.App_Notes,
   };
+}
+
+function parseFootnoteMarks(raw) {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    return (parsed && typeof parsed === 'object') ? parsed : null;
+  } catch {
+    return null;
+  }
 }
 
 // ─── Unit Filtering ───────────────────────────────────────────────────────────
@@ -1109,59 +1354,78 @@ function applyUnits(results, units) {
 // ─── Chunk Fallback Builder ───────────────────────────────────────────────────
 // When no structured application records exist yet, surface PDF chunks directly.
 
-function buildChunkResults(chunkMatches, linkCtx = {}) {
-  // Group by standard_id, keep best chunk per standard
+function buildChunkResults(chunkMatches, linkCtx = {}, { perStandard = 1 } = {}) {
+  // Group by standard_id. Body-excerpt mode keeps the single best chunk per
+  // standard; references mode keeps EVERY entry (perStandard: Infinity) —
+  // each bibliography entry is its own result.
   const byStandard = new Map();
   for (const match of chunkMatches) {
     const stdId = match.metadata?.standard_id || match.metadata?.standard_code;
     if (!stdId) continue;
-    if (!byStandard.has(stdId) || byStandard.get(stdId).score < match.score) {
-      byStandard.set(stdId, match);
+    if (!byStandard.has(stdId)) byStandard.set(stdId, []);
+    byStandard.get(stdId).push(match);
+  }
+
+  const picked = [];
+  for (const [stdId, matches] of byStandard) {
+    matches.sort((a, b) => (b.score || 0) - (a.score || 0));
+    for (const match of matches.slice(0, perStandard === Infinity ? matches.length : perStandard)) {
+      picked.push([stdId, match]);
     }
   }
 
-  return [...byStandard.entries()].map(([stdId, match]) => ({
-    // Chunk results have no application row, so synthesize the minimal
-    // fields buildVitriumLink needs: standard id + the chunk's page.
-    vitriumLink: buildVitriumLink({
-      Standard: stdId,
-      Page_Number: match.metadata?.page_number ?? null,
-    }, linkCtx),
-    application: {
-      code: match.id,
-      category: stdId,
-      sub1: null,
-      sub2: null,
-      sub3: null,
-      fullName: stdId,
-      standard: stdId,
-      standardFull: match.metadata?.standard_code || stdId,
-      tableRef: null,
-      rowRef: null,
-      areaOrTask: null,
-      indoorOutdoor: match.metadata?.indoor_outdoor || null,
-      horizontal: null,
-      vertical: null,
-      task: null,
-      tm24Eligible: false,
-      tm24Notes: null,
-      outdoor: null,
-      footnotes: null,
-      generalNotes: null,
-      appNotes: null,
-    },
-    relevanceScore: Math.round((match.score || 0) * 1000) / 1000,
-    excerpt: {
-      text: match.metadata?.excerpt_text || '',
-      pageNumber: match.metadata?.page_number || null,
-      section: match.metadata?.section || null,
-      chunkType: match.metadata?.chunk_type || 'text',
-    },
-    citation: match.metadata?.standard_code
-      ? `${match.metadata.standard_code}${match.metadata.page_number ? `, p. ${match.metadata.page_number}` : ''}`
-      : stdId,
-    relatedApplications: [],
-  }));
+  return picked.map(([stdId, match]) => {
+    // Full-title citation (client requirement — applies to BOTH result
+    // render paths): designation + descriptive title + page.
+    const stdInfo = linkCtx.standardsIndex?.get(stdId);
+    const designation = stdInfo?.fullDesignation || match.metadata?.standard_code || stdId;
+    const fullName = composeStandardName(designation, stdInfo?.title || null);
+    const pageNum = match.metadata?.page_number || null;
+
+    return {
+      resultType: match.metadata?.chunk_type === 'reference' ? 'reference' : 'excerpt',
+      // Chunk results have no application row, so synthesize the minimal
+      // fields buildVitriumLink needs: standard id + the chunk's page.
+      vitriumLink: buildVitriumLink({
+        Standard: stdId,
+        Page_Number: pageNum,
+      }, linkCtx),
+      application: {
+        code: match.id,
+        category: stdId,
+        sub1: null,
+        sub2: null,
+        sub3: null,
+        fullName: stdId,
+        standard: stdId,
+        standardFull: designation,
+        standardTitle: stdInfo?.title || null,
+        tableRef: null,
+        rowRef: null,
+        areaOrTask: null,
+        indoorOutdoor: match.metadata?.indoor_outdoor || null,
+        horizontal: null,
+        vertical: null,
+        task: null,
+        tm24Eligible: false,
+        tm24Notes: null,
+        outdoor: null,
+        footnotes: null,
+        footnoteMarks: null,
+        generalNotes: null,
+        appNotes: null,
+      },
+      relevanceScore: Math.round((match.score || 0) * 1000) / 1000,
+      excerpt: {
+        text: match.metadata?.excerpt_text || '',
+        pageNumber: pageNum,
+        section: match.metadata?.section || null,
+        chunkType: match.metadata?.chunk_type || 'text',
+      },
+      citation: `${fullName}${pageNum ? `, p. ${pageNum}` : ''}`,
+      relatedApplications: [],
+    };
+  });
 }
 
 // ─── Utility Helpers ──────────────────────────────────────────────────────────
@@ -1195,19 +1459,20 @@ function buildVectorFilter(filters) {
  *
  * Caller-supplied filters take precedence (see mergedFilters in handleSearch).
  */
-function inferFiltersFromQuery(query) {
+function inferFiltersFromQuery(query, forceComparison = false) {
   const out = {};
 
   const lzMatch = /\b(?:lz)\s*([0-4])\b/i.exec(query);
   if (lzMatch) out.lighting_zone = `LZ${lzMatch[1]}`;
 
-  // Only constrain to a specific standard for version-comparison intent.
+  // Only constrain to a specific standard for version-comparison intent —
+  // detected from phrasing OR forced by the "Compare Versions" filter.
   // Outside that intent, mentioning a standard ID in passing should not
   // hide adjacent standards from the result list.
   //
   // Use standard_prefix (LIKE) rather than standard (=) because users say
   // "RP-43" but the D1 Standard column carries the year suffix ("RP-43-25").
-  if (isVersionComparisonQuery(query)) {
+  if (forceComparison || isVersionComparisonQuery(query)) {
     const stdMatch = /\b((?:RP|TM|HB|LM|LP|LS|DG|LEM|G)-\d+(?:\.\d+)?)\b/i.exec(query);
     if (stdMatch) out.standard_prefix = stdMatch[1].toUpperCase();
   }

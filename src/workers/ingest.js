@@ -9,9 +9,13 @@
  *
  *   POST /api/ingest
  *     Accept pre-parsed PDF data from the ingestion script.
+ *     Auth: Bearer LUCIUS_API_SECRET (fail-closed in production).
  *     Body: { standardId, status, metadata, chunks, tables, applications }
  *     - status:       'current' (default) | 'deprecated'
  *     - chunks:       [{text, pageNumber, section, type}]       → Vectorize
+ *                     type: 'text' | 'table' | 'general_notes' | 'reference'
+ *                     ('reference' = References/Bibliography entries; powers
+ *                      the references-only search mode)
  *     - tables:       [{pageNumber, title, rows, ...}]          → D1 standards.tables_json
  *     - applications: [{code, App, Hor_Lux, ...}]  (optional)  → D1 applications (upsert)
  *
@@ -38,12 +42,22 @@
  */
 
 import { bumpDataVersion } from '../lib/cache.js';
+import { checkAuth } from '../lib/auth.js';
 
 const EMBED_MODEL = '@cf/baai/bge-base-en-v1.5';
 const EMBED_BATCH = 100;       // Workers AI max per call
+const EMBED_MAX_ATTEMPTS = 3;  // retries per embedding batch (transient AI errors)
 const VECTORIZE_BATCH = 1000;  // Vectorize max per upsert
+const DELETE_BATCH = 200;      // Vectorize deleteByIds batch size
 
 export async function handleIngest(request, env) {
+  // Ingest rewrites the searchable corpus — shared-secret protected, and
+  // fail-closed in production when no secret is configured (see lib/auth.js).
+  const auth = await checkAuth(request, env);
+  if (!auth.ok) {
+    return jsonResponse({ error: auth.reason || 'Unauthorized' }, auth.reason ? 503 : 401);
+  }
+
   const url = new URL(request.url);
   const subPath = url.pathname.replace('/api/ingest', '').replace(/\/$/, '');
 
@@ -90,6 +104,12 @@ async function ingestParsedPDF(request, env) {
 
   const isDeprecated = status === 'deprecated';
 
+  // Previous ingest state — used both for the deprecated-downgrade guard and
+  // for stale-vector cleanup when a re-ingest produces FEWER chunks.
+  const existing = await env.DB.prepare(
+    'SELECT status, chunk_count FROM standards WHERE id = ?'
+  ).bind(standardId).first();
+
   if (isDeprecated) {
     // Deprecated values must never be served as current guidance.
     if (Array.isArray(applications) && applications.length > 0) {
@@ -100,9 +120,6 @@ async function ingestParsedPDF(request, env) {
     // Same id already Active in D1 → this file is a reaffirmed printing of
     // the current edition, not a prior edition. Refuse rather than silently
     // downgrading an active standard.
-    const existing = await env.DB.prepare(
-      'SELECT status FROM standards WHERE id = ?'
-    ).bind(standardId).first();
     if (existing && existing.status !== 'Deprecated') {
       return jsonResponse({
         error: `"${standardId}" is already indexed as a CURRENT standard — refusing to re-ingest it as deprecated. ` +
@@ -118,17 +135,25 @@ async function ingestParsedPDF(request, env) {
   }
 
   // ── 1. Generate embeddings for all chunks (skip if none) ──────────────────
-  if (chunks.length > 0) {
-    for (const chunk of chunks.slice(0, 3)) {
-      if (typeof chunk.text !== 'string' || !chunk.text.trim()) {
-        return jsonResponse({ error: 'Each chunk must have a non-empty text field' }, 400);
-      }
+  // Validate EVERY chunk up front: a single empty text at position N would
+  // otherwise fail deep inside the Workers AI call and leave a half-indexed
+  // standard behind.
+  for (let i = 0; i < chunks.length; i++) {
+    if (typeof chunks[i].text !== 'string' || !chunks[i].text.trim()) {
+      return jsonResponse({ error: `Chunk ${i} has an empty text field — every chunk must carry text` }, 400);
     }
   }
 
   const embeddings = chunks.length > 0
     ? await embedInBatches(env.AI, chunks.map(c => c.text))
     : [];
+
+  // Full-indexing guarantee: one embedding per chunk, no silent truncation.
+  if (embeddings.length !== chunks.length) {
+    return jsonResponse({
+      error: `Embedding count mismatch: got ${embeddings.length} embeddings for ${chunks.length} chunks — aborting so the index never holds a partial document.`,
+    }, 500);
+  }
 
   // ── 2. Build Vectorize vectors ─────────────────────────────────────────────
   const vectors = chunks.map((chunk, i) => ({
@@ -138,7 +163,7 @@ async function ingestParsedPDF(request, env) {
       standard_id: standardId,
       application_code: null,
       standard_code: standardId,
-      chunk_type: chunk.type || 'text',       // 'text' | 'table' | 'section_heading'
+      chunk_type: chunk.type || 'text',       // 'text' | 'table' | 'general_notes' | 'reference'
       page_number: chunk.pageNumber || null,
       section: chunk.section || null,         // e.g. "3.5" from IES section numbering
       excerpt_text: chunk.text.substring(0, 500), // metadata size limit ~1KB
@@ -155,6 +180,40 @@ async function ingestParsedPDF(request, env) {
     await targetIndex.upsert(vectors.slice(i, i + VECTORIZE_BATCH));
   }
 
+  // ── 3b. Stale-vector cleanup ───────────────────────────────────────────────
+  // Vector ids are deterministic (`<standardId>-chunk-<n>`). If a re-ingest
+  // produced FEWER chunks than the previous run, the tail ids (n .. prev-1)
+  // still hold the OLD document's content and would keep surfacing in search.
+  // Delete them so the index exactly mirrors the latest parse. Three cases:
+  //   a. Same index, known previous count → delete the tail range.
+  //   b. Same index, UNKNOWN previous count (row predates migration 0006) →
+  //      probe deterministic ids upward from the new count and delete what
+  //      exists, so the first post-0006 re-ingest self-heals the standard.
+  //   c. Status flipped (Deprecated → Active): the new vectors went to a
+  //      DIFFERENT index, so the old index still holds the entire previous
+  //      document — delete its full range.
+  const prevChunkCount = existing?.chunk_count ?? null;
+  const prevIndex = existing
+    ? (existing.status === 'Deprecated' ? env.VECTORIZE_DEPRECATED : env.VECTORIZE)
+    : null;
+  let staleDeleted = 0;
+  if (chunks.length > 0 && existing && prevIndex) {
+    try {
+      if (prevIndex !== targetIndex) {
+        // (c) index transition — nothing in the old index was overwritten
+        staleDeleted += await deleteVectorRange(prevIndex, standardId, 0, prevChunkCount ?? null);
+      } else if (prevChunkCount != null && prevChunkCount > chunks.length) {
+        // (a) shrinking re-ingest
+        staleDeleted += await deleteVectorRange(targetIndex, standardId, chunks.length, prevChunkCount);
+      } else if (prevChunkCount == null) {
+        // (b) legacy row without stats — probe for a stale tail
+        staleDeleted += await deleteVectorRange(targetIndex, standardId, chunks.length, null);
+      }
+    } catch (err) {
+      console.error(`stale vector cleanup failed for ${standardId} (non-fatal):`, err.message);
+    }
+  }
+
   // ── 4. Persist standard metadata + tables to D1 (skip for app-only batches) ─
   // Store tables as a compact JSON array (page, header, row count, footnotes)
   const tablesCompact = (tables || []).map(t => ({
@@ -169,11 +228,20 @@ async function ingestParsedPDF(request, env) {
   // (best-effort) so responses can say "deprecated — replaced by RP-6-24".
   const supersededBy = isDeprecated ? await findSupersedingStandard(env.DB, standardId) : null;
 
+  // ── 4a. Index-coverage stats ──────────────────────────────────────────────
+  // Written on every chunk-carrying ingest so staff can verify the standard
+  // is FULLY indexed (GET /api/admin/index-status): how many pages produced
+  // at least one chunk, and the chunk-type mix (text/table/general_notes/
+  // reference). pageCount comes from the parsing script (metadata.pageCount).
+  const coverage = buildCoverageStats(chunks);
+  const pageCount = Number.isFinite(metadata.pageCount) ? metadata.pageCount : null;
+
   if (chunks.length > 0 || tables.length > 0 || metadata.title) await env.DB.prepare(`
     INSERT INTO standards
       (id, title, description, author, year, full_designation, r2_key,
-       tables_json, status, superseded_by, indexed_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+       tables_json, status, superseded_by, chunk_count, page_count,
+       coverage_json, indexed_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
     ON CONFLICT(id) DO UPDATE SET
       title        = excluded.title,
       description  = excluded.description,
@@ -184,6 +252,9 @@ async function ingestParsedPDF(request, env) {
       tables_json  = excluded.tables_json,
       status       = excluded.status,
       superseded_by = COALESCE(excluded.superseded_by, standards.superseded_by),
+      chunk_count  = COALESCE(excluded.chunk_count, standards.chunk_count),
+      page_count   = COALESCE(excluded.page_count, standards.page_count),
+      coverage_json = COALESCE(excluded.coverage_json, standards.coverage_json),
       indexed_at   = CURRENT_TIMESTAMP,
       updated_at   = CURRENT_TIMESTAMP
   `).bind(
@@ -197,6 +268,9 @@ async function ingestParsedPDF(request, env) {
     JSON.stringify(tablesCompact),
     isDeprecated ? 'Deprecated' : 'Active',
     supersededBy,
+    chunks.length > 0 ? chunks.length : null,
+    pageCount,
+    chunks.length > 0 ? JSON.stringify(coverage) : null,
   ).run();
 
   // ── 5. Upsert extracted application records into D1 ──────────────────────
@@ -216,8 +290,61 @@ async function ingestParsedPDF(request, env) {
     chunksIndexed: chunks.length,
     tablesFound: (tables || []).length,
     vectorsUpserted: vectors.length,
+    staleVectorsDeleted: staleDeleted,
     applicationsUpserted,
+    coverage: chunks.length > 0 ? { ...coverage, pageCount } : null,
   });
+}
+
+// Bounds for the probe-based cleanup (endIndex unknown): far beyond any real
+// document's chunk count, cheap to walk in PROBE_WINDOW-id getByIds calls.
+const PROBE_WINDOW = 100;
+const PROBE_HARD_CAP = 5000;
+
+/**
+ * Delete `<standardId>-chunk-<n>` vectors for n in [startIndex, endIndex).
+ * When endIndex is null (unknown previous count), probe upward window by
+ * window via getByIds and delete whatever exists, stopping at the first
+ * fully-empty window. Returns the number of vectors deleted.
+ */
+async function deleteVectorRange(index, standardId, startIndex, endIndex) {
+  let deleted = 0;
+
+  if (endIndex != null) {
+    const ids = [];
+    for (let n = startIndex; n < endIndex; n++) ids.push(`${standardId}-chunk-${n}`);
+    for (let i = 0; i < ids.length; i += DELETE_BATCH) {
+      const batch = ids.slice(i, i + DELETE_BATCH);
+      const res = await index.deleteByIds(batch);
+      deleted += res?.count ?? batch.length;
+    }
+    return deleted;
+  }
+
+  for (let start = startIndex; start < startIndex + PROBE_HARD_CAP; start += PROBE_WINDOW) {
+    const ids = Array.from({ length: PROBE_WINDOW }, (_, j) => `${standardId}-chunk-${start + j}`);
+    const found = await index.getByIds(ids);
+    const foundIds = (found || []).map(v => v.id).filter(Boolean);
+    if (foundIds.length === 0) break; // past the end of the stale tail
+    const res = await index.deleteByIds(foundIds);
+    deleted += res?.count ?? foundIds.length;
+  }
+  return deleted;
+}
+
+/**
+ * Per-ingest coverage stats persisted to standards.coverage_json — the raw
+ * material for the /api/admin/index-status full-indexing report.
+ */
+function buildCoverageStats(chunks) {
+  const pages = new Set();
+  const byType = {};
+  for (const c of chunks) {
+    if (c.pageNumber != null) pages.add(c.pageNumber);
+    const t = c.type || 'text';
+    byType[t] = (byType[t] || 0) + 1;
+  }
+  return { pagesWithChunks: pages.size, byType };
 }
 
 /**
@@ -276,7 +403,7 @@ const APP_COLS = [
   'Lighting_Zone', 'Max_Glare_Rating', 'Max_Uplight', 'Curfew_Dimming',
   'Spectrum_Guidance', 'Controls_Required',
   // Notes & links
-  'Footnotes', 'General_Notes', 'App_Notes',
+  'Footnotes', 'Footnote_Marks', 'General_Notes', 'App_Notes',
   'Vitrium_Doc_ID', 'Vitrium_Deep_Link',
   'Active',
 ];
@@ -456,10 +583,35 @@ async function embedInBatches(ai, texts) {
   const embeddings = [];
   for (let i = 0; i < texts.length; i += EMBED_BATCH) {
     const batch = texts.slice(i, i + EMBED_BATCH);
-    const response = await ai.run(EMBED_MODEL, { text: batch });
+    const response = await embedWithRetry(ai, batch, i / EMBED_BATCH);
     embeddings.push(...response.data);
   }
   return embeddings;
+}
+
+/**
+ * One embedding batch with bounded retries. Workers AI throws transient
+ * capacity errors under load; without retries a single blip aborts the whole
+ * document mid-index. The batch either fully succeeds (with one embedding per
+ * input) or the ingest fails loudly — never a silent partial.
+ */
+async function embedWithRetry(ai, batch, batchIndex) {
+  let lastErr;
+  for (let attempt = 1; attempt <= EMBED_MAX_ATTEMPTS; attempt++) {
+    try {
+      const response = await ai.run(EMBED_MODEL, { text: batch });
+      if (!Array.isArray(response?.data) || response.data.length !== batch.length) {
+        throw new Error(`embedding batch ${batchIndex}: expected ${batch.length} vectors, got ${response?.data?.length ?? 0}`);
+      }
+      return response;
+    } catch (err) {
+      lastErr = err;
+      if (attempt < EMBED_MAX_ATTEMPTS) {
+        await new Promise(r => setTimeout(r, attempt * 1000));
+      }
+    }
+  }
+  throw lastErr;
 }
 
 function jsonResponse(data, status = 200) {
