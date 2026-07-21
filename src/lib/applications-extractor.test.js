@@ -96,8 +96,8 @@ describe('parseDataRow — RP-43 Environmental & Visual columns', () => {
 
 // ─── Hierarchy reconstruction (depth via X clustering) ────────────────────────
 
-function line(text, x, fontSize = 7.5) {
-  return { text, x, y: 0, fontSize, bold: false };
+function line(text, x, fontSize = 7.5, y = 0) {
+  return { text, x, y, fontSize, bold: false };
 }
 
 describe('extractApplicationsFromPages — hierarchy nesting', () => {
@@ -148,5 +148,70 @@ describe('extractApplicationsFromPages — hierarchy nesting', () => {
     expect(q.withHorLux).toBe(records.length);
     expect(q.withApp).toBe(records.length);
     expect(q.withIlluminanceCategory).toBe(records.length);
+  });
+});
+
+// ─── Footnote association (client bug: "ambulance" reproduction) ──────────────
+// A footnote marker printed on a HEADER line ("Emergency department entry¹")
+// scopes to that header — it must attach to the header LEVEL in
+// Footnote_Marks, never independently to the Day/Night sub-rows. A marker
+// printed beside a DATA row attaches to that row only. Marker ref lines are
+// tiny-font numeric lines bound to their target by Y proximity.
+
+describe('extractApplicationsFromPages — footnote scoping', () => {
+  const lines = [
+    line('INTERIOR - HEALTHCARE', 70, 7.5, 10),
+    line('Emergency Department', 78, 7.5, 20),
+    line('Emergency department entry', 86, 7.5, 30),
+    line('1', 86, 4.5, 27), // tiny superscript ref, printed beside the HEADER
+    line('Day A M 100 lx @ 0.00 m 10 fc @ 0.0 ft Avg', 94, 7.5, 40),
+    line('Night A K 50 lx @ 0.00 m 5 fc @ 0.0 ft Avg', 94, 7.5, 50),
+    line('Triage T P 300 lx @ 0.76 m 30 fc @ 2.5 ft Avg', 94, 7.5, 60),
+    line('3', 94, 4.5, 63), // tiny ref printed beside the Triage DATA row
+    line('Waiting Rooms', 78, 7.5, 70),
+    line('Family Areas', 86, 7.5, 80),
+    line('General A N 150 lx @ 0.76 m 15 fc @ 2.5 ft Avg', 94, 7.5, 90),
+    line('Imaging', 78, 7.5, 100),
+    line('Control Rooms', 86, 7.5, 110),
+    line('Console T Q 400 lx @ 0.76 m 40 fc @ 2.5 ft Avg', 94, 7.5, 120),
+    line('Application Task/Area Notes', 60, 9.5, 130),
+    line('1 Applies to the emergency department entry as a whole.', 60, 9.5, 140),
+    line('3 Verify local code requirements before final design.', 60, 9.5, 150),
+  ];
+  const pages = [{ number: 1, width: 792, height: 612, text: lines.map(l => l.text).join('\n'), lines }];
+  const records = extractApplicationsFromPages(pages, 'RP-28-25', { fullDesignation: 'ANSI/IES RP-28-25' });
+  const byLeaf = (leaf) => records.find(r => r.App_s2 === leaf);
+  const marksOf = (r) => JSON.parse(r.Footnote_Marks);
+
+  it('attaches a header footnote to the header LEVEL, not the sub-rows', () => {
+    for (const leaf of ['Day', 'Night']) {
+      const rec = byLeaf(leaf);
+      const marks = marksOf(rec);
+      expect(marks.levels.App_s1).toEqual([1]);     // on "Emergency department entry"
+      expect(marks.row).toEqual([]);                 // NOT independently on the sub-row
+    }
+  });
+
+  it('attaches a row footnote to that row only, alongside inherited header marks', () => {
+    const triage = byLeaf('Triage');
+    const marks = marksOf(triage);
+    expect(marks.row).toEqual([3]);
+    expect(marks.levels.App_s1).toEqual([1]);
+  });
+
+  it('resolves note text for all referenced numbers', () => {
+    expect(byLeaf('Day').Footnotes).toContain('1. Applies to the emergency department entry');
+    const triage = byLeaf('Triage');
+    expect(triage.Footnotes).toContain('1. Applies to the emergency department entry');
+    expect(triage.Footnotes).toContain('3. Verify local code requirements');
+  });
+
+  it('does not leak header footnotes to later application branches', () => {
+    expect(byLeaf('General').Footnote_Marks).toBeNull();
+    expect(byLeaf('Console').Footnote_Marks).toBeNull();
+  });
+
+  it('keeps the header footnote off unrelated rows entirely', () => {
+    expect(byLeaf('General').Footnotes ?? null).toBeNull();
   });
 });

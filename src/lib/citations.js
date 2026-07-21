@@ -5,19 +5,49 @@
  */
 
 /**
+ * Compose the full display name of a standard: designation + descriptive
+ * title, e.g. "ANSI/IES RP-2-20+E1 Recommended Practice: Lighting Retail
+ * Spaces". Client requirement: EVERY search result shows the full title, not
+ * the bare designation. Handles titles that already embed the designation
+ * (common in PDF metadata) without duplicating it.
+ *
+ * @param {string} designation - e.g. "ANSI/IES RP-2-20+E1"
+ * @param {string|null} title - descriptive title from the standards table
+ * @returns {string}
+ */
+export function composeStandardName(designation, title) {
+  const d = (designation || '').trim();
+  const t = (title || '').trim();
+  if (!t) return d;
+  if (!d) return t;
+  // Title already carries the full designation → use the title as-is.
+  if (t.toUpperCase().startsWith(d.toUpperCase())) return t;
+  // Title starts with the bare id ("RP-2-20 Lighting Retail Spaces") →
+  // reattach the designation's prefix ("ANSI/IES ") instead of duplicating.
+  const coreId = d.replace(/^ANSI\/IES\s+/i, '');
+  if (coreId !== d && t.toUpperCase().startsWith(coreId.toUpperCase())) {
+    return `${d.slice(0, d.length - coreId.length)}${t}`;
+  }
+  return `${d} ${t}`;
+}
+
+/**
  * Format a full citation for an application record.
  * @param {Object} app - Application row (from D1 or formatted)
  * @param {string|null} section - Optional section override
  * @param {number|null} pageNumber - Optional page number override
+ * @param {string|null} title - Standard's descriptive title (from D1 standards
+ *   table) — appended to the designation so every citation carries the full
+ *   standard name (client requirement, both result render paths).
  * @returns {string}
  */
-export function formatCitation(app, section = null, pageNumber = null) {
+export function formatCitation(app, section = null, pageNumber = null, title = null) {
   // Prefer the Standard_Full field (e.g. "ANSI/IES RP-9-20") over abbreviated Standard
   const designation = app.Standard_Full || app.standardFull || app.Standard || app.standard || '';
   const tableRef = app.Table_Ref || app.tableRef || '';
   const rowRef = app.Row_Ref || app.rowRef || '';
 
-  let citation = designation;
+  let citation = composeStandardName(designation, title);
 
   if (tableRef) citation += `, ${tableRef}`;
   if (rowRef) citation += `, ${rowRef}`;

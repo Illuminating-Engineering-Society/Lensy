@@ -253,6 +253,46 @@ These may come in future phases based on user feedback.
 
 ---
 
+## Launch Operations Checklist
+
+Run through this before every production deploy (added July 2026 with the
+search/UX overhaul):
+
+1. **Apply D1 migrations** — `npm run db:migrate:remote`
+   (0006 adds `applications.Footnote_Marks` + per-standard index-coverage stats).
+2. **Set the API secret** — `wrangler secret put LUCIUS_API_SECRET`.
+   Ingest and admin endpoints **fail closed** in production without it.
+   Give the same value to the ingestion machine via the `LUCIUS_API_SECRET`
+   env var so `npm run ingest` can authenticate.
+3. **Create Vectorize metadata indexes** (once, before ingesting):
+   ```
+   wrangler vectorize create-metadata-index ies-standards-vectors --property-name=standard_code --type=string
+   wrangler vectorize create-metadata-index ies-standards-vectors --property-name=chunk_type --type=string
+   ```
+   Filters only apply to vectors inserted *after* the index exists — re-ingest
+   if these were created late.
+4. **Re-ingest the corpus** — `npm run ingest`. This now records per-standard
+   coverage stats, tags References-section entries (`chunk_type=reference`,
+   powering the References search mode), captures footnote placement
+   (`Footnote_Marks`), and deletes stale tail vectors on shrinking re-ingests.
+   Watch for `⚠ LOW COVERAGE` warnings in the output.
+5. **Verify full indexing** — `GET /api/admin/index-status` (Bearer secret).
+   Confirms, per standard: chunk counts, page-coverage %, chunk-type mix,
+   application-row counts, and a live Vectorize spot-check that first/middle/
+   last vectors exist. Ship only when the warnings list is empty (or every
+   warning is understood).
+6. **Rate limiting** — `/api/search` is capped at 60 req/min/IP via the
+   `SEARCH_RATE_LIMITER` binding in wrangler.toml (fails open if removed).
+7. **Caching** — searches, embeddings, and AI Guide summaries are KV-cached;
+   every ingest bumps the corpus data-version, invalidating cached responses.
+   After out-of-band D1 edits, call `POST /api/admin/flush-cache`.
+8. **Known gap — Projects auth**: the `/api/projects*` routes are anonymous
+   (`user_id` is a client-supplied placeholder until Phase 3 SSO). Do not
+   store confidential client information in Projects until member login
+   ships; anyone who can reach the API can read/modify project records.
+
+---
+
 ## Questions or Feedback?
 
 **Project Lead:** Shane Skwarek, S-FX (shane@s-fx.com)  

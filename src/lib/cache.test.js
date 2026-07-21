@@ -9,6 +9,9 @@ import {
   putCachedEmbedding,
   getCachedSearch,
   putCachedSearch,
+  buildAISummaryCacheKey,
+  getCachedAISummary,
+  putCachedAISummary,
 } from './cache.js';
 
 /** Minimal in-memory KV namespace mock. */
@@ -107,6 +110,28 @@ describe('search cache', () => {
     const payload = { query: 'spa', results: [{ relevanceScore: 0.9 }] };
     await putCachedSearch(kv, key, payload);
     expect(await getCachedSearch(kv, key)).toEqual(payload);
+  });
+});
+
+describe('AI summary cache', () => {
+  it('keys on query + result set + data version', async () => {
+    const a = await buildAISummaryCacheKey('v1', 'summary', 'spa lighting', ['A1', 'A2']);
+    const same = await buildAISummaryCacheKey('v1', 'summary', 'spa lighting', ['A1', 'A2']);
+    const otherResults = await buildAISummaryCacheKey('v1', 'summary', 'spa lighting', ['A1', 'B9']);
+    const otherVersion = await buildAISummaryCacheKey('v2', 'summary', 'spa lighting', ['A1', 'A2']);
+    expect(a).toBe(same);
+    expect(a).not.toBe(otherResults);
+    expect(a).not.toBe(otherVersion);
+  });
+
+  it('round-trips a summary and fails open without KV', async () => {
+    const kv = mockKV();
+    const key = await buildAISummaryCacheKey('v1', 'summary', 'q', ['A1']);
+    const summary = { text: 'cited answer', watermark: 'w', disclaimer: 'd' };
+    await putCachedAISummary(kv, key, summary);
+    expect(await getCachedAISummary(kv, key)).toEqual(summary);
+    expect(await getCachedAISummary(undefined, key)).toBeNull();
+    await putCachedAISummary(undefined, key, summary); // no-op, must not throw
   });
 });
 

@@ -111,32 +111,49 @@
         </button>
       </div>
 
-      <!-- Filters row -->
-      <div class="flex flex-wrap justify-center gap-3 mt-4">
-        <select id="filter-location" class="text-sm border border-white/20 rounded-lg px-3 py-2 bg-white/10 text-white backdrop-blur-sm focus:outline-none focus:ring-2 focus:ring-white/40">
-          <option value="" class="text-gray-900">Indoor &amp; Outdoor</option>
-          <option value="Indoor" class="text-gray-900">Indoor only</option>
-          <option value="Outdoor" class="text-gray-900">Outdoor only</option>
-          <option value="Both" class="text-gray-900">Both</option>
-        </select>
+      <!-- Filters row — content-type checkboxes (independent, multi-select)
+           per the client filter overhaul. Defaults: Illuminance Tables +
+           Document Body on, References off, Interior & Exterior both on.
+           The former "TM-24 Eligible" filter was removed (superseded). -->
+      <div class="flex flex-wrap justify-center gap-2 mt-4" id="filters-row">
         <label class="flex items-center gap-2 text-sm text-blue-100 px-3 py-2 rounded-lg bg-white/10 cursor-pointer hover:bg-white/15 transition">
-          <input type="checkbox" id="filter-tm24" class="rounded accent-ies-gold">
-          TM-24 Eligible
+          <input type="checkbox" id="filter-ct-tables" class="rounded accent-ies-gold" checked>
+          Illuminance Tables
         </label>
         <label class="flex items-center gap-2 text-sm text-blue-100 px-3 py-2 rounded-lg bg-white/10 cursor-pointer hover:bg-white/15 transition">
+          <input type="checkbox" id="filter-ct-body" class="rounded accent-ies-gold" checked>
+          Document Body
+        </label>
+        <label class="flex items-center gap-2 text-sm text-blue-100 px-3 py-2 rounded-lg bg-white/10 cursor-pointer hover:bg-white/15 transition">
+          <input type="checkbox" id="filter-ct-references" class="rounded accent-ies-gold">
+          References
+        </label>
+        <label id="filter-ct-compare-wrap" style="display: none" class="items-center gap-2 text-sm text-blue-100 px-3 py-2 rounded-lg bg-white/10 cursor-pointer hover:bg-white/15 transition">
+          <input type="checkbox" id="filter-ct-compare" class="rounded accent-ies-gold">
+          Compare Versions
+        </label>
+        <span class="w-px bg-white/20 my-1 hidden sm:block"></span>
+        <label class="flex items-center gap-2 text-sm text-blue-100 px-3 py-2 rounded-lg bg-white/10 cursor-pointer hover:bg-white/15 transition">
+          <input type="checkbox" id="filter-interior" class="rounded accent-ies-gold" checked>
+          Interior
+        </label>
+        <label class="flex items-center gap-2 text-sm text-blue-100 px-3 py-2 rounded-lg bg-white/10 cursor-pointer hover:bg-white/15 transition">
+          <input type="checkbox" id="filter-exterior" class="rounded accent-ies-gold" checked>
+          Exterior
+        </label>
+        <span class="w-px bg-white/20 my-1 hidden sm:block"></span>
+        <label class="flex items-center gap-2 text-sm text-blue-100 px-3 py-2 rounded-lg bg-white/10 cursor-pointer hover:bg-white/15 transition">
           <input type="checkbox" id="include-ai" class="rounded accent-ies-gold">
-          AI Explanation
+          AI Guide
         </label>
       </div>
 
-      <!-- Example searches -->
-      <div class="mt-6 flex flex-wrap justify-center gap-2">
+      <!-- Sample searches — each populates the query box AND the filter state -->
+      <div class="mt-6 flex flex-wrap justify-center gap-2" id="sample-searches">
         <span class="text-blue-300 text-sm self-center">Try:</span>
-        <button onclick="setQuery('spa and wellness lighting')" class="text-sm bg-white/10 hover:bg-white/20 text-white px-3 py-1.5 rounded-full transition">Spa &amp; wellness</button>
-        <button onclick="setQuery('office conference room meeting')" class="text-sm bg-white/10 hover:bg-white/20 text-white px-3 py-1.5 rounded-full transition">Meeting rooms</button>
-        <button onclick="setQuery('outdoor restaurant patio dining')" class="text-sm bg-white/10 hover:bg-white/20 text-white px-3 py-1.5 rounded-full transition">Outdoor dining</button>
-        <button onclick="setQuery('parking garage structure')" class="text-sm bg-white/10 hover:bg-white/20 text-white px-3 py-1.5 rounded-full transition">Parking garage</button>
-        <button onclick="setQuery('sports field stadium')" class="text-sm bg-white/10 hover:bg-white/20 text-white px-3 py-1.5 rounded-full transition">Sports field</button>
+        <button onclick="runSampleSearch('parking')" class="text-sm bg-white/10 hover:bg-white/20 text-white px-3 py-1.5 rounded-full transition">Parking Garages</button>
+        <button onclick="runSampleSearch('vision-refs')" class="text-sm bg-white/10 hover:bg-white/20 text-white px-3 py-1.5 rounded-full transition">Vision References</button>
+        <button id="sample-compare" onclick="runSampleSearch('rp43-new')" class="hidden text-sm bg-white/10 hover:bg-white/20 text-white px-3 py-1.5 rounded-full transition">What's new in RP-43?</button>
       </div>
     </div>
   </div>
@@ -155,11 +172,6 @@
         class="px-4 py-2 bg-ies-blue text-white rounded-lg hover:bg-ies-blue-dark transition text-sm font-medium">
         Search
       </button>
-      <select id="compact-filter-location" class="text-sm border border-gray-200 rounded-lg px-2 py-2 bg-white focus:ring-2 focus:ring-ies-blue focus:border-transparent">
-        <option value="">All</option>
-        <option value="Indoor">Indoor</option>
-        <option value="Outdoor">Outdoor</option>
-      </select>
     </div>
   </div>
 
@@ -231,6 +243,11 @@
           </button>
         </div>
       </div>
+
+      <!-- Document filter chips — generated from the standards present in the
+           current result set; clicking one narrows the list to that document
+           (client request: quick doc-narrowing near the top of results). -->
+      <div id="doc-chips" class="hidden flex-wrap items-center gap-1.5 mb-4 no-print"></div>
 
       <!-- Low-confidence advisory (shown when API returns noStrongMatch=true) -->
       <div
@@ -355,22 +372,61 @@
 
   <script src="../utils/api.js"></script>
   <script>
+    // ── Feature flags ────────────────────────────────────────────────────────
+    // compareVersions gates the "Compare Versions" filter checkbox and the
+    // "What's new in RP-43?" sample search. The backend comparison path is
+    // built; flip this to true once the deprecated editions are confirmed
+    // ingested in the environment being demoed (Dan's Task 6 status check).
+    const FEATURES = { compareVersions: false };
+
     // ── State ────────────────────────────────────────────────────────────────
     let lastQuery = '';
-    let currentResultCodes = [];
     let selectedApplicationCodes = new Set();
     let modalPendingCodes = []; // application codes waiting to be added
     let projectsCache = null;
+    let activeDocFilter = null; // standard id chip currently narrowing results
 
     // ── Pagination ─────────────────────────────────────────────────────────────
     // The API returns a single pool of up to POOL_SIZE results (backend
     // MAX_LIMIT). We page over that pool entirely client-side — no extra
     // network round-trips on page change, and it stays within one response
     // cache entry per query.
-    const POOL_SIZE = 30;  // matches backend MAX_LIMIT
-    const PAGE_SIZE = 8;   // results shown per page
+    const POOL_SIZE = 50;  // matches backend MAX_LIMIT
+    const PAGE_SIZE = 25;  // results shown per page (client request)
     let allResults = [];
     let currentPage = 1;
+
+    // ── Sample searches (client-specified query + filter state, AI Guide on) ──
+    const SAMPLE_SEARCHES = {
+      'parking': {
+        query: 'What are considerations for lighting parking garages?',
+        contentTypes: { tables: true, body: true, references: false, compare: false },
+      },
+      'vision-refs': {
+        query: 'Provide a list of references in IES standards related to human vision',
+        contentTypes: { tables: false, body: false, references: true, compare: false },
+      },
+      'rp43-new': {
+        query: 'What is new in the current version of ANSI/IES RP-43?',
+        contentTypes: { tables: true, body: true, references: false, compare: true },
+      },
+    };
+
+    function runSampleSearch(key) {
+      const sample = SAMPLE_SEARCHES[key];
+      if (!sample) return;
+      document.getElementById('search-input').value = sample.query;
+      document.getElementById('filter-ct-tables').checked = !!sample.contentTypes.tables;
+      document.getElementById('filter-ct-body').checked = !!sample.contentTypes.body;
+      document.getElementById('filter-ct-references').checked = !!sample.contentTypes.references;
+      if (FEATURES.compareVersions) {
+        document.getElementById('filter-ct-compare').checked = !!sample.contentTypes.compare;
+      }
+      document.getElementById('filter-interior').checked = true;
+      document.getElementById('filter-exterior').checked = true;
+      document.getElementById('include-ai').checked = true; // AI Guide: on
+      performSearch();
+    }
 
     // ── Search ───────────────────────────────────────────────────────────────
     function setQuery(text) {
@@ -382,9 +438,28 @@
       const q = document.getElementById('compact-search-input').value.trim();
       if (!q) return;
       document.getElementById('search-input').value = q;
-      const loc = document.getElementById('compact-filter-location').value;
-      document.getElementById('filter-location').value = loc;
       performSearch();
+    }
+
+    function collectFilters() {
+      const filters = {};
+
+      // Interior / Exterior checkboxes → indoor_outdoor filter. Both (or
+      // neither) checked = no location narrowing.
+      const interior = document.getElementById('filter-interior').checked;
+      const exterior = document.getElementById('filter-exterior').checked;
+      if (interior && !exterior) filters.indoor_outdoor = 'Indoor';
+      else if (exterior && !interior) filters.indoor_outdoor = 'Outdoor';
+
+      // Content-type checkboxes (independent multi-select)
+      const ct = [];
+      if (document.getElementById('filter-ct-tables').checked) ct.push('tables');
+      if (document.getElementById('filter-ct-body').checked) ct.push('body');
+      if (document.getElementById('filter-ct-references').checked) ct.push('references');
+      if (FEATURES.compareVersions && document.getElementById('filter-ct-compare').checked) ct.push('compare');
+      if (ct.length > 0) filters.content_types = ct;
+
+      return filters;
     }
 
     async function performSearch() {
@@ -405,10 +480,7 @@
       showLoading(true);
       clearResults();
 
-      const filters = {};
-      const loc = document.getElementById('filter-location').value;
-      if (loc) filters.indoor_outdoor = loc;
-      if (document.getElementById('filter-tm24').checked) filters.tm24_eligible = true;
+      const filters = collectFilters();
       const includeAI = document.getElementById('include-ai').checked;
 
       try {
@@ -428,10 +500,23 @@
       selectedApplicationCodes = new Set();
       allResults = data.results || [];
       currentPage = 1;
-      currentResultCodes = allResults.map(r => r.application?.code).filter(Boolean);
+      activeDocFilter = null;
       updateBulkActionsUI();
 
       document.getElementById('results-meta').textContent = `for "${data.query}"`;
+
+      // Sync the checkboxes to the content types the backend ACTUALLY used —
+      // reference-intent queries auto-scope to References, and an
+      // all-unchecked state falls back to Tables + Body; the visible filter
+      // state must match the results on screen.
+      if (Array.isArray(data.contentTypes)) {
+        document.getElementById('filter-ct-tables').checked = data.contentTypes.includes('tables');
+        document.getElementById('filter-ct-body').checked = data.contentTypes.includes('body');
+        document.getElementById('filter-ct-references').checked = data.contentTypes.includes('references');
+        if (FEATURES.compareVersions) {
+          document.getElementById('filter-ct-compare').checked = data.contentTypes.includes('compare');
+        }
+      }
 
       // Low-confidence advisory: banner shows above the list when the API
       // signals no strong match. Results are still rendered — the user just
@@ -452,22 +537,81 @@
       if (!allResults.length) {
         document.getElementById('results-heading').textContent = 'Results';
         document.getElementById('results-list').innerHTML = '';
+        document.getElementById('doc-chips').classList.add('hidden');
         document.getElementById('no-results').classList.remove('hidden');
         return;
       }
 
+      renderDocChips();
       renderResultsPage();
     }
 
-    // Render the current page's slice of `allResults` plus pagination controls.
+    // ── Document filter chips ────────────────────────────────────────────────
+    // One chip per standard present in the result set, ordered by first
+    // appearance (the list is relevance-ordered, so first appearance = best
+    // match). Clicking a chip narrows the rendered list to that document;
+    // clicking it again (or "All") clears the narrowing. Purely client-side —
+    // no extra API round-trip, stays inside the same cached response.
+    function renderDocChips() {
+      const wrap = document.getElementById('doc-chips');
+      const seen = [];
+      const counts = {};
+      for (const r of allResults) {
+        const std = r.application?.standard;
+        if (!std) continue;
+        if (!counts[std]) { seen.push(std); counts[std] = 0; }
+        counts[std]++;
+      }
+
+      if (seen.length < 2) {
+        wrap.classList.add('hidden');
+        wrap.classList.remove('flex');
+        wrap.innerHTML = '';
+        return;
+      }
+
+      // The standard id travels via a data attribute, never an inline JS
+      // string — HTML-escaping does not JS-escape, so an id containing a
+      // quote must not reach an onclick expression.
+      const chip = (label, value, active, count) => `
+        <button
+          class="doc-chip text-xs px-2.5 py-1 rounded-full border font-medium transition ${active
+            ? 'bg-ies-blue text-white border-ies-blue'
+            : 'bg-white text-gray-600 border-gray-200 hover:border-ies-blue hover:text-ies-blue'}"
+          data-std="${escapeHtml(value ?? '')}"
+        >${escapeHtml(label)}${count != null ? ` <span class="${active ? 'text-blue-200' : 'text-gray-400'}">${count}</span>` : ''}</button>`;
+
+      wrap.innerHTML =
+        `<span class="text-xs text-gray-400 mr-1">Narrow to:</span>` +
+        chip('All Documents', null, activeDocFilter === null, null) +
+        seen.map(std => chip(std, std, activeDocFilter === std, counts[std])).join('');
+      wrap.classList.remove('hidden');
+      wrap.classList.add('flex');
+    }
+
+    function setDocFilter(std) {
+      activeDocFilter = (std && activeDocFilter !== std) ? std : null;
+      currentPage = 1;
+      renderDocChips();
+      renderResultsPage();
+      updateBulkActionsUI();
+    }
+
+    function visibleResults() {
+      if (!activeDocFilter) return allResults;
+      return allResults.filter(r => r.application?.standard === activeDocFilter);
+    }
+
+    // Render the current page's slice of the visible results plus pagination.
     function renderResultsPage() {
-      const total = allResults.length;
+      const pool = visibleResults();
+      const total = pool.length;
       const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
       currentPage = Math.min(Math.max(1, currentPage), totalPages);
 
       const start = (currentPage - 1) * PAGE_SIZE;
       const end = Math.min(start + PAGE_SIZE, total);
-      const pageResults = allResults.slice(start, end);
+      const pageResults = pool.slice(start, end);
 
       // Heading reflects the full result count; the range hint sits in the meta line.
       document.getElementById('results-heading').textContent =
@@ -560,9 +704,29 @@
 
     function renderAISummary(summary) {
       document.getElementById('ai-disclaimer').textContent = summary.disclaimer || '';
-      document.getElementById('ai-summary-text').textContent = summary.text || '';
+      const textEl = document.getElementById('ai-summary-text');
+      textEl.textContent = summary.text || '';
+      // Longer AI Guide answers arrive with paragraph breaks — preserve them.
+      textEl.classList.add('whitespace-pre-line');
       document.getElementById('ai-watermark').textContent = summary.watermark || '';
       document.getElementById('ai-summary-card').classList.remove('hidden');
+    }
+
+    // ── Footnote superscripts ────────────────────────────────────────────────
+    // footnoteMarks (per migration 0006) records WHERE each footnote number is
+    // printed in the source table: { levels: { App_s1: [1] }, row: [3] }.
+    // supFor() renders the marker for one hierarchy level; the note TEXT stays
+    // in the collapsed "Application Task/Area Notes" disclosure below.
+    function supFor(app, colName) {
+      const nums = app?.footnoteMarks?.levels?.[colName];
+      if (!nums || !nums.length) return '';
+      return `<sup class="text-[0.65em] font-bold text-ies-blue ml-0.5" title="See Application Task/Area Notes ${nums.join(', ')}">${nums.join(',')}</sup>`;
+    }
+
+    function supForRow(app) {
+      const nums = app?.footnoteMarks?.row;
+      if (!nums || !nums.length) return '';
+      return `<sup class="text-[0.65em] font-bold text-ies-blue ml-0.5" title="See Application Task/Area Notes ${nums.join(', ')}">${nums.join(',')}</sup>`;
     }
 
     function renderResultCard(group, index) {
@@ -587,37 +751,51 @@
       // the application title reads as the most prominent element (request #1).
       const appBadgeHex = isExterior ? '#8A3B18' : isInterior ? '#2E4A62' : '#4B5563';
 
-      // Green Sub_Category banner (prominent, full-width)
+      // Green Sub_Category banner (prominent, full-width). Banner-level
+      // footnote markers render inside it, white like the rest of the banner.
+      const subCatSup = (app.footnoteMarks?.levels?.Sub_Category || []).length
+        ? `<sup class="text-[0.65em] font-bold text-white/90 ml-0.5" title="See Application Task/Area Notes ${app.footnoteMarks.levels.Sub_Category.join(', ')}">${app.footnoteMarks.levels.Sub_Category.join(',')}</sup>`
+        : '';
       const subCategoryBanner = app.subCategory ? `
         <span class="inline-block text-[11px] font-bold tracking-wider uppercase px-2.5 py-1 rounded"
               style="background-color: ${bannerHex}; color: #fff;">
-          ${escapeHtml(app.subCategory)}
+          ${escapeHtml(app.subCategory)}${subCatSup}
         </span>` : '';
 
       // Prominent application-name badge = the top-level App name. Printed
       // ONCE per card even when the card holds several adjacent table rows
-      // (client feedback: don't reprint application titles).
+      // (client feedback: don't reprint application titles). An App-level
+      // footnote marker prints INSIDE the badge, next to the name it scopes
+      // to — exactly where the source table shows it.
       const appName = app.category || app.fullName || app.code || 'Application';
+      const appLevelSup = (app.footnoteMarks?.levels?.App || []).length
+        ? `<sup class="text-[0.65em] font-bold text-white/90 ml-0.5" title="See Application Task/Area Notes ${app.footnoteMarks.levels.App.join(', ')}">${app.footnoteMarks.levels.App.join(',')}</sup>`
+        : '';
       const appBadge = `
         <span class="inline-block text-sm font-bold text-white px-2.5 py-1 rounded align-middle"
-              style="background-color: ${appBadgeHex};">${escapeHtml(appName)}</span>`;
+              style="background-color: ${appBadgeHex};">${escapeHtml(appName)}${appLevelSup}</span>`;
 
       // Hierarchy crumbs shared by EVERY member print once next to the App
       // badge; each member row then shows only its differentiating tail.
-      const crumbsOf = (a) => [a.sub1, a.sub2, a.sub3, a.sub4, a.sub5, a.sub6].filter(Boolean);
+      // Each crumb carries its hierarchy COLUMN name so footnote superscripts
+      // attach to the exact level the printed table marks (footnoteMarks.levels).
+      const crumbsOf = (a) => [
+        [a.sub1, 'App_s1'], [a.sub2, 'App_s2'], [a.sub3, 'App_s3'],
+        [a.sub4, 'App_s4'], [a.sub5, 'App_s5'], [a.sub6, 'App_s6'],
+      ].filter(([v]) => v).map(([text, col]) => ({ text, col }));
       const memberCrumbs = members.map(m => crumbsOf(m.application || {}));
       let prefixLen = memberCrumbs[0].length;
       if (isGrouped) {
         for (const crumbs of memberCrumbs) {
           let i = 0;
-          while (i < prefixLen && i < crumbs.length && crumbs[i] === memberCrumbs[0][i]) i++;
+          while (i < prefixLen && i < crumbs.length && crumbs[i].text === memberCrumbs[0][i].text) i++;
           prefixLen = i;
         }
       }
       const crumbSep = '<span class="mx-1.5 text-gray-300">›</span>';
       const sharedCrumbs = memberCrumbs[0].slice(0, prefixLen);
       const breadcrumb = sharedCrumbs.length
-        ? sharedCrumbs.map(c => escapeHtml(c)).join(crumbSep)
+        ? sharedCrumbs.map(c => escapeHtml(c.text) + supFor(app, c.col)).join(crumbSep)
         : '';
 
       // Indoor/outdoor badge — uses the banner color for stronger branding
@@ -647,6 +825,11 @@
         </article>
       `;
 
+      // Chunk-only results (document-body excerpts, reference entries) have no
+      // D1 application row: no checkbox, no "Add to Project" — the excerpt and
+      // its links ARE the card.
+      const isApp = (primary.resultType || 'application') === 'application';
+
       if (isGrouped) {
         // One shared header, then one compact section per adjacent table row.
         // Row-level facts (badges, citation, checkbox, actions) live on the
@@ -669,12 +852,12 @@
       }
 
       // Single-row card: same layout as before, with the actions (Add to
-      // Project / Vitrium / Match) moved off to the side of the title row —
-      // client feedback: condense vertical white space.
+      // Project / Open in Library / Match) moved off to the side of the title
+      // row — client feedback: condense vertical white space.
       return cardShell(`
         <div class="flex items-start justify-between gap-2 mb-1.5">
           <div class="flex items-start gap-2.5 min-w-0">
-            ${isDeprecated ? '' : `<input
+            ${(isDeprecated || !isApp) ? '' : `<input
               type="checkbox"
               class="result-checkbox mt-0.5 rounded accent-ies-blue shrink-0"
               value="${escapeHtml(app.code || '')}"
@@ -692,7 +875,7 @@
         <div class="flex items-center justify-between gap-2 flex-wrap mb-1 pl-[26px]">
           <div class="flex items-baseline flex-wrap gap-x-2 gap-y-1 min-w-0">
             ${appBadge}
-            ${breadcrumb ? `<span class="text-sm text-gray-600 font-medium">${breadcrumb}</span>` : ''}
+            ${breadcrumb ? `<span class="text-sm text-gray-600 font-medium">${breadcrumb}${supForRow(app)}</span>` : supForRow(app)}
           </div>
           ${actionsCluster(primary, appName)}
         </div>
@@ -706,12 +889,15 @@
 
     // One section of a grouped card = one adjacent table row: header line
     // (checkbox + differentiator + row badges | actions), citation, data.
+    // tailCrumbs are {text, col} objects, so each level's footnote superscript
+    // renders on the exact label the printed table marks; row-level markers
+    // append after the tail.
     function renderMemberSection(result, tailCrumbs, i, appName, crumbSep, seenExcerpts) {
       const app = result.application || {};
       const label = tailCrumbs.length
-        ? tailCrumbs.map(c => escapeHtml(c)).join(crumbSep)
-        : (app.rowRef ? `Row ${escapeHtml(String(app.rowRef))}` : escapeHtml(app.fullName || app.code || ''));
-      const name = tailCrumbs.length ? `${appName} › ${tailCrumbs.join(' › ')}` : appName;
+        ? tailCrumbs.map(c => escapeHtml(c.text) + supFor(app, c.col)).join(crumbSep) + supForRow(app)
+        : (app.rowRef ? `Row ${escapeHtml(String(app.rowRef))}` : escapeHtml(app.fullName || app.code || '')) + supForRow(app);
+      const name = tailCrumbs.length ? `${appName} › ${tailCrumbs.map(c => c.text).join(' › ')}` : appName;
 
       return `
         <div class="${i > 0 ? 'mt-2.5 pt-2.5 border-t border-gray-100' : 'mt-1.5'}">
@@ -773,25 +959,43 @@
     }
 
     // Compact action cluster shown off to the side of a result row:
-    // Match % · Vitrium link · Add to Project.
+    // Match % · Open in Library (primary) · Add to Project.
+    //
+    // "Open in Library" (formerly the "Vitrium" text link — client feedback:
+    // unclear name, visually secondary) is now a filled button with the same
+    // visual weight as "Add to Project", differentiated by fill color, and
+    // listed first as the primary action per result card.
     function actionsCluster(result, name) {
       const app = result.application || {};
       const score = result.relevanceScore || 0;
+      const isApp = (result.resultType || 'application') === 'application';
 
-      const vitriumBtn = result.vitriumLink ? `
-        <a href="${escapeHtml(result.vitriumLink)}" target="_blank" rel="noopener"
-           class="text-xs text-ies-blue hover:underline flex items-center gap-1" title="View in Vitrium">
-          <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+      const linkSvg = `<svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
             <path stroke-linecap="round" stroke-linejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/>
-          </svg>
-          Vitrium
+          </svg>`;
+      const filledLink = (href, label, title) => `
+        <a href="${escapeHtml(href)}" target="_blank" rel="noopener"
+           class="text-xs px-2.5 py-1 bg-emerald-700 text-white rounded-lg hover:bg-emerald-800 transition font-medium flex items-center gap-1"
+           title="${escapeHtml(title)}">
+          ${linkSvg}
+          ${escapeHtml(label)}
         </a>
-      ` : '';
+      `;
 
-      return `
-        <div class="flex items-center gap-2.5 shrink-0 no-print">
-          ${score > 0 ? `<span class="text-xs text-gray-300 tabular-nums">Match: ${Math.round(score * 100)}%</span>` : ''}
-          ${vitriumBtn}
+      // Reference entries link per the priority order resolved server-side:
+      // Lighting Library → DOI → source URL → no link (never fabricated).
+      let primaryLink = '';
+      if (result.resultType === 'reference') {
+        const ref = result.referenceLink;
+        if (ref?.url) {
+          const label = ref.type === 'library' ? 'Open in Library' : ref.type === 'doi' ? 'View via DOI' : 'View Source';
+          primaryLink = filledLink(ref.url, label, 'Open the referenced document');
+        }
+      } else if (result.vitriumLink) {
+        primaryLink = filledLink(result.vitriumLink, 'Open in Library', 'Open in the IES Lighting Library');
+      }
+
+      const addToProjectBtn = isApp ? `
           <button
             class="add-to-project-btn text-xs px-2.5 py-1 bg-ies-blue text-white rounded-lg hover:bg-ies-blue-dark transition font-medium flex items-center gap-1"
             data-code="${escapeHtml(app.code || '')}"
@@ -802,7 +1006,13 @@
               <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/>
             </svg>
             Add to Project
-          </button>
+          </button>` : '';
+
+      return `
+        <div class="flex items-center gap-2.5 shrink-0 no-print">
+          ${score > 0 ? `<span class="text-xs text-gray-300 tabular-nums">Match: ${Math.round(score * 100)}%</span>` : ''}
+          ${primaryLink}
+          ${addToProjectBtn}
         </div>
       `;
     }
@@ -870,20 +1080,29 @@
       const excerpts = Array.isArray(result.excerpts)
         ? result.excerpts
         : (result.excerpt ? [result.excerpt] : []);
+      // Reference entries bypass the table-dump heuristic: bibliography lines
+      // are legitimately digit-heavy (years, page ranges, DOIs) but are the
+      // whole point of a reference result.
       const proseExcerpts = excerpts.filter(e =>
-        e && e.text && e.chunkType !== 'table' && !looksLikeTableDump(e.text)
+        e && e.text && e.chunkType !== 'table'
+          && (e.chunkType === 'reference' || !looksLikeTableDump(e.text))
           && !(seenExcerpts && seenExcerpts.has(e.text))
       );
       if (seenExcerpts) proseExcerpts.forEach(e => seenExcerpts.add(e.text));
+      const excerptHeading = result.resultType === 'reference' ? 'Reference Entry' : 'From the Standard';
       const excerptBlock = proseExcerpts.length > 0 ? `
         <div class="mt-2 pt-2 border-t border-gray-100">
-          <p class="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-1.5">From the Standard</p>
-          ${proseExcerpts.slice(0, 2).map(e => `
+          <p class="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-1.5">${excerptHeading}</p>
+          ${proseExcerpts.slice(0, 2).map(e => {
+            // Reference entries render in full (they are short and their tail
+            // carries the year/publisher/DOI); body excerpts stay compact.
+            const cap = e.chunkType === 'reference' ? 500 : 240;
+            return `
             <div class="text-xs text-gray-600 leading-relaxed mb-2 pl-3 border-l-2 border-gray-200">
-              "${escapeHtml((e.text || '').substring(0, 240))}${(e.text || '').length > 240 ? '…' : ''}"
+              "${escapeHtml((e.text || '').substring(0, cap))}${(e.text || '').length > cap ? '…' : ''}"
               <span class="ml-1 text-gray-400">${e.section ? `§${escapeHtml(e.section)} · ` : ''}${e.pageNumber != null ? `p. ${e.pageNumber}` : ''}</span>
             </div>
-          `).join('')}
+          `; }).join('')}
         </div>
       ` : '';
 
@@ -1150,10 +1369,14 @@
       document.getElementById('ai-summary-card').classList.add('hidden');
       document.getElementById('no-results').classList.add('hidden');
       document.getElementById('no-strong-match-banner').classList.add('hidden');
-      currentResultCodes = [];
+      const chips = document.getElementById('doc-chips');
+      chips.classList.add('hidden');
+      chips.classList.remove('flex');
+      chips.innerHTML = '';
       selectedApplicationCodes = new Set();
       allResults = [];
       currentPage = 1;
+      activeDocFilter = null;
       updateBulkActionsUI();
     }
 
@@ -1164,9 +1387,23 @@
       updateBulkActionsUI();
     }
 
+    // Application codes eligible for bulk selection — scoped to the VISIBLE
+    // pool, so "All" under an active doc chip only selects that document's
+    // rows, never hidden ones.
+    function selectableCodes() {
+      return visibleResults()
+        .filter(r => (r.resultType || 'application') === 'application' && !r.isDeprecated)
+        .map(r => r.application?.code)
+        .filter(Boolean);
+    }
+
     function toggleSelectAll(checked) {
-      selectedApplicationCodes = checked ? new Set(currentResultCodes) : new Set();
-      document.querySelectorAll('.result-checkbox').forEach(cb => cb.checked = checked);
+      const codes = selectableCodes();
+      if (checked) codes.forEach(c => selectedApplicationCodes.add(c));
+      else codes.forEach(c => selectedApplicationCodes.delete(c));
+      document.querySelectorAll('.result-checkbox').forEach(cb => {
+        cb.checked = selectedApplicationCodes.has(cb.dataset.code);
+      });
       updateBulkActionsUI();
     }
 
@@ -1175,13 +1412,14 @@
       const addSelectedBtn = document.getElementById('add-selected-btn');
       const label = document.getElementById('add-selected-label');
       const selectAll = document.getElementById('select-all-results');
-      const hasResults = currentResultCodes.length > 0;
+      const pool = selectableCodes();
+      const hasResults = pool.length > 0;
       const n = selectedApplicationCodes.size;
 
       bulkActions.classList.toggle('hidden', !hasResults);
       addSelectedBtn.disabled = n === 0;
       label.textContent = `Add to Project${n > 0 ? ` (${n})` : ''}`;
-      if (selectAll) selectAll.checked = hasResults && n === currentResultCodes.length;
+      if (selectAll) selectAll.checked = hasResults && pool.every(c => selectedApplicationCodes.has(c));
     }
 
     function escapeHtml(str) {
@@ -1203,8 +1441,22 @@
       if (cb) toggleSelection(cb.dataset.code, cb.checked);
     });
 
+    // Delegated doc-chip clicks (chips are re-rendered on every filter change)
+    document.getElementById('doc-chips').addEventListener('click', e => {
+      const chip = e.target.closest('.doc-chip');
+      if (chip) setDocFilter(chip.dataset.std || null);
+    });
+
     // Close modal on Escape
     document.addEventListener('keydown', e => { if (e.key === 'Escape') closeProjectModal(); });
+
+    // ── Feature-flag init ────────────────────────────────────────────────────
+    // Compare Versions ships dark until the deprecated corpus is confirmed
+    // live in the target environment (FEATURES.compareVersions).
+    if (FEATURES.compareVersions) {
+      document.getElementById('filter-ct-compare-wrap').style.display = 'flex';
+      document.getElementById('sample-compare').classList.remove('hidden');
+    }
   </script>
 </body>
 </html>

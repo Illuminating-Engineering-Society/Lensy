@@ -228,9 +228,6 @@ function extractFromPages(tablePages, standardId, fullDesignation) {
   const offGrid = (line) =>
     bodyFont != null && Math.abs((line.fontSize ?? bodyFont) - bodyFont) > BODY_FONT_TOLERANCE;
 
-  // Boilerplate / header lines to skip
-  const SKIP_RE = /^(?:ANSI\/IES|Recommended Practice|Recommended Illuminance|APPLICATION|Target E[hv]|Horizontal Illuminance|Vertical Illuminance|Environmental and Visual|Uniformity|TaskRatio|Lux\s*@|Fc\s*@|@\s*Height|See Notes|TS\s*=|Class of Play|Veiling Risk|Sub Category|Hierarchy|App_s)/i;
-
   // Recognize start of a new table (could be A-1, A-2, A-3 ...)
   // We don't reset hierarchy on new table — the IES schema treats them
   // as sub-views of the same application taxonomy.
@@ -245,32 +242,40 @@ function extractFromPages(tablePages, standardId, fullDesignation) {
   let tableRef = 'Table A-1';
   let pendingLink = null;  // cross-reference captured from a "Refer to ANSI/IES ..." hierarchy line
 
+  // Header-scoped footnote refs, indexed by hierarchy depth (0 = Sub_Category,
+  // 1 = App, 2..7 = App_s1..App_s6). A footnote marker printed on a HEADER
+  // line ("Emergency department entry¹") scopes to that header — the printed
+  // table shows it once at the application level, NOT independently on each
+  // Day/Night sub-row (client feedback, "ambulance" reproduction). Each entry
+  // is { name, refs } and is cleared whenever its slot (or an ancestor) is
+  // overwritten.
+  const headerRefs = new Array(8).fill(null);
+
   for (const page of tablePages) {
     const ref = detectTableRef(page.text);
     if (ref) tableRef = ref;
 
     // Footnote support (client feedback: associate footnotes with results).
-    // The criteria grid renders each row's note references as a separate
-    // TINY-font line right below the row ("1, 3, 6" at ~4.7pt under a 7.1pt
-    // body), and the note definitions under an "Application Task/Area Notes"
-    // heading at the prose font. Collect the definitions first, attach the
-    // refs to rows as we walk, resolve at end of page.
+    // The criteria grid renders footnote markers as separate TINY-font numeric
+    // lines ("1, 3, 6" at ~4.7pt beside a 7.1pt body). A marker belongs to the
+    // line it is PRINTED NEXT TO — which, in the extracted text stream, may
+    // come before OR after its target (superscripts sit slightly above the
+    // baseline and can sort either way). Bind each ref line to its nearest
+    // body line by Y distance in a pre-pass, instead of assuming "previous
+    // data row" — that assumption mis-attributed header footnotes to whatever
+    // row happened to parse last.
+    const pageLines = page.lines || [];
+    const { refsByTarget, refLineIdxs } = bindFootnoteRefLines(pageLines, bodyFont);
     const noteMap = collectPageNotes(page, bodyFont);
     const pageRecords = [];
-    let lastRecord = null; // most recent data row — target for footnote refs
 
-    // Detect a "Sub Category" announce line if present
-    for (const line of (page.lines || [])) {
+    for (let li = 0; li < pageLines.length; li++) {
+      const line = pageLines[li];
       const text = line.text?.trim();
       if (!text) continue;
 
-      // Attach tiny-font numeric ref lines BEFORE the generic skips — a bare
-      // single-digit "4" would otherwise be discarded by the length/page-number
-      // checks below.
-      if (lastRecord && isFootnoteRefLine(text, line, bodyFont)) {
-        lastRecord._noteRefs = (lastRecord._noteRefs || []).concat(parseNoteRefs(text));
-        continue;
-      }
+      // Tiny-font ref lines were consumed by the pre-pass binding.
+      if (refLineIdxs.has(li)) continue;
 
       if (text.length < 2) continue;
       if (SKIP_RE.test(text)) continue;
@@ -285,7 +290,7 @@ function extractFromPages(tablePages, standardId, fullDesignation) {
         hierarchy.app = null;
         hierarchy.s1 = hierarchy.s2 = hierarchy.s3 = null;
         hierarchy.s4 = hierarchy.s5 = hierarchy.s6 = null;
-        lastRecord = null;
+        headerRefs.fill(null);
         continue;
       }
 
@@ -303,21 +308,35 @@ function extractFromPages(tablePages, standardId, fullDesignation) {
         // Basis") that share a Y band with the table but are not hierarchy.
         const deepestLevel = levels[levels.length - 1] ?? baseX;
         if ((line.x ?? baseX) > deepestLevel + INDENT_TOLERANCE) continue;
-        const { name, link } = splitNameAndLink(parsed.label);
+        const { name: rawName, link } = splitNameAndLink(parsed.label);
+        const { name, refs: gluedRefs } = stripGluedSuperscripts(rawName);
         if (name.length < 2) continue;
-        applyHierarchyAtDepth(hierarchy, depth, name);
+        const effDepth = applyHierarchyAtDepth(hierarchy, depth, name);
+        // This slot and everything deeper was just reset — stale refs go too.
+        for (let d = effDepth; d < headerRefs.length; d++) headerRefs[d] = null;
+        const boundRefs = dedupeNums([...(refsByTarget.get(li) || []), ...gluedRefs]);
+        if (boundRefs.length > 0) headerRefs[effDepth] = { name, refs: boundRefs };
         if (link) pendingLink = link;
-        // A ref line after a header annotates the header, not the last row.
-        lastRecord = null;
         continue;
       }
 
       // Data row — snapshot hierarchy with leaf, build record
       const { name: leafRaw, link: leafLink } = splitNameAndLink(parsed.label);
-      const leafName = cleanAppName(leafRaw);
+      const { name: leafStripped, refs: leafGluedRefs } = stripGluedSuperscripts(leafRaw);
+      const leafName = cleanAppName(leafStripped);
       const rowLink = leafLink || pendingLink;
       pendingLink = null;
       const snapshot = snapshotHierarchyWithLeaf(hierarchy, depth, leafName);
+
+      // Footnote marks for this record: header-level marks inherited from
+      // ancestor headers still present in the snapshot, plus marks printed on
+      // the data row itself.
+      const headerLevels = collectHeaderMarks(snapshot, headerRefs);
+      const rowMarks = dedupeNums([...(refsByTarget.get(li) || []), ...leafGluedRefs]);
+      const allRefNums = dedupeNums([
+        ...Object.values(headerLevels).flat(),
+        ...rowMarks,
+      ]);
 
       const tm24 = isTM24EligibleCat(parsed.horCat) || isTM24EligibleCat(parsed.verCat);
       const code = `${standardId.replace(/[^A-Z0-9]/gi, '')}_${String(rowIndex).padStart(4, '0')}`;
@@ -379,6 +398,9 @@ function extractFromPages(tablePages, standardId, fullDesignation) {
         Spectrum_Guidance: parsed.spectrum,
         Controls_Required: parsed.controls,
         Footnotes:     null,
+        Footnote_Marks: (Object.keys(headerLevels).length > 0 || rowMarks.length > 0)
+          ? JSON.stringify({ levels: headerLevels, row: rowMarks })
+          : null,
         General_Notes: null,
         App_Notes:     null,
         Vitrium_Doc_ID:    null,
@@ -386,8 +408,9 @@ function extractFromPages(tablePages, standardId, fullDesignation) {
         Active: 1,
       });
 
-      lastRecord = records[records.length - 1];
-      pageRecords.push(lastRecord);
+      const rec = records[records.length - 1];
+      if (allRefNums.length > 0) rec._noteRefs = allRefNums;
+      pageRecords.push(rec);
       rowIndex++;
     }
 
@@ -413,6 +436,11 @@ function extractFromPages(tablePages, standardId, fullDesignation) {
   return records;
 }
 
+// Boilerplate / header lines the record loop skips. Module-scoped: also used
+// by bindFootnoteRefLines to keep footnote refs off lines that never become
+// hierarchy or data nodes.
+const SKIP_RE = /^(?:ANSI\/IES|Recommended Practice|Recommended Illuminance|APPLICATION|Target E[hv]|Horizontal Illuminance|Vertical Illuminance|Environmental and Visual|Uniformity|TaskRatio|Lux\s*@|Fc\s*@|@\s*Height|See Notes|TS\s*=|Class of Play|Veiling Risk|Sub Category|Hierarchy|App_s)/i;
+
 // ─── Footnotes ────────────────────────────────────────────────────────────────
 
 /** A row's footnote references render as a bare numeric list ("4", "1, 3, 6")
@@ -425,6 +453,123 @@ function isFootnoteRefLine(text, line, bodyFont) {
 
 function parseNoteRefs(text) {
   return text.split(',').map(s => parseInt(s.trim(), 10)).filter(Number.isFinite);
+}
+
+function dedupeNums(nums) {
+  return [...new Set(nums)].sort((a, b) => a - b);
+}
+
+// A superscript marker line sits slightly above or below the baseline of the
+// line it annotates; anything farther than this is a different row entirely.
+const FOOTNOTE_Y_BIND_RADIUS = 8; // pt
+
+/**
+ * Pre-pass: bind every tiny-font footnote ref line on a page to the body line
+ * it annotates, by nearest Y distance. Returns:
+ *   refsByTarget  Map<lineIndex, number[]>  — target line index → footnote numbers
+ *   refLineIdxs   Set<lineIndex>            — indexes of the ref lines themselves
+ *
+ * When no line lies within the Y radius (or Y data is missing), fall back to
+ * the nearest PRECEDING body line — the old sequential behavior, kept as a
+ * safety net rather than the primary rule.
+ */
+function bindFootnoteRefLines(lines, bodyFont) {
+  const refsByTarget = new Map();
+  const refLineIdxs = new Set();
+
+  // A ref may only bind to a line the record loop actually CONSUMES as a
+  // hierarchy or data node — mirroring the loop's own skip checks. Binding to
+  // a column-header fragment, table title, page number or prose line would
+  // silently swallow the footnote.
+  const isBindableTarget = (l) => {
+    const t = (l.text || '').trim();
+    if (t.length < 2 || t.length > 200) return false;
+    if (isFootnoteRefLine(t, l, bodyFont)) return false;
+    if (SKIP_RE.test(t)) return false;
+    if (/^Table\s+[A-Z]?-?\d/i.test(t)) return false;
+    if (/^\d+$/.test(t)) return false;
+    if (bodyFont != null && l.fontSize != null && Math.abs(l.fontSize - bodyFont) > BODY_FONT_TOLERANCE) {
+      // Off-font lines are skipped by the loop — except sub-category banners,
+      // which are consumed before the font check.
+      return SUB_CATEGORY_RE.test(t);
+    }
+    return true;
+  };
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const text = (line.text || '').trim();
+    if (!isFootnoteRefLine(text, line, bodyFont)) continue;
+    refLineIdxs.add(i);
+    const refs = parseNoteRefs(text);
+    if (refs.length === 0) continue;
+
+    let best = -1;
+    let bestDist = Infinity;
+    if (line.y != null) {
+      for (let j = 0; j < lines.length; j++) {
+        if (j === i) continue;
+        const cand = lines[j];
+        if (cand.y == null || !isBindableTarget(cand)) continue;
+        const dist = Math.abs(cand.y - line.y);
+        if (dist <= FOOTNOTE_Y_BIND_RADIUS && dist < bestDist) {
+          best = j;
+          bestDist = dist;
+        }
+      }
+    }
+    if (best < 0) {
+      for (let j = i - 1; j >= 0; j--) {
+        if (isBindableTarget(lines[j])) { best = j; break; }
+      }
+    }
+    if (best >= 0) {
+      refsByTarget.set(best, [...(refsByTarget.get(best) || []), ...refs]);
+    }
+  }
+
+  return { refsByTarget, refLineIdxs };
+}
+
+const SUPERSCRIPT_DIGITS = { '⁰': '0', '¹': '1', '²': '2', '³': '3', '⁴': '4', '⁵': '5', '⁶': '6', '⁷': '7', '⁸': '8', '⁹': '9' };
+
+/**
+ * Strip a trailing glued unicode superscript from a label ("Emergency
+ * department entry¹" → name "Emergency department entry", refs [1]). Only
+ * unicode superscript glyphs are treated as footnote markers — trailing ASCII
+ * digits can be legitimate name content ("Court 2").
+ */
+function stripGluedSuperscripts(name) {
+  const trimmed = (name || '').trim();
+  const m = /([¹²³⁴⁵⁶⁷⁸⁹⁰]+)\s*$/.exec(trimmed);
+  if (!m) return { name: trimmed, refs: [] };
+  const n = parseInt([...m[1]].map(c => SUPERSCRIPT_DIGITS[c]).join(''), 10);
+  return {
+    name: trimmed.slice(0, m.index).trim(),
+    refs: Number.isFinite(n) ? [n] : [],
+  };
+}
+
+const LEVEL_COLS = ['Sub_Category', 'App', 'App_s1', 'App_s2', 'App_s3', 'App_s4', 'App_s5', 'App_s6'];
+
+/**
+ * Header marks applicable to one record: every headerRefs entry whose name is
+ * still present at its depth in the record's hierarchy snapshot. The name
+ * check is defense in depth — slots are cleared on overwrite, so a mismatch
+ * means the hierarchy moved without us noticing.
+ */
+function collectHeaderMarks(snapshot, headerRefs) {
+  const chain = [
+    snapshot.subCategory, snapshot.app, snapshot.s1, snapshot.s2,
+    snapshot.s3, snapshot.s4, snapshot.s5, snapshot.s6,
+  ];
+  const levels = {};
+  for (let d = 0; d < headerRefs.length; d++) {
+    const h = headerRefs[d];
+    if (!h || h.refs.length === 0) continue;
+    if (chain[d] === h.name) levels[LEVEL_COLS[d]] = h.refs;
+  }
+  return levels;
 }
 
 const MAX_NOTE_LENGTH = 600;
@@ -690,6 +835,7 @@ function parsePrefixMarkers(prefix) {
 
 // ─── Hierarchy Helpers ────────────────────────────────────────────────────────
 
+/** @returns {number} the EFFECTIVE depth the name was written at (after clamping) */
 function applyHierarchyAtDepth(h, depth, name) {
   // Clamp so a hierarchy line can't skip an empty ancestor slot (same nesting
   // invariant as the leaf snapshot). The source occasionally indents a child
@@ -725,6 +871,7 @@ function applyHierarchyAtDepth(h, depth, name) {
     default:
       h.s6 = name;
   }
+  return Math.min(depth, 7);
 }
 
 function snapshotHierarchyWithLeaf(h, depth, leafName) {

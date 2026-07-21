@@ -27,15 +27,18 @@
  * throws, we return null / no-op so search still works — just uncached.
  */
 
-const EMBEDDING_TTL_SECONDS = 60 * 60 * 24 * 30; // 30 days — deterministic data
-const SEARCH_TTL_SECONDS = 60 * 60 * 24;         // 24 hours — bounds out-of-band staleness
+const EMBEDDING_TTL_SECONDS = 60 * 60 * 24 * 30;  // 30 days — deterministic data
+const SEARCH_TTL_SECONDS = 60 * 60 * 24;          // 24 hours — bounds out-of-band staleness
+const AI_SUMMARY_TTL_SECONDS = 60 * 60 * 24 * 7;  // 7 days — keyed by query+results+dataVersion
 const DATA_VERSION_KEY = 'cache:data-version';
 
 // Bump whenever the search pipeline changes what a cached response contains
 // (result ordering, excerpt attachment, chunk filtering, payload shape...).
 // The data version only tracks corpus changes, so without this stamp a deploy
 // would keep serving responses computed by the previous code for up to a TTL.
-const SEARCH_CACHE_SCHEMA = 'v3';
+// v4: full-title citations, content-type filters, footnote marks, reference
+//     results, referenceLink field.
+const SEARCH_CACHE_SCHEMA = 'v4';
 
 // ─── Hashing ──────────────────────────────────────────────────────────────────
 
@@ -133,5 +136,38 @@ export async function putCachedSearch(kv, key, payload) {
     await kv.put(key, JSON.stringify(payload), { expirationTtl: SEARCH_TTL_SECONDS });
   } catch (err) {
     console.error('cache: search put failed (non-fatal):', err.message);
+  }
+}
+
+// ─── AI Summary Cache ─────────────────────────────────────────────────────────
+//
+// The 70B summary model is by far the most expensive Workers AI call. The
+// full-response cache only covers EXACT parameter matches — the same query
+// with a different limit/units/filter combination re-runs the summary even
+// though its inputs (query + the results fed into the prompt) are identical.
+// This layer keys on exactly those inputs, so any request shape that produces
+// the same top results reuses the generated summary. The data version keeps
+// summaries from outliving the corpus they describe.
+
+export async function buildAISummaryCacheKey(dataVersion, model, query, resultCodes) {
+  const hash = await sha256Hex(`${model}\n${query}\n${(resultCodes || []).join(',')}`);
+  return `cache:ai:${SEARCH_CACHE_SCHEMA}:${dataVersion}:${hash}`;
+}
+
+export async function getCachedAISummary(kv, key) {
+  if (!kv) return null;
+  try {
+    return await kv.get(key, { type: 'json' });
+  } catch {
+    return null;
+  }
+}
+
+export async function putCachedAISummary(kv, key, summary) {
+  if (!kv || !summary) return;
+  try {
+    await kv.put(key, JSON.stringify(summary), { expirationTtl: AI_SUMMARY_TTL_SECONDS });
+  } catch (err) {
+    console.error('cache: AI summary put failed (non-fatal):', err.message);
   }
 }

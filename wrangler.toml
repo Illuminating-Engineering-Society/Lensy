@@ -9,7 +9,18 @@
 #   wrangler vectorize create ies-standards-deprecated-vectors --dimensions=768 --metric=cosine
 #   wrangler kv namespace create ies-sessions  → copy id below
 #
+# Metadata indexes (required for filtered Vectorize queries — filters only
+# apply to vectors inserted AFTER the index exists, so create these before
+# ingesting; re-ingest afterwards if they were added later):
+#   wrangler vectorize create-metadata-index ies-standards-vectors --property-name=standard_code --type=string
+#   wrangler vectorize create-metadata-index ies-standards-vectors --property-name=chunk_type --type=string
+#     (chunk_type powers the References-only search mode; without it the
+#      reference-scoped query falls back to the shared top-K pool)
+#
 # Then set secrets (do NOT commit real keys):
+#   wrangler secret put LUCIUS_API_SECRET    ← REQUIRED before production deploy:
+#                                              ingest + admin endpoints fail closed
+#                                              without it when ENVIRONMENT=production
 #   wrangler secret put VITRIUM_API_KEY
 #   wrangler secret put SHAREPOINT_TOKEN
 
@@ -50,6 +61,16 @@ id = "42532fedadc54caf899f190ec3d7eea7"
 # ─── Workers AI: Embeddings + AI Summaries ───────────────────────────────────
 [ai]
 binding = "AI"
+
+# ─── Rate Limiting: /api/search (Workers Rate Limiting API) ──────────────────
+# Protects the Workers AI budget from abusive clients. Keyed by client IP;
+# 60 searches/min is far above any human usage. The Worker fails OPEN if the
+# binding is missing or errors, so removing this block only removes the limit.
+[[unsafe.bindings]]
+name = "SEARCH_RATE_LIMITER"
+type = "ratelimit"
+namespace_id = "1001"
+simple = { limit = 60, period = 60 }
 
 # ─── Environment Variables (non-secret) ──────────────────────────────────────
 [vars]
