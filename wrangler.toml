@@ -85,7 +85,22 @@ ENVIRONMENT = "production"
 # VITRIUM_API_KEY
 # SHAREPOINT_TOKEN
 
-# ─── Routes ───────────────────────────────────────────────────────────────────
+# ─── Routes / Custom Domain ───────────────────────────────────────────────────
+# Serves the Worker at lensy.ies.org instead of the default *.workers.dev URL.
+#
+# REQUIRES the ies.org DNS zone (or a delegated lensy.ies.org zone) to already
+# be present in this Cloudflare account — that's a manual step, done once, via
+# either:
+#   (a) the "Domains" tab on this Worker in the dashboard → Add Custom Domain, or
+#   (b) letting this route provision automatically on `wrangler deploy` /
+#       Workers Builds, IF the zone is already in the account.
+# If the zone is NOT in this account yet, deploy will fail with a clear error
+# naming the missing zone — that's expected until IES's DNS is added/delegated
+# here. Removing this block does not affect the *.workers.dev URL.
+[[routes]]
+pattern = "lensy.ies.org"
+custom_domain = true
+
 [triggers]
 crons = []  # Add scheduled tasks here if needed
 
