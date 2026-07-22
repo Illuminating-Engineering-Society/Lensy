@@ -43,6 +43,9 @@
 
 import { bumpDataVersion } from '../lib/cache';
 import { checkAuth } from '../lib/auth';
+import type { ApplicationRow, IngestChunk, TableData } from '../types';
+
+function errMsg(err: unknown): string { return err instanceof Error ? err.message : String(err); }
 
 const EMBED_MODEL = '@cf/baai/bge-base-en-v1.5';
 const EMBED_BATCH = 100;       // Workers AI max per call
@@ -50,7 +53,7 @@ const EMBED_MAX_ATTEMPTS = 3;  // retries per embedding batch (transient AI erro
 const VECTORIZE_BATCH = 1000;  // Vectorize max per upsert
 const DELETE_BATCH = 200;      // Vectorize deleteByIds batch size
 
-export async function handleIngest(request, env) {
+export async function handleIngest(request: Request, env: Env): Promise<Response> {
   // Ingest rewrites the searchable corpus — shared-secret protected, and
   // fail-closed in production when no secret is configured (see lib/auth.js).
   const auth = await checkAuth(request, env);
@@ -75,8 +78,8 @@ export async function handleIngest(request, env) {
 // ─── PDF Chunk Ingestion ───────────────────────────────────────────────────────
 // Called by scripts/ingest-pdfs.js after it has parsed the PDF locally.
 
-async function ingestParsedPDF(request, env) {
-  let body;
+async function ingestParsedPDF(request: Request, env: Env): Promise<Response> {
+  let body: any;
   try {
     body = await request.json();
   } catch {
@@ -108,7 +111,7 @@ async function ingestParsedPDF(request, env) {
   // for stale-vector cleanup when a re-ingest produces FEWER chunks.
   const existing = await env.DB.prepare(
     'SELECT status, chunk_count FROM standards WHERE id = ?'
-  ).bind(standardId).first();
+  ).bind(standardId).first<{ status: string; chunk_count: number | null }>();
 
   if (isDeprecated) {
     // Deprecated values must never be served as current guidance.
@@ -177,7 +180,7 @@ async function ingestParsedPDF(request, env) {
   // Deprecated chunks go to the dedicated deprecated index, never the main one.
   const targetIndex = isDeprecated ? env.VECTORIZE_DEPRECATED : env.VECTORIZE;
   for (let i = 0; i < vectors.length; i += VECTORIZE_BATCH) {
-    await targetIndex.upsert(vectors.slice(i, i + VECTORIZE_BATCH));
+    await targetIndex.upsert(vectors.slice(i, i + VECTORIZE_BATCH) as unknown as VectorizeVector[]);
   }
 
   // ── 3b. Stale-vector cleanup ───────────────────────────────────────────────
@@ -210,13 +213,13 @@ async function ingestParsedPDF(request, env) {
         staleDeleted += await deleteVectorRange(targetIndex, standardId, chunks.length, null);
       }
     } catch (err) {
-      console.error(`stale vector cleanup failed for ${standardId} (non-fatal):`, err.message);
+      console.error(`stale vector cleanup failed for ${standardId} (non-fatal):`, errMsg(err));
     }
   }
 
   // ── 4. Persist standard metadata + tables to D1 (skip for app-only batches) ─
   // Store tables as a compact JSON array (page, header, row count, footnotes)
-  const tablesCompact = (tables || []).map(t => ({
+  const tablesCompact = (tables || []).map((t: TableData) => ({
     pageNumber: t.pageNumber,
     header: t.header,
     rowCount: (t.rows || []).length,
@@ -307,11 +310,11 @@ const PROBE_HARD_CAP = 5000;
  * window via getByIds and delete whatever exists, stopping at the first
  * fully-empty window. Returns the number of vectors deleted.
  */
-async function deleteVectorRange(index, standardId, startIndex, endIndex) {
+async function deleteVectorRange(index: VectorizeIndex, standardId: string, startIndex: number, endIndex: number | null): Promise<number> {
   let deleted = 0;
 
   if (endIndex != null) {
-    const ids = [];
+    const ids: string[] = [];
     for (let n = startIndex; n < endIndex; n++) ids.push(`${standardId}-chunk-${n}`);
     for (let i = 0; i < ids.length; i += DELETE_BATCH) {
       const batch = ids.slice(i, i + DELETE_BATCH);
@@ -324,7 +327,7 @@ async function deleteVectorRange(index, standardId, startIndex, endIndex) {
   for (let start = startIndex; start < startIndex + PROBE_HARD_CAP; start += PROBE_WINDOW) {
     const ids = Array.from({ length: PROBE_WINDOW }, (_, j) => `${standardId}-chunk-${start + j}`);
     const found = await index.getByIds(ids);
-    const foundIds = (found || []).map(v => v.id).filter(Boolean);
+    const foundIds = (found || []).map((v: { id: string }) => v.id).filter(Boolean);
     if (foundIds.length === 0) break; // past the end of the stale tail
     const res = await index.deleteByIds(foundIds);
     deleted += res?.count ?? foundIds.length;
@@ -336,9 +339,9 @@ async function deleteVectorRange(index, standardId, startIndex, endIndex) {
  * Per-ingest coverage stats persisted to standards.coverage_json — the raw
  * material for the /api/admin/index-status full-indexing report.
  */
-function buildCoverageStats(chunks) {
-  const pages = new Set();
-  const byType = {};
+function buildCoverageStats(chunks: IngestChunk[]): { pagesWithChunks: number; byType: Record<string, number> } {
+  const pages = new Set<number>();
+  const byType: Record<string, number> = {};
   for (const c of chunks) {
     if (c.pageNumber != null) pages.add(c.pageNumber);
     const t = c.type || 'text';
@@ -356,7 +359,7 @@ function buildCoverageStats(chunks) {
  * the superseding standard. Returns null when the family has no Active
  * edition indexed yet — re-ingesting the deprecated PDF later will fill it.
  */
-async function findSupersedingStandard(db, standardId) {
+async function findSupersedingStandard(db: D1Database, standardId: string): Promise<string | null> {
   const m = /^(.+)-\d{2}(?:\+E\d+)?$/.exec(standardId);
   if (!m) return null;
   const family = m[1];
@@ -366,10 +369,10 @@ async function findSupersedingStandard(db, standardId) {
       WHERE status = 'Active' AND id LIKE ?
       ORDER BY year DESC, id DESC
       LIMIT 1
-    `).bind(`${family}-%`).first();
+    `).bind(`${family}-%`).first<{ id: string }>();
     return row?.id || null;
   } catch (err) {
-    console.error('findSupersedingStandard failed (non-fatal):', err.message);
+    console.error('findSupersedingStandard failed (non-fatal):', errMsg(err));
     return null;
   }
 }
@@ -414,7 +417,7 @@ const UPDATE_COLS = APP_COLS.filter(c =>
   c !== 'code' && c !== 'Vitrium_Doc_ID' && c !== 'Vitrium_Deep_Link'
 );
 
-async function upsertApplications(db, applications) {
+async function upsertApplications(db: D1Database, applications: Partial<ApplicationRow>[]): Promise<number> {
   if (applications.length === 0) return 0;
 
   const BATCH = 1; // insert one row at a time to avoid D1 variable limit
@@ -437,7 +440,7 @@ async function upsertApplications(db, applications) {
     `;
 
     const bindings = batch.flatMap(app => APP_COLS.map(col => {
-      const v = app[col];
+      const v = app[col as keyof ApplicationRow];
       return (v === undefined || v === '') ? null : v;
     }));
 
@@ -452,10 +455,10 @@ async function upsertApplications(db, applications) {
 // Re-embeds all D1 application rows into Vectorize.
 // Safe to re-run at any time (upsert is idempotent).
 
-async function ingestApplications(env) {
+async function ingestApplications(env: Env): Promise<Response> {
   const result = await env.DB.prepare(
     'SELECT * FROM applications WHERE Active = 1'
-  ).all();
+  ).all<ApplicationRow>();
 
   const applications = result.results;
   if (applications.length === 0) {
@@ -484,7 +487,7 @@ async function ingestApplications(env) {
   }));
 
   for (let i = 0; i < vectors.length; i += VECTORIZE_BATCH) {
-    await env.VECTORIZE.upsert(vectors.slice(i, i + VECTORIZE_BATCH));
+    await env.VECTORIZE.upsert(vectors.slice(i, i + VECTORIZE_BATCH) as unknown as VectorizeVector[]);
   }
 
   // Corpus changed — invalidate all cached search responses.
@@ -514,8 +517,8 @@ async function ingestApplications(env) {
  *   4. Include indoor/outdoor and area/task as plain English — these
  *      are common query qualifiers.
  */
-function buildApplicationEmbedText(app) {
-  const stripParens = (s) => s ? String(s).replace(/\s*\([^)]*\)\s*/g, ' ').replace(/\s+/g, ' ').trim() : '';
+function buildApplicationEmbedText(app: ApplicationRow): string {
+  const stripParens = (s: string | null | undefined) => s ? String(s).replace(/\s*\([^)]*\)\s*/g, ' ').replace(/\s+/g, ' ').trim() : '';
 
   // Pick the topical noun: App_s1 if it carries content, else App.
   const primary = stripParens(app.App_s1) || stripParens(app.App) || '';
@@ -524,7 +527,7 @@ function buildApplicationEmbedText(app) {
 
   // Mid-hierarchy subdivisions that may add real topical info
   // (skip Lz0–Lz4 zone tags and Upper/Lower limit labels — those are filters).
-  const isFilterToken = (s) =>
+  const isFilterToken = (s: string) =>
     !s || /^Lz\d/i.test(s) || /lower\s+limit|upper\s+limit/i.test(s) ||
     /^(?:I|II|III|IV)$/.test(s);
   const subPath = [app.App_s2, app.App_s3, app.App_s4, app.App_s5, app.App_s6]
@@ -561,8 +564,8 @@ function buildApplicationEmbedText(app) {
 // The Node.js script calls this to get a temporary URL for uploading the PDF to R2.
 // Alternative: the script can use `wrangler r2 object put` directly.
 
-async function getR2UploadUrl(request, env) {
-  const { standardId } = await request.json();
+async function getR2UploadUrl(request: Request, env: Env): Promise<Response> {
+  const { standardId } = await request.json() as { standardId?: string };
   if (!standardId) return jsonResponse({ error: 'standardId required' }, 400);
 
   // R2 presigned URLs are not yet available in Workers (as of early 2025).
@@ -579,8 +582,8 @@ async function getR2UploadUrl(request, env) {
 
 // ─── Shared Helpers ───────────────────────────────────────────────────────────
 
-async function embedInBatches(ai, texts) {
-  const embeddings = [];
+async function embedInBatches(ai: Ai, texts: string[]): Promise<number[][]> {
+  const embeddings: number[][] = [];
   for (let i = 0; i < texts.length; i += EMBED_BATCH) {
     const batch = texts.slice(i, i + EMBED_BATCH);
     const response = await embedWithRetry(ai, batch, i / EMBED_BATCH);
@@ -595,11 +598,11 @@ async function embedInBatches(ai, texts) {
  * document mid-index. The batch either fully succeeds (with one embedding per
  * input) or the ingest fails loudly — never a silent partial.
  */
-async function embedWithRetry(ai, batch, batchIndex) {
-  let lastErr;
+async function embedWithRetry(ai: Ai, batch: string[], batchIndex: number): Promise<{ data: number[][] }> {
+  let lastErr: unknown;
   for (let attempt = 1; attempt <= EMBED_MAX_ATTEMPTS; attempt++) {
     try {
-      const response = await ai.run(EMBED_MODEL, { text: batch });
+      const response = await ai.run(EMBED_MODEL, { text: batch }) as unknown as { data: number[][] };
       if (!Array.isArray(response?.data) || response.data.length !== batch.length) {
         throw new Error(`embedding batch ${batchIndex}: expected ${batch.length} vectors, got ${response?.data?.length ?? 0}`);
       }
@@ -614,7 +617,7 @@ async function embedWithRetry(ai, batch, batchIndex) {
   throw lastErr;
 }
 
-function jsonResponse(data, status = 200) {
+function jsonResponse(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
     status,
     headers: { 'Content-Type': 'application/json' },

@@ -25,7 +25,7 @@
 #   wrangler secret put SHAREPOINT_TOKEN
 
 name = "lensy"
-main = "src/workers/api.js"
+main = "src/workers/api.ts"
 compatibility_date = "2025-01-01"
 compatibility_flags = ["nodejs_compat"]
 

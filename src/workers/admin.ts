@@ -35,6 +35,16 @@
 
 import { bumpDataVersion, getDataVersion } from '../lib/cache';
 import { checkAuth } from '../lib/auth';
+import type { StandardRow, SearchLogRow } from '../types';
+
+interface IndexStatusRow {
+  id: string; title: string; status: string; indexedAt: string | null;
+  chunkCount: number | null; pageCount: number | null; pagesWithChunks: number | null;
+  pageCoveragePct: number | null; chunkTypes: Record<string, number> | null;
+  applicationRows: number;
+  vectorSpotCheck: { probed: number; found: number; missing: string[] } | { error: string } | null;
+  warnings: string[];
+}
 
 const EMBED_MODEL = '@cf/baai/bge-base-en-v1.5';
 const SCAN_DEFAULT_PASSES = 8;
@@ -46,7 +56,7 @@ const DELETE_BATCH = 200;
  * fail-closed in production when the secret is missing (lib/auth.js).
  * Returns a Response to short-circuit with, or null when authorized.
  */
-async function requireAuth(request, env) {
+async function requireAuth(request: Request, env: Env): Promise<Response | null> {
   const auth = await checkAuth(request, env);
   if (auth.ok) return null;
   return jsonResponse({ error: auth.reason || 'Unauthorized' }, auth.reason ? 503 : 401);
@@ -65,7 +75,7 @@ async function requireAuth(request, env) {
  * sit far from our random probes can be missed in a single run. The script
  * caller can re-run for higher confidence.
  */
-export async function handleAdminScanOrphans(request, env) {
+export async function handleAdminScanOrphans(request: Request, env: Env): Promise<Response> {
   const denied = await requireAuth(request, env);
   if (denied) return denied;
 
@@ -75,7 +85,7 @@ export async function handleAdminScanOrphans(request, env) {
 
   const validStandards = await fetchValidStandardIds(env.DB);
 
-  const seenStandards = new Map(); // standard_id → { count, sampleIds: Set }
+  const seenStandards = new Map<string, { count: number; sampleIds: Set<string> }>(); // standard_id → …
   const proseTexts = [
     'lighting recommendations',
     'illuminance category',
@@ -90,7 +100,7 @@ export async function handleAdminScanOrphans(request, env) {
   for (let pass = 0; pass < passes; pass++) {
     // Use varied prose so embeddings cover different parts of the space.
     const text = proseTexts[pass % proseTexts.length];
-    const embRes = await env.AI.run(EMBED_MODEL, { text: [text] });
+    const embRes = await env.AI.run(EMBED_MODEL, { text: [text] }) as unknown as { data: number[][] };
     const queryVector = embRes.data[0];
 
     const result = await env.VECTORIZE.query(queryVector, {
@@ -99,7 +109,7 @@ export async function handleAdminScanOrphans(request, env) {
     });
 
     for (const match of result.matches || []) {
-      const stdId = match.metadata?.standard_id || match.metadata?.standard_code;
+      const stdId = (match.metadata?.standard_id || match.metadata?.standard_code) as string | undefined;
       if (!stdId) continue;
       let entry = seenStandards.get(stdId);
       if (!entry) {
@@ -139,21 +149,21 @@ export async function handleAdminScanOrphans(request, env) {
  *
  * Body: { prefixes: string[], maxIndex?: number = 600 }
  */
-export async function handleAdminEnumerateIds(request, env) {
+export async function handleAdminEnumerateIds(request: Request, env: Env): Promise<Response> {
   const denied = await requireAuth(request, env);
   if (denied) return denied;
   const body = await safeJson(request);
-  const prefixes = Array.isArray(body?.prefixes) ? body.prefixes.filter(p => typeof p === 'string') : [];
+  const prefixes = Array.isArray(body?.prefixes) ? body.prefixes.filter((p: unknown): p is string => typeof p === 'string') : [];
   const maxIndex = Math.min(2000, Math.max(0, body?.maxIndex ?? 600));
   if (prefixes.length === 0) return jsonResponse({ error: 'prefixes[] required' }, 400);
 
   const PROBE_BATCH = 100; // getByIds accepts arrays; cap for safety
-  const found = {};
+  const found: Record<string, string[]> = {};
 
   for (const prefix of prefixes) {
     found[prefix] = [];
     for (let start = 0; start <= maxIndex; start += PROBE_BATCH) {
-      const ids = [];
+      const ids: string[] = [];
       for (let n = start; n < Math.min(start + PROBE_BATCH, maxIndex + 1); n++) {
         ids.push(`${prefix}-chunk-${n}`);
       }
@@ -164,7 +174,7 @@ export async function handleAdminEnumerateIds(request, env) {
     }
   }
 
-  const totalFound = Object.values(found).reduce((s, arr) => s + arr.length, 0);
+  const totalFound = Object.values(found).reduce((s: number, arr: string[]) => s + arr.length, 0);
   return jsonResponse({ prefixes, maxIndex, totalFound, found });
 }
 
@@ -174,12 +184,12 @@ export async function handleAdminEnumerateIds(request, env) {
  * The caller is responsible for the list — typically built by enumerating
  * `${standardId}-chunk-N` for N in a known range. We don't infer.
  */
-export async function handleAdminDeleteOrphans(request, env) {
+export async function handleAdminDeleteOrphans(request: Request, env: Env): Promise<Response> {
   const denied = await requireAuth(request, env);
   if (denied) return denied;
 
   const body = await safeJson(request);
-  const ids = Array.isArray(body?.ids) ? body.ids.filter(x => typeof x === 'string') : [];
+  const ids = Array.isArray(body?.ids) ? body.ids.filter((x: unknown): x is string => typeof x === 'string') : [];
   if (ids.length === 0) return jsonResponse({ error: 'ids[] required' }, 400);
 
   let deleted = 0;
@@ -204,7 +214,7 @@ export async function handleAdminDeleteOrphans(request, env) {
  * no_strong_match, cached. The table carries no user-identifying data by
  * design (privacy requirement) — there is nothing personal to export.
  */
-export async function handleAdminSearchLog(request, env) {
+export async function handleAdminSearchLog(request: Request, env: Env): Promise<Response> {
   const denied = await requireAuth(request, env);
   if (denied) return denied;
 
@@ -217,13 +227,13 @@ export async function handleAdminSearchLog(request, env) {
     SELECT created_at, query, result_count, standards_referenced, no_strong_match, cached
     FROM search_log WHERE 1=1
   `;
-  const bindings = [];
+  const bindings: (string | number)[] = [];
   if (from) { sql += ' AND created_at >= ?'; bindings.push(from); }
   if (to) { sql += ' AND created_at <= ?'; bindings.push(to); }
   sql += ' ORDER BY created_at DESC LIMIT ?';
   bindings.push(limit);
 
-  const result = await env.DB.prepare(sql).bind(...bindings).all();
+  const result = await env.DB.prepare(sql).bind(...bindings).all<SearchLogRow>();
   const rows = result.results || [];
 
   const header = 'created_at,query,result_count,standards_referenced,no_strong_match,cached';
@@ -248,7 +258,7 @@ export async function handleAdminSearchLog(request, env) {
  * CSV-escape one cell. Also neutralizes spreadsheet formula injection —
  * queries are user-supplied free text, and staff open this file in Excel.
  */
-function csvCell(v) {
+function csvCell(v: unknown): string {
   let s = v == null ? '' : String(v);
   if (/^[=+\-@\t\r]/.test(s)) s = `'${s}`;
   return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
@@ -271,7 +281,7 @@ function csvCell(v) {
  * Warnings flag: missing stats (pre-0006 ingest), page coverage below 60%,
  * zero application rows for a NEW_TABLE-era standard, failed spot-checks.
  */
-export async function handleAdminIndexStatus(request, env) {
+export async function handleAdminIndexStatus(request: Request, env: Env): Promise<Response> {
   const denied = await requireAuth(request, env);
   if (denied) return denied;
 
@@ -283,21 +293,21 @@ export async function handleAdminIndexStatus(request, env) {
       SELECT id, title, full_designation, status, chunk_count, page_count,
              coverage_json, indexed_at
       FROM standards ORDER BY id
-    `).all(),
+    `).all<StandardRow>(),
     env.DB.prepare(`
       SELECT Standard AS standard, COUNT(*) AS n
       FROM applications WHERE Active = 1 GROUP BY Standard
-    `).all(),
+    `).all<{ standard: string; n: number }>(),
   ]);
 
-  const appCounts = new Map((appCountsRes.results || []).map(r => [r.standard, r.n]));
+  const appCounts = new Map((appCountsRes.results || []).map(r => [r.standard, r.n] as [string, number]));
 
-  const report = [];
+  const report: IndexStatusRow[] = [];
   for (const std of standardsRes.results || []) {
     let coverage = null;
     try { coverage = std.coverage_json ? JSON.parse(std.coverage_json) : null; } catch { /* ignore */ }
 
-    const row = {
+    const row: IndexStatusRow = {
       id: std.id,
       title: std.title,
       status: std.status,
@@ -324,14 +334,14 @@ export async function handleAdminIndexStatus(request, env) {
       row.warnings.push('No reference chunks — expected if the standard has no References section; otherwise re-ingest.');
     }
 
-    if (verify && std.chunk_count > 0) {
+    if (verify && (std.chunk_count ?? 0) > 0) {
       const index = std.status === 'Deprecated' ? env.VECTORIZE_DEPRECATED : env.VECTORIZE;
       if (index) {
-        const n = std.chunk_count;
+        const n = std.chunk_count ?? 0;
         const probeIdxs = [...new Set([0, Math.floor((n - 1) / 2), n - 1])];
         try {
           const got = await index.getByIds(probeIdxs.map(i => `${std.id}-chunk-${i}`));
-          const foundIds = new Set((got || []).map(v => v.id));
+          const foundIds = new Set((got || []).map((v: { id: string }) => v.id));
           const missing = probeIdxs
             .map(i => `${std.id}-chunk-${i}`)
             .filter(id => !foundIds.has(id));
@@ -340,7 +350,7 @@ export async function handleAdminIndexStatus(request, env) {
             row.warnings.push(`Vectorize spot-check missing ${missing.length}/${probeIdxs.length} probes — re-ingest this standard.`);
           }
         } catch (err) {
-          row.vectorSpotCheck = { error: err.message };
+          row.vectorSpotCheck = { error: err instanceof Error ? err.message : String(err) };
         }
       }
     }
@@ -367,7 +377,7 @@ export async function handleAdminIndexStatus(request, env) {
  * Invalidate all cached search responses by bumping the data version.
  * Cheap (one KV write); old entries simply stop being read and expire.
  */
-export async function handleAdminFlushCache(request, env) {
+export async function handleAdminFlushCache(request: Request, env: Env): Promise<Response> {
   const denied = await requireAuth(request, env);
   if (denied) return denied;
 
@@ -393,7 +403,7 @@ export async function handleAdminFlushCache(request, env) {
  * POST /api/admin/r2-multipart?action=abort&key=<key>
  *   Body: { uploadId } → { aborted: true }
  */
-export async function handleAdminR2Multipart(request, env) {
+export async function handleAdminR2Multipart(request: Request, env: Env): Promise<Response> {
   const denied = await requireAuth(request, env);
   if (denied) return denied;
 
@@ -413,10 +423,11 @@ export async function handleAdminR2Multipart(request, env) {
 
   if (action === 'part') {
     const uploadId = url.searchParams.get('uploadId');
-    const partNumber = parseInt(url.searchParams.get('partNumber'), 10);
+    const partNumber = parseInt(url.searchParams.get('partNumber') || '', 10);
     if (!uploadId || !Number.isInteger(partNumber) || partNumber < 1) {
       return jsonResponse({ error: 'uploadId and partNumber (≥1) required' }, 400);
     }
+    if (!request.body) return jsonResponse({ error: 'request body (part bytes) required' }, 400);
     const upload = env.PDFS.resumeMultipartUpload(key, uploadId);
     const part = await upload.uploadPart(partNumber, request.body);
     return jsonResponse({ partNumber: part.partNumber, etag: part.etag });
@@ -445,16 +456,16 @@ export async function handleAdminR2Multipart(request, env) {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-async function fetchValidStandardIds(db) {
-  const result = await db.prepare('SELECT id FROM standards').all();
+async function fetchValidStandardIds(db: D1Database): Promise<Set<string>> {
+  const result = await db.prepare('SELECT id FROM standards').all<{ id: string }>();
   return new Set((result.results || []).map(r => r.id));
 }
 
-async function safeJson(request) {
+async function safeJson(request: Request): Promise<any> {
   try { return await request.json(); } catch { return {}; }
 }
 
-function jsonResponse(data, status = 200) {
+function jsonResponse(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data, null, 2), {
     status,
     headers: { 'Content-Type': 'application/json' },
