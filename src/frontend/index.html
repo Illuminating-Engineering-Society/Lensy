@@ -1,2 +1,1462 @@
 <!DOCTYPE html>
-<html><head><meta http-equiv="refresh" content="0; url=/pages/index.html"></head><body></body></html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lensy — IES Standards Search</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            'ies-blue': '#003DA5',
+            'ies-blue-dark': '#002d7a',
+            'ies-gold': '#F5A623',
+            // Sub_Category banner colors per IlluminanceTables_Reference_260421 (Visual)
+            'sub-interior':  '#2E4A62',  // dark blue — INTERIORS banner
+            'sub-exterior':  '#2E4A34',  // dark green — EXTERIORS banner
+            // App banner accents (level 2 in the spec): light fills
+            'app-interior':  '#4F81A1',  // light blue — Sub Sub Category Interior
+            'app-exterior':  '#A3471A',  // brown/red — Application Exterior
+          },
+          fontFamily: {
+            sans: ['-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'sans-serif'],
+            mono: ['ui-monospace', 'SFMono-Regular', 'monospace'],
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    .result-card { transition: box-shadow 0.15s, transform 0.15s; }
+    .result-card:hover { box-shadow: 0 4px 24px rgba(0,61,165,0.10); transform: translateY(-1px); }
+    .lux-badge { font-variant-numeric: tabular-nums; }
+    .ai-border { border-left: 3px solid #003DA5; }
+    .hero-gradient { background: linear-gradient(135deg, #003DA5 0%, #0052CC 60%, #0066FF 100%); }
+    .search-glow:focus-within { box-shadow: 0 0 0 3px rgba(0,61,165,0.20); }
+    .skeleton { background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%); background-size: 200% 100%; animation: skeleton-loading 1.4s infinite; }
+    @keyframes skeleton-loading { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+    .lux-value { font-size: 1.1rem; font-weight: 700; letter-spacing: -0.02em; }
+    .fade-in { animation: fadeIn 0.25s ease-out; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+    .modal-backdrop { backdrop-filter: blur(4px); }
+    @media print {
+      .no-print { display: none !important; }
+      .result-card { break-inside: avoid; box-shadow: none; transform: none; }
+    }
+  </style>
+</head>
+<body class="bg-gray-50 min-h-screen text-gray-900">
+
+  <!-- ── Header ───────────────────────────────────────────────────────────── -->
+  <header class="bg-ies-blue text-white shadow-md no-print sticky top-0 z-40">
+    <div class="max-w-5xl mx-auto px-4 py-3 flex items-center justify-between">
+      <a href="/" class="flex items-center gap-3 group">
+        <div class="w-8 h-8 rounded-lg bg-white/15 flex items-center justify-center">
+          <svg class="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M12 3v1m0 16v1M4.22 4.22l.707.707M18.364 18.364l.707.707M3 12H2m20 0h-1M4.927 19.073l.707-.707M18.364 5.636l.707-.707M12 8a4 4 0 100 8 4 4 0 000-8z"/>
+          </svg>
+        </div>
+        <div>
+          <span class="text-xl font-bold tracking-tight">Lensy</span>
+          <span class="hidden sm:inline text-blue-300 text-sm ml-2">IES Standards Assistant</span>
+        </div>
+      </a>
+      <nav class="flex items-center gap-1 text-sm">
+        <a href="/projects.html" id="nav-projects"
+           class="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-blue-200 hover:text-white hover:bg-white/10 transition">
+          <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/>
+          </svg>
+          My Projects
+        </a>
+        <a href="https://www.ies.org" target="_blank" rel="noopener"
+           class="px-3 py-1.5 rounded-md text-blue-200 hover:text-white hover:bg-white/10 transition">
+          IES.org ↗
+        </a>
+      </nav>
+    </div>
+  </header>
+
+  <!-- ── Hero / Search Section ─────────────────────────────────────────────── -->
+  <div id="hero-section" class="hero-gradient text-white no-print">
+    <div class="max-w-3xl mx-auto px-4 py-12 sm:py-16 text-center">
+      <h2 class="text-3xl sm:text-4xl font-bold mb-3 tracking-tight">
+        Find IES Lighting Standards
+      </h2>
+      <p class="text-blue-200 text-lg mb-8">
+        Ask in plain language — get cited answers from authoritative IES standards.
+      </p>
+
+      <!-- Search box -->
+      <div class="bg-white rounded-xl shadow-lg p-2 flex gap-2 search-glow transition">
+        <input
+          type="text"
+          id="search-input"
+          placeholder="e.g. How bright should a skating rink be?"
+          class="flex-1 px-4 py-3 text-gray-900 text-base placeholder-gray-400 bg-transparent outline-none"
+          onkeydown="if(event.key==='Enter') performSearch()"
+          autofocus
+        />
+        <button
+          id="search-btn"
+          onclick="performSearch()"
+          class="px-5 py-3 bg-ies-blue text-white rounded-lg hover:bg-ies-blue-dark transition font-semibold flex items-center gap-2 shrink-0"
+        >
+          <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+          </svg>
+          Search
+        </button>
+      </div>
+
+      <!-- Filters row — content-type checkboxes (independent, multi-select)
+           per the client filter overhaul. Defaults: Illuminance Tables +
+           Document Body on, References off, Interior & Exterior both on.
+           The former "TM-24 Eligible" filter was removed (superseded). -->
+      <div class="flex flex-wrap justify-center gap-2 mt-4" id="filters-row">
+        <label class="flex items-center gap-2 text-sm text-blue-100 px-3 py-2 rounded-lg bg-white/10 cursor-pointer hover:bg-white/15 transition">
+          <input type="checkbox" id="filter-ct-tables" class="rounded accent-ies-gold" checked>
+          Illuminance Tables
+        </label>
+        <label class="flex items-center gap-2 text-sm text-blue-100 px-3 py-2 rounded-lg bg-white/10 cursor-pointer hover:bg-white/15 transition">
+          <input type="checkbox" id="filter-ct-body" class="rounded accent-ies-gold" checked>
+          Document Body
+        </label>
+        <label class="flex items-center gap-2 text-sm text-blue-100 px-3 py-2 rounded-lg bg-white/10 cursor-pointer hover:bg-white/15 transition">
+          <input type="checkbox" id="filter-ct-references" class="rounded accent-ies-gold">
+          References
+        </label>
+        <label id="filter-ct-compare-wrap" style="display: none" class="items-center gap-2 text-sm text-blue-100 px-3 py-2 rounded-lg bg-white/10 cursor-pointer hover:bg-white/15 transition">
+          <input type="checkbox" id="filter-ct-compare" class="rounded accent-ies-gold">
+          Compare Versions
+        </label>
+        <span class="w-px bg-white/20 my-1 hidden sm:block"></span>
+        <label class="flex items-center gap-2 text-sm text-blue-100 px-3 py-2 rounded-lg bg-white/10 cursor-pointer hover:bg-white/15 transition">
+          <input type="checkbox" id="filter-interior" class="rounded accent-ies-gold" checked>
+          Interior
+        </label>
+        <label class="flex items-center gap-2 text-sm text-blue-100 px-3 py-2 rounded-lg bg-white/10 cursor-pointer hover:bg-white/15 transition">
+          <input type="checkbox" id="filter-exterior" class="rounded accent-ies-gold" checked>
+          Exterior
+        </label>
+        <span class="w-px bg-white/20 my-1 hidden sm:block"></span>
+        <label class="flex items-center gap-2 text-sm text-blue-100 px-3 py-2 rounded-lg bg-white/10 cursor-pointer hover:bg-white/15 transition">
+          <input type="checkbox" id="include-ai" class="rounded accent-ies-gold">
+          AI Guide
+        </label>
+      </div>
+
+      <!-- Sample searches — each populates the query box AND the filter state -->
+      <div class="mt-6 flex flex-wrap justify-center gap-2" id="sample-searches">
+        <span class="text-blue-300 text-sm self-center">Try:</span>
+        <button onclick="runSampleSearch('parking')" class="text-sm bg-white/10 hover:bg-white/20 text-white px-3 py-1.5 rounded-full transition">Parking Garages</button>
+        <button onclick="runSampleSearch('vision-refs')" class="text-sm bg-white/10 hover:bg-white/20 text-white px-3 py-1.5 rounded-full transition">Vision References</button>
+        <button id="sample-compare" onclick="runSampleSearch('rp43-new')" class="hidden text-sm bg-white/10 hover:bg-white/20 text-white px-3 py-1.5 rounded-full transition">What's new in RP-43?</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Compact search bar (shown after first search) ──────────────────────── -->
+  <div id="compact-search" class="hidden no-print bg-white border-b border-gray-200 sticky top-[57px] z-30 shadow-sm">
+    <div class="max-w-5xl mx-auto px-4 py-3 flex gap-2">
+      <input
+        type="text"
+        id="compact-search-input"
+        class="flex-1 px-4 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-ies-blue focus:border-transparent"
+        placeholder="Search IES Standards..."
+        onkeydown="if(event.key==='Enter') performSearchFromCompact()"
+      />
+      <button onclick="performSearchFromCompact()"
+        class="px-4 py-2 bg-ies-blue text-white rounded-lg hover:bg-ies-blue-dark transition text-sm font-medium">
+        Search
+      </button>
+    </div>
+  </div>
+
+  <!-- ── Main Content ───────────────────────────────────────────────────────── -->
+  <main class="max-w-5xl mx-auto px-4 py-6">
+
+    <!-- Loading skeletons -->
+    <div id="loading" class="hidden space-y-4">
+      <div class="flex items-center gap-3 mb-2">
+        <div class="skeleton h-4 w-32 rounded"></div>
+        <div class="skeleton h-4 w-48 rounded"></div>
+      </div>
+      <div class="skeleton h-44 rounded-xl"></div>
+      <div class="skeleton h-44 rounded-xl"></div>
+      <div class="skeleton h-44 rounded-xl"></div>
+    </div>
+
+    <!-- Results Area -->
+    <section id="results-section" class="hidden fade-in">
+
+      <!-- AI Summary -->
+      <div id="ai-summary-card" class="hidden bg-blue-50 rounded-xl p-5 mb-5 ai-border">
+        <div class="flex items-start gap-3">
+          <div class="w-8 h-8 rounded-lg bg-ies-blue/10 flex items-center justify-center shrink-0 mt-0.5">
+            <svg class="w-4 h-4 text-ies-blue" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.347.347a3.5 3.5 0 004.95 4.95l1.414 1.414a7 7 0 10-9.9-9.9l-.347.347z"/>
+            </svg>
+          </div>
+          <div class="flex-1 min-w-0">
+            <div class="flex items-center justify-between mb-1">
+              <h3 class="font-semibold text-gray-900 text-sm">AI Explanation</h3>
+              <span class="text-xs text-gray-400 bg-gray-100 px-2 py-0.5 rounded">Beta</span>
+            </div>
+            <p id="ai-disclaimer" class="text-xs text-gray-500 mb-3"></p>
+            <div id="ai-summary-text" class="text-sm text-gray-700 leading-relaxed"></div>
+            <p id="ai-watermark" class="text-xs text-gray-400 mt-3 italic"></p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Results header + bulk actions -->
+      <div class="flex flex-wrap items-center justify-between gap-3 mb-4 no-print">
+        <div>
+          <h2 class="text-base font-semibold text-gray-900" id="results-heading">Results</h2>
+          <p class="text-sm text-gray-400" id="results-meta"></p>
+        </div>
+        <div class="flex items-center gap-2">
+          <div id="bulk-actions" class="hidden flex items-center gap-2">
+            <label class="flex items-center gap-1.5 text-sm text-gray-600 cursor-pointer">
+              <input type="checkbox" id="select-all-results" onchange="toggleSelectAll(this.checked)" class="rounded accent-ies-blue">
+              All
+            </label>
+            <button
+              id="add-selected-btn"
+              onclick="addSelectedToProject()"
+              disabled
+              class="px-3 py-1.5 bg-ies-blue text-white rounded-lg text-sm font-medium hover:bg-ies-blue-dark transition disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5"
+            >
+              <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/>
+              </svg>
+              <span id="add-selected-label">Add to Project (0)</span>
+            </button>
+          </div>
+          <button onclick="window.print()" class="p-1.5 text-gray-400 hover:text-gray-600 rounded-md hover:bg-gray-100 transition" title="Print">
+            <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <!-- Document filter chips — generated from the standards present in the
+           current result set; clicking one narrows the list to that document
+           (client request: quick doc-narrowing near the top of results). -->
+      <div id="doc-chips" class="hidden flex-wrap items-center gap-1.5 mb-4 no-print"></div>
+
+      <!-- Low-confidence advisory (shown when API returns noStrongMatch=true) -->
+      <div
+        id="no-strong-match-banner"
+        class="hidden mb-4 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 flex gap-3 no-print"
+        role="status"
+      >
+        <svg class="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/>
+        </svg>
+        <p id="no-strong-match-text" class="text-sm text-amber-900 leading-relaxed"></p>
+      </div>
+
+      <!-- Result cards list -->
+      <div id="results-list" class="space-y-3"></div>
+
+      <!-- Empty state -->
+      <div id="no-results" class="hidden text-center py-16">
+        <div class="w-16 h-16 rounded-full bg-gray-100 flex items-center justify-center mx-auto mb-4">
+          <svg class="w-8 h-8 text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+          </svg>
+        </div>
+        <p class="text-gray-600 font-medium">No results found</p>
+        <p class="text-sm text-gray-400 mt-1">
+          Try different keywords or contact
+          <a href="mailto:Standards@ies.org" class="text-ies-blue hover:underline">Standards@ies.org</a>
+        </p>
+      </div>
+    </section>
+  </main>
+
+  <!-- ── Footer ───────────────────────────────────────────────────────────── -->
+  <footer class="text-center text-xs text-gray-400 py-8 mt-8 border-t border-gray-100 no-print">
+    <p class="font-medium text-gray-500">Lensy — IES Standards Search Assistant</p>
+    <p class="mt-1">
+      <a href="https://www.ies.org" class="hover:underline hover:text-gray-600">Illuminating Engineering Society</a>
+      <span class="mx-2">·</span>
+      <a href="mailto:Standards@ies.org" class="hover:underline hover:text-gray-600">Standards@ies.org</a>
+    </p>
+    <p class="mt-2 text-gray-300">Always refer to the full IES Standard for authoritative guidance.</p>
+  </footer>
+
+  <!-- ── Add to Project Modal ───────────────────────────────────────────────── -->
+  <div id="project-modal" class="hidden fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4">
+    <div class="absolute inset-0 bg-black/40 modal-backdrop" onclick="closeProjectModal()"></div>
+    <div class="relative bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 fade-in">
+      <div class="flex items-center justify-between mb-5">
+        <h3 class="text-lg font-bold text-gray-900">Add to Project</h3>
+        <button onclick="closeProjectModal()" class="text-gray-400 hover:text-gray-600 p-1 rounded-md hover:bg-gray-100 transition">
+          <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
+          </svg>
+        </button>
+      </div>
+
+      <!-- Application summary in modal -->
+      <div id="modal-app-info" class="bg-gray-50 rounded-lg px-4 py-3 mb-5 text-sm">
+        <p class="font-medium text-gray-800" id="modal-app-name"></p>
+        <p class="text-gray-500 text-xs mt-0.5" id="modal-app-citation"></p>
+      </div>
+
+      <!-- Project selection -->
+      <div id="modal-project-select-section">
+        <label class="block text-sm font-medium text-gray-700 mb-2">Select or create project</label>
+        <div id="modal-projects-list" class="space-y-2 max-h-44 overflow-y-auto mb-3">
+          <div class="skeleton h-10 rounded-lg"></div>
+          <div class="skeleton h-10 rounded-lg"></div>
+        </div>
+        <button onclick="showCreateProjectForm()" class="w-full text-sm text-ies-blue border border-ies-blue/30 rounded-lg px-4 py-2.5 hover:bg-blue-50 transition flex items-center justify-center gap-2">
+          <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/>
+          </svg>
+          New project
+        </button>
+      </div>
+
+      <!-- Create project form -->
+      <div id="modal-create-project-form" class="hidden">
+        <button onclick="hideCreateProjectForm()" class="text-sm text-gray-500 hover:text-gray-700 mb-3 flex items-center gap-1">
+          <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7"/>
+          </svg>
+          Back to projects
+        </button>
+        <div class="space-y-3">
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">Project name <span class="text-red-400">*</span></label>
+            <input type="text" id="new-project-name" placeholder="e.g. Downtown Office Renovation"
+              class="w-full px-3 py-2.5 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-ies-blue focus:border-transparent"/>
+          </div>
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">Client</label>
+              <input type="text" id="new-project-client" placeholder="Client name"
+                class="w-full px-3 py-2.5 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-ies-blue focus:border-transparent"/>
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">Location</label>
+              <input type="text" id="new-project-location" placeholder="City, State"
+                class="w-full px-3 py-2.5 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-ies-blue focus:border-transparent"/>
+            </div>
+          </div>
+          <button onclick="createProjectAndAdd()"
+            class="w-full py-2.5 bg-ies-blue text-white rounded-lg text-sm font-semibold hover:bg-ies-blue-dark transition">
+            Create Project &amp; Add
+          </button>
+        </div>
+      </div>
+
+      <p id="modal-error" class="hidden text-xs text-red-600 mt-3"></p>
+    </div>
+  </div>
+
+  <!-- ── Toast notification ─────────────────────────────────────────────────── -->
+  <div id="toast" class="fixed bottom-5 left-1/2 -translate-x-1/2 z-50 hidden">
+    <div id="toast-inner" class="flex items-center gap-3 px-4 py-3 rounded-xl shadow-lg text-sm font-medium text-white min-w-[220px]">
+      <svg id="toast-icon" class="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"></svg>
+      <span id="toast-message"></span>
+    </div>
+  </div>
+
+  <script src="/utils/api.js"></script>
+  <script>
+    // ── Feature flags ────────────────────────────────────────────────────────
+    // compareVersions gates the "Compare Versions" filter checkbox and the
+    // "What's new in RP-43?" sample search. The backend comparison path is
+    // built; flip this to true once the deprecated editions are confirmed
+    // ingested in the environment being demoed (Dan's Task 6 status check).
+    const FEATURES = { compareVersions: false };
+
+    // ── State ────────────────────────────────────────────────────────────────
+    let lastQuery = '';
+    let selectedApplicationCodes = new Set();
+    let modalPendingCodes = []; // application codes waiting to be added
+    let projectsCache = null;
+    let activeDocFilter = null; // standard id chip currently narrowing results
+
+    // ── Pagination ─────────────────────────────────────────────────────────────
+    // The API returns a single pool of up to POOL_SIZE results (backend
+    // MAX_LIMIT). We page over that pool entirely client-side — no extra
+    // network round-trips on page change, and it stays within one response
+    // cache entry per query.
+    const POOL_SIZE = 50;  // matches backend MAX_LIMIT
+    const PAGE_SIZE = 25;  // results shown per page (client request)
+    let allResults = [];
+    let currentPage = 1;
+
+    // ── Sample searches (client-specified query + filter state, AI Guide on) ──
+    const SAMPLE_SEARCHES = {
+      'parking': {
+        query: 'What are considerations for lighting parking garages?',
+        contentTypes: { tables: true, body: true, references: false, compare: false },
+      },
+      'vision-refs': {
+        query: 'Provide a list of references in IES standards related to human vision',
+        contentTypes: { tables: false, body: false, references: true, compare: false },
+      },
+      'rp43-new': {
+        query: 'What is new in the current version of ANSI/IES RP-43?',
+        contentTypes: { tables: true, body: true, references: false, compare: true },
+      },
+    };
+
+    function runSampleSearch(key) {
+      const sample = SAMPLE_SEARCHES[key];
+      if (!sample) return;
+      document.getElementById('search-input').value = sample.query;
+      document.getElementById('filter-ct-tables').checked = !!sample.contentTypes.tables;
+      document.getElementById('filter-ct-body').checked = !!sample.contentTypes.body;
+      document.getElementById('filter-ct-references').checked = !!sample.contentTypes.references;
+      if (FEATURES.compareVersions) {
+        document.getElementById('filter-ct-compare').checked = !!sample.contentTypes.compare;
+      }
+      document.getElementById('filter-interior').checked = true;
+      document.getElementById('filter-exterior').checked = true;
+      document.getElementById('include-ai').checked = true; // AI Guide: on
+      performSearch();
+    }
+
+    // ── Search ───────────────────────────────────────────────────────────────
+    function setQuery(text) {
+      document.getElementById('search-input').value = text;
+      performSearch();
+    }
+
+    function performSearchFromCompact() {
+      const q = document.getElementById('compact-search-input').value.trim();
+      if (!q) return;
+      document.getElementById('search-input').value = q;
+      performSearch();
+    }
+
+    function collectFilters() {
+      const filters = {};
+
+      // Interior / Exterior checkboxes → indoor_outdoor filter. Both (or
+      // neither) checked = no location narrowing.
+      const interior = document.getElementById('filter-interior').checked;
+      const exterior = document.getElementById('filter-exterior').checked;
+      if (interior && !exterior) filters.indoor_outdoor = 'Indoor';
+      else if (exterior && !interior) filters.indoor_outdoor = 'Outdoor';
+
+      // Content-type checkboxes (independent multi-select)
+      const ct = [];
+      if (document.getElementById('filter-ct-tables').checked) ct.push('tables');
+      if (document.getElementById('filter-ct-body').checked) ct.push('body');
+      if (document.getElementById('filter-ct-references').checked) ct.push('references');
+      if (FEATURES.compareVersions && document.getElementById('filter-ct-compare').checked) ct.push('compare');
+      if (ct.length > 0) filters.content_types = ct;
+
+      return filters;
+    }
+
+    async function performSearch() {
+      const query = document.getElementById('search-input').value.trim();
+      if (!query) return;
+
+      lastQuery = query;
+
+      // Sync compact search bar
+      document.getElementById('compact-search-input').value = query;
+      document.getElementById('hero-section').classList.add('no-print');
+
+      // Shrink hero after first search
+      document.getElementById('hero-section').style.paddingTop = '2rem';
+      document.getElementById('hero-section').style.paddingBottom = '2rem';
+      document.getElementById('compact-search').classList.remove('hidden');
+
+      showLoading(true);
+      clearResults();
+
+      const filters = collectFilters();
+      const includeAI = document.getElementById('include-ai').checked;
+
+      try {
+        const data = await LensyAPI.search(query, { filters, includeAISummary: includeAI, limit: POOL_SIZE });
+        renderResults(data);
+      } catch (err) {
+        renderError(err.message);
+      } finally {
+        showLoading(false);
+      }
+    }
+
+    // ── Rendering ────────────────────────────────────────────────────────────
+    function renderResults(data) {
+      const section = document.getElementById('results-section');
+      section.classList.remove('hidden');
+      selectedApplicationCodes = new Set();
+      allResults = data.results || [];
+      currentPage = 1;
+      activeDocFilter = null;
+      updateBulkActionsUI();
+
+      document.getElementById('results-meta').textContent = `for "${data.query}"`;
+
+      // Sync the checkboxes to the content types the backend ACTUALLY used —
+      // reference-intent queries auto-scope to References, and an
+      // all-unchecked state falls back to Tables + Body; the visible filter
+      // state must match the results on screen.
+      if (Array.isArray(data.contentTypes)) {
+        document.getElementById('filter-ct-tables').checked = data.contentTypes.includes('tables');
+        document.getElementById('filter-ct-body').checked = data.contentTypes.includes('body');
+        document.getElementById('filter-ct-references').checked = data.contentTypes.includes('references');
+        if (FEATURES.compareVersions) {
+          document.getElementById('filter-ct-compare').checked = data.contentTypes.includes('compare');
+        }
+      }
+
+      // Low-confidence advisory: banner shows above the list when the API
+      // signals no strong match. Results are still rendered — the user just
+      // sees a clear "these are best-effort" notice.
+      const banner = document.getElementById('no-strong-match-banner');
+      const bannerText = document.getElementById('no-strong-match-text');
+      if (data.noStrongMatch && allResults.length > 0) {
+        bannerText.textContent = data.noStrongMatchMessage
+          || 'No strong match found. The results below are the closest available.';
+        banner.classList.remove('hidden');
+      } else {
+        banner.classList.add('hidden');
+        bannerText.textContent = '';
+      }
+
+      if (data.aiSummary) renderAISummary(data.aiSummary);
+
+      if (!allResults.length) {
+        document.getElementById('results-heading').textContent = 'Results';
+        document.getElementById('results-list').innerHTML = '';
+        document.getElementById('doc-chips').classList.add('hidden');
+        document.getElementById('no-results').classList.remove('hidden');
+        return;
+      }
+
+      renderDocChips();
+      renderResultsPage();
+    }
+
+    // ── Document filter chips ────────────────────────────────────────────────
+    // One chip per standard present in the result set, ordered by first
+    // appearance (the list is relevance-ordered, so first appearance = best
+    // match). Clicking a chip narrows the rendered list to that document;
+    // clicking it again (or "All") clears the narrowing. Purely client-side —
+    // no extra API round-trip, stays inside the same cached response.
+    function renderDocChips() {
+      const wrap = document.getElementById('doc-chips');
+      const seen = [];
+      const counts = {};
+      for (const r of allResults) {
+        const std = r.application?.standard;
+        if (!std) continue;
+        if (!counts[std]) { seen.push(std); counts[std] = 0; }
+        counts[std]++;
+      }
+
+      if (seen.length < 2) {
+        wrap.classList.add('hidden');
+        wrap.classList.remove('flex');
+        wrap.innerHTML = '';
+        return;
+      }
+
+      // The standard id travels via a data attribute, never an inline JS
+      // string — HTML-escaping does not JS-escape, so an id containing a
+      // quote must not reach an onclick expression.
+      const chip = (label, value, active, count) => `
+        <button
+          class="doc-chip text-xs px-2.5 py-1 rounded-full border font-medium transition ${active
+            ? 'bg-ies-blue text-white border-ies-blue'
+            : 'bg-white text-gray-600 border-gray-200 hover:border-ies-blue hover:text-ies-blue'}"
+          data-std="${escapeHtml(value ?? '')}"
+        >${escapeHtml(label)}${count != null ? ` <span class="${active ? 'text-blue-200' : 'text-gray-400'}">${count}</span>` : ''}</button>`;
+
+      wrap.innerHTML =
+        `<span class="text-xs text-gray-400 mr-1">Narrow to:</span>` +
+        chip('All Documents', null, activeDocFilter === null, null) +
+        seen.map(std => chip(std, std, activeDocFilter === std, counts[std])).join('');
+      wrap.classList.remove('hidden');
+      wrap.classList.add('flex');
+    }
+
+    function setDocFilter(std) {
+      activeDocFilter = (std && activeDocFilter !== std) ? std : null;
+      currentPage = 1;
+      renderDocChips();
+      renderResultsPage();
+      updateBulkActionsUI();
+    }
+
+    function visibleResults() {
+      if (!activeDocFilter) return allResults;
+      return allResults.filter(r => r.application?.standard === activeDocFilter);
+    }
+
+    // Render the current page's slice of the visible results plus pagination.
+    function renderResultsPage() {
+      const pool = visibleResults();
+      const total = pool.length;
+      const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+      currentPage = Math.min(Math.max(1, currentPage), totalPages);
+
+      const start = (currentPage - 1) * PAGE_SIZE;
+      const end = Math.min(start + PAGE_SIZE, total);
+      const pageResults = pool.slice(start, end);
+
+      // Heading reflects the full result count; the range hint sits in the meta line.
+      document.getElementById('results-heading').textContent =
+        `${total} Result${total !== 1 ? 's' : ''}`;
+
+      // Group consecutive sibling rows (same standard + banner + application)
+      // into one card so the application title prints once — client feedback:
+      // don't reprint titles when results come from adjacent table rows.
+      const groups = groupSiblingResults(pageResults);
+
+      const list = document.getElementById('results-list');
+      list.innerHTML = groups.map((g, i) => renderResultCard(g, i)).join('')
+        + renderPaginationControls(totalPages, start + 1, end, total);
+    }
+
+    // Cluster consecutive results that belong to the same application block
+    // of the same standard. Only true application rows group (chunk-only
+    // results carry no rowRef and always render as standalone cards).
+    function groupSiblingResults(results) {
+      const keyOf = (r) => {
+        const a = r.application || {};
+        return `${a.standard || ''}|${a.subCategory || ''}|${a.category || ''}`;
+      };
+      const isAppRow = (r) => r.application && r.application.rowRef != null;
+
+      const groups = [];
+      for (const r of results) {
+        const key = keyOf(r);
+        const last = groups[groups.length - 1];
+        if (last && last.key === key && isAppRow(r) && isAppRow(last.members[0])) {
+          last.members.push(r);
+        } else {
+          groups.push({ key, members: [r] });
+        }
+      }
+      return groups;
+    }
+
+    function renderPaginationControls(totalPages, fromN, toN, total) {
+      if (totalPages <= 1) return '';
+
+      const btn = (label, page, opts = {}) => {
+        const { disabled = false, active = false, aria = label } = opts;
+        const base = 'min-w-[2.25rem] h-9 px-3 inline-flex items-center justify-center rounded-lg text-sm font-medium transition border';
+        if (active) {
+          return `<button class="${base} bg-ies-blue text-white border-ies-blue" aria-current="page" disabled>${label}</button>`;
+        }
+        if (disabled) {
+          return `<button class="${base} text-gray-300 border-gray-100 cursor-not-allowed" disabled aria-label="${aria}">${label}</button>`;
+        }
+        return `<button onclick="goToPage(${page})" class="${base} text-gray-600 border-gray-200 hover:border-ies-blue hover:text-ies-blue bg-white" aria-label="${aria}">${label}</button>`;
+      };
+
+      // Compact page-number window: first, last, current ±1, with ellipses.
+      const pages = [];
+      for (let p = 1; p <= totalPages; p++) {
+        if (p === 1 || p === totalPages || Math.abs(p - currentPage) <= 1) {
+          pages.push(p);
+        } else if (pages[pages.length - 1] !== '…') {
+          pages.push('…');
+        }
+      }
+
+      const numberBtns = pages.map(p =>
+        p === '…'
+          ? `<span class="min-w-[2.25rem] h-9 inline-flex items-center justify-center text-sm text-gray-400">…</span>`
+          : btn(String(p), p, { active: p === currentPage })
+      ).join('');
+
+      return `
+        <nav class="no-print flex flex-col sm:flex-row items-center justify-between gap-3 mt-6 pt-4 border-t border-gray-100" aria-label="Results pagination">
+          <p class="text-xs text-gray-400 tabular-nums">Showing ${fromN}–${toN} of ${total}</p>
+          <div class="flex items-center gap-1.5">
+            ${btn('‹ Prev', currentPage - 1, { disabled: currentPage === 1, aria: 'Previous page' })}
+            ${numberBtns}
+            ${btn('Next ›', currentPage + 1, { disabled: currentPage === totalPages, aria: 'Next page' })}
+          </div>
+        </nav>
+      `;
+    }
+
+    function goToPage(page) {
+      currentPage = page;
+      renderResultsPage();
+      // Bring the top of the list into view so the user isn't stranded mid-page.
+      const section = document.getElementById('results-section');
+      const top = section.getBoundingClientRect().top + window.scrollY - 80;
+      window.scrollTo({ top, behavior: 'smooth' });
+    }
+
+    function renderAISummary(summary) {
+      document.getElementById('ai-disclaimer').textContent = summary.disclaimer || '';
+      const textEl = document.getElementById('ai-summary-text');
+      textEl.textContent = summary.text || '';
+      // Longer AI Guide answers arrive with paragraph breaks — preserve them.
+      textEl.classList.add('whitespace-pre-line');
+      document.getElementById('ai-watermark').textContent = summary.watermark || '';
+      document.getElementById('ai-summary-card').classList.remove('hidden');
+    }
+
+    // ── Footnote superscripts ────────────────────────────────────────────────
+    // footnoteMarks (per migration 0006) records WHERE each footnote number is
+    // printed in the source table: { levels: { App_s1: [1] }, row: [3] }.
+    // supFor() renders the marker for one hierarchy level; the note TEXT stays
+    // in the collapsed "Application Task/Area Notes" disclosure below.
+    function supFor(app, colName) {
+      const nums = app?.footnoteMarks?.levels?.[colName];
+      if (!nums || !nums.length) return '';
+      return `<sup class="text-[0.65em] font-bold text-ies-blue ml-0.5" title="See Application Task/Area Notes ${nums.join(', ')}">${nums.join(',')}</sup>`;
+    }
+
+    function supForRow(app) {
+      const nums = app?.footnoteMarks?.row;
+      if (!nums || !nums.length) return '';
+      return `<sup class="text-[0.65em] font-bold text-ies-blue ml-0.5" title="See Application Task/Area Notes ${nums.join(', ')}">${nums.join(',')}</sup>`;
+    }
+
+    function renderResultCard(group, index) {
+      const members = group.members;
+      const isGrouped = members.length > 1;
+      const primary = members[0];
+      const app = primary.application || {};
+      const isExterior = app.indoorOutdoor === 'Outdoor';
+      const isInterior = app.indoorOutdoor === 'Indoor';
+      // Deprecated-edition excerpts only appear on version-comparison
+      // searches ("what's new in RP-6?"). They must read as historical
+      // context, never as guidance — amber stripe + explicit banner.
+      const isDeprecated = !!primary.isDeprecated;
+
+      // Sub_Category banner colors per IlluminanceTables_Reference_260421
+      // (Interior = dark blue #2E4A62, Exterior = dark green #2E4A34). The
+      // banner runs full-width at the top of the card; a left border stripe
+      // reinforces the indoor/outdoor distinction at a glance.
+      const bannerHex = isDeprecated ? '#B45309'
+        : isExterior ? '#2E4A34' : isInterior ? '#2E4A62' : '#374151';
+      // Application-name badge — brown for exterior, blue for interior — so
+      // the application title reads as the most prominent element (request #1).
+      const appBadgeHex = isExterior ? '#8A3B18' : isInterior ? '#2E4A62' : '#4B5563';
+
+      // Green Sub_Category banner (prominent, full-width). Banner-level
+      // footnote markers render inside it, white like the rest of the banner.
+      const subCatSup = (app.footnoteMarks?.levels?.Sub_Category || []).length
+        ? `<sup class="text-[0.65em] font-bold text-white/90 ml-0.5" title="See Application Task/Area Notes ${app.footnoteMarks.levels.Sub_Category.join(', ')}">${app.footnoteMarks.levels.Sub_Category.join(',')}</sup>`
+        : '';
+      const subCategoryBanner = app.subCategory ? `
+        <span class="inline-block text-[11px] font-bold tracking-wider uppercase px-2.5 py-1 rounded"
+              style="background-color: ${bannerHex}; color: #fff;">
+          ${escapeHtml(app.subCategory)}${subCatSup}
+        </span>` : '';
+
+      // Prominent application-name badge = the top-level App name. Printed
+      // ONCE per card even when the card holds several adjacent table rows
+      // (client feedback: don't reprint application titles). An App-level
+      // footnote marker prints INSIDE the badge, next to the name it scopes
+      // to — exactly where the source table shows it.
+      const appName = app.category || app.fullName || app.code || 'Application';
+      const appLevelSup = (app.footnoteMarks?.levels?.App || []).length
+        ? `<sup class="text-[0.65em] font-bold text-white/90 ml-0.5" title="See Application Task/Area Notes ${app.footnoteMarks.levels.App.join(', ')}">${app.footnoteMarks.levels.App.join(',')}</sup>`
+        : '';
+      const appBadge = `
+        <span class="inline-block text-sm font-bold text-white px-2.5 py-1 rounded align-middle"
+              style="background-color: ${appBadgeHex};">${escapeHtml(appName)}${appLevelSup}</span>`;
+
+      // Hierarchy crumbs shared by EVERY member print once next to the App
+      // badge; each member row then shows only its differentiating tail.
+      // Each crumb carries its hierarchy COLUMN name so footnote superscripts
+      // attach to the exact level the printed table marks (footnoteMarks.levels).
+      const crumbsOf = (a) => [
+        [a.sub1, 'App_s1'], [a.sub2, 'App_s2'], [a.sub3, 'App_s3'],
+        [a.sub4, 'App_s4'], [a.sub5, 'App_s5'], [a.sub6, 'App_s6'],
+      ].filter(([v]) => v).map(([text, col]) => ({ text, col }));
+      const memberCrumbs = members.map(m => crumbsOf(m.application || {}));
+      let prefixLen = memberCrumbs[0].length;
+      if (isGrouped) {
+        for (const crumbs of memberCrumbs) {
+          let i = 0;
+          while (i < prefixLen && i < crumbs.length && crumbs[i].text === memberCrumbs[0][i].text) i++;
+          prefixLen = i;
+        }
+      }
+      const crumbSep = '<span class="mx-1.5 text-gray-300">›</span>';
+      const sharedCrumbs = memberCrumbs[0].slice(0, prefixLen);
+      const breadcrumb = sharedCrumbs.length
+        ? sharedCrumbs.map(c => escapeHtml(c.text) + supFor(app, c.col)).join(crumbSep)
+        : '';
+
+      // Indoor/outdoor badge — uses the banner color for stronger branding
+      const locationBadge = app.indoorOutdoor ? `
+        <span class="text-xs px-2 py-0.5 rounded-full font-medium border"
+              style="background-color: ${bannerHex}15; color: ${bannerHex}; border-color: ${bannerHex}33;">
+          ${escapeHtml(app.indoorOutdoor)}
+        </span>
+      ` : '';
+
+      // Excerpt texts already printed in this card — adjacent rows of the
+      // same standard usually share one excerpt; show it once, not per row.
+      const seenExcerpts = new Set();
+
+      const deprecatedBanner = isDeprecated ? `
+        <div class="flex items-start gap-2 -mx-3 -mt-3 mb-2.5 px-3 py-1.5 bg-amber-50 border-b border-amber-200">
+          <span class="text-[11px] font-bold tracking-wider uppercase text-amber-700 shrink-0 mt-px">Deprecated</span>
+          <span class="text-xs text-amber-800">${escapeHtml(primary.deprecationNotice
+            || 'This edition has been superseded. Shown for version comparison only — refer to the current standard for guidance.')}</span>
+        </div>` : '';
+
+      const cardShell = (inner) => `
+        <article class="result-card bg-white rounded-xl border border-gray-100 shadow-sm p-3 relative overflow-hidden"
+                 style="animation-delay: ${index * 40}ms; border-left: 3px solid ${bannerHex};">
+          ${deprecatedBanner}
+          ${inner}
+        </article>
+      `;
+
+      // Chunk-only results (document-body excerpts, reference entries) have no
+      // D1 application row: no checkbox, no "Add to Project" — the excerpt and
+      // its links ARE the card.
+      const isApp = (primary.resultType || 'application') === 'application';
+
+      if (isGrouped) {
+        // One shared header, then one compact section per adjacent table row.
+        // Row-level facts (badges, citation, checkbox, actions) live on the
+        // member rows; per-row "Add to Project" sits off to the side.
+        return cardShell(`
+          <div class="flex items-start justify-between gap-2 mb-1.5">
+            <div class="min-w-0">${subCategoryBanner}</div>
+            <div class="flex items-center gap-1.5 shrink-0 flex-wrap justify-end">
+              ${locationBadge}
+            </div>
+          </div>
+          <div class="flex items-baseline flex-wrap gap-x-2 gap-y-1 mb-1">
+            ${appBadge}
+            ${breadcrumb ? `<span class="text-sm text-gray-600 font-medium">${breadcrumb}</span>` : ''}
+          </div>
+          ${members.map((m, i) =>
+            renderMemberSection(m, crumbsOf(m.application || {}).slice(prefixLen), i, appName, crumbSep, seenExcerpts)
+          ).join('')}
+        `);
+      }
+
+      // Single-row card: same layout as before, with the actions (Add to
+      // Project / Open in Library / Match) moved off to the side of the title
+      // row — client feedback: condense vertical white space.
+      return cardShell(`
+        <div class="flex items-start justify-between gap-2 mb-1.5">
+          <div class="flex items-start gap-2.5 min-w-0">
+            ${(isDeprecated || !isApp) ? '' : `<input
+              type="checkbox"
+              class="result-checkbox mt-0.5 rounded accent-ies-blue shrink-0"
+              value="${escapeHtml(app.code || '')}"
+              data-code="${escapeHtml(app.code || '')}"
+              ${app.code && selectedApplicationCodes.has(app.code) ? 'checked' : ''}
+            />`}
+            <div class="min-w-0">${subCategoryBanner}</div>
+          </div>
+          <div class="flex items-center gap-1.5 shrink-0 flex-wrap justify-end">
+            ${locationBadge}${rowBadges(app)}
+          </div>
+        </div>
+
+        <!-- Application name badge + drill-down breadcrumb | actions off to the side -->
+        <div class="flex items-center justify-between gap-2 flex-wrap mb-1 pl-[26px]">
+          <div class="flex items-baseline flex-wrap gap-x-2 gap-y-1 min-w-0">
+            ${appBadge}
+            ${breadcrumb ? `<span class="text-sm text-gray-600 font-medium">${breadcrumb}${supForRow(app)}</span>` : supForRow(app)}
+          </div>
+          ${actionsCluster(primary, appName)}
+        </div>
+        <p class="text-xs text-gray-400 mb-1 pl-[26px]">${escapeHtml(primary.citation || '')}</p>
+
+        <div class="pl-[26px]">
+          ${renderDataBlocks(primary, seenExcerpts)}
+        </div>
+      `);
+    }
+
+    // One section of a grouped card = one adjacent table row: header line
+    // (checkbox + differentiator + row badges | actions), citation, data.
+    // tailCrumbs are {text, col} objects, so each level's footnote superscript
+    // renders on the exact label the printed table marks; row-level markers
+    // append after the tail.
+    function renderMemberSection(result, tailCrumbs, i, appName, crumbSep, seenExcerpts) {
+      const app = result.application || {};
+      const label = tailCrumbs.length
+        ? tailCrumbs.map(c => escapeHtml(c.text) + supFor(app, c.col)).join(crumbSep) + supForRow(app)
+        : (app.rowRef ? `Row ${escapeHtml(String(app.rowRef))}` : escapeHtml(app.fullName || app.code || '')) + supForRow(app);
+      const name = tailCrumbs.length ? `${appName} › ${tailCrumbs.map(c => c.text).join(' › ')}` : appName;
+
+      return `
+        <div class="${i > 0 ? 'mt-2.5 pt-2.5 border-t border-gray-100' : 'mt-1.5'}">
+          <div class="flex items-center justify-between gap-2 flex-wrap">
+            <div class="flex items-center gap-2 min-w-0 flex-wrap">
+              <input
+                type="checkbox"
+                class="result-checkbox rounded accent-ies-blue shrink-0"
+                value="${escapeHtml(app.code || '')}"
+                data-code="${escapeHtml(app.code || '')}"
+                ${app.code && selectedApplicationCodes.has(app.code) ? 'checked' : ''}
+              />
+              <span class="text-sm font-semibold text-gray-800">${label}</span>
+              ${rowBadges(app)}
+            </div>
+            ${actionsCluster(result, name)}
+          </div>
+          <p class="text-xs text-gray-400 mt-0.5 pl-[26px]">${escapeHtml(result.citation || '')}</p>
+          <div class="pl-[26px]">
+            ${renderDataBlocks(result, seenExcerpts)}
+          </div>
+        </div>
+      `;
+    }
+
+    // Per-row badges: Area/Task, TM-24, Veiling Risk (L/M/H), Class of Play
+    // (I-IV). Row-level facts, so grouped cards print them on each member row.
+    // Inline hex avoids the Tailwind JIT missing classes built dynamically in JS.
+    function rowBadges(app) {
+      const areaTaskBadge = app.areaOrTask ? `
+        <span class="text-xs px-2 py-0.5 rounded-full bg-gray-50 text-gray-500 border border-gray-100">${escapeHtml(app.areaOrTask)}</span>
+      ` : '';
+
+      const tm24Badge = app.tm24Eligible ? `
+        <span class="text-xs px-2 py-0.5 rounded-full bg-green-50 text-green-700 border border-green-200">TM-24</span>
+      ` : '';
+
+      const veilingPalette = {
+        L: { bg: '#ECFDF5', text: '#065F46', border: '#A7F3D0' },
+        M: { bg: '#FFFBEB', text: '#92400E', border: '#FCD34D' },
+        H: { bg: '#FEF2F2', text: '#991B1B', border: '#FECACA' },
+      };
+      const veilingTone = veilingPalette[String(app.veilingRisk || '').toUpperCase()];
+      const veilingBadge = veilingTone ? `
+        <span class="text-xs px-2 py-0.5 rounded-full font-medium border"
+              style="background-color: ${veilingTone.bg}; color: ${veilingTone.text}; border-color: ${veilingTone.border};"
+              title="Veiling reflection risk">
+          Veiling: ${escapeHtml(app.veilingRisk)}
+        </span>
+      ` : '';
+
+      const classOfPlayBadge = app.classOfPlay ? `
+        <span class="text-xs px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200" title="RP-6 Class of Play">
+          Class ${escapeHtml(app.classOfPlay)}
+        </span>
+      ` : '';
+
+      return `${areaTaskBadge}${tm24Badge}${veilingBadge}${classOfPlayBadge}`;
+    }
+
+    // Compact action cluster shown off to the side of a result row:
+    // Match % · Open in Library (primary) · Add to Project.
+    //
+    // "Open in Library" (formerly the "Vitrium" text link — client feedback:
+    // unclear name, visually secondary) is now a filled button with the same
+    // visual weight as "Add to Project", differentiated by fill color, and
+    // listed first as the primary action per result card.
+    function actionsCluster(result, name) {
+      const app = result.application || {};
+      const score = result.relevanceScore || 0;
+      const isApp = (result.resultType || 'application') === 'application';
+
+      const linkSvg = `<svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/>
+          </svg>`;
+      const filledLink = (href, label, title) => `
+        <a href="${escapeHtml(href)}" target="_blank" rel="noopener"
+           class="text-xs px-2.5 py-1 bg-emerald-700 text-white rounded-lg hover:bg-emerald-800 transition font-medium flex items-center gap-1"
+           title="${escapeHtml(title)}">
+          ${linkSvg}
+          ${escapeHtml(label)}
+        </a>
+      `;
+
+      // Reference entries link per the priority order resolved server-side:
+      // Lighting Library → DOI → source URL → no link (never fabricated).
+      let primaryLink = '';
+      if (result.resultType === 'reference') {
+        const ref = result.referenceLink;
+        if (ref?.url) {
+          const label = ref.type === 'library' ? 'Open in Library' : ref.type === 'doi' ? 'View via DOI' : 'View Source';
+          primaryLink = filledLink(ref.url, label, 'Open the referenced document');
+        }
+      } else if (result.vitriumLink) {
+        primaryLink = filledLink(result.vitriumLink, 'Open in Library', 'Open in the IES Lighting Library');
+      }
+
+      const addToProjectBtn = isApp ? `
+          <button
+            class="add-to-project-btn text-xs px-2.5 py-1 bg-ies-blue text-white rounded-lg hover:bg-ies-blue-dark transition font-medium flex items-center gap-1"
+            data-code="${escapeHtml(app.code || '')}"
+            data-name="${escapeHtml(name)}"
+            data-citation="${escapeHtml(result.citation || '')}"
+          >
+            <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/>
+            </svg>
+            Add to Project
+          </button>` : '';
+
+      return `
+        <div class="flex items-center gap-2.5 shrink-0 no-print">
+          ${score > 0 ? `<span class="text-xs text-gray-300 tabular-nums">Match: ${Math.round(score * 100)}%</span>` : ''}
+          ${primaryLink}
+          ${addToProjectBtn}
+        </div>
+      `;
+    }
+
+    // Data blocks for one result row: illuminance planes, environmental
+    // considerations, collapsed footnotes, and the "From the Standard" excerpt.
+    function renderDataBlocks(result, seenExcerpts) {
+      const app = result.application || {};
+
+      // Illuminance values (Horizontal / Vertical / Task planes, side-by-side)
+      const luxBlock = buildIlluminanceBlock(app);
+
+      // Environmental & Visual Considerations — labeled cards, each with a
+      // sub-label pointing at the guidance type ("Max" / "See Notes"), per
+      // requests #8 and #9. Spectrum now carries an explicit label.
+      const outdoor = app.outdoor || {};
+      const envCards = [
+        { label: 'Lighting Zone', value: outdoor.lightingZone,     sub: null },
+        { label: 'Glare',         value: outdoor.maxGlareRating,    sub: 'Max' },
+        { label: 'Uplight',       value: outdoor.maxUplight,        sub: 'Max' },
+        { label: 'Controls',      value: outdoor.controlsRequired,  sub: 'See Notes' },
+        { label: 'Curfew',        value: outdoor.curfewDimming,     sub: 'See Notes' },
+        { label: 'Spectrum',      value: outdoor.spectrumGuidance,  sub: 'See Notes' },
+      ].filter(c => c.value != null && c.value !== '');
+
+      const envCard = (c) => `
+        <div class="bg-amber-50/60 border border-amber-100 rounded-md px-2.5 py-1">
+          <p class="text-[10px] uppercase tracking-wide text-gray-500 leading-tight">${c.label}</p>
+          <p class="text-sm font-bold text-gray-800 leading-tight">${escapeHtml(String(c.value))}</p>
+          ${c.sub ? `<p class="text-[10px] text-gray-400 leading-tight">${c.sub}</p>` : ''}
+        </div>`;
+
+      const outdoorBlock = envCards.length ? `
+        <div class="mt-2 pt-2 border-t border-gray-100">
+          <p class="text-sm font-semibold text-gray-700 mb-1.5">Environmental and Visual Considerations</p>
+          <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
+            ${envCards.map(envCard).join('')}
+          </div>
+        </div>
+      ` : '';
+
+      // Application Task/Area Notes — footnotes collapsed by default; the user
+      // clicks to expand (matches the proposed layout). Combines App_Notes,
+      // Footnotes and General_Notes into one disclosure.
+      const notesText = [app.appNotes, app.footnotes, app.generalNotes]
+        .filter(Boolean).join('\n\n');
+      const notesBlock = notesText ? `
+        <details class="mt-2 pt-2 border-t border-gray-100 group">
+          <summary class="cursor-pointer text-sm font-semibold text-gray-700 flex items-center gap-2 list-none select-none">
+            <svg class="w-3.5 h-3.5 text-gray-400 transition-transform group-open:rotate-90 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/>
+            </svg>
+            Application Task/Area Notes
+            <span class="text-xs font-normal text-gray-400">— footnotes begin collapsed. Click to display.</span>
+          </summary>
+          <div class="mt-2 pl-5 text-xs text-gray-600 leading-relaxed whitespace-pre-line">${escapeHtml(notesText)}</div>
+        </details>
+      ` : '';
+
+      // "From the Standard" — the search worker returns a single best excerpt
+      // (search.js: pickExcerptForApp). Only useful when it shows PROSE context
+      // from the body of the standard; a raw table dump just repeats the data
+      // already shown above, so we suppress it (request #10). Within a grouped
+      // card, an excerpt already printed by an earlier row is not repeated.
+      const excerpts = Array.isArray(result.excerpts)
+        ? result.excerpts
+        : (result.excerpt ? [result.excerpt] : []);
+      // Reference entries bypass the table-dump heuristic: bibliography lines
+      // are legitimately digit-heavy (years, page ranges, DOIs) but are the
+      // whole point of a reference result.
+      const proseExcerpts = excerpts.filter(e =>
+        e && e.text && e.chunkType !== 'table'
+          && (e.chunkType === 'reference' || !looksLikeTableDump(e.text))
+          && !(seenExcerpts && seenExcerpts.has(e.text))
+      );
+      if (seenExcerpts) proseExcerpts.forEach(e => seenExcerpts.add(e.text));
+      const excerptHeading = result.resultType === 'reference' ? 'Reference Entry' : 'From the Standard';
+      const excerptBlock = proseExcerpts.length > 0 ? `
+        <div class="mt-2 pt-2 border-t border-gray-100">
+          <p class="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-1.5">${excerptHeading}</p>
+          ${proseExcerpts.slice(0, 2).map(e => {
+            // Reference entries render in full (they are short and their tail
+            // carries the year/publisher/DOI); body excerpts stay compact.
+            const cap = e.chunkType === 'reference' ? 500 : 240;
+            return `
+            <div class="text-xs text-gray-600 leading-relaxed mb-2 pl-3 border-l-2 border-gray-200">
+              "${escapeHtml((e.text || '').substring(0, cap))}${(e.text || '').length > cap ? '…' : ''}"
+              <span class="ml-1 text-gray-400">${e.section ? `§${escapeHtml(e.section)} · ` : ''}${e.pageNumber != null ? `p. ${e.pageNumber}` : ''}</span>
+            </div>
+          `; }).join('')}
+        </div>
+      ` : '';
+
+      return `${luxBlock}${outdoorBlock}${notesBlock}${excerptBlock}`;
+    }
+
+    // Heuristic for request #10: a "From the Standard" excerpt that is mostly
+    // digits/short tokens is almost certainly a raw table dump (lux/fc values,
+    // ratios, page refs) rather than prose — suppress it since it only repeats
+    // the structured data already displayed above.
+    function looksLikeTableDump(text) {
+      if (!text) return false;
+      const t = String(text);
+      const digitRatio = (t.match(/\d/g) || []).length / t.length;
+      const letterRatio = (t.match(/[a-zA-Z]/g) || []).length / t.length;
+      return digitRatio > 0.22 || letterRatio < 0.45;
+    }
+
+    function buildIlluminanceBlock(app) {
+      const hor = app.horizontal;
+      const ver = app.vertical;
+      const task = app.task;
+      if (!hor && !ver && !task) return '';
+
+      // Height suffix, appended to the Maintained value so lux/fc and their
+      // measurement height read as one figure ("2 lx @ 0.0 m") per requests
+      // #4 and #7. Supports numeric heights and "TS" (Task Surface).
+      const hSuffix = (val, unit) => {
+        if (val == null || val === '') return '';
+        if (String(val).toUpperCase() === 'TS') return ' @ TS';
+        return ` @ ${val} ${unit}`;
+      };
+
+      // A single data cell inside a plane box. Tight vertical padding —
+      // client feedback: condense cell padding so adjacent results are
+      // easier to compare on one screen.
+      const cell = (label, mainHtml, subText) => `
+        <div class="px-2.5 py-1">
+          <p class="text-[10px] uppercase tracking-wide text-gray-400">${label}</p>
+          <p class="text-sm font-bold text-gray-900 leading-tight lux-badge">${mainHtml}</p>
+          ${subText ? `<p class="text-[11px] text-gray-400 leading-tight">${escapeHtml(String(subText))}</p>` : ''}
+        </div>`;
+
+      // A plane box: a tinted header ("Horizontal (Eₕ) Cat. A") over a compact
+      // grid of Maintained / Basis / Uniformity (+ CV when present). The
+      // category letter is now explicitly labeled "Cat." (request #3).
+      const renderPlaneBox = (plane, label, tintBg, tintFg) => {
+        const catLabel = plane.category != null && plane.category !== ''
+          ? ` <span class="font-bold">Cat. ${escapeHtml(String(plane.category))}</span>` : '';
+
+        const maintMain = plane.lux != null || plane.fc != null
+          ? `${plane.lux ?? '—'}<span class="text-[11px] font-normal text-gray-400 ml-0.5">lx</span>`
+            + `<span class="font-normal text-gray-500">${escapeHtml(hSuffix(plane.heightM, 'm'))}</span>`
+          : null;
+        const maintSub = plane.fc != null
+          ? `${plane.fc} fc${hSuffix(plane.heightFt, 'ft')}`
+          : null;
+
+        // Uniformity: if there's no ratio value, promote the ratio basis to the
+        // main slot; otherwise the basis (e.g. "Avg:Min") sits underneath as the
+        // sub-label so it's shown for every plane, not just vertical (request #5).
+        const uniMain = plane.uniformity ?? plane.ratioBasis;
+        const uniSub = plane.uniformity != null ? plane.ratioBasis : null;
+
+        // Cell order: Maintained → Uniformity → Basis. Client feedback requires
+        // "Basis" to always display after (to the right of) "Uniformity".
+        const cells = [];
+        if (maintMain != null) cells.push(cell('Maintained', maintMain, maintSub));
+        if (uniMain != null) cells.push(cell('Uniformity', escapeHtml(String(uniMain)), uniSub));
+        if (plane.avgMaxMin != null) cells.push(cell('Basis', escapeHtml(String(plane.avgMaxMin)), null));
+        if (plane.cv != null) cells.push(cell('CV', escapeHtml(String(plane.cv)), null));
+        if (!cells.length) return '';
+
+        return `
+          <div class="border border-gray-200 rounded-lg overflow-hidden">
+            <div class="px-2.5 py-1 text-xs font-semibold" style="background-color: ${tintBg}; color: ${tintFg};">
+              ${label}${catLabel}
+            </div>
+            <div class="grid divide-x divide-gray-100" style="grid-template-columns: repeat(${cells.length}, minmax(0, 1fr));">
+              ${cells.join('')}
+            </div>
+            ${plane.notes ? `<p class="text-[11px] text-gray-500 italic px-2.5 py-1 border-t border-gray-100">${escapeHtml(plane.notes)}</p>` : ''}
+          </div>
+        `;
+      };
+
+      // Per IlluminanceTables_Reference_260421 (Visual): each plane has its own
+      // header tint — Eh = light blue, Ev = light green, Task = light yellow.
+      const sections = [];
+      if (hor)  sections.push(renderPlaneBox(hor,  'Horizontal (Eₕ)', '#D7E8F4', '#1E4F73'));
+      if (ver)  sections.push(renderPlaneBox(ver,  'Vertical (Eᵥ)',   '#D9F2D0', '#2E4A34'));
+      if (task) sections.push(renderPlaneBox(task, 'Task',            '#FCF1D8', '#7A4F0E'));
+
+      if (!sections.length) return '';
+
+      // Side-by-side on wider screens (Horizontal + Vertical), stacked on
+      // narrow — condenses the card so more results fit per screen (request #6).
+      return `
+        <div class="mt-2 grid grid-cols-1 md:grid-cols-2 gap-2">
+          ${sections.join('')}
+        </div>
+      `;
+    }
+
+    function renderError(message) {
+      document.getElementById('results-section').classList.remove('hidden');
+      document.getElementById('results-list').innerHTML = `
+        <div class="bg-red-50 border border-red-200 rounded-xl p-5 flex items-start gap-3">
+          <svg class="w-5 h-5 text-red-400 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+          </svg>
+          <div>
+            <p class="text-sm font-semibold text-red-700">Search failed</p>
+            <p class="text-sm text-red-600 mt-1">${escapeHtml(message)}</p>
+          </div>
+        </div>
+      `;
+    }
+
+    // ── Project Modal ────────────────────────────────────────────────────────
+    async function openProjectModal(applicationCode, appName, citation) {
+      modalPendingCodes = Array.isArray(applicationCode) ? applicationCode : [applicationCode];
+      document.getElementById('modal-app-name').textContent = appName || applicationCode;
+      document.getElementById('modal-app-citation').textContent = citation || '';
+      document.getElementById('modal-error').classList.add('hidden');
+      hideCreateProjectForm();
+      document.getElementById('project-modal').classList.remove('hidden');
+      document.body.style.overflow = 'hidden';
+      await loadProjectsIntoModal();
+    }
+
+    function closeProjectModal() {
+      document.getElementById('project-modal').classList.add('hidden');
+      document.body.style.overflow = '';
+      modalPendingCodes = [];
+    }
+
+    async function addSelectedToProject() {
+      if (selectedApplicationCodes.size === 0) return;
+      const codes = [...selectedApplicationCodes];
+      // Use first selected code's name as the modal title
+      document.getElementById('modal-app-name').textContent = `${codes.length} application${codes.length > 1 ? 's' : ''} selected`;
+      document.getElementById('modal-app-citation').textContent = '';
+      modalPendingCodes = codes;
+      document.getElementById('modal-error').classList.add('hidden');
+      hideCreateProjectForm();
+      document.getElementById('project-modal').classList.remove('hidden');
+      document.body.style.overflow = 'hidden';
+      await loadProjectsIntoModal();
+    }
+
+    async function loadProjectsIntoModal() {
+      const container = document.getElementById('modal-projects-list');
+      container.innerHTML = `<div class="skeleton h-10 rounded-lg"></div><div class="skeleton h-10 rounded-lg mt-2"></div>`;
+
+      try {
+        const data = await LensyAPI.listProjects(1);
+        projectsCache = data.projects || [];
+
+        if (!projectsCache.length) {
+          container.innerHTML = `<p class="text-sm text-gray-400 text-center py-3">No projects yet. Create one below.</p>`;
+          return;
+        }
+
+        container.innerHTML = projectsCache.map(p => `
+          <button onclick="addToExistingProject(${p.id})"
+            class="w-full text-left flex items-center justify-between px-4 py-2.5 rounded-lg border border-gray-100 hover:border-ies-blue hover:bg-blue-50 transition group">
+            <div>
+              <p class="text-sm font-medium text-gray-800 group-hover:text-ies-blue">${escapeHtml(p.name)}</p>
+              ${p.location ? `<p class="text-xs text-gray-400">${escapeHtml(p.location)}</p>` : ''}
+            </div>
+            <svg class="w-4 h-4 text-gray-300 group-hover:text-ies-blue" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/>
+            </svg>
+          </button>
+        `).join('');
+      } catch (err) {
+        container.innerHTML = `<p class="text-sm text-red-500">Failed to load projects.</p>`;
+      }
+    }
+
+    async function addToExistingProject(projectId) {
+      try {
+        if (modalPendingCodes.length === 1) {
+          await LensyAPI.addToProject(modalPendingCodes[0], projectId);
+        } else {
+          await LensyAPI.addManyToProject(modalPendingCodes, projectId);
+        }
+        closeProjectModal();
+        showToast(`Added to project`, 'success');
+      } catch (err) {
+        document.getElementById('modal-error').textContent = err.message;
+        document.getElementById('modal-error').classList.remove('hidden');
+      }
+    }
+
+    function showCreateProjectForm() {
+      document.getElementById('modal-project-select-section').classList.add('hidden');
+      document.getElementById('modal-create-project-form').classList.remove('hidden');
+      document.getElementById('new-project-name').focus();
+    }
+
+    function hideCreateProjectForm() {
+      document.getElementById('modal-project-select-section').classList.remove('hidden');
+      document.getElementById('modal-create-project-form').classList.add('hidden');
+    }
+
+    async function createProjectAndAdd() {
+      const name = document.getElementById('new-project-name').value.trim();
+      if (!name) {
+        document.getElementById('new-project-name').focus();
+        return;
+      }
+      const client = document.getElementById('new-project-client').value.trim();
+      const location = document.getElementById('new-project-location').value.trim();
+
+      try {
+        const created = await LensyAPI.createProject({ name, client_name: client || null, location: location || null, user_id: 1 });
+        const projectId = created.project.id;
+
+        if (modalPendingCodes.length === 1) {
+          await LensyAPI.addToProject(modalPendingCodes[0], projectId);
+        } else {
+          await LensyAPI.addManyToProject(modalPendingCodes, projectId);
+        }
+        closeProjectModal();
+        showToast(`Project "${name}" created`, 'success');
+      } catch (err) {
+        document.getElementById('modal-error').textContent = err.message;
+        document.getElementById('modal-error').classList.remove('hidden');
+      }
+    }
+
+    // ── Toast ────────────────────────────────────────────────────────────────
+    let toastTimeout;
+    function showToast(message, type = 'success') {
+      const toast = document.getElementById('toast');
+      const inner = document.getElementById('toast-inner');
+      const icon = document.getElementById('toast-icon');
+      document.getElementById('toast-message').textContent = message;
+
+      if (type === 'success') {
+        inner.className = inner.className.replace(/bg-\S+/, '') + ' bg-gray-900';
+        icon.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/>';
+      } else {
+        inner.className = inner.className.replace(/bg-\S+/, '') + ' bg-red-600';
+        icon.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>';
+      }
+
+      toast.classList.remove('hidden');
+      clearTimeout(toastTimeout);
+      toastTimeout = setTimeout(() => toast.classList.add('hidden'), 3000);
+    }
+
+    // ── UI Helpers ───────────────────────────────────────────────────────────
+    function showLoading(show) {
+      document.getElementById('loading').classList.toggle('hidden', !show);
+      document.getElementById('search-btn').disabled = show;
+    }
+
+    function clearResults() {
+      document.getElementById('results-section').classList.add('hidden');
+      document.getElementById('results-list').innerHTML = '';
+      document.getElementById('ai-summary-card').classList.add('hidden');
+      document.getElementById('no-results').classList.add('hidden');
+      document.getElementById('no-strong-match-banner').classList.add('hidden');
+      const chips = document.getElementById('doc-chips');
+      chips.classList.add('hidden');
+      chips.classList.remove('flex');
+      chips.innerHTML = '';
+      selectedApplicationCodes = new Set();
+      allResults = [];
+      currentPage = 1;
+      activeDocFilter = null;
+      updateBulkActionsUI();
+    }
+
+    function toggleSelection(applicationCode, checked) {
+      if (!applicationCode) return;
+      if (checked) selectedApplicationCodes.add(applicationCode);
+      else selectedApplicationCodes.delete(applicationCode);
+      updateBulkActionsUI();
+    }
+
+    // Application codes eligible for bulk selection — scoped to the VISIBLE
+    // pool, so "All" under an active doc chip only selects that document's
+    // rows, never hidden ones.
+    function selectableCodes() {
+      return visibleResults()
+        .filter(r => (r.resultType || 'application') === 'application' && !r.isDeprecated)
+        .map(r => r.application?.code)
+        .filter(Boolean);
+    }
+
+    function toggleSelectAll(checked) {
+      const codes = selectableCodes();
+      if (checked) codes.forEach(c => selectedApplicationCodes.add(c));
+      else codes.forEach(c => selectedApplicationCodes.delete(c));
+      document.querySelectorAll('.result-checkbox').forEach(cb => {
+        cb.checked = selectedApplicationCodes.has(cb.dataset.code);
+      });
+      updateBulkActionsUI();
+    }
+
+    function updateBulkActionsUI() {
+      const bulkActions = document.getElementById('bulk-actions');
+      const addSelectedBtn = document.getElementById('add-selected-btn');
+      const label = document.getElementById('add-selected-label');
+      const selectAll = document.getElementById('select-all-results');
+      const pool = selectableCodes();
+      const hasResults = pool.length > 0;
+      const n = selectedApplicationCodes.size;
+
+      bulkActions.classList.toggle('hidden', !hasResults);
+      addSelectedBtn.disabled = n === 0;
+      label.textContent = `Add to Project${n > 0 ? ` (${n})` : ''}`;
+      if (selectAll) selectAll.checked = hasResults && pool.every(c => selectedApplicationCodes.has(c));
+    }
+
+    function escapeHtml(str) {
+      if (str == null) return '';
+      return String(str)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    // Event delegation for dynamically-generated result cards
+    document.getElementById('results-list').addEventListener('click', e => {
+      const btn = e.target.closest('.add-to-project-btn');
+      if (btn) {
+        openProjectModal(btn.dataset.code, btn.dataset.name, btn.dataset.citation);
+      }
+    });
+
+    document.getElementById('results-list').addEventListener('change', e => {
+      const cb = e.target.closest('.result-checkbox');
+      if (cb) toggleSelection(cb.dataset.code, cb.checked);
+    });
+
+    // Delegated doc-chip clicks (chips are re-rendered on every filter change)
+    document.getElementById('doc-chips').addEventListener('click', e => {
+      const chip = e.target.closest('.doc-chip');
+      if (chip) setDocFilter(chip.dataset.std || null);
+    });
+
+    // Close modal on Escape
+    document.addEventListener('keydown', e => { if (e.key === 'Escape') closeProjectModal(); });
+
+    // ── Feature-flag init ────────────────────────────────────────────────────
+    // Compare Versions ships dark until the deprecated corpus is confirmed
+    // live in the target environment (FEATURES.compareVersions).
+    if (FEATURES.compareVersions) {
+      document.getElementById('filter-ct-compare-wrap').style.display = 'flex';
+      document.getElementById('sample-compare').classList.remove('hidden');
+    }
+  </script>
+</body>
+</html>
