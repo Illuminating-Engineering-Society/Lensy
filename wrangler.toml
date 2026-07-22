@@ -24,7 +24,7 @@
 #   wrangler secret put VITRIUM_API_KEY
 #   wrangler secret put SHAREPOINT_TOKEN
 
-name = "lucius-api"
+name = "lensy"
 main = "src/workers/api.js"
 compatibility_date = "2025-01-01"
 compatibility_flags = ["nodejs_compat"]
