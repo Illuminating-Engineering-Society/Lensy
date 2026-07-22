@@ -12,7 +12,7 @@ import {
   buildAISummaryCacheKey,
   getCachedAISummary,
   putCachedAISummary,
-} from './cache.js';
+} from './cache';
 
 /** Minimal in-memory KV namespace mock. */
 function mockKV() {

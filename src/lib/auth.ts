@@ -11,10 +11,12 @@
  * the local pipeline still works.
  */
 
-/**
- * @returns {Promise<{ ok: boolean, reason?: string }>}
- */
-export async function checkAuth(request, env) {
+export interface AuthResult {
+  ok: boolean;
+  reason?: string;
+}
+
+export async function checkAuth(request: Request, env: Env): Promise<AuthResult> {
   const expected = env.LUCIUS_API_SECRET;
   if (!expected) {
     if (env.ENVIRONMENT === 'production') {
@@ -36,7 +38,7 @@ export async function checkAuth(request, env) {
  * comparison independent of where the strings first differ AND of their
  * lengths, so the check leaks no timing signal about the secret.
  */
-async function timingSafeEqual(a, b) {
+async function timingSafeEqual(a: string, b: string): Promise<boolean> {
   const enc = new TextEncoder();
   const [da, db] = await Promise.all([
     crypto.subtle.digest('SHA-256', enc.encode(a)),

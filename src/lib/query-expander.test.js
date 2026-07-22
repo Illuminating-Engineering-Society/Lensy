@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { splitMultiQuery, cleanQuery, expandQuery, prepareQueryForEmbedding, isReferenceQuery } from './query-expander.js';
+import { splitMultiQuery, cleanQuery, expandQuery, prepareQueryForEmbedding, isReferenceQuery } from './query-expander';
 
 describe('query-expander', () => {
   it('splits comma-delimited multi-queries', () => {

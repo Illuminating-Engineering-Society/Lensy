@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { checkAuth } from './auth.js';
+import { checkAuth } from './auth';
 
 function req(token) {
   return {

@@ -179,7 +179,7 @@ const SYNONYMS = {
  * "office lobby, conference room, break room" → ["office lobby", "conference room", "break room"]
  * "spa lighting" → ["spa lighting"]
  */
-export function splitMultiQuery(query) {
+export function splitMultiQuery(query: string): string[] {
   const trimmed = query.trim();
 
   // Split on comma or semicolon, filter out empty segments
@@ -199,7 +199,7 @@ export function splitMultiQuery(query) {
  * Strip natural language question phrasing to extract the core topic.
  * "how bright should a spa be?" → "spa"
  */
-export function cleanQuery(query) {
+export function cleanQuery(query: string): string {
   let q = query.trim();
 
   for (const pattern of QUESTION_PATTERNS) {
@@ -226,11 +226,11 @@ export function cleanQuery(query) {
  * The original query terms always come first so their signal dominates.
  * Synonym terms are appended to widen the semantic neighbourhood.
  */
-export function expandQuery(query) {
+export function expandQuery(query: string): string {
   const cleaned = cleanQuery(query);
   const lower = cleaned.toLowerCase();
 
-  const expansions = new Set();
+  const expansions = new Set<string>();
 
   for (const [term, synonymText] of Object.entries(SYNONYMS)) {
     // Match on whole-word boundary to avoid "spa" matching "space"
@@ -256,7 +256,7 @@ export function expandQuery(query) {
  * Full pipeline: clean + expand.
  * Use this before embedding a user query.
  */
-export function prepareQueryForEmbedding(query) {
+export function prepareQueryForEmbedding(query: string): string {
   return expandQuery(cleanQuery(query));
 }
 
@@ -281,7 +281,7 @@ const VERSION_COMPARE_PATTERNS = [
  *
  * @returns {boolean}
  */
-export function isVersionComparisonQuery(query) {
+export function isVersionComparisonQuery(query: string): boolean {
   if (!query) return false;
   return VERSION_COMPARE_PATTERNS.some(re => re.test(query));
 }
@@ -311,11 +311,11 @@ const REFERENCE_QUERY_PATTERNS = [
  *
  * @returns {boolean}
  */
-export function isReferenceQuery(query) {
+export function isReferenceQuery(query: string): boolean {
   if (!query) return false;
   return REFERENCE_QUERY_PATTERNS.some(re => re.test(query));
 }
 
-function escapeRegex(str) {
+function escapeRegex(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }

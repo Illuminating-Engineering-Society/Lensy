@@ -10,7 +10,8 @@
  *   - Max 3 paragraphs per response
  */
 
-import { checkCopyrightViolations } from './citations.js';
+import { checkCopyrightViolations } from './citations';
+import type { AISummary, SearchResult } from '../types';
 
 const MODEL = '@cf/meta/llama-3.3-70b-instruct-fp8-fast';
 // Doubled from 1000 (client feedback: AI Guide answers read as length-capped).
@@ -107,10 +108,13 @@ If you cannot confidently answer from the provided search results:
  * @param {Array} searchResults - Formatted search results
  * @returns {Promise<{text: string, watermark: string, disclaimer: string}>}
  */
-export async function generateResponse(ai, query, searchResults) {
+export async function generateResponse(ai: Ai, query: string, searchResults: SearchResult[]): Promise<AISummary> {
   const userPrompt = buildPrompt(query, searchResults);
 
-  const response = await ai.run(MODEL, {
+  // The model-string overloads in workers-types don't cover this exact model's
+  // request/response shape, so narrow at this one boundary to the field we read.
+  const run = ai.run as unknown as (model: string, opts: unknown) => Promise<{ response: string }>;
+  const response = await run(MODEL, {
     max_tokens: MAX_TOKENS,
     messages: [
       { role: 'system', content: SYSTEM_PROMPT },
@@ -133,7 +137,7 @@ export async function generateResponse(ai, query, searchResults) {
   };
 }
 
-function buildPrompt(query, searchResults) {
+function buildPrompt(query: string, searchResults: SearchResult[]): string {
   // Deprecated excerpts are appended after current results by the search
   // worker (version-comparison queries only). Reserve prompt slots for them —
   // a plain slice(0, 5) would cut off exactly the content the comparison
@@ -182,7 +186,7 @@ Instructions:
 Generate a concise, cited response:`;
 }
 
-function buildSafeFallback(query, searchResults) {
+function buildSafeFallback(query: string, searchResults: SearchResult[]): AISummary {
   const standardsList = [...new Set(
     searchResults.map(r => r.application?.standardFull || r.application?.standard).filter(Boolean)
   )].map(s => `- ${s}`).join('\n');

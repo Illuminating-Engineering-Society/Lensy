@@ -33,8 +33,8 @@
  *     first/middle/last chunk vectors actually exist (?verify=0 to skip).
  */
 
-import { bumpDataVersion, getDataVersion } from '../lib/cache.js';
-import { checkAuth } from '../lib/auth.js';
+import { bumpDataVersion, getDataVersion } from '../lib/cache';
+import { checkAuth } from '../lib/auth';
 
 const EMBED_MODEL = '@cf/baai/bge-base-en-v1.5';
 const SCAN_DEFAULT_PASSES = 8;

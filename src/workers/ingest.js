@@ -41,8 +41,8 @@
  *     Return R2 key and wrangler command for uploading the raw PDF.
  */
 
-import { bumpDataVersion } from '../lib/cache.js';
-import { checkAuth } from '../lib/auth.js';
+import { bumpDataVersion } from '../lib/cache';
+import { checkAuth } from '../lib/auth';
 
 const EMBED_MODEL = '@cf/baai/bge-base-en-v1.5';
 const EMBED_BATCH = 100;       // Workers AI max per call
