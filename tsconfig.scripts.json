@@ -1,0 +1,27 @@
+{
+  // Node graph: the ingestion/maintenance scripts and the Node-only libs they
+  // import (pdfjs-dist, fs, path, child_process). @types/node lives ONLY here.
+  "compilerOptions": {
+    "target": "es2022",
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "lib": ["es2023"],
+    "types": ["node"],
+    "strict": true,
+    "noEmit": true,
+    "allowJs": true,
+    "checkJs": false,
+    "resolveJsonModule": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true
+  },
+  "include": [
+    "scripts/**/*",
+    "src/lib/pdf-parser.*",
+    "src/lib/table-extractor.*",
+    "src/lib/chunker.*",
+    "src/lib/applications-extractor.*",
+    "src/types.ts"
+  ],
+  "exclude": ["node_modules", "dist", ".wrangler"]
+}

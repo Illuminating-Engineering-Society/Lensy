@@ -17,15 +17,20 @@
     "sync-metadata": "node scripts/sync-metadata.js",
     "test:search": "node scripts/test-search.js",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "cf-typegen": "wrangler types",
+    "typecheck": "tsc --noEmit -p tsconfig.worker.json && tsc --noEmit -p tsconfig.scripts.json"
   },
   "dependencies": {
     "pdfjs-dist": "^4.9.155"
   },
   "devDependencies": {
-    "wrangler": "^3.100.0",
+    "@cloudflare/vitest-pool-workers": "^0.5.0",
+    "@cloudflare/workers-types": "^4.20260702.1",
+    "@types/node": "^20.19.43",
+    "typescript": "^5.9.3",
     "vitest": "^2.1.0",
-    "@cloudflare/vitest-pool-workers": "^0.5.0"
+    "wrangler": "^3.100.0"
   },
   "engines": {
     "node": ">=18.0.0"
