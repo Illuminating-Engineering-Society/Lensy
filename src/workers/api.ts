@@ -20,9 +20,9 @@
  *   GET    /api/projects/:id/export
  */
 
-import { handleSearch } from './search.js';
-import { handleIngest } from './ingest.js';
-import { handleAdminScanOrphans, handleAdminEnumerateIds, handleAdminDeleteOrphans, handleAdminFlushCache, handleAdminSearchLog, handleAdminR2Multipart, handleAdminIndexStatus } from './admin.js';
+import { handleSearch } from './search';
+import { handleIngest } from './ingest';
+import { handleAdminScanOrphans, handleAdminEnumerateIds, handleAdminDeleteOrphans, handleAdminFlushCache, handleAdminSearchLog, handleAdminR2Multipart, handleAdminIndexStatus } from './admin';
 
 // CORS: the search/read API is public and credential-less; admin/ingest
 // routes require the bearer secret. KNOWN GAP (Phase 1 by design): the
@@ -38,7 +38,7 @@ const CORS_HEADERS = {
 };
 
 export default {
-  async fetch(request, env, ctx) {
+  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     // CORS preflight
     if (request.method === 'OPTIONS') {
       return new Response(null, { status: 204, headers: CORS_HEADERS });
@@ -101,7 +101,7 @@ export default {
       console.error('API error:', err);
       // Never leak stack/internal details to production clients; the full
       // error is in the Worker logs (`wrangler tail`).
-      const detail = env.ENVIRONMENT === 'production' ? undefined : err.message;
+      const detail = env.ENVIRONMENT === 'production' ? undefined : (err instanceof Error ? err.message : String(err));
       return withCors(json({ error: 'Internal server error', ...(detail ? { detail } : {}) }, 500));
     }
   },
@@ -109,7 +109,7 @@ export default {
 
 // ─── Applications Handlers ────────────────────────────────────────────────────
 
-async function handleApplications(request, env, url) {
+async function handleApplications(request: Request, env: Env, url: URL): Promise<Response> {
   const parts = url.pathname.split('/').filter(Boolean); // ['api', 'applications', ':code']
   const code = parts[2];
 
@@ -145,7 +145,7 @@ async function handleApplications(request, env, url) {
 
 // ─── Standards Handlers ───────────────────────────────────────────────────────
 
-async function handleStandards(request, env, url) {
+async function handleStandards(request: Request, env: Env, url: URL): Promise<Response> {
   const parts = url.pathname.split('/').filter(Boolean);
   const id = parts[2];
 
@@ -168,7 +168,7 @@ async function handleStandards(request, env, url) {
 
 // ─── Projects Handlers ────────────────────────────────────────────────────────
 
-async function handleProjects(request, env, url) {
+async function handleProjects(request: Request, env: Env, url: URL): Promise<Response> {
   const parts = url.pathname.split('/').filter(Boolean);
   // ['api', 'projects'] or ['api', 'projects', :id] or ['api', 'projects', :id, 'applications', :appId]
   const projectId = parts[2];
@@ -205,7 +205,7 @@ async function handleProjects(request, env, url) {
   }
 }
 
-async function listProjects(request, env, url) {
+async function listProjects(request: Request, env: Env, url: URL): Promise<Response> {
   // Phase 1: simple user_id from query param (Phase 3 will use auth middleware)
   const userId = url.searchParams.get('user_id') || '1';
   const status = url.searchParams.get('status') || 'Active';
@@ -221,7 +221,7 @@ async function listProjects(request, env, url) {
   return json({ projects: result.results });
 }
 
-async function getProject(env, projectId) {
+async function getProject(env: Env, projectId: string): Promise<Response> {
   const project = await env.DB.prepare(
     'SELECT * FROM projects WHERE id = ?'
   ).bind(projectId).first();
@@ -240,8 +240,8 @@ async function getProject(env, projectId) {
   return json({ project, applications: applications.results });
 }
 
-async function createProject(request, env) {
-  const body = await request.json();
+async function createProject(request: Request, env: Env): Promise<Response> {
+  const body: any = await request.json();
   const {
     user_id = 1, name, location, client_name, client_company,
     project_type, designer_name, designer_company, target_codes, notes
@@ -267,8 +267,8 @@ async function createProject(request, env) {
   return json({ project }, 201);
 }
 
-async function updateProject(request, env, projectId) {
-  const body = await request.json();
+async function updateProject(request: Request, env: Env, projectId: string): Promise<Response> {
+  const body: any = await request.json();
   const allowed = ['name', 'location', 'client_name', 'client_company',
                    'project_type', 'designer_name', 'designer_company',
                    'target_codes', 'status', 'notes'];
@@ -286,7 +286,7 @@ async function updateProject(request, env, projectId) {
   return getProject(env, projectId);
 }
 
-async function deleteProject(env, projectId) {
+async function deleteProject(env: Env, projectId: string): Promise<Response> {
   const project = await env.DB.prepare(
     'SELECT id FROM projects WHERE id = ?'
   ).bind(projectId).first();
@@ -300,7 +300,7 @@ async function deleteProject(env, projectId) {
 
 // ─── Project Applications Sub-resource ───────────────────────────────────────
 
-async function handleProjectApplications(request, env, url, projectId, appId) {
+async function handleProjectApplications(request: Request, env: Env, url: URL, projectId: string, appId?: string): Promise<Response> {
   switch (request.method) {
     case 'POST':
       return addApplicationToProject(request, env, projectId);
@@ -318,8 +318,8 @@ async function handleProjectApplications(request, env, url, projectId, appId) {
   }
 }
 
-async function addApplicationToProject(request, env, projectId) {
-  const body = await request.json();
+async function addApplicationToProject(request: Request, env: Env, projectId: string): Promise<Response> {
+  const body: any = await request.json();
   // Accepts single object or array for bulk add
   const items = Array.isArray(body) ? body : [body];
 
@@ -385,8 +385,8 @@ async function addApplicationToProject(request, env, projectId) {
   }, hasInserts ? 201 : 200);
 }
 
-async function updateApplicationInProject(request, env, appId) {
-  const body = await request.json();
+async function updateApplicationInProject(request: Request, env: Env, appId: string): Promise<Response> {
+  const body: any = await request.json();
   const allowed = ['quantity', 'room_names', 'custom_notes',
                    'overridden', 'override_hor_lux', 'override_ver_lux',
                    'override_reason', 'sort_order'];
@@ -408,7 +408,7 @@ async function updateApplicationInProject(request, env, appId) {
   return json({ application: updated });
 }
 
-async function removeApplicationFromProject(env, appId, projectId) {
+async function removeApplicationFromProject(env: Env, appId: string, projectId: string): Promise<Response> {
   await env.DB.prepare(
     'DELETE FROM project_applications WHERE id = ? AND project_id = ?'
   ).bind(appId, projectId).run();
@@ -417,11 +417,11 @@ async function removeApplicationFromProject(env, appId, projectId) {
 
 // ─── Export Handler ───────────────────────────────────────────────────────────
 
-async function handleProjectExport(request, env, projectId, url) {
+async function handleProjectExport(request: Request, env: Env, projectId: string, url: URL): Promise<Response> {
   const format = url.searchParams.get('format') || 'json';
 
   const projectResponse = await getProject(env, projectId);
-  const projectData = await projectResponse.json();
+  const projectData = await projectResponse.json() as { project?: unknown; applications?: unknown };
 
   if (format === 'json') {
     return json(projectData);
@@ -439,14 +439,14 @@ async function handleProjectExport(request, env, projectId, url) {
 
 // ─── Utilities ────────────────────────────────────────────────────────────────
 
-function json(data, status = 200) {
+function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
     status,
     headers: { 'Content-Type': 'application/json' },
   });
 }
 
-function withCors(response) {
+function withCors(response: Response): Response {
   const newHeaders = new Headers(response.headers);
   for (const [k, v] of Object.entries(CORS_HEADERS)) {
     newHeaders.set(k, v);
