@@ -1,0 +1,10 @@
+{
+  // Solution file: routes each source file to the right project (Worker vs
+  // Node) for editors. CLI type-checking runs both explicitly via
+  // `npm run typecheck` (see package.json).
+  "files": [],
+  "references": [
+    { "path": "./tsconfig.worker.json" },
+    { "path": "./tsconfig.scripts.json" }
+  ]
+}

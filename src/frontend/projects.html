@@ -6,26 +6,64 @@
   <title>My Projects — Lensy</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
+    // IES brand design tokens — mirror of index.html's config (duplicated
+    // because the CDN-Tailwind setup has no shared build step; a future
+    // Vite/Tailwind build would make this a single source of truth).
     tailwind.config = {
       theme: {
         extend: {
           colors: {
-            'ies-blue': '#003DA5',
-            'ies-blue-dark': '#002d7a',
-            'ies-gold': '#F5A623',
-          }
+            'brand-primary':        '#D95D2B',
+            'brand-primary-dark':   '#B84A20',
+            'brand-secondary':      '#3A5068',
+            'brand-secondary-dark': '#2C3D4F',
+            'brand-accent':         '#EFA723',
+            'brand-accent-dark':    '#D8930F',
+            'surface':              '#F7F7F7',
+            'ink':                  '#2C2C2C',
+            // Back-compat aliases → Primary (see index.html for rationale)
+            'ies-blue':      '#D95D2B',
+            'ies-blue-dark': '#B84A20',
+            'ies-gold':      '#EFA723',
+          },
+          fontFamily: {
+            display: ['Nohemi', 'Inter', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'sans-serif'],
+            sans:    ['Inter', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'sans-serif'],
+            mono:    ['ui-monospace', 'SFMono-Regular', 'monospace'],
+          },
+          spacing: { xs: '13.3px', s: '20px', m: '30px', l: '45px', xl: '67.5px', xxl: '101.25px' },
+          borderRadius: { xs: '4px', s: '8px', m: '12px', l: '16px', xl: '24px', xxl: '32px' },
+          boxShadow: {
+            m:  '0 1px 3px rgba(44,44,44,0.08), 0 1px 2px rgba(44,44,44,0.06)',
+            l:  '0 4px 16px rgba(44,44,44,0.10)',
+            xl: '0 12px 32px rgba(44,44,44,0.14)',
+          },
         }
       }
     }
   </script>
   <style>
+    @font-face {
+      font-family: 'Nohemi'; font-style: normal; font-weight: 400 700;
+      font-display: swap; src: url('/fonts/Nohemi-Variable.woff2') format('woff2');
+    }
+    @font-face {
+      font-family: 'Inter'; font-style: normal; font-weight: 100 900;
+      font-display: swap; src: url('/fonts/Inter-Variable.woff2') format('woff2');
+    }
+    :root {
+      --brand-primary: #D95D2B; --brand-secondary: #3A5068; --brand-accent: #EFA723;
+      --surface: #F7F7F7; --ink: #2C2C2C;
+    }
+    body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; color: var(--ink); }
+    h1, h2, h3, .font-display { font-family: 'Nohemi', 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; }
     .skeleton { background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%); background-size: 200% 100%; animation: skeleton-loading 1.4s infinite; }
     @keyframes skeleton-loading { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
     .fade-in { animation: fadeIn 0.2s ease-out; }
     @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
     .modal-backdrop { backdrop-filter: blur(4px); }
     .project-card { transition: box-shadow 0.15s, transform 0.15s; }
-    .project-card:hover { box-shadow: 0 4px 24px rgba(0,61,165,0.10); transform: translateY(-1px); }
+    .project-card:hover { box-shadow: 0 4px 24px rgba(44,44,44,0.10); transform: translateY(-1px); }
     .lux-value { font-variant-numeric: tabular-nums; font-weight: 700; }
     @media print {
       .no-print { display: none !important; }
@@ -33,10 +71,10 @@
     }
   </style>
 </head>
-<body class="bg-gray-50 min-h-screen text-gray-900">
+<body class="bg-surface min-h-screen text-ink">
 
   <!-- ── Header ───────────────────────────────────────────────────────────── -->
-  <header class="bg-ies-blue text-white shadow-md no-print">
+  <header class="bg-brand-secondary text-white shadow-md no-print">
     <div class="max-w-5xl mx-auto px-4 py-3 flex items-center justify-between">
       <a href="/" class="flex items-center gap-3">
         <div class="w-8 h-8 rounded-lg bg-white/15 flex items-center justify-center">
@@ -45,7 +83,7 @@
           </svg>
         </div>
         <div>
-          <span class="text-xl font-bold tracking-tight">Lensy</span>
+          <span class="font-display text-xl font-bold tracking-tight">Lensy</span>
           <span class="hidden sm:inline text-blue-300 text-sm ml-2">IES Standards Assistant</span>
         </div>
       </a>

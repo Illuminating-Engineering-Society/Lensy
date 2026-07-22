@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { formatCitation, validateCitation, checkCopyrightViolations, composeStandardName } from './citations.js';
+import { formatCitation, validateCitation, checkCopyrightViolations, composeStandardName } from './citations';
 
 describe('composeStandardName', () => {
   it('appends the descriptive title to the designation', () => {

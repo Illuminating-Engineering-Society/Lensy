@@ -1,0 +1,33 @@
+{
+  // Cloudflare Worker graph (bundled by wrangler/esbuild). Web APIs only —
+  // NO @types/node here, so Worker code can't accidentally reference
+  // Buffer/process/node:crypto. Runtime globals come from @cloudflare/workers-types.
+  "compilerOptions": {
+    "target": "es2022",
+    "module": "es2022",
+    "moduleResolution": "bundler",
+    "lib": ["es2022"],
+    "types": ["@cloudflare/workers-types"],
+    "strict": true,
+    "noEmit": true,
+    "allowJs": true,
+    "checkJs": false,
+    "isolatedModules": true,
+    "resolveJsonModule": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true
+  },
+  "include": [
+    "src/workers/**/*",
+    "src/lib/auth.*",
+    "src/lib/cache.*",
+    "src/lib/citations.*",
+    "src/lib/query-expander.*",
+    "src/lib/ai-summary.*",
+    "src/lib/embeddings.*",
+    "src/types.ts",
+    "worker-configuration.d.ts",
+    "worker-env.d.ts"
+  ],
+  "exclude": ["node_modules", "dist", ".wrangler", "src/frontend"]
+}

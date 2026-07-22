@@ -62,9 +62,9 @@
  *    }
  */
 
-import { prepareQueryForEmbedding, splitMultiQuery, cleanQuery, isVersionComparisonQuery, isReferenceQuery } from '../lib/query-expander.js';
-import { generateResponse } from '../lib/ai-summary.js';
-import { formatCitation, composeStandardName } from '../lib/citations.js';
+import { prepareQueryForEmbedding, splitMultiQuery, cleanQuery, isVersionComparisonQuery, isReferenceQuery } from '../lib/query-expander';
+import { generateResponse } from '../lib/ai-summary';
+import { formatCitation, composeStandardName } from '../lib/citations';
 import {
   getDataVersion,
   buildSearchCacheKey,
@@ -75,7 +75,7 @@ import {
   buildAISummaryCacheKey,
   getCachedAISummary,
   putCachedAISummary,
-} from '../lib/cache.js';
+} from '../lib/cache';
 
 const EMBED_MODEL = '@cf/baai/bge-base-en-v1.5';
 const VECTOR_TOP_K = 50;      // Vectorize caps topK at 50 when returning metadata; fetch the max, dedupe down to limit

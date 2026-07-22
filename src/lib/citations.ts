@@ -4,18 +4,33 @@
  * Copyright Rule: Never quote more than 15 words from a single source.
  */
 
+/** Fields formatCitation reads — a D1 application row OR a formatted result. */
+interface CitationInput {
+  Standard_Full?: string | null; standardFull?: string | null;
+  Standard?: string | null; standard?: string | null;
+  Table_Ref?: string | null; tableRef?: string | null;
+  Row_Ref?: string | number | null; rowRef?: string | number | null;
+}
+
+interface StandardCitationInput {
+  full_designation?: string | null;
+  id: string;
+  title?: string | null;
+}
+
+export interface CopyrightViolation {
+  type: 'long_quote' | 'prohibited_phrase';
+  detail: string;
+}
+
 /**
  * Compose the full display name of a standard: designation + descriptive
  * title, e.g. "ANSI/IES RP-2-20+E1 Recommended Practice: Lighting Retail
  * Spaces". Client requirement: EVERY search result shows the full title, not
  * the bare designation. Handles titles that already embed the designation
  * (common in PDF metadata) without duplicating it.
- *
- * @param {string} designation - e.g. "ANSI/IES RP-2-20+E1"
- * @param {string|null} title - descriptive title from the standards table
- * @returns {string}
  */
-export function composeStandardName(designation, title) {
+export function composeStandardName(designation: string | null | undefined, title: string | null | undefined): string {
   const d = (designation || '').trim();
   const t = (title || '').trim();
   if (!t) return d;
@@ -32,16 +47,16 @@ export function composeStandardName(designation, title) {
 }
 
 /**
- * Format a full citation for an application record.
- * @param {Object} app - Application row (from D1 or formatted)
- * @param {string|null} section - Optional section override
- * @param {number|null} pageNumber - Optional page number override
- * @param {string|null} title - Standard's descriptive title (from D1 standards
- *   table) — appended to the designation so every citation carries the full
- *   standard name (client requirement, both result render paths).
- * @returns {string}
+ * Format a full citation for an application record. `title` (the standard's
+ * descriptive title from D1) is appended so every citation carries the full
+ * standard name — client requirement, both result render paths.
  */
-export function formatCitation(app, section = null, pageNumber = null, title = null) {
+export function formatCitation(
+  app: CitationInput,
+  section: string | null = null,
+  pageNumber: number | null = null,
+  title: string | null = null,
+): string {
   // Prefer the Standard_Full field (e.g. "ANSI/IES RP-9-20") over abbreviated Standard
   const designation = app.Standard_Full || app.standardFull || app.Standard || app.standard || '';
   const tableRef = app.Table_Ref || app.tableRef || '';
@@ -57,14 +72,12 @@ export function formatCitation(app, section = null, pageNumber = null, title = n
   return citation;
 }
 
-/**
- * Format a citation from raw standard metadata (e.g. for PDF chunk results).
- * @param {Object} standard - Standard row from D1
- * @param {number} pageNumber
- * @param {string|null} section
- * @returns {string}
- */
-export function formatStandardCitation(standard, pageNumber = null, section = null) {
+/** Format a citation from raw standard metadata (e.g. for PDF chunk results). */
+export function formatStandardCitation(
+  standard: StandardCitationInput,
+  pageNumber: number | null = null,
+  section: string | null = null,
+): string {
   const designation = standard.full_designation || standard.id;
   const title = standard.title || '';
 
@@ -74,13 +87,9 @@ export function formatStandardCitation(standard, pageNumber = null, section = nu
   return citation;
 }
 
-/**
- * Validate that a citation string meets IES requirements.
- * @param {string} text - Citation text to validate
- * @returns {{ valid: boolean, issues: string[] }}
- */
-export function validateCitation(text) {
-  const issues = [];
+/** Validate that a citation string meets IES requirements. */
+export function validateCitation(text: string): { valid: boolean; issues: string[] } {
+  const issues: string[] = [];
 
   if (!/ANSI\/IES\s+[A-Z]+-\d+-\d+/.test(text)) {
     issues.push('Missing ANSI/IES standard designation (e.g. ANSI/IES RP-9-20)');
@@ -94,14 +103,10 @@ export function validateCitation(text) {
 
 /**
  * Check AI-generated text for copyright violations.
- * Enforces:
- *   - Max 15 words per quoted passage
- *   - Max 1 quote per source
- * @param {string} text - AI-generated response text
- * @returns {Array<{type: string, detail: string}>} Array of violations (empty if clean)
+ * Enforces: max 15 words per quoted passage; no prohibited reproduction phrases.
  */
-export function checkCopyrightViolations(text) {
-  const violations = [];
+export function checkCopyrightViolations(text: string): CopyrightViolation[] {
+  const violations: CopyrightViolation[] = [];
 
   // Check for long quoted passages (>15 words between quotes)
   const quotedPassages = text.match(/"[^"]{30,}"/g) || [];
@@ -116,17 +121,10 @@ export function checkCopyrightViolations(text) {
   }
 
   // Check for prohibited reproduction phrases
-  const prohibited = [
-    'all rights reserved',
-    'reproduced with permission',
-    'copyright ies',
-  ];
+  const prohibited = ['all rights reserved', 'reproduced with permission', 'copyright ies'];
   for (const phrase of prohibited) {
     if (text.toLowerCase().includes(phrase)) {
-      violations.push({
-        type: 'prohibited_phrase',
-        detail: `Contains prohibited phrase: "${phrase}"`,
-      });
+      violations.push({ type: 'prohibited_phrase', detail: `Contains prohibited phrase: "${phrase}"` });
     }
   }
 
