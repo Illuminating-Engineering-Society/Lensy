@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { normalizeContentTypes, buildReferenceLink } from './search.js';
+import { normalizeContentTypes, buildReferenceLink } from './search';
 
 // ─── Content-type normalization ───────────────────────────────────────────────
 
