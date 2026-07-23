@@ -20,7 +20,7 @@ Read these documents in order, or jump to what you need:
 
 ### 📊 For Stakeholders & Leadership
 
-**[01_SUMMARY.md](docs/01_SUMMARY.md)** - Executive Overview (5 min read)
+**[LUCIUS_SCOPE.md § Executive Summary](LUCIUS_SCOPE.md#executive-summary)** - Executive Overview (5 min read)
 - What we're building and why
 - Key architectural decisions
 - Business impact and success metrics
@@ -32,7 +32,7 @@ Read these documents in order, or jump to what you need:
 
 ### 📋 For Product & Project Managers
 
-**[02_SCOPE.md](docs/02_SCOPE.md)** - Comprehensive Requirements (30 min read)
+**[LUCIUS_SCOPE.md](LUCIUS_SCOPE.md)** - Comprehensive Requirements (30 min read)
 - Complete feature list (Priority 1/2/3)
 - Technical architecture (AI layer, Vitrium, External API)
 - Integration points (SharePoint, Wicket, Webstore)
@@ -44,7 +44,7 @@ Read these documents in order, or jump to what you need:
 
 ### 🎨 For Developers & Designers
 
-**[03_MVP_FEATURES.md](docs/03_MVP_FEATURES.md)** - MVP Feature Specification (45 min read)
+**[LUCIUS_MVP_FEATURES.md](LUCIUS_MVP_FEATURES.md)** - MVP Feature Specification (45 min read)
 - Detailed UI wireframes for every feature
 - User workflows with examples
 - Database schemas
@@ -57,7 +57,7 @@ Read these documents in order, or jump to what you need:
 
 ### 🔧 For Implementation (Claude Code)
 
-**[05_Claude.md](docs/05_Claude.md)** - Technical Implementation Guide (60 min read)
+**[Claude.md](Claude.md)** - Technical Implementation Guide (60 min read)
 - Cloudflare infrastructure setup (Workers, Vectorize, R2, D1)
 - PDF ingestion pipeline
 - Vector search implementation
@@ -66,17 +66,6 @@ Read these documents in order, or jump to what you need:
 
 **Start here if:** You're ready to build. This is your step-by-step development guide.
 
----
-
-### 📚 For Context (Optional)
-
-**[04_ADDENDUM_RealSystem.md](docs/04_ADDENDUM_RealSystem.md)** - Current System Analysis
-- What idt.ies.org actually does today
-- 68-column database structure
-- How Lensy enhances (not replaces) existing features
-- Migration considerations
-
-**Start here if:** You need to understand the current Illuminance Selector or legacy constraints.
 
 ---
 
