@@ -13,7 +13,14 @@
 import { checkCopyrightViolations } from './citations';
 import type { AISummary, SearchResult } from '../types';
 
-const MODEL = '@cf/meta/llama-3.3-70b-instruct-fp8-fast';
+// Model chain (client bug DO9: "AI Guide results are not populating on any
+// search"): a failure of the primary model must degrade, never disappear.
+// Each model is tried in order; if every one errors, a safe standards-list
+// fallback is returned (flagged `degraded` so it is never cached).
+const MODELS = [
+  '@cf/meta/llama-3.3-70b-instruct-fp8-fast',
+  '@cf/meta/llama-3.1-8b-instruct-fast',
+];
 // Doubled from 1000 (client feedback: AI Guide answers read as length-capped).
 // The paragraph guidance below was relaxed in step so the budget is usable.
 const MAX_TOKENS = 2000;
@@ -114,15 +121,33 @@ export async function generateResponse(ai: Ai, query: string, searchResults: Sea
   // The model-string overloads in workers-types don't cover this exact model's
   // request/response shape, so narrow at this one boundary to the field we read.
   const run = ai.run as unknown as (model: string, opts: unknown) => Promise<{ response: string }>;
-  const response = await run(MODEL, {
-    max_tokens: MAX_TOKENS,
-    messages: [
-      { role: 'system', content: SYSTEM_PROMPT },
-      { role: 'user', content: userPrompt },
-    ],
-  });
 
-  const text = response.response;
+  let text: string | null = null;
+  for (const model of MODELS) {
+    try {
+      const response = await run(model, {
+        max_tokens: MAX_TOKENS,
+        messages: [
+          { role: 'system', content: SYSTEM_PROMPT },
+          { role: 'user', content: userPrompt },
+        ],
+      });
+      if (response?.response && response.response.trim()) {
+        text = response.response;
+        break;
+      }
+      console.warn(`AI Guide model ${model} returned an empty response — trying next model`);
+    } catch (err) {
+      console.error(`AI Guide model ${model} failed — trying next model:`, err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  // Every model errored — degrade to the standards list instead of vanishing.
+  // The `degraded` flag stops this from being cached, so the next identical
+  // search retries the models.
+  if (text == null) {
+    return { ...buildSafeFallback(query, searchResults), degraded: true };
+  }
 
   const violations = checkCopyrightViolations(text);
   if (violations.length > 0) {

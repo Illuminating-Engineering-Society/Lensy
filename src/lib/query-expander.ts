@@ -54,6 +54,12 @@ const SYNONYMS = {
   'patient room':    'patient room hospital bedroom healthcare ward',
   'operating room':  'operating room surgery surgical suite OR sterile',
   'emergency room':  'emergency room ER emergency department trauma bay',
+  // "ambulance" must keep surfacing the hospital Building Entrances rows
+  // (client regression report DO2: the 7/22 build stopped returning
+  // "Emergency department entry" for this term).
+  'ambulance':       'ambulance porte cochere emergency department entry hospital healthcare building entrance',
+  'emergency department': 'emergency department entry ER emergency room hospital entrance ambulance',
+  'porte cochere':   'porte cochere ambulance covered entrance canopy healthcare hospital drive-up',
   'exam room':       'exam room examination clinical healthcare medical office',
   'waiting room':    'waiting room waiting area lobby reception lounge',
   'corridor':        'corridor hallway aisle passageway circulation path',

@@ -76,6 +76,7 @@ import {
   getCachedAISummary,
   putCachedAISummary,
 } from '../lib/cache';
+import standardsSchema from '../config/standards-schema.json';
 import type {
   ApplicationRow, ContentType, FootnoteMarks, FormattedApplication, ReferenceLink,
   RelatedApplication, SearchFilters, SearchResult, StandardIndexEntry, StandardRow, StandardsIndex, VectorMetadata,
@@ -90,7 +91,11 @@ type ScoredApp = { score: number; app: ApplicationRow; chunkMeta?: Partial<Vecto
 type DepDbg = Record<string, unknown>;
 type SearchOutput = { results: SearchResult[]; expandedQuery: string };
 
-function errMsg(err: unknown): string { return err instanceof Error ? errMsg(err) : String(err); }
+// NOTE: this previously returned `errMsg(err)` for Error instances — infinite
+// recursion that turned ANY caught Error into a RangeError inside the catch
+// block, escalating "non-fatal" failures (AI summary, backfills, probes) into
+// failed requests. Likely contributor to the "AI Guide never populates" report.
+function errMsg(err: unknown): string { return err instanceof Error ? err.message : String(err); }
 
 const EMBED_MODEL = '@cf/baai/bge-base-en-v1.5';
 const VECTOR_TOP_K = 50;      // Vectorize caps topK at 50 when returning metadata; fetch the max, dedupe down to limit
@@ -278,12 +283,24 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
           const cached = body.debug ? null : await getCachedAISummary(kv, aiKey);
           if (cached) return cached;
           const generated = await generateResponse(env.AI, rawQuery, allResults.results);
-          if (!body.debug && ctx?.waitUntil) ctx.waitUntil(putCachedAISummary(kv, aiKey, generated));
-          else if (!body.debug) await putCachedAISummary(kv, aiKey, generated);
+          // Degraded summaries (every model errored) are never cached — the
+          // next identical search retries the models instead of pinning the
+          // fallback text for the cache TTL (client bug DO9).
+          const cacheable = !body.debug && !generated.degraded;
+          if (cacheable && ctx?.waitUntil) ctx.waitUntil(putCachedAISummary(kv, aiKey, generated));
+          else if (cacheable) await putCachedAISummary(kv, aiKey, generated);
           return generated;
         } catch (err) {
+          // generateResponse degrades internally; this only catches plumbing
+          // failures (KV, prompt building). Still return SOMETHING — an AI
+          // Guide the user turned on must never silently vanish (DO9).
           console.error('AI summary error (non-fatal):', errMsg(err));
-          return null;
+          return {
+            text: 'The AI Guide could not generate a response for this search. The results below are unaffected — please try again in a moment.',
+            watermark: null,
+            disclaimer: 'AI Guide temporarily unavailable.',
+            degraded: true,
+          };
         }
       })()
     : Promise.resolve(null);
@@ -304,8 +321,19 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
   const topScore = allResults.results.reduce(
     (max, r) => Math.max(max, r.relevanceScore || 0), 0
   );
+  // The advisory doesn't apply to References or version-comparison searches
+  // (client feedback DO11): reference entries legitimately score lower, and a
+  // comparison isn't looking for lighting recommendations in the first place.
   const referencesOnly = contentTypes.has('references') && !contentTypes.has('tables') && !contentTypes.has('body');
-  const noStrongMatch = !referencesOnly && topScore < STRONG_MATCH_THRESHOLD;
+  const noStrongMatch = !referencesOnly && !isVersionComparison && topScore < STRONG_MATCH_THRESHOLD;
+
+  // Comparison searches need the AI Guide to synthesize "what changed" across
+  // editions — without it the user just sees raw excerpts. Tell them to turn
+  // it on (client request DO11); this notice REPLACES the no-strong-match
+  // advisory for comparison searches.
+  const aiGuideRequiredNotice = (isVersionComparison && !includeAISummary)
+    ? 'AI Guide is required for document comparisons. Please toggle the AI Guide filter on and repeat your search.'
+    : null;
 
   const payload = {
     query: rawQuery,
@@ -316,6 +344,7 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
     contentTypes: [...contentTypes],
     noStrongMatch,
     noStrongMatchMessage: noStrongMatch ? NO_STRONG_MATCH_MESSAGE : null,
+    aiGuideRequiredNotice,
     results: applyUnits(allResults.results, units),
     aiSummary,
     timestamp: new Date().toISOString(),
@@ -323,7 +352,10 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
   };
 
   // Store after responding when possible (waitUntil); never blocks the user.
-  const cacheWrite = body.debug ? Promise.resolve() : putCachedSearch(kv, cacheKey, payload);
+  // A payload whose requested AI summary degraded is NOT cached: serving it
+  // from cache would pin the fallback text even after the models recover.
+  const skipCache = body.debug || (includeAISummary && (aiSummary as { degraded?: boolean } | null)?.degraded === true);
+  const cacheWrite = skipCache ? Promise.resolve() : putCachedSearch(kv, cacheKey, payload);
   const logWrite = logSearch(env, payload, false);
   if (ctx?.waitUntil) {
     ctx.waitUntil(cacheWrite);
@@ -409,12 +441,15 @@ async function runSingleSearch(rawQuery: string, filters: SearchFilters, limit: 
     m.metadata?.chunk_type === 'reference' && m.metadata?.standard_id
   );
 
-  // 3b. Body-only searches ("Illuminance Tables" unchecked): the shared
-  //     top-K pool is dominated by application vectors, so the prose share
-  //     can be tiny or empty. Pull text chunks directly with a chunk_type
-  //     filter, mirroring the references-mode query. Fail-open: without the
-  //     metadata index the filtered query errors and the main pool stands.
-  if (includeBody && !includeTables) {
+  // 3b. Body-scoped supplemental query: the shared top-K pool is dominated
+  //     by application vectors, so the prose share can be tiny or empty —
+  //     originally run only for body-ONLY searches, but the same starvation
+  //     hits the default Tables+Body search (client feedback DO5: filtering
+  //     to both returned almost no document-body results). Pull text chunks
+  //     directly with a chunk_type filter whenever Document Body is checked.
+  //     Fail-open: without the metadata index the filtered query errors and
+  //     the main pool stands.
+  if (includeBody) {
     try {
       const bodyQuery = await env.VECTORIZE.query(queryVector, {
         topK: VECTOR_TOP_K,
@@ -551,6 +586,21 @@ async function runSingleSearch(rawQuery: string, filters: SearchFilters, limit: 
     } catch (err) {
       console.error('reference-scoped vector query failed, using main pool (non-fatal):', errMsg(err));
     }
+    // Last-resort recall (client bug DO12: "References filter displays but is
+    // not populating results"): the chunk_type-filtered query silently returns
+    // NOTHING when the metadata index was created after ingest (filters only
+    // apply to vectors inserted afterwards), and the shared pool is dominated
+    // by application vectors. Reference chunks have deterministic ids near the
+    // tail of each document (References sections sit at the back), and D1
+    // coverage stats say exactly how many each standard has — probe them
+    // directly and rank in-process. Fail-open.
+    if (refPool.length === 0) {
+      try {
+        refPool = await probeReferenceChunks(env, queryVector, filters);
+      } catch (err) {
+        console.error('reference chunk probe failed (non-fatal):', errMsg(err));
+      }
+    }
     const liveRefs = refPool.filter(m => {
       const id = m.metadata?.standard_id || m.metadata?.standard_code;
       return id && standardsIndex.has(id);
@@ -658,20 +708,47 @@ async function fetchStandardsIndex(db: D1Database): Promise<StandardsIndex> {
   const result = await db.prepare(
     'SELECT id, title, full_designation, status, superseded_by, vitrium_doc_id, vitrium_web_url FROM standards'
   ).all<StandardRow>();
-  return new Map<string, StandardIndexEntry>((result.results || []).map((r): [string, StandardIndexEntry] => [
-    r.id,
-    {
-      docId: r.vitrium_doc_id || null,
-      webUrl: r.vitrium_web_url || null,
-      status: r.status || 'Active',
-      supersededBy: r.superseded_by || null,
-      // Full-title citations (client requirement): designation + descriptive
-      // title on every result. Title falls back to null when the standard
-      // hasn't been ingested with metadata yet.
-      title: (r.title && r.title !== r.id) ? r.title : null,
-      fullDesignation: r.full_designation || null,
-    },
-  ]));
+  return new Map<string, StandardIndexEntry>((result.results || []).map((r): [string, StandardIndexEntry] => {
+    const curated = curatedStandardInfo(r.id);
+    return [
+      r.id,
+      {
+        docId: r.vitrium_doc_id || null,
+        webUrl: r.vitrium_web_url || null,
+        status: r.status || 'Active',
+        supersededBy: r.superseded_by || null,
+        // Full-title citations (client requirement DO1): designation +
+        // descriptive title on EVERY result. D1 title first (synced metadata),
+        // then the curated schema title — PDF metadata is often missing or
+        // equals the bare id, which previously left citations title-less.
+        title: (r.title && r.title !== r.id) ? r.title : (curated?.title || null),
+        fullDesignation: r.full_designation || curated?.fullDesignation || null,
+      },
+    ];
+  }));
+}
+
+/**
+ * Curated designation/title lookup from src/config/standards-schema.json —
+ * the fallback that guarantees full-title citations even when a standard was
+ * ingested before metadata sync populated D1. Errata suffixes match their
+ * base edition ("RP-2-20+E1" → "RP-2-20") when no exact entry exists.
+ */
+type CuratedInfo = { title: string | null; fullDesignation: string | null };
+const CURATED_STANDARDS = new Map<string, CuratedInfo>(
+  (standardsSchema.standards || []).map((s: { id: string; title?: string; full_designation?: string }) => [
+    s.id.toUpperCase(),
+    { title: s.title || null, fullDesignation: s.full_designation || null },
+  ])
+);
+
+export function curatedStandardInfo(id: string | null | undefined): CuratedInfo | null {
+  if (!id) return null;
+  const key = String(id).toUpperCase();
+  const exact = CURATED_STANDARDS.get(key);
+  if (exact) return exact;
+  const base = key.replace(/\+E\d+$/, '');
+  return base !== key ? (CURATED_STANDARDS.get(base) || null) : null;
 }
 
 // ─── Deprecated Standards (version comparison only) ───────────────────────────
@@ -860,6 +937,80 @@ async function probeDeprecatedFamily(env: Env, scopePrefix: string, queryVector:
   }
 
   return scored.sort((a, b) => b.score - a.score).slice(0, 20);
+}
+
+// Reference-probe parameters (References-mode fallback, DO12). References
+// sections sit at the BACK of a standard, so probing a tail window of
+// (2×refCount + 40) chunks reliably covers them even when annexes follow.
+const REF_PROBE_MAX_STANDARDS = 8;   // standards probed per search
+const REF_PROBE_BATCH = 20;          // getByIds max batch size
+const REF_PROBE_MAX_BATCHES = 30;    // global getByIds budget per search
+const REF_PROBE_KEEP = 30;           // top-ranked reference chunks returned
+
+/**
+ * Fetch reference chunks directly by deterministic id (`<standardId>-chunk-<n>`)
+ * from the tail of each standard that D1 coverage stats say carries reference
+ * entries, then rank them against the query vector with in-process cosine
+ * similarity. Used only when both the chunk_type-filtered query and the shared
+ * pool produced zero reference chunks — guarantees References-mode recall
+ * regardless of Vectorize metadata-index state.
+ */
+async function probeReferenceChunks(env: Env, queryVector: number[], filters: SearchFilters): Promise<VMatch[]> {
+  let sql = `
+    SELECT id, chunk_count, coverage_json FROM standards
+    WHERE status = 'Active' AND chunk_count IS NOT NULL AND coverage_json IS NOT NULL
+  `;
+  const bindings: string[] = [];
+  if (filters.standard) { sql += ' AND id = ?'; bindings.push(filters.standard); }
+  if (filters.standard_prefix) { sql += ' AND id LIKE ?'; bindings.push(`${filters.standard_prefix}-%`); }
+
+  const rows = await env.DB.prepare(sql).bind(...bindings)
+    .all<{ id: string; chunk_count: number; coverage_json: string }>();
+
+  const targets: Array<{ id: string; chunkCount: number; refCount: number }> = [];
+  for (const r of rows.results || []) {
+    try {
+      const cov = JSON.parse(r.coverage_json);
+      const refCount = Number(cov?.byType?.reference) || 0;
+      if (refCount > 0) targets.push({ id: r.id, chunkCount: r.chunk_count, refCount });
+    } catch { /* malformed coverage row — skip */ }
+  }
+  if (targets.length === 0) return [];
+  // Reference-richest standards first — most likely to hold the entry sought.
+  targets.sort((a, b) => b.refCount - a.refCount);
+
+  let qNorm = 0;
+  for (const x of queryVector) qNorm += x * x;
+  qNorm = Math.sqrt(qNorm) || 1;
+
+  const scored: VMatch[] = [];
+  let batchBudget = REF_PROBE_MAX_BATCHES;
+  for (const t of targets.slice(0, REF_PROBE_MAX_STANDARDS)) {
+    if (batchBudget <= 0) break;
+    const window = Math.min(t.chunkCount, t.refCount * 2 + 40);
+    const start = Math.max(0, t.chunkCount - window);
+    // Walk the tail window newest-first so the References block (nearest the
+    // end) is covered before the budget runs out.
+    for (let hi = t.chunkCount; hi > start && batchBudget > 0; hi -= REF_PROBE_BATCH) {
+      const lo = Math.max(start, hi - REF_PROBE_BATCH);
+      const ids = Array.from({ length: hi - lo }, (_, j) => `${t.id}-chunk-${lo + j}`);
+      batchBudget--;
+      const got = await env.VECTORIZE.getByIds(ids);
+      for (const v of got || []) {
+        const meta = (v.metadata || {}) as Partial<VectorMetadata>;
+        if (meta.chunk_type !== 'reference') continue;
+        const vals = (v.values || []) as number[];
+        let dot = 0, norm = 0;
+        for (let k = 0; k < vals.length; k++) {
+          dot += vals[k] * queryVector[k];
+          norm += vals[k] * vals[k];
+        }
+        scored.push({ id: v.id, score: dot / (qNorm * (Math.sqrt(norm) || 1)), metadata: meta });
+      }
+    }
+  }
+
+  return scored.sort((a, b) => b.score - a.score).slice(0, REF_PROBE_KEEP);
 }
 
 // ─── Multi-Search ─────────────────────────────────────────────────────────────
@@ -1102,6 +1253,9 @@ function buildResult(app: ApplicationRow, score: number, chunkMeta: Partial<Vect
   return {
     resultType: 'application',
     application: formatted,
+    // Front-of-document link (DO1R2): the citation title opens the standard
+    // itself — deliberately WITHOUT the #page fragment vitriumLink carries.
+    standardLink: stdInfo?.webUrl || null,
     relevanceScore: Math.round(score * 1000) / 1000,
     excerpt: excerpt ? {
       text: excerpt.excerpt_text ?? '',
@@ -1141,8 +1295,10 @@ function buildExcerptIndex(chunkMatches: VMatch[]): ExcerptIndex {
   return index;
 }
 
-const EXCERPT_BACKFILL_MAX = 5;    // standards backfilled per search
-const EXCERPT_BACKFILL_TOP_K = 10; // chunks fetched per backfilled standard
+// Raised 5→10 / 10→15 (client feedback DO4: "From the Standard" excerpts
+// should appear on more results — increase the frequency).
+const EXCERPT_BACKFILL_MAX = 10;   // standards backfilled per search
+const EXCERPT_BACKFILL_TOP_K = 15; // chunks fetched per backfilled standard
 
 /**
  * Ensure the standards behind the top application results have at least one
@@ -1409,6 +1565,8 @@ function buildChunkResults(chunkMatches: VMatch[], linkCtx: LinkCtx = {}, { perS
         Standard: stdId,
         Page_Number: pageNum,
       }, linkCtx),
+      // Front-of-document link for the citation title (DO1R2) — no fragment.
+      standardLink: stdInfo?.webUrl || null,
       application: {
         code: match.id,
         category: stdId,

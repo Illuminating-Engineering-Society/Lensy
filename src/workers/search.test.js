@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { normalizeContentTypes, buildReferenceLink } from './search';
+import { normalizeContentTypes, buildReferenceLink, curatedStandardInfo } from './search';
 
 // ─── Content-type normalization ───────────────────────────────────────────────
 
@@ -94,5 +94,26 @@ describe('buildReferenceLink', () => {
 
   it('returns null for an indexed standard without a Library URL', () => {
     expect(buildReferenceLink('IES LS-9, Lighting Science.', index)).toBeNull();
+  });
+});
+
+// ─── Curated full-title fallback (DO1: full titles on EVERY result) ───────────
+
+describe('curatedStandardInfo', () => {
+  it('resolves a schema-listed id to its curated title and designation', () => {
+    const info = curatedStandardInfo('RP-43-25');
+    expect(info?.title).toMatch(/Outdoor Pedestrian/i);
+    expect(info?.fullDesignation).toBe('ANSI/IES RP-43-25');
+  });
+
+  it('matches errata suffixes against the base edition', () => {
+    const base = curatedStandardInfo('RP-43-25');
+    expect(curatedStandardInfo('RP-43-25+E1')).toEqual(base);
+  });
+
+  it('is case-insensitive and null-safe', () => {
+    expect(curatedStandardInfo('rp-43-25')?.fullDesignation).toBe('ANSI/IES RP-43-25');
+    expect(curatedStandardInfo(null)).toBeNull();
+    expect(curatedStandardInfo('NOT-A-STANDARD-99')).toBeNull();
   });
 });

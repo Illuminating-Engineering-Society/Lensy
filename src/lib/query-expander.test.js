@@ -30,6 +30,23 @@ describe('query-expander', () => {
     expect(prepared).toContain('warehouse');
     expect(prepared).toContain('distribution');
   });
+
+  // Regression for client report DO2: "ambulance" stopped returning the
+  // hospital "Emergency department entry" rows between builds. The expansion
+  // must anchor the term to the Building Entrances vocabulary of RP-29.
+  it('expands "ambulance" toward emergency department entry rows', () => {
+    const expanded = expandQuery('ambulance');
+    expect(expanded).toContain('emergency');
+    expect(expanded).toContain('department');
+    expect(expanded).toContain('porte');
+    expect(expanded).toContain('entrance');
+  });
+
+  it('expands "emergency department" toward entry/entrance rows', () => {
+    const expanded = expandQuery('emergency department');
+    expect(expanded).toContain('entry');
+    expect(expanded).toContain('ambulance');
+  });
 });
 
 describe('isReferenceQuery', () => {

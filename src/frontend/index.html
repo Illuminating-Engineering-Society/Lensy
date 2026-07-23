@@ -214,7 +214,7 @@
       <div class="mt-6 flex flex-wrap justify-center gap-2" id="sample-searches">
         <span class="text-blue-300 text-sm self-center">Try:</span>
         <button onclick="runSampleSearch('parking')" class="text-sm bg-white/10 hover:bg-white/20 text-white px-3 py-1.5 rounded-full transition">Parking Garages</button>
-        <button onclick="runSampleSearch('vision-refs')" class="text-sm bg-white/10 hover:bg-white/20 text-white px-3 py-1.5 rounded-full transition">Vision References</button>
+        <button onclick="runSampleSearch('vision-refs')" class="text-sm bg-white/10 hover:bg-white/20 text-white px-3 py-1.5 rounded-full transition">Vision references</button>
         <button id="sample-compare" onclick="runSampleSearch('rp43-new')" class="hidden text-sm bg-white/10 hover:bg-white/20 text-white px-3 py-1.5 rounded-full transition">What's new in RP-43?</button>
       </div>
     </div>
@@ -436,10 +436,11 @@
   <script>
     // ── Feature flags ────────────────────────────────────────────────────────
     // compareVersions gates the "Compare Versions" filter checkbox and the
-    // "What's new in RP-43?" sample search. The backend comparison path is
-    // built; flip this to true once the deprecated editions are confirmed
-    // ingested in the environment being demoed (Dan's Task 6 status check).
-    const FEATURES = { compareVersions: false };
+    // "What's new in RP-43?" sample search. Enabled for client evaluation
+    // (feedback DO11/DO16): comparison searches without AI Guide now get an
+    // explicit "toggle AI Guide on" prompt, so the path is safe to expose
+    // even while the deprecated corpus is still being confirmed.
+    const FEATURES = { compareVersions: true };
 
     // ── State ────────────────────────────────────────────────────────────────
     let lastQuery = '';
@@ -580,12 +581,16 @@
         }
       }
 
-      // Low-confidence advisory: banner shows above the list when the API
-      // signals no strong match. Results are still rendered — the user just
-      // sees a clear "these are best-effort" notice.
+      // Advisory banner above the list. The AI-Guide-required notice (version
+      // comparison searched without AI Guide — feedback DO11) REPLACES the
+      // low-confidence "no explicit recommendations" advisory; the backend
+      // already suppresses that advisory for reference and comparison results.
       const banner = document.getElementById('no-strong-match-banner');
       const bannerText = document.getElementById('no-strong-match-text');
-      if (data.noStrongMatch && allResults.length > 0) {
+      if (data.aiGuideRequiredNotice) {
+        bannerText.textContent = data.aiGuideRequiredNotice;
+        banner.classList.remove('hidden');
+      } else if (data.noStrongMatch && allResults.length > 0) {
         bannerText.textContent = data.noStrongMatchMessage
           || 'No strong match found. The results below are the closest available.';
         banner.classList.remove('hidden');
@@ -594,7 +599,17 @@
         bannerText.textContent = '';
       }
 
-      if (data.aiSummary) renderAISummary(data.aiSummary);
+      if (data.aiSummary) {
+        renderAISummary(data.aiSummary);
+      } else if (document.getElementById('include-ai').checked && allResults.length > 0) {
+        // AI Guide was requested but nothing came back (feedback DO9): say so
+        // instead of silently omitting the card.
+        renderAISummary({
+          text: 'The AI Guide could not generate a response for this search. The results below are unaffected — please try again in a moment.',
+          disclaimer: 'AI Guide temporarily unavailable.',
+          watermark: '',
+        });
+      }
 
       if (!allResults.length) {
         document.getElementById('results-heading').textContent = 'Results';
@@ -879,18 +894,31 @@
             || 'This edition has been superseded. Shown for version comparison only — refer to the current standard for guidance.')}</span>
         </div>` : '';
 
-      const cardShell = (inner) => `
-        <article class="result-card bg-white rounded-xl border border-gray-100 shadow-sm p-3 relative overflow-hidden"
-                 style="animation-delay: ${index * 40}ms; border-left: 3px solid ${bannerHex};">
-          ${deprecatedBanner}
-          ${inner}
-        </article>
-      `;
-
       // Chunk-only results (document-body excerpts, reference entries) have no
       // D1 application row: no checkbox, no "Add to Project" — the excerpt and
       // its links ARE the card.
       const isApp = (primary.resultType || 'application') === 'application';
+
+      // Visual distinction per result TYPE (feedback DO5: don't lose the
+      // document-body results among the tables): illuminance-table rows keep a
+      // solid left border, document-body excerpts get dashed, references get
+      // dotted — plus an explicit type chip on non-table cards.
+      const borderLineStyle = isApp ? 'solid'
+        : primary.resultType === 'reference' ? 'dotted' : 'dashed';
+      const typeChip = !isApp ? `
+        <span class="text-xs px-2 py-0.5 rounded-full font-medium border ${primary.resultType === 'reference'
+          ? 'bg-purple-50 text-purple-700 border-purple-200'
+          : 'bg-sky-50 text-sky-700 border-sky-200'}">
+          ${primary.resultType === 'reference' ? 'Reference' : 'Document Body'}
+        </span>` : '';
+
+      const cardShell = (inner) => `
+        <article class="result-card bg-white rounded-xl border border-gray-100 shadow-sm p-3 relative overflow-hidden"
+                 style="animation-delay: ${index * 40}ms; border-left: 3px ${borderLineStyle} ${bannerHex};">
+          ${deprecatedBanner}
+          ${inner}
+        </article>
+      `;
 
       if (isGrouped) {
         // One shared header, then one compact section per adjacent table row.
@@ -910,6 +938,9 @@
           ${members.map((m, i) =>
             renderMemberSection(m, crumbsOf(m.application || {}).slice(prefixLen), i, appName, crumbSep, seenExcerpts)
           ).join('')}
+          <div class="pl-[26px]">
+            ${buildNotesBlock(collectNoteLines(members.map(m => m.application || {})))}
+          </div>
         `);
       }
 
@@ -929,7 +960,7 @@
             <div class="min-w-0">${subCategoryBanner}</div>
           </div>
           <div class="flex items-center gap-1.5 shrink-0 flex-wrap justify-end">
-            ${locationBadge}${rowBadges(app)}
+            ${typeChip}${locationBadge}${rowBadges(app)}
           </div>
         </div>
 
@@ -941,7 +972,7 @@
           </div>
           ${actionsCluster(primary, appName)}
         </div>
-        <p class="text-xs text-gray-400 mb-1 pl-[26px]">${escapeHtml(primary.citation || '')}</p>
+        <p class="text-xs text-gray-400 mb-1 pl-[26px]">${citationHtml(primary)}</p>
 
         <div class="pl-[26px]">
           ${renderDataBlocks(primary, seenExcerpts)}
@@ -977,12 +1008,29 @@
             </div>
             ${actionsCluster(result, name)}
           </div>
-          <p class="text-xs text-gray-400 mt-0.5 pl-[26px]">${escapeHtml(result.citation || '')}</p>
+          <p class="text-xs text-gray-400 mt-0.5 pl-[26px]">${citationHtml(result)}</p>
           <div class="pl-[26px]">
-            ${renderDataBlocks(result, seenExcerpts)}
+            ${renderDataBlocks(result, seenExcerpts, { suppressNotes: true })}
           </div>
         </div>
       `;
+    }
+
+    // Full-title citation line. When the backend supplies standardLink (the
+    // standard's Lighting Library URL with NO page fragment) the citation is a
+    // hyperlink that opens the FRONT of the referenced standard, so users can
+    // open it and read it through instead of jumping to a page inside
+    // (client feedback DO1R2). The page-targeted jump stays on the separate
+    // "Open in Library" button.
+    function citationHtml(result) {
+      const text = escapeHtml(result.citation || '');
+      if (!text) return '';
+      if (result.standardLink) {
+        return `<a href="${escapeHtml(result.standardLink)}" target="_blank" rel="noopener"
+          class="hover:text-ies-blue hover:underline underline-offset-2 decoration-gray-300 transition"
+          title="Open this standard from the beginning in the IES Lighting Library">${text}</a>`;
+      }
+      return text;
     }
 
     // Per-row badges: Area/Task, TM-24, Veiling Risk (L/M/H), Class of Play
@@ -1079,9 +1127,61 @@
       `;
     }
 
+    // ── Application Task/Area Notes helpers (feedback DO3) ──────────────────
+    // Collect the distinct note LINES across one or more application rows.
+    // Sibling rows of one table block usually repeat the same footnote text —
+    // dedupe line-by-line so a consolidated card-level block reads like the
+    // single notes list printed below the source table.
+    function collectNoteLines(apps) {
+      const seen = new Set();
+      const lines = [];
+      for (const a of apps) {
+        for (const chunk of [a?.appNotes, a?.footnotes, a?.generalNotes]) {
+          if (!chunk) continue;
+          for (const raw of String(chunk).split(/\n+/)) {
+            const line = raw.trim();
+            if (!line || seen.has(line)) continue;
+            seen.add(line);
+            lines.push(line);
+          }
+        }
+      }
+      return lines;
+    }
+
+    // One collapsed disclosure listing the notes. Numbered entries ("1. …",
+    // "1) …") render with the number set off in a bold superscript-style
+    // marker so each note visually pairs with the ¹ markers on the rows —
+    // matching the printed table's footnote list.
+    function buildNotesBlock(noteLines) {
+      if (!noteLines || !noteLines.length) return '';
+      const items = noteLines.map(line => {
+        const m = /^(\d{1,2})[.)]\s*(.*)$/.exec(line);
+        if (m) {
+          return `<div class="flex gap-2 mb-1">
+            <span class="font-bold text-ies-blue shrink-0 w-4 text-right">${m[1]}</span>
+            <span>${escapeHtml(m[2])}</span>
+          </div>`;
+        }
+        return `<div class="mb-1">${escapeHtml(line)}</div>`;
+      }).join('');
+      return `
+        <details class="mt-2 pt-2 border-t border-gray-100 group">
+          <summary class="cursor-pointer text-sm font-semibold text-gray-700 flex items-center gap-2 list-none select-none">
+            <svg class="w-3.5 h-3.5 text-gray-400 transition-transform group-open:rotate-90 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/>
+            </svg>
+            Application Task/Area Notes
+            <span class="text-xs font-normal text-gray-400">— footnotes begin collapsed. Click to display.</span>
+          </summary>
+          <div class="mt-2 pl-5 text-xs text-gray-600 leading-relaxed">${items}</div>
+        </details>
+      `;
+    }
+
     // Data blocks for one result row: illuminance planes, environmental
     // considerations, collapsed footnotes, and the "From the Standard" excerpt.
-    function renderDataBlocks(result, seenExcerpts) {
+    function renderDataBlocks(result, seenExcerpts, opts = {}) {
       const app = result.application || {};
 
       // Illuminance values (Horizontal / Vertical / Task planes, side-by-side)
@@ -1118,21 +1218,12 @@
 
       // Application Task/Area Notes — footnotes collapsed by default; the user
       // clicks to expand (matches the proposed layout). Combines App_Notes,
-      // Footnotes and General_Notes into one disclosure.
-      const notesText = [app.appNotes, app.footnotes, app.generalNotes]
-        .filter(Boolean).join('\n\n');
-      const notesBlock = notesText ? `
-        <details class="mt-2 pt-2 border-t border-gray-100 group">
-          <summary class="cursor-pointer text-sm font-semibold text-gray-700 flex items-center gap-2 list-none select-none">
-            <svg class="w-3.5 h-3.5 text-gray-400 transition-transform group-open:rotate-90 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
-              <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/>
-            </svg>
-            Application Task/Area Notes
-            <span class="text-xs font-normal text-gray-400">— footnotes begin collapsed. Click to display.</span>
-          </summary>
-          <div class="mt-2 pl-5 text-xs text-gray-600 leading-relaxed whitespace-pre-line">${escapeHtml(notesText)}</div>
-        </details>
-      ` : '';
+      // Footnotes and General_Notes into one disclosure. Grouped cards
+      // suppress the per-row disclosure and render ONE consolidated block
+      // after the member rows instead (feedback DO3: the drop-down must sit
+      // in a consistent place, exactly like the notes below a printed table,
+      // not on whichever sibling row happened to carry the text).
+      const notesBlock = opts.suppressNotes ? '' : buildNotesBlock(collectNoteLines([app]));
 
       // "From the Standard" — the search worker returns a single best excerpt
       // (search.js: pickExcerptForApp). Only useful when it shows PROSE context
