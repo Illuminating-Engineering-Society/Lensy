@@ -264,6 +264,12 @@ export interface SearchResult {
   excerpt: Excerpt | null;
   citation: string;
   vitriumLink: string | null;
+  /**
+   * Front-of-document Lighting Library URL (no page fragment) — the UI links
+   * the full-title citation here so users can open the standard and read it
+   * through, instead of jumping to a page inside (client feedback DO1R2).
+   */
+  standardLink?: string | null;
   relatedApplications: RelatedApplication[];
   referenceLink?: ReferenceLink;
   isDeprecated?: boolean;
@@ -275,6 +281,12 @@ export interface AISummary {
   text: string;
   watermark: string | null;
   disclaimer: string;
+  /**
+   * True when the text is the no-model safe fallback produced because every
+   * AI model attempt errored. Degraded summaries are never cached, so the
+   * next identical search retries the models.
+   */
+  degraded?: boolean;
 }
 
 export type ContentType = 'tables' | 'body' | 'references' | 'compare';
