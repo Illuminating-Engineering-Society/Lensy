@@ -76,6 +76,21 @@ import {
   getCachedAISummary,
   putCachedAISummary,
 } from '../lib/cache';
+import type {
+  ApplicationRow, ContentType, FootnoteMarks, FormattedApplication, ReferenceLink,
+  RelatedApplication, SearchFilters, SearchResult, StandardIndexEntry, StandardRow, StandardsIndex, VectorMetadata,
+} from '../types';
+
+// ── Local shapes for internal plumbing ──────────────────────────────────────
+type LinkCtx = { standardsIndex?: StandardsIndex };
+type VMatch = { id: string; score: number; values?: number[]; metadata?: Partial<VectorMetadata> };
+type ExcerptChunk = Partial<VectorMetadata> & { score: number };
+type ExcerptIndex = Record<string, ExcerptChunk[]>;
+type ScoredApp = { score: number; app: ApplicationRow; chunkMeta?: Partial<VectorMetadata> };
+type DepDbg = Record<string, unknown>;
+type SearchOutput = { results: SearchResult[]; expandedQuery: string };
+
+function errMsg(err: unknown): string { return err instanceof Error ? errMsg(err) : String(err); }
 
 const EMBED_MODEL = '@cf/baai/bge-base-en-v1.5';
 const VECTOR_TOP_K = 50;      // Vectorize caps topK at 50 when returning metadata; fetch the max, dedupe down to limit
@@ -86,14 +101,14 @@ const STRONG_MATCH_THRESHOLD = 0.60; // top relevanceScore below this → flag n
 // Content-type filter (client filter overhaul): independent checkboxes for
 // what KINDS of results appear. Defaults mirror the UI (tables + body on,
 // references off). 'compare' additionally forces version-comparison handling.
-const DEFAULT_CONTENT_TYPES = ['tables', 'body'];
+const DEFAULT_CONTENT_TYPES: ContentType[] = ['tables', 'body'];
 const VALID_CONTENT_TYPES = new Set(['tables', 'body', 'references', 'compare']);
 
-export function normalizeContentTypes(filters, rawQuery) {
+export function normalizeContentTypes(filters: SearchFilters | undefined, rawQuery: string): Set<ContentType> {
   const raw = Array.isArray(filters?.content_types) ? filters.content_types : null;
   const cleaned = (raw || [])
     .map(t => String(t).toLowerCase())
-    .filter(t => VALID_CONTENT_TYPES.has(t));
+    .filter((t): t is ContentType => VALID_CONTENT_TYPES.has(t));
   const ct = new Set(cleaned.length > 0 ? cleaned : DEFAULT_CONTENT_TYPES);
 
   // 'compare' is a MODIFIER (forces version-comparison handling), not a
@@ -127,7 +142,7 @@ const NO_STRONG_MATCH_MESSAGE =
 
 // ─── Entry Point ──────────────────────────────────────────────────────────────
 
-export async function handleSearch(request, env, ctx) {
+export async function handleSearch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
   // ── Rate limiting (Workers Rate Limiting binding; fail-open) ──────────────
   // Protects the Workers AI budget from abusive clients. Keyed by client IP.
   // If the binding isn't configured (or the limiter errors) search proceeds.
@@ -139,11 +154,11 @@ export async function handleSearch(request, env, ctx) {
         return jsonResponse({ error: 'Too many searches — please wait a moment and try again.' }, 429);
       }
     } catch (err) {
-      console.error('rate limiter error (fail-open):', err.message);
+      console.error('rate limiter error (fail-open):', errMsg(err));
     }
   }
 
-  let body;
+  let body: any;
   try {
     body = await request.json();
   } catch {
@@ -267,7 +282,7 @@ export async function handleSearch(request, env, ctx) {
           else if (!body.debug) await putCachedAISummary(kv, aiKey, generated);
           return generated;
         } catch (err) {
-          console.error('AI summary error (non-fatal):', err.message);
+          console.error('AI summary error (non-fatal):', errMsg(err));
           return null;
         }
       })()
@@ -328,7 +343,7 @@ export async function handleSearch(request, env, ctx) {
  * response referenced. Staff export it via GET /api/admin/search-log.csv.
  * Fail-open: a missing table or a D1 hiccup never breaks search.
  */
-async function logSearch(env, payload, cached) {
+async function logSearch(env: Env, payload: { query: string; results?: SearchResult[]; noStrongMatch?: boolean }, cached: boolean): Promise<void> {
   try {
     const standards = [
       ...new Set((payload.results || [])
@@ -346,13 +361,13 @@ async function logSearch(env, payload, cached) {
       cached ? 1 : 0
     ).run();
   } catch (err) {
-    console.error('search log write failed (non-fatal):', err.message);
+    console.error('search log write failed (non-fatal):', errMsg(err));
   }
 }
 
 // ─── Single Search ────────────────────────────────────────────────────────────
 
-async function runSingleSearch(rawQuery, filters, limit, env, contentTypes = new Set(DEFAULT_CONTENT_TYPES)) {
+async function runSingleSearch(rawQuery: string, filters: SearchFilters, limit: number, env: Env, contentTypes: Set<ContentType> = new Set(DEFAULT_CONTENT_TYPES)): Promise<SearchOutput> {
   const expandedQuery = prepareQueryForEmbedding(rawQuery);
   const includeTables = contentTypes.has('tables');
   const includeBody = contentTypes.has('body');
@@ -364,7 +379,7 @@ async function runSingleSearch(rawQuery, filters, limit, env, contentTypes = new
   //    miss the response cache only because filters/limit/units differ.
   let queryVector = await getCachedEmbedding(env.SESSIONS, EMBED_MODEL, expandedQuery);
   if (!queryVector) {
-    const embResult = await env.AI.run(EMBED_MODEL, { text: [expandedQuery] });
+    const embResult = await env.AI.run(EMBED_MODEL, { text: [expandedQuery] }) as unknown as { data: number[][] };
     queryVector = embResult.data[0];
     await putCachedEmbedding(env.SESSIONS, EMBED_MODEL, expandedQuery, queryVector);
   }
@@ -377,7 +392,7 @@ async function runSingleSearch(rawQuery, filters, limit, env, contentTypes = new
     ...(vectorFilter ? { filter: vectorFilter } : {}),
   });
 
-  const matches = vectorResults.matches || [];
+  const matches = (vectorResults.matches || []) as unknown as VMatch[];
 
   // 3. Split matches by type. Reference-section chunks are handled by their
   //    own step (11) and never join the general body-chunk pool: they are
@@ -407,18 +422,20 @@ async function runSingleSearch(rawQuery, filters, limit, env, contentTypes = new
         filter: { ...(vectorFilter || {}), chunk_type: 'text' },
       });
       const dedupe = new Map(chunkMatches.map(m => [m.id, m]));
-      for (const m of bodyQuery.matches || []) {
+      for (const m of (bodyQuery.matches || []) as unknown as VMatch[]) {
         if (m.metadata?.standard_id) dedupe.set(m.id, m);
       }
       chunkMatches = [...dedupe.values()];
     } catch (err) {
-      console.error('body-scoped vector query failed, using main pool (non-fatal):', err.message);
+      console.error('body-scoped vector query failed, using main pool (non-fatal):', errMsg(err));
     }
   }
 
   // 4. Fetch application records from D1 (plus the standards index, used
   //    for full-title citations, Vitrium links, and orphan-chunk filtering)
-  const appCodes = dedupeByCode(appMatches).slice(0, limit * 2).map(m => m.metadata.application_code);
+  const appCodes = dedupeByCode(appMatches).slice(0, limit * 2)
+    .map(m => m.metadata?.application_code)
+    .filter((c): c is string => !!c);
   const [appMap, standardsIndex] = await Promise.all([
     fetchApplications(env.DB, appCodes, filters),
     fetchStandardsIndex(env.DB),
@@ -431,9 +448,9 @@ async function runSingleSearch(rawQuery, filters, limit, env, contentTypes = new
   //     'deprecated' or D1 rows flipped to Deprecated after ingestion.
   //     Version-comparison queries pull deprecated content through the
   //     dedicated searchDeprecatedForComparison() path instead.
-  const notDeprecated = (m) => {
+  const notDeprecated = (m: VMatch) => {
     if (m.metadata?.status === 'deprecated') return false;
-    const entry = standardsIndex.get(m.metadata?.standard_id || m.metadata?.standard_code);
+    const entry = standardsIndex.get((m.metadata?.standard_id || m.metadata?.standard_code) ?? '');
     return !entry || entry.status !== 'Deprecated';
   };
   chunkMatches = chunkMatches.filter(notDeprecated);
@@ -443,13 +460,14 @@ async function runSingleSearch(rawQuery, filters, limit, env, contentTypes = new
   const excerptIndex = buildExcerptIndex(chunkMatches);
 
   // 6. Assemble results
-  const scored = appMatches
-    .filter(m => appMap[m.metadata.application_code])
-    .map(m => ({
-      score: m.score,
-      app: appMap[m.metadata.application_code],
-      chunkMeta: m.metadata,
-    }));
+  const scored: ScoredApp[] = [];
+  for (const m of appMatches) {
+    const code = m.metadata?.application_code;
+    if (!code) continue;
+    const app = appMap[code];
+    if (!app) continue;
+    scored.push({ score: m.score, app, chunkMeta: m.metadata });
+  }
 
   // Deduplicate, keep highest score per application code
   const deduped = deduplicateScored(scored);
@@ -526,12 +544,12 @@ async function runSingleSearch(rawQuery, filters, limit, env, contentTypes = new
         filter: { ...(vectorFilter || {}), chunk_type: 'reference' },
       });
       const dedupe = new Map(refPool.map(m => [m.id, m]));
-      for (const m of refQuery.matches || []) {
+      for (const m of (refQuery.matches || []) as unknown as VMatch[]) {
         if (m.metadata?.chunk_type === 'reference' && notDeprecated(m)) dedupe.set(m.id, m);
       }
       refPool = [...dedupe.values()];
     } catch (err) {
-      console.error('reference-scoped vector query failed, using main pool (non-fatal):', err.message);
+      console.error('reference-scoped vector query failed, using main pool (non-fatal):', errMsg(err));
     }
     const liveRefs = refPool.filter(m => {
       const id = m.metadata?.standard_id || m.metadata?.standard_code;
@@ -570,7 +588,7 @@ async function runSingleSearch(rawQuery, filters, limit, env, contentTypes = new
  *
  * @returns {{ url: string, type: 'library'|'doi'|'url' } | null}
  */
-export function buildReferenceLink(text, standardsIndex) {
+export function buildReferenceLink(text: string, standardsIndex?: StandardsIndex): ReferenceLink {
   if (!text) return null;
 
   // 1. IES standard citation → Lighting Library
@@ -583,13 +601,13 @@ export function buildReferenceLink(text, standardsIndex) {
     // suffix-strip: stripping a trailing 2-digit group off "TM-30" would
     // yield family "TM" and link the citation to an arbitrary TM-* standard.
     let entry = standardsIndex.get(cited);
-    let entryOk = entry && entry.status !== 'Deprecated' && entry.webUrl;
+    let entryOk: boolean = !!(entry && entry.status !== 'Deprecated' && entry.webUrl);
     if (!entryOk) {
       const family = stdMatch[1].toUpperCase();
       // Candidate ids must be exactly "<family>-<2-digit edition>[+E]".
       const editionRe = /^-\d{2}(?:\+E\d+)?$/;
       let bestEdition = -1;
-      let bestId = null;
+      let bestId: string | null = null;
       for (const [id, info] of standardsIndex) {
         const idU = id.toUpperCase();
         if (!idU.startsWith(family)) continue;
@@ -605,7 +623,7 @@ export function buildReferenceLink(text, standardsIndex) {
       }
       entryOk = bestId != null;
     }
-    if (entryOk) return { url: entry.webUrl, type: 'library' };
+    if (entryOk && entry?.webUrl) return { url: entry.webUrl, type: 'library' };
   }
 
   // 2. DOI
@@ -636,11 +654,11 @@ export function buildReferenceLink(text, standardsIndex) {
  *
  * Runs once per request (small set: ~dozens of rows).
  */
-async function fetchStandardsIndex(db) {
+async function fetchStandardsIndex(db: D1Database): Promise<StandardsIndex> {
   const result = await db.prepare(
     'SELECT id, title, full_designation, status, superseded_by, vitrium_doc_id, vitrium_web_url FROM standards'
-  ).all();
-  return new Map((result.results || []).map(r => [
+  ).all<StandardRow>();
+  return new Map<string, StandardIndexEntry>((result.results || []).map((r): [string, StandardIndexEntry] => [
     r.id,
     {
       docId: r.vitrium_doc_id || null,
@@ -676,7 +694,7 @@ const MAX_DEPRECATED_RESULTS = 3;   // flagged excerpts appended to the response
  * Fail-open: any error returns [] and the comparison proceeds with current
  * content only.
  */
-async function searchDeprecatedForComparison(rawQuery, filters, env, topicHint = '', dbg = null) {
+async function searchDeprecatedForComparison(rawQuery: string, filters: SearchFilters, env: Env, topicHint = '', dbg: DepDbg | null = null): Promise<SearchResult[]> {
   const D = dbg || {};
   if (!env.VECTORIZE_DEPRECATED) { D.step = 'no-binding'; return []; }
 
@@ -706,7 +724,7 @@ async function searchDeprecatedForComparison(rawQuery, filters, env, topicHint =
 
     let queryVector = await getCachedEmbedding(env.SESSIONS, EMBED_MODEL, embedText);
     if (!queryVector) {
-      const embResult = await env.AI.run(EMBED_MODEL, { text: [embedText] });
+      const embResult = await env.AI.run(EMBED_MODEL, { text: [embedText] }) as unknown as { data: number[][] };
       queryVector = embResult.data[0];
       await putCachedEmbedding(env.SESSIONS, EMBED_MODEL, embedText, queryVector);
     }
@@ -728,16 +746,16 @@ async function searchDeprecatedForComparison(rawQuery, filters, env, topicHint =
       String(m.id).toUpperCase().startsWith(scopePrefix)
     ).slice(0, 20);
 
-    let candidates = [];
+    let candidates: VMatch[] = [];
     if (scoped.length > 0) {
       const scoreById = new Map(scoped.map(m => [m.id, m.score]));
       const fetched = await env.VECTORIZE_DEPRECATED.getByIds(scoped.map(m => m.id));
       candidates = (fetched || []).map(v => ({
-        id: v.id, score: scoreById.get(v.id) || 0, metadata: v.metadata,
+        id: v.id, score: scoreById.get(v.id) || 0, metadata: v.metadata as Partial<VectorMetadata>,
       }));
     }
 
-    const proseOnly = (list) => list.filter(m => {
+    const proseOnly = (list: VMatch[]): VMatch[] => list.filter((m: VMatch) => {
       const meta = m.metadata || {};
       const text = String(meta.excerpt_text || '');
       return meta.chunk_type !== 'table' && text.trim().length >= 60 && !isTableLike(text);
@@ -766,7 +784,7 @@ async function searchDeprecatedForComparison(rawQuery, filters, env, topicHint =
       .sort((a, b) => (b.relevanceScore || 0) - (a.relevanceScore || 0))
       .slice(0, MAX_DEPRECATED_RESULTS)
       .map(r => {
-        const info = standardsIndex.get(r.application.standard);
+        const info = standardsIndex.get(r.application.standard ?? '');
         const supersededBy = info?.supersededBy || null;
         const name = r.application.standardFull || r.application.standard;
         return {
@@ -781,8 +799,8 @@ async function searchDeprecatedForComparison(rawQuery, filters, env, topicHint =
       });
   } catch (err) {
     D.step = 'error';
-    D.error = err.message;
-    console.error('deprecated comparison search failed (non-fatal):', err.message);
+    D.error = errMsg(err);
+    console.error('deprecated comparison search failed (non-fatal):', errMsg(err));
     return [];
   }
 }
@@ -800,10 +818,10 @@ const PROBE_MAX_CHUNKS = 300;
  * global ANN pool — guarantees recall for any indexed family at the cost
  * of a few getByIds round-trips.
  */
-async function probeDeprecatedFamily(env, scopePrefix, queryVector, D = {}) {
+async function probeDeprecatedFamily(env: Env, scopePrefix: string, queryVector: number[], D: DepDbg = {}): Promise<VMatch[]> {
   const rows = await env.DB.prepare(
     "SELECT id FROM standards WHERE status = 'Deprecated' AND id LIKE ?"
-  ).bind(`${scopePrefix}%`).all();
+  ).bind(`${scopePrefix}%`).all<{ id: string }>();
   const members = (rows.results || []).map(r => r.id);
   D.probeMembers = members;
   if (members.length === 0) return [];
@@ -812,7 +830,7 @@ async function probeDeprecatedFamily(env, scopePrefix, queryVector, D = {}) {
   for (const x of queryVector) qNorm += x * x;
   qNorm = Math.sqrt(qNorm) || 1;
 
-  const scored = [];
+  const scored: VMatch[] = [];
   for (const member of members) {
     for (let start = 0; start < PROBE_MAX_CHUNKS; start += PROBE_BATCH) {
       const ids = Array.from({ length: PROBE_BATCH }, (_, j) => `${member}-chunk-${start + j}`);
@@ -846,7 +864,7 @@ async function probeDeprecatedFamily(env, scopePrefix, queryVector, D = {}) {
 
 // ─── Multi-Search ─────────────────────────────────────────────────────────────
 
-async function runMultiSearch(subQueries, filters, limitPerQuery, env, contentTypes) {
+async function runMultiSearch(subQueries: string[], filters: SearchFilters, limitPerQuery: number, env: Env, contentTypes: Set<ContentType>): Promise<SearchOutput> {
   // Run all sub-queries in parallel; limit per sub-query = max 5 to keep total reasonable
   const perQueryLimit = Math.min(5, limitPerQuery);
   const searches = await Promise.all(
@@ -880,7 +898,7 @@ async function runMultiSearch(subQueries, filters, limitPerQuery, env, contentTy
  * only members WITHIN a group are reordered to match the printed table.
  * Chunk-only results (no rowRef) never cluster.
  */
-function clusterSiblings(results) {
+function clusterSiblings(results: SearchResult[]): SearchResult[] {
   const groups = new Map();
   for (const r of results) {
     const a = r.application || {};
@@ -899,12 +917,12 @@ function clusterSiblings(results) {
   return out;
 }
 
-function comparePublicationOrder(a, b) {
+function comparePublicationOrder(a: SearchResult, b: SearchResult): number {
   const A = a.application, B = b.application;
   const rowDiff = rowRefNumber(A.rowRef) - rowRefNumber(B.rowRef);
   if (rowDiff !== 0) return rowDiff;
   for (const key of ['sub1', 'sub2', 'sub3', 'sub4']) {
-    const cmp = compareHierarchyField(A[key], B[key]);
+    const cmp = compareHierarchyField(A[key as keyof typeof A] as string | null, B[key as keyof typeof B] as string | null);
     if (cmp !== 0) return cmp;
   }
   return 0;
@@ -912,7 +930,7 @@ function comparePublicationOrder(a, b) {
 
 // ─── D1 Helpers ───────────────────────────────────────────────────────────────
 
-async function fetchApplications(db, codes, filters = {}) {
+async function fetchApplications(db: D1Database, codes: string[], filters: SearchFilters = {}): Promise<Record<string, ApplicationRow>> {
   if (codes.length === 0) return {};
 
   const placeholders = codes.map(() => '?').join(',');
@@ -940,15 +958,15 @@ async function fetchApplications(db, codes, filters = {}) {
     bindings.push(filters.lighting_zone);
   }
 
-  const result = await db.prepare(sql).bind(...bindings).all();
-  return Object.fromEntries(result.results.map(a => [a.code, a]));
+  const result = await db.prepare(sql).bind(...bindings).all<ApplicationRow>();
+  return Object.fromEntries((result.results || []).map(a => [a.code, a]));
 }
 
-async function getRelatedApplications(env, application, excludeCodes) {
+async function getRelatedApplications(env: Env, application: FormattedApplication, excludeCodes: string[]): Promise<RelatedApplication[]> {
   if (!application) return [];
 
   const TARGET = 4;
-  const collected = new Map(); // code → row, preserves insertion order
+  const collected = new Map<string, Record<string, any>>(); // code → row, preserves insertion order
   const exclude = new Set(excludeCodes);
 
   /**
@@ -971,7 +989,7 @@ async function getRelatedApplications(env, application, excludeCodes) {
     if (collected.size >= TARGET) break;
 
     const conditions = ['Active = 1', 'Standard = ?'];
-    const bindings = [application.standard];
+    const bindings: any[] = [application.standard];
     for (const [col, val] of Object.entries(filters)) {
       if (val == null) { conditions.length = 0; break; } // skip layer if filter value is null
       conditions.push(`${col} = ?`);
@@ -989,9 +1007,9 @@ async function getRelatedApplications(env, application, excludeCodes) {
     `;
     bindings.push(remaining + collected.size + exclude.size);
 
-    const result = await env.DB.prepare(sql).bind(...bindings).all();
+    const result = await env.DB.prepare(sql).bind(...bindings).all<Record<string, any>>();
 
-    for (const row of result.results) {
+    for (const row of result.results || []) {
       if (exclude.has(row.code) || collected.has(row.code)) continue;
       collected.set(row.code, row);
       if (collected.size >= TARGET) break;
@@ -1019,7 +1037,7 @@ async function getRelatedApplications(env, application, excludeCodes) {
 
 // ─── Text Fallback ────────────────────────────────────────────────────────────
 
-async function textFallback(db, query, filters, limit, excerptIndex, linkCtx) {
+async function textFallback(db: D1Database, query: string, filters: SearchFilters, limit: number, excerptIndex: ExcerptIndex, linkCtx: LinkCtx): Promise<SearchResult[]> {
   const terms = query.toLowerCase().split(/\s+/).filter(t => t.length >= 3).slice(0, 4);
   if (terms.length === 0) return [];
 
@@ -1033,7 +1051,7 @@ async function textFallback(db, query, filters, limit, excerptIndex, linkCtx) {
   const likeBindings = terms.flatMap(t => cols.map(() => `%${t}%`));
 
   let sql = `SELECT * FROM applications WHERE Active = 1 AND (${likeClause})`;
-  const bindings = [...likeBindings];
+  const bindings: (string | number)[] = [...likeBindings];
 
   if (filters.indoor_outdoor && filters.indoor_outdoor !== 'Both') {
     sql += ' AND (Indoor_Outdoor = ? OR Indoor_Outdoor = ?)';
@@ -1058,22 +1076,22 @@ async function textFallback(db, query, filters, limit, excerptIndex, linkCtx) {
   sql += ' LIMIT ?';
   bindings.push(limit * 2);
 
-  const result = await db.prepare(sql).bind(...bindings).all();
+  const result = await db.prepare(sql).bind(...bindings).all<ApplicationRow>();
   return result.results.map(app =>
-    buildResult(app, 0, null, excerptIndex, linkCtx)
+    buildResult(app, 0, undefined, excerptIndex, linkCtx)
   );
 }
 
 // ─── Result Builder ───────────────────────────────────────────────────────────
 
-function buildResult(app, score, chunkMeta, excerptIndex, linkCtx) {
+function buildResult(app: ApplicationRow, score: number, chunkMeta: Partial<VectorMetadata> | undefined, excerptIndex: ExcerptIndex, linkCtx: LinkCtx): SearchResult {
   const formatted = formatApplication(app);
   // Pass the application's own page (where its table row lives), not the
   // excerpt's page — the citation should point at the source row, while
   // the excerpt's pageNumber stays in the excerpt object. The standard's
   // descriptive title (from D1) makes the citation carry the FULL name:
   // "ANSI/IES RP-2-20+E1 Recommended Practice: Lighting Retail Spaces, ...".
-  const stdInfo = linkCtx.standardsIndex?.get(app.Standard);
+  const stdInfo = linkCtx.standardsIndex?.get(app.Standard ?? '');
   const citation = formatCitation(app, null, app.Page_Number ?? null, stdInfo?.title || null);
   const vitriumLink = buildVitriumLink(app, linkCtx);
 
@@ -1086,13 +1104,13 @@ function buildResult(app, score, chunkMeta, excerptIndex, linkCtx) {
     application: formatted,
     relevanceScore: Math.round(score * 1000) / 1000,
     excerpt: excerpt ? {
-      text: excerpt.excerpt_text,
-      pageNumber: excerpt.page_number,
-      section: excerpt.section,
+      text: excerpt.excerpt_text ?? '',
+      pageNumber: excerpt.page_number ?? null,
+      section: excerpt.section ?? null,
       // Surface the chunk type so the UI can hide raw table dumps in the
       // "From the Standard" panel — that section is only useful when it shows
       // prose context from the body of the standard, not a repeat of the table.
-      chunkType: excerpt.chunk_type,
+      chunkType: excerpt.chunk_type ?? 'text',
     } : null,
     citation,
     vitriumLink,
@@ -1108,8 +1126,8 @@ function buildResult(app, score, chunkMeta, excerptIndex, linkCtx) {
  * table — this avoids attaching the same generic excerpt to every row of
  * the same standard.
  */
-function buildExcerptIndex(chunkMatches) {
-  const index = {};
+function buildExcerptIndex(chunkMatches: VMatch[]): ExcerptIndex {
+  const index: ExcerptIndex = {};
   for (const match of chunkMatches) {
     const stdId = match.metadata?.standard_id;
     if (!stdId) continue;
@@ -1136,9 +1154,9 @@ const EXCERPT_BACKFILL_TOP_K = 10; // chunks fetched per backfilled standard
  * standard's vectors. Fail-open per standard: on error the result simply
  * renders without an excerpt, as before.
  */
-async function backfillExcerpts(env, queryVector, apps, excerptIndex) {
-  const targets = [];
-  const seen = new Set();
+async function backfillExcerpts(env: Env, queryVector: number[], apps: ApplicationRow[], excerptIndex: ExcerptIndex): Promise<void> {
+  const targets: string[] = [];
+  const seen = new Set<string>();
   for (const app of apps) {
     const std = app.Standard;
     if (!std || seen.has(std)) continue;
@@ -1157,7 +1175,7 @@ async function backfillExcerpts(env, queryVector, apps, excerptIndex) {
         returnMetadata: 'all',
         filter: { standard_code: std },
       });
-      for (const m of res.matches || []) {
+      for (const m of (res.matches || []) as unknown as VMatch[]) {
         const meta = m.metadata || {};
         // The filter also matches this standard's application vectors — skip.
         // Reference entries make poor "From the Standard" excerpts too.
@@ -1168,7 +1186,7 @@ async function backfillExcerpts(env, queryVector, apps, excerptIndex) {
       }
       if (excerptIndex[std]) excerptIndex[std].sort((a, b) => b.score - a.score);
     } catch (err) {
-      console.error(`excerpt backfill failed for ${std} (non-fatal):`, err.message);
+      console.error(`excerpt backfill failed for ${std} (non-fatal):`, errMsg(err));
     }
   }));
 }
@@ -1179,7 +1197,7 @@ async function backfillExcerpts(env, queryVector, apps, excerptIndex) {
  * whether a standard still needs an excerpt backfill and to keep chunk-only
  * results with nothing displayable out of the list. No text = not prose.
  */
-function isTableLike(text) {
+function isTableLike(text: string | null | undefined): boolean {
   if (!text) return true;
   const t = String(text);
   const digitRatio = (t.match(/\d/g) || []).length / t.length;
@@ -1199,20 +1217,20 @@ function isTableLike(text) {
  *     scoring chunk for the standard, again preferring non-table.
  *  3. If the standard has no chunk matches at all, return null.
  */
-function pickExcerptForApp(excerptIndex, app) {
-  const bucket = excerptIndex[app.Standard];
+function pickExcerptForApp(excerptIndex: ExcerptIndex, app: ApplicationRow): ExcerptChunk | null {
+  const bucket = app.Standard ? excerptIndex[app.Standard] : undefined;
   if (!bucket || bucket.length === 0) return null;
 
-  const isTable = (c) => c.chunk_type === 'table';
+  const isTable = (c: ExcerptChunk) => c.chunk_type === 'table';
   const appPage = app.Page_Number;
 
   if (appPage != null) {
     const NEAR_RADIUS = 5;
     const inRadius = bucket.filter(c => c.page_number != null && Math.abs(c.page_number - appPage) <= NEAR_RADIUS);
-    const pickNearest = (pool) => {
-      let best = null, bestDist = Infinity;
+    const pickNearest = (pool: ExcerptChunk[]): ExcerptChunk | null => {
+      let best: ExcerptChunk | null = null, bestDist = Infinity;
       for (const c of pool) {
-        const dist = Math.abs(c.page_number - appPage);
+        const dist = Math.abs((c.page_number ?? 0) - appPage);
         if (dist < bestDist || (dist === bestDist && (!best || c.score > best.score))) {
           best = c; bestDist = dist;
         }
@@ -1231,7 +1249,7 @@ function pickExcerptForApp(excerptIndex, app) {
 
 // ─── Application Formatter ────────────────────────────────────────────────────
 
-function formatApplication(app) {
+function formatApplication(app: ApplicationRow): FormattedApplication {
   return {
     code: app.code,
     // Hierarchy
@@ -1316,7 +1334,7 @@ function formatApplication(app) {
   };
 }
 
-function parseFootnoteMarks(raw) {
+function parseFootnoteMarks(raw: string | null | undefined): FootnoteMarks | null {
   if (!raw) return null;
   try {
     const parsed = JSON.parse(raw);
@@ -1332,18 +1350,19 @@ function parseFootnoteMarks(raw) {
  * Strip lux or fc fields based on user preference.
  * Default is 'both' — only strip when explicitly requested.
  */
-function applyUnits(results, units) {
+function applyUnits(results: SearchResult[], units: string): SearchResult[] {
   if (units === 'both' || !units) return results;
 
   return results.map(r => {
     const app = { ...r.application };
-    for (const block of ['horizontal', 'vertical', 'task']) {
-      if (!app[block]) continue;
+    for (const block of ['horizontal', 'vertical', 'task'] as const) {
+      const plane = app[block];
+      if (!plane) continue;
       if (units === 'lux') {
-        const { fc, heightFt, ...rest } = app[block]; // eslint-disable-line no-unused-vars
+        const { fc, heightFt, ...rest } = plane; // eslint-disable-line no-unused-vars
         app[block] = rest;
       } else if (units === 'fc') {
-        const { lux, heightM, ...rest } = app[block]; // eslint-disable-line no-unused-vars
+        const { lux, heightM, ...rest } = plane; // eslint-disable-line no-unused-vars
         app[block] = rest;
       }
     }
@@ -1354,19 +1373,19 @@ function applyUnits(results, units) {
 // ─── Chunk Fallback Builder ───────────────────────────────────────────────────
 // When no structured application records exist yet, surface PDF chunks directly.
 
-function buildChunkResults(chunkMatches, linkCtx = {}, { perStandard = 1 } = {}) {
+function buildChunkResults(chunkMatches: VMatch[], linkCtx: LinkCtx = {}, { perStandard = 1 }: { perStandard?: number } = {}): SearchResult[] {
   // Group by standard_id. Body-excerpt mode keeps the single best chunk per
   // standard; references mode keeps EVERY entry (perStandard: Infinity) —
   // each bibliography entry is its own result.
-  const byStandard = new Map();
+  const byStandard = new Map<string, VMatch[]>();
   for (const match of chunkMatches) {
     const stdId = match.metadata?.standard_id || match.metadata?.standard_code;
     if (!stdId) continue;
     if (!byStandard.has(stdId)) byStandard.set(stdId, []);
-    byStandard.get(stdId).push(match);
+    byStandard.get(stdId)!.push(match);
   }
 
-  const picked = [];
+  const picked: Array<[string, VMatch]> = [];
   for (const [stdId, matches] of byStandard) {
     matches.sort((a, b) => (b.score || 0) - (a.score || 0));
     for (const match of matches.slice(0, perStandard === Infinity ? matches.length : perStandard)) {
@@ -1430,8 +1449,8 @@ function buildChunkResults(chunkMatches, linkCtx = {}, { perStandard = 1 } = {})
 
 // ─── Utility Helpers ──────────────────────────────────────────────────────────
 
-function buildVectorFilter(filters) {
-  const f = {};
+function buildVectorFilter(filters: SearchFilters): Record<string, string | boolean> | null {
+  const f: Record<string, string | boolean> = {};
   // indoor_outdoor is deliberately NOT applied at the vector level:
   //   - Text chunks are ingested with indoor_outdoor: null (ingest.js), so an
   //     equality filter silently drops ALL chunk vectors — filtered searches
@@ -1459,8 +1478,8 @@ function buildVectorFilter(filters) {
  *
  * Caller-supplied filters take precedence (see mergedFilters in handleSearch).
  */
-function inferFiltersFromQuery(query, forceComparison = false) {
-  const out = {};
+function inferFiltersFromQuery(query: string, forceComparison = false): SearchFilters {
+  const out: SearchFilters = {};
 
   const lzMatch = /\b(?:lz)\s*([0-4])\b/i.exec(query);
   if (lzMatch) out.lighting_zone = `LZ${lzMatch[1]}`;
@@ -1480,23 +1499,23 @@ function inferFiltersFromQuery(query, forceComparison = false) {
   return out;
 }
 
-function dedupeByCode(matches) {
-  const seen = new Map();
+function dedupeByCode(matches: VMatch[]): VMatch[] {
+  const seen = new Map<string, VMatch>();
   for (const m of matches) {
     const code = m.metadata?.application_code;
     if (!code) continue;
-    if (!seen.has(code) || seen.get(code).score < m.score) {
+    if (!seen.has(code) || seen.get(code)!.score < m.score) {
       seen.set(code, m);
     }
   }
   return [...seen.values()].sort((a, b) => b.score - a.score);
 }
 
-function deduplicateScored(scored) {
-  const seen = new Map();
+function deduplicateScored(scored: ScoredApp[]): ScoredApp[] {
+  const seen = new Map<string, ScoredApp>();
   for (const item of scored) {
     const code = item.app.code;
-    if (!seen.has(code) || seen.get(code).score < item.score) {
+    if (!seen.has(code) || seen.get(code)!.score < item.score) {
       seen.set(code, item);
     }
   }
@@ -1517,7 +1536,7 @@ function deduplicateScored(scored) {
  * tie because Vectorize's scores are not meaningfully different at that
  * resolution.
  */
-function compareScoredApps(a, b) {
+function compareScoredApps(a: ScoredApp, b: ScoredApp): number {
   const SCORE_EPSILON = 0.01;
   const scoreDiff = b.score - a.score;
   if (Math.abs(scoreDiff) > SCORE_EPSILON) return scoreDiff;
@@ -1525,7 +1544,7 @@ function compareScoredApps(a, b) {
   const A = a.app, B = b.app;
   const hierarchyKeys = ['Sub_Category', 'App', 'App_s1', 'App_s2', 'App_s3', 'App_s4'];
   for (const key of hierarchyKeys) {
-    const cmp = compareHierarchyField(A[key], B[key]);
+    const cmp = compareHierarchyField(A[key as keyof typeof A] as string | null, B[key as keyof typeof B] as string | null);
     if (cmp !== 0) return cmp;
   }
   return rowRefNumber(A.Row_Ref) - rowRefNumber(B.Row_Ref);
@@ -1535,7 +1554,7 @@ function compareScoredApps(a, b) {
  * Same tie-break logic as compareScoredApps, but for the formatted
  * `result` shape returned by buildResult (used after a fallback merge).
  */
-function compareResults(a, b) {
+function compareResults(a: SearchResult, b: SearchResult): number {
   const SCORE_EPSILON = 0.01;
   const scoreDiff = (b.relevanceScore || 0) - (a.relevanceScore || 0);
   if (Math.abs(scoreDiff) > SCORE_EPSILON) return scoreDiff;
@@ -1543,7 +1562,7 @@ function compareResults(a, b) {
   const A = a.application, B = b.application;
   const hierarchyKeys = ['subCategory', 'category', 'sub1', 'sub2', 'sub3', 'sub4'];
   for (const key of hierarchyKeys) {
-    const cmp = compareHierarchyField(A[key], B[key]);
+    const cmp = compareHierarchyField(A[key as keyof typeof A] as string | null, B[key as keyof typeof B] as string | null);
     if (cmp !== 0) return cmp;
   }
   return rowRefNumber(A.rowRef) - rowRefNumber(B.rowRef);
@@ -1556,7 +1575,7 @@ function compareResults(a, b) {
  *   - "Lower limit" sorts before "Upper limit"
  *   - everything else falls back to case-insensitive lexicographic
  */
-function compareHierarchyField(a, b) {
+function compareHierarchyField(a: string | null | undefined, b: string | null | undefined): number {
   if (a == null && b == null) return 0;
   if (a == null) return 1;
   if (b == null) return -1;
@@ -1575,13 +1594,13 @@ function compareHierarchyField(a, b) {
   return String(a).toLowerCase().localeCompare(String(b).toLowerCase());
 }
 
-function rowRefNumber(rowRef) {
+function rowRefNumber(rowRef: string | number | null | undefined): number {
   if (!rowRef) return Number.MAX_SAFE_INTEGER;
   const m = /(\d+)/.exec(String(rowRef));
   return m ? Number(m[1]) : Number.MAX_SAFE_INTEGER;
 }
 
-function mergeResults(primary, fallback) {
+function mergeResults(primary: SearchResult[], fallback: SearchResult[]): void {
   const seen = new Set(primary.map(r => r.application.code));
   for (const item of fallback) {
     if (!seen.has(item.application.code)) {
@@ -1606,10 +1625,10 @@ function mergeResults(primary, fallback) {
  *
  * Returns null when no URL is known — the UI hides the button.
  */
-function buildVitriumLink(app, linkCtx = {}) {
+function buildVitriumLink(app: { Standard?: string | null; Page_Number?: number | null; Link_Mapping?: string | null; Vitrium_Deep_Link?: string | null }, linkCtx: LinkCtx = {}): string | null {
   if (app.Vitrium_Deep_Link) return app.Vitrium_Deep_Link;
 
-  const webUrl = linkCtx.standardsIndex?.get(app.Standard)?.webUrl;
+  const webUrl = linkCtx.standardsIndex?.get(app.Standard ?? '')?.webUrl;
   if (!webUrl) return null;
 
   if (app.Link_Mapping) return `${webUrl}#${app.Link_Mapping}`;
@@ -1617,7 +1636,7 @@ function buildVitriumLink(app, linkCtx = {}) {
   return webUrl;
 }
 
-function jsonResponse(data, status = 200) {
+function jsonResponse(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
     status,
     headers: { 'Content-Type': 'application/json' },
