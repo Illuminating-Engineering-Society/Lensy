@@ -23,6 +23,13 @@
 #                                              without it when ENVIRONMENT=production
 #   wrangler secret put VITRIUM_API_KEY
 #   wrangler secret put SHAREPOINT_TOKEN
+#
+# SSO against auth.ies.org (AuthIES) — Lensy is a COOKIE Service Provider and
+# verifies the shared ies_auth cookie. BOTH secrets must be the SAME values as
+# the AuthIES Worker's (they decrypt/verify the cookie it mints):
+#   wrangler secret put SESSION_ENCRYPTION_KEY
+#   wrangler secret put COOKIE_SIGNING_SECRET
+# Without them every SSO check fails → nobody can log in (staff bearer still works).
 
 name = "lensy"
 main = "src/workers/api.ts"
@@ -80,10 +87,19 @@ VITRIUM_API_URL = "https://api.vitrium.com"
 # standard in D1 (standards.vitrium_web_url), populated by
 # scripts/sync-metadata.js --csv from Vitrium's document export.
 ENVIRONMENT = "production"
+# IES Auth IDP (AuthIES Worker) — where /login and /logout redirect and where
+# the ies_auth cookie comes from.
+AUTH_IDP_BASE_URL = "https://auth.ies.org"
+# "false" → ONLY emails in invited_users may enter. Default (anything else):
+# IES members (isMember in the cookie) get in without an invite; the
+# invited_users allowlist adds guests and can still revoke anyone.
+ALLOW_MEMBERS_WITHOUT_INVITE = "true"
 
 # Secrets set via `wrangler secret put`:
 # VITRIUM_API_KEY
 # SHAREPOINT_TOKEN
+# SESSION_ENCRYPTION_KEY   (same value as AuthIES)
+# COOKIE_SIGNING_SECRET    (same value as AuthIES)
 
 # ─── Routes / Custom Domain ───────────────────────────────────────────────────
 # Serves the Worker at lensy.ies.org instead of the default *.workers.dev URL.

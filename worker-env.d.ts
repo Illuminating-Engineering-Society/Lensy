@@ -14,5 +14,8 @@ declare global {
     LUCIUS_API_SECRET?: string;
     VITRIUM_API_KEY?: string;
     SHAREPOINT_TOKEN?: string;
+    // SSO cookie verification — SAME values as the AuthIES Worker (lib/sso.ts).
+    SESSION_ENCRYPTION_KEY?: string;
+    COOKIE_SIGNING_SECRET?: string;
   }
 }

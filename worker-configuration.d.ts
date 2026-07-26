@@ -3,7 +3,9 @@
 interface Env {
 	SESSIONS: KVNamespace;
 	VITRIUM_API_URL: "https://api.vitrium.com";
-	ENVIRONMENT: "production";
+	AUTH_IDP_BASE_URL: "https://auth.ies.org";
+	ALLOW_MEMBERS_WITHOUT_INVITE: "true";
+	ENVIRONMENT: string;
 	PDFS: R2Bucket;
 	DB: D1Database;
 	SEARCH_RATE_LIMITER: RateLimit;

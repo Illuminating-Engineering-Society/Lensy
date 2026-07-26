@@ -24,6 +24,8 @@ import { handleSearch } from './search';
 import { handleIngest } from './ingest';
 import { handleAdminScanOrphans, handleAdminEnumerateIds, handleAdminDeleteOrphans, handleAdminFlushCache, handleAdminSearchLog, handleAdminR2Multipart, handleAdminIndexStatus } from './admin';
 import { handleAdminUsers } from './users';
+import { handleAuthMe, handleDevLogin, requireReadAccess } from './session';
+import { buildLoginUrl, buildLogoutUrl } from '../lib/sso';
 
 // CORS: the search/read API is public and credential-less; admin/ingest
 // routes require the bearer secret. KNOWN GAP (Phase 1 by design): the
@@ -49,8 +51,24 @@ export default {
     const path = url.pathname;
 
     try {
-      // ── Search ──────────────────────────────────────────────────────────────
+      // ── Auth (SSO against auth.ies.org — lib/sso.ts) ─────────────────────
+      if (path === '/api/auth/me' && request.method === 'GET') {
+        return withCors(await handleAuthMe(request, env));
+      }
+      if (path === '/api/auth/dev-login' && request.method === 'POST') {
+        return withCors(await handleDevLogin(request, env));
+      }
+      if (path === '/login' && request.method === 'GET') {
+        return Response.redirect(buildLoginUrl(env, request.url), 302);
+      }
+      if (path === '/logout' && request.method === 'GET') {
+        return Response.redirect(buildLogoutUrl(env, request.url), 302);
+      }
+
+      // ── Search (requires an SSO session or the staff bearer secret) ──────
       if (path === '/api/search' && request.method === 'POST') {
+        const denied = await requireReadAccess(request, env);
+        if (denied) return withCors(denied);
         return withCors(await handleSearch(request, env, ctx));
       }
 
@@ -87,17 +105,24 @@ export default {
         return withCors(await handleAdminUsers(request, env, url));
       }
 
-      // ── Applications ─────────────────────────────────────────────────────
+      // ── Applications / Standards / Projects (same session gate as search) ─
+      if (
+        path.startsWith('/api/applications') ||
+        path.startsWith('/api/standards') ||
+        path.startsWith('/api/projects')
+      ) {
+        const denied = await requireReadAccess(request, env);
+        if (denied) return withCors(denied);
+      }
+
       if (path.startsWith('/api/applications')) {
         return withCors(await handleApplications(request, env, url));
       }
 
-      // ── Standards ────────────────────────────────────────────────────────
       if (path.startsWith('/api/standards')) {
         return withCors(await handleStandards(request, env, url));
       }
 
-      // ── Projects ─────────────────────────────────────────────────────────
       if (path.startsWith('/api/projects')) {
         return withCors(await handleProjects(request, env, url));
       }

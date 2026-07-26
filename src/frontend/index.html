@@ -4,6 +4,9 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Lensy — IES Standards Search</title>
+  <!-- SSO gate: hides the app until /api/auth/me authorizes the visitor.
+       Must load before anything renders. -->
+  <script src="/utils/auth-gate.js"></script>
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
     // ── IES brand design tokens (from the shared IES style guide) ──────────────
