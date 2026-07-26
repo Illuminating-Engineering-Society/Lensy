@@ -23,6 +23,7 @@
 import { handleSearch } from './search';
 import { handleIngest } from './ingest';
 import { handleAdminScanOrphans, handleAdminEnumerateIds, handleAdminDeleteOrphans, handleAdminFlushCache, handleAdminSearchLog, handleAdminR2Multipart, handleAdminIndexStatus } from './admin';
+import { handleAdminUsers } from './users';
 
 // CORS: the search/read API is public and credential-less; admin/ingest
 // routes require the bearer secret. KNOWN GAP (Phase 1 by design): the
@@ -79,6 +80,11 @@ export default {
       }
       if (path === '/api/admin/r2-multipart' && request.method === 'POST') {
         return withCors(await handleAdminR2Multipart(request, env));
+      }
+
+      // ── Admin: invited-users dashboard (shared-secret protected) ─────────
+      if (path === '/api/admin/users' || path.startsWith('/api/admin/users/')) {
+        return withCors(await handleAdminUsers(request, env, url));
       }
 
       // ── Applications ─────────────────────────────────────────────────────

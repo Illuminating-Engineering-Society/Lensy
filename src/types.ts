@@ -389,3 +389,20 @@ export interface TableData {
   footnotes?: string;
   generalNotes?: string;
 }
+
+/** D1 row: invited_users (migrations/0007_invited_users.sql). */
+export interface InvitedUserRow {
+  id: number;
+  email: string;
+  name: string | null;
+  organization: string | null;
+  role: string;
+  status: string;
+  person_uuid: string | null;
+  expires_at: string | null;
+  invited_by: string | null;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+  last_login_at: string | null;
+}

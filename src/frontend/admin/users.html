@@ -1,0 +1,495 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Lensy — Invited Users (Staff)</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    // IES brand design tokens — duplicated per page (no shared build step yet;
+    // see the note in index.html).
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            'brand-primary':        '#D95D2B',
+            'brand-primary-dark':   '#B84A20',
+            'brand-secondary':      '#3A5068',
+            'brand-secondary-dark': '#2C3D4F',
+            'brand-accent':         '#EFA723',
+            'surface':              '#F7F7F7',
+            'ink':                  '#2C2C2C',
+          },
+          fontFamily: {
+            display: ['Nohemi', 'Inter', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'sans-serif'],
+            sans:    ['Inter', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'sans-serif'],
+            mono:    ['ui-monospace', 'SFMono-Regular', 'monospace'],
+          },
+        }
+      }
+    }
+  </script>
+  <style>
+    @font-face {
+      font-family: 'Nohemi'; font-style: normal; font-weight: 400 700;
+      font-display: swap; src: url('/fonts/Nohemi-Variable.woff2') format('woff2');
+    }
+    @font-face {
+      font-family: 'Inter'; font-style: normal; font-weight: 100 900;
+      font-display: swap; src: url('/fonts/Inter-Variable.woff2') format('woff2');
+    }
+    body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; color: #2C2C2C; }
+    h1, h2, h3, .font-display { font-family: 'Nohemi', 'Inter', sans-serif; }
+    .fade-in { animation: fadeIn 0.2s ease-out; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+    .modal-backdrop { backdrop-filter: blur(4px); }
+  </style>
+</head>
+<body class="bg-surface min-h-screen text-ink">
+
+  <!-- ── Header ─────────────────────────────────────────────────────────── -->
+  <header class="bg-brand-secondary text-white shadow-md sticky top-0 z-40">
+    <div class="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between">
+      <a href="/" class="flex items-center gap-3">
+        <div class="w-8 h-8 rounded-lg bg-white/15 flex items-center justify-center">
+          <svg class="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M12 3v1m0 16v1M4.22 4.22l.707.707M18.364 18.364l.707.707M3 12H2m20 0h-1M4.927 19.073l.707-.707M18.364 5.636l.707-.707M12 8a4 4 0 100 8 4 4 0 000-8z"/>
+          </svg>
+        </div>
+        <div>
+          <span class="font-display text-xl font-bold tracking-tight">Lensy</span>
+          <span class="hidden sm:inline text-blue-200 text-sm ml-2">Staff · Invited Users</span>
+        </div>
+      </a>
+      <button id="btn-lock" onclick="lockDashboard()" class="hidden text-sm text-blue-200 hover:text-white px-3 py-1.5 rounded-md hover:bg-white/10 transition">
+        Lock dashboard
+      </button>
+    </div>
+  </header>
+
+  <main class="max-w-6xl mx-auto px-4 py-8">
+
+    <!-- ── Admin-key gate ─────────────────────────────────────────────────── -->
+    <section id="gate" class="max-w-md mx-auto bg-white rounded-xl shadow p-6 mt-10">
+      <h1 class="font-display text-xl font-bold mb-1">Staff access</h1>
+      <p class="text-sm text-gray-500 mb-4">
+        Enter the Lensy admin key (<span class="font-mono text-xs">LUCIUS_API_SECRET</span>).
+        It is kept only in this browser tab's session.
+      </p>
+      <form onsubmit="return connect(event)">
+        <input id="gate-key" type="password" autocomplete="off" placeholder="Admin key"
+               class="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-brand-primary focus:border-transparent" />
+        <button type="submit"
+                class="mt-3 w-full bg-brand-primary hover:bg-brand-primary-dark text-white px-4 py-2.5 rounded-lg font-medium transition">
+          Open dashboard
+        </button>
+        <p id="gate-error" class="hidden text-sm text-red-600 mt-3"></p>
+      </form>
+    </section>
+
+    <!-- ── Dashboard ──────────────────────────────────────────────────────── -->
+    <section id="dashboard" class="hidden">
+      <div class="flex flex-wrap items-center justify-between gap-3 mb-5">
+        <h1 class="font-display text-2xl font-bold">Invited users</h1>
+        <div class="flex items-center gap-2">
+          <button onclick="loadUsers()" class="px-3 py-2 text-sm rounded-lg border border-gray-300 bg-white hover:bg-gray-50 transition">Refresh</button>
+          <button onclick="openInvite()" class="px-4 py-2 text-sm rounded-lg bg-brand-primary hover:bg-brand-primary-dark text-white font-medium transition">+ Invite users</button>
+        </div>
+      </div>
+
+      <!-- Filters -->
+      <div class="flex flex-wrap items-center gap-2 mb-4">
+        <div id="chips" class="flex flex-wrap gap-2"></div>
+        <div class="flex-1 min-w-[220px]">
+          <input id="search" type="search" placeholder="Filter by email, name, organization…"
+                 oninput="debouncedRender()"
+                 class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-brand-primary focus:border-transparent bg-white" />
+        </div>
+      </div>
+
+      <p id="capped-note" class="hidden text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-3">
+        Showing the first 1000 rows only — narrow the filter to see everything.
+      </p>
+
+      <!-- Table -->
+      <div class="bg-white rounded-xl shadow overflow-hidden">
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead>
+              <tr class="text-left text-xs uppercase tracking-wide text-gray-500 border-b border-gray-200">
+                <th class="px-4 py-3">Email</th>
+                <th class="px-4 py-3">Name</th>
+                <th class="px-4 py-3">Organization</th>
+                <th class="px-4 py-3">Role</th>
+                <th class="px-4 py-3">Status</th>
+                <th class="px-4 py-3">Expires</th>
+                <th class="px-4 py-3">Last login</th>
+                <th class="px-4 py-3 text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody id="rows"></tbody>
+          </table>
+        </div>
+        <p id="empty" class="hidden text-center text-gray-400 text-sm py-10">No users match this view.</p>
+      </div>
+    </section>
+  </main>
+
+  <!-- ── Invite modal ─────────────────────────────────────────────────────── -->
+  <div id="invite-modal" class="hidden fixed inset-0 z-50 flex items-start justify-center bg-black/40 modal-backdrop overflow-y-auto p-4">
+    <div class="bg-white rounded-xl shadow-xl w-full max-w-lg my-10 fade-in">
+      <div class="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+        <h2 class="font-display text-lg font-bold">Invite users</h2>
+        <button onclick="closeInvite()" class="text-gray-400 hover:text-gray-600 text-xl leading-none">&times;</button>
+      </div>
+      <form onsubmit="return submitInvite(event)" class="px-6 py-5 space-y-4">
+        <div>
+          <label class="block text-xs font-medium text-gray-600 mb-1">Emails <span class="text-gray-400">(one per line — optionally “email, Name, Organization”)</span></label>
+          <textarea id="inv-emails" rows="5" required
+                    placeholder="guest@example.com&#10;dana@firm.com, Dana Ruiz, Firm LLC"
+                    class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg font-mono focus:ring-2 focus:ring-brand-primary focus:border-transparent"></textarea>
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block text-xs font-medium text-gray-600 mb-1">Role</label>
+            <select id="inv-role" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white">
+              <option value="guest" selected>guest</option>
+              <option value="staff">staff</option>
+              <option value="admin">admin</option>
+            </select>
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-gray-600 mb-1">Access expires <span class="text-gray-400">(optional)</span></label>
+            <input id="inv-expires" type="date" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white" />
+          </div>
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block text-xs font-medium text-gray-600 mb-1">Invited by <span class="text-gray-400">(you)</span></label>
+            <input id="inv-by" type="text" placeholder="Your name" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg" />
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-gray-600 mb-1">Notes <span class="text-gray-400">(optional)</span></label>
+            <input id="inv-notes" type="text" placeholder="e.g. 2026 conference guests" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg" />
+          </div>
+        </div>
+        <p class="text-xs text-gray-400">
+          No email is sent yet — this adds people to the access list that SSO login will check once
+          Lensy is connected to auth.ies.org.
+        </p>
+        <div id="invite-result" class="hidden text-sm rounded-lg px-3 py-2"></div>
+        <div class="flex justify-end gap-2 pt-1">
+          <button type="button" onclick="closeInvite()" class="px-4 py-2 text-sm rounded-lg border border-gray-300 hover:bg-gray-50 transition">Cancel</button>
+          <button type="submit" id="invite-submit" class="px-4 py-2 text-sm rounded-lg bg-brand-primary hover:bg-brand-primary-dark text-white font-medium transition">Add to access list</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ── Edit modal ───────────────────────────────────────────────────────── -->
+  <div id="edit-modal" class="hidden fixed inset-0 z-50 flex items-start justify-center bg-black/40 modal-backdrop overflow-y-auto p-4">
+    <div class="bg-white rounded-xl shadow-xl w-full max-w-md my-10 fade-in">
+      <div class="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+        <h2 class="font-display text-lg font-bold">Edit user</h2>
+        <button onclick="closeEdit()" class="text-gray-400 hover:text-gray-600 text-xl leading-none">&times;</button>
+      </div>
+      <form onsubmit="return submitEdit(event)" class="px-6 py-5 space-y-4">
+        <p id="edit-email" class="font-mono text-sm text-gray-500"></p>
+        <input type="hidden" id="edit-id" />
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block text-xs font-medium text-gray-600 mb-1">Name</label>
+            <input id="edit-name" type="text" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg" />
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-gray-600 mb-1">Organization</label>
+            <input id="edit-org" type="text" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg" />
+          </div>
+        </div>
+        <div class="grid grid-cols-3 gap-3">
+          <div>
+            <label class="block text-xs font-medium text-gray-600 mb-1">Role</label>
+            <select id="edit-role" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white">
+              <option value="guest">guest</option>
+              <option value="staff">staff</option>
+              <option value="admin">admin</option>
+            </select>
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-gray-600 mb-1">Status</label>
+            <select id="edit-status" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white">
+              <option value="invited">invited</option>
+              <option value="active">active</option>
+              <option value="revoked">revoked</option>
+            </select>
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-gray-600 mb-1">Expires</label>
+            <input id="edit-expires" type="date" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg" />
+          </div>
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-gray-600 mb-1">Notes</label>
+          <input id="edit-notes" type="text" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg" />
+        </div>
+        <div id="edit-result" class="hidden text-sm rounded-lg px-3 py-2"></div>
+        <div class="flex justify-end gap-2 pt-1">
+          <button type="button" onclick="closeEdit()" class="px-4 py-2 text-sm rounded-lg border border-gray-300 hover:bg-gray-50 transition">Cancel</button>
+          <button type="submit" class="px-4 py-2 text-sm rounded-lg bg-brand-primary hover:bg-brand-primary-dark text-white font-medium transition">Save changes</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script>
+    const KEY_STORAGE = 'lensy_admin_key';
+    const BY_STORAGE  = 'lensy_admin_invited_by';
+    let allUsers = [];
+    let counts = { all: 0, invited: 0, active: 0, revoked: 0, expired: 0 };
+    let statusFilter = 'all';
+    let searchTimer = null;
+
+    // ── API helper: bearer key from sessionStorage; 401/503 relocks. ──────
+    async function api(path, options = {}) {
+      const key = sessionStorage.getItem(KEY_STORAGE) || '';
+      const res = await fetch(path, {
+        ...options,
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer ' + key,
+          ...(options.headers || {}),
+        },
+      });
+      if (res.status === 401) {
+        lockDashboard('That key was rejected. Enter it again.');
+        throw new Error('unauthorized');
+      }
+      const data = await res.json().catch(() => ({}));
+      if (res.status === 503 && data.error) {
+        lockDashboard(data.error);
+        throw new Error('unavailable');
+      }
+      return { status: res.status, data };
+    }
+
+    function esc(s) {
+      return String(s ?? '').replace(/[&<>"']/g, c =>
+        ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
+    }
+
+    // ── Gate ──────────────────────────────────────────────────────────────
+    async function connect(ev) {
+      ev.preventDefault();
+      const key = document.getElementById('gate-key').value.trim();
+      if (!key) return false;
+      sessionStorage.setItem(KEY_STORAGE, key);
+      const err = document.getElementById('gate-error');
+      err.classList.add('hidden');
+      try {
+        await loadUsers();
+        document.getElementById('gate').classList.add('hidden');
+        document.getElementById('dashboard').classList.remove('hidden');
+        document.getElementById('btn-lock').classList.remove('hidden');
+      } catch (e) { /* lockDashboard already showed the reason */ }
+      return false;
+    }
+
+    function lockDashboard(message) {
+      sessionStorage.removeItem(KEY_STORAGE);
+      document.getElementById('dashboard').classList.add('hidden');
+      document.getElementById('btn-lock').classList.add('hidden');
+      document.getElementById('gate').classList.remove('hidden');
+      document.getElementById('gate-key').value = '';
+      const err = document.getElementById('gate-error');
+      if (message) { err.textContent = message; err.classList.remove('hidden'); }
+      else err.classList.add('hidden');
+    }
+
+    // ── Data ──────────────────────────────────────────────────────────────
+    async function loadUsers() {
+      const { data } = await api('/api/admin/users');
+      allUsers = data.users || [];
+      counts = data.counts || counts;
+      document.getElementById('capped-note').classList.toggle('hidden', !data.capped);
+      render();
+    }
+
+    function debouncedRender() {
+      clearTimeout(searchTimer);
+      searchTimer = setTimeout(render, 150);
+    }
+
+    function setFilter(s) { statusFilter = s; render(); }
+
+    // ── Rendering ─────────────────────────────────────────────────────────
+    const CHIP_DEFS = [
+      ['all', 'All'], ['invited', 'Invited'], ['active', 'Active'],
+      ['expired', 'Expired'], ['revoked', 'Revoked'],
+    ];
+    const BADGE = {
+      invited: 'bg-amber-100 text-amber-800',
+      active:  'bg-green-100 text-green-800',
+      expired: 'bg-gray-200 text-gray-600',
+      revoked: 'bg-red-100 text-red-700',
+    };
+
+    function render() {
+      // Chips
+      document.getElementById('chips').innerHTML = CHIP_DEFS.map(([s, label]) => {
+        const active = statusFilter === s;
+        return `<button onclick="setFilter('${s}')"
+          class="px-3 py-1.5 text-sm rounded-full border transition ${active
+            ? 'bg-brand-secondary text-white border-brand-secondary'
+            : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'}">
+          ${label} <span class="${active ? 'text-blue-200' : 'text-gray-400'}">${counts[s] ?? 0}</span>
+        </button>`;
+      }).join('');
+
+      // Rows
+      const q = document.getElementById('search').value.trim().toLowerCase();
+      const visible = allUsers.filter(u => {
+        if (statusFilter !== 'all' && u.effective_status !== statusFilter) return false;
+        if (!q) return true;
+        return [u.email, u.name, u.organization, u.invited_by]
+          .some(f => f && f.toLowerCase().includes(q));
+      });
+
+      const tbody = document.getElementById('rows');
+      tbody.innerHTML = visible.map(u => {
+        const badge = BADGE[u.effective_status] || 'bg-gray-100 text-gray-600';
+        const revokeBtn = u.status === 'revoked'
+          ? `<button onclick="quickStatus(${u.id}, 'invited')" class="text-green-700 hover:underline">Reinstate</button>`
+          : `<button onclick="quickStatus(${u.id}, 'revoked')" class="text-red-600 hover:underline">Revoke</button>`;
+        return `<tr class="border-b border-gray-100 hover:bg-gray-50">
+          <td class="px-4 py-3 font-mono text-xs">${esc(u.email)}</td>
+          <td class="px-4 py-3">${esc(u.name) || '<span class="text-gray-300">—</span>'}</td>
+          <td class="px-4 py-3">${esc(u.organization) || '<span class="text-gray-300">—</span>'}</td>
+          <td class="px-4 py-3">${esc(u.role)}</td>
+          <td class="px-4 py-3"><span class="inline-block px-2 py-0.5 rounded-full text-xs font-medium ${badge}">${esc(u.effective_status)}</span></td>
+          <td class="px-4 py-3 text-xs text-gray-500">${u.expires_at ? esc(u.expires_at.slice(0, 10)) : '—'}</td>
+          <td class="px-4 py-3 text-xs text-gray-500">${u.last_login_at ? esc(u.last_login_at.slice(0, 10)) : '<span title="Will populate once SSO login is live">never</span>'}</td>
+          <td class="px-4 py-3 text-right whitespace-nowrap space-x-3 text-xs">
+            ${revokeBtn}
+            <button onclick="openEdit(${u.id})" class="text-brand-secondary hover:underline">Edit</button>
+            <button onclick="removeUser(${u.id}, '${esc(u.email)}')" class="text-gray-400 hover:text-red-600 hover:underline">Delete</button>
+          </td>
+        </tr>`;
+      }).join('');
+      document.getElementById('empty').classList.toggle('hidden', visible.length > 0);
+    }
+
+    // ── Invite ────────────────────────────────────────────────────────────
+    function openInvite() {
+      document.getElementById('inv-by').value = localStorage.getItem(BY_STORAGE) || '';
+      document.getElementById('invite-result').classList.add('hidden');
+      document.getElementById('invite-modal').classList.remove('hidden');
+    }
+    function closeInvite() { document.getElementById('invite-modal').classList.add('hidden'); }
+
+    async function submitInvite(ev) {
+      ev.preventDefault();
+      const lines = document.getElementById('inv-emails').value.split('\n')
+        .map(l => l.trim()).filter(Boolean);
+      const role = document.getElementById('inv-role').value;
+      const expires = document.getElementById('inv-expires').value || null;
+      const invitedBy = document.getElementById('inv-by').value.trim() || null;
+      const notes = document.getElementById('inv-notes').value.trim() || null;
+      if (invitedBy) localStorage.setItem(BY_STORAGE, invitedBy);
+
+      const payload = lines.map(line => {
+        const [email, name, organization] = line.split(',').map(p => p.trim());
+        return { email, name: name || null, organization: organization || null,
+                 role, expires_at: expires, notes, invited_by: invitedBy };
+      });
+      if (payload.length === 0) return false;
+
+      const btn = document.getElementById('invite-submit');
+      btn.disabled = true;
+      try {
+        const { data } = await api('/api/admin/users', { method: 'POST', body: JSON.stringify(payload) });
+        const box = document.getElementById('invite-result');
+        const parts = [];
+        if (data.inserted?.length) parts.push(`${data.inserted.length} added`);
+        if (data.skipped?.length)  parts.push(`${data.skipped.length} already invited`);
+        if (data.rejected?.length) parts.push(`${data.rejected.length} rejected: ` +
+          data.rejected.map(r => `${r.email ?? '(no email)'} (${r.reason})`).join('; '));
+        box.textContent = parts.join(' · ') || 'Nothing to do.';
+        box.className = 'text-sm rounded-lg px-3 py-2 ' +
+          (data.rejected?.length ? 'bg-amber-50 text-amber-800' : 'bg-green-50 text-green-800');
+        box.classList.remove('hidden');
+        if (data.inserted?.length) document.getElementById('inv-emails').value = '';
+        await loadUsers();
+      } finally {
+        btn.disabled = false;
+      }
+      return false;
+    }
+
+    // ── Edit / quick actions ──────────────────────────────────────────────
+    function openEdit(id) {
+      const u = allUsers.find(x => x.id === id);
+      if (!u) return;
+      document.getElementById('edit-id').value = id;
+      document.getElementById('edit-email').textContent = u.email;
+      document.getElementById('edit-name').value = u.name || '';
+      document.getElementById('edit-org').value = u.organization || '';
+      document.getElementById('edit-role').value = u.role;
+      document.getElementById('edit-status').value = u.status;
+      document.getElementById('edit-expires').value = u.expires_at ? u.expires_at.slice(0, 10) : '';
+      document.getElementById('edit-notes').value = u.notes || '';
+      document.getElementById('edit-result').classList.add('hidden');
+      document.getElementById('edit-modal').classList.remove('hidden');
+    }
+    function closeEdit() { document.getElementById('edit-modal').classList.add('hidden'); }
+
+    async function submitEdit(ev) {
+      ev.preventDefault();
+      const id = document.getElementById('edit-id').value;
+      const patch = {
+        name: document.getElementById('edit-name').value,
+        organization: document.getElementById('edit-org').value,
+        role: document.getElementById('edit-role').value,
+        status: document.getElementById('edit-status').value,
+        expires_at: document.getElementById('edit-expires').value || null,
+        notes: document.getElementById('edit-notes').value,
+      };
+      const { status, data } = await api(`/api/admin/users/${id}`, {
+        method: 'PATCH', body: JSON.stringify(patch),
+      });
+      if (status >= 400) {
+        const box = document.getElementById('edit-result');
+        box.textContent = data.error || 'Update failed';
+        box.className = 'text-sm rounded-lg px-3 py-2 bg-red-50 text-red-700';
+        box.classList.remove('hidden');
+        return false;
+      }
+      closeEdit();
+      await loadUsers();
+      return false;
+    }
+
+    async function quickStatus(id, status) {
+      await api(`/api/admin/users/${id}`, { method: 'PATCH', body: JSON.stringify({ status }) });
+      await loadUsers();
+    }
+
+    async function removeUser(id, email) {
+      if (!confirm(`Delete ${email} from the access list? This cannot be undone — use Revoke to keep the record.`)) return;
+      await api(`/api/admin/users/${id}`, { method: 'DELETE' });
+      await loadUsers();
+    }
+
+    // ── Boot: reuse a key already in this tab's session ───────────────────
+    (async function boot() {
+      if (!sessionStorage.getItem(KEY_STORAGE)) return;
+      try {
+        await loadUsers();
+        document.getElementById('gate').classList.add('hidden');
+        document.getElementById('dashboard').classList.remove('hidden');
+        document.getElementById('btn-lock').classList.remove('hidden');
+      } catch (e) { /* gate stays visible */ }
+    })();
+  </script>
+</body>
+</html>
