@@ -31,7 +31,7 @@ Providers: none") — the crypto in `src/lib/sso.ts` still mirrors AuthIES
 
 | Change | Effect on Lensy |
 |---|---|
-| Login is a first-party form at `auth.ies.org` (`AUTH_MODE=native`); no Wicket CAS leg | Flow docs/comments only — Lensy's redirect is identical |
+| Login is a first-party form at `auth.ies.org`; the Wicket CAS leg is **deleted** (no `AUTH_MODE`, no `/oauth/callback`, no `ies-login.wicketcloud.com` in any code path) | Flow docs/comments only — Lensy's redirect is identical |
 | Payload gained `roles` (lowercase IdP role slugs) | Modelled on `SsoUser`, normalized to `[]` for older cookies, returned as `user.idpRoles`. **Not** used to grant access |
 | Every pre-existing IES account starts `pending` and must set a password from an emailed link | Such users have no cookie at all → they reach Lensy as anonymous, so the sign-in screen explains the one-time password reset rather than erroring |
 
@@ -132,9 +132,23 @@ them before adding it.
 `POST /api/auth/dev-login` (only when `ENVIRONMENT` ≠ production) mints an
 `ies_auth` cookie with the `.dev.vars` placeholder secrets — the gate shows a
 "Dev login" button on localhost. It mints the same shape the IdP does, `roles`
-included, so local dev exercises the production parse path. To exercise the real
-redirect flow, run the AuthIES Worker locally (`ENVIRONMENT=development`,
-`IDP_BASE_URL=http://localhost:8787`) and point `AUTH_IDP_BASE_URL` at it.
+included, so local dev exercises the production parse path.
+
+To exercise the real redirect flow, run the AuthIES Worker locally
+(`ENVIRONMENT=development`, `IDP_BASE_URL=http://localhost:8787`) and point
+`AUTH_IDP_BASE_URL` at it. **The two repos' `.dev.vars` must carry the same
+placeholder pair** or Lensy answers 503 `sso_misconfigured` on every real cookie.
+They diverged once (Lensy had `dev-session-encryption-key-not-secret` while
+AuthIES had 64 zeros); the shared local values are now:
+
+```
+SESSION_ENCRYPTION_KEY="0000000000000000000000000000000000000000000000000000000000000000"
+COOKIE_SIGNING_SECRET="1111111111111111111111111111111111111111111111111111111111111111"
+```
+
+Verified 2026-07-26: a cookie minted by a real native login at
+`auth.ies.org/login?sp=lensy` decrypts under `src/lib/sso.ts` with `sub`,
+`isMember`, `memberTier` and `roles` intact.
 
 ## Open decisions / next steps
 

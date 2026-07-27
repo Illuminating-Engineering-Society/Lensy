@@ -5,10 +5,11 @@
  * sets the shared `ies_auth` cookie on `.ies.org`, and lensy.ies.org verifies
  * and decrypts it here — no OAuth round-trips, no token storage.
  *
- * AuthIES now runs NATIVE auth (`AUTH_MODE=native`): the IdP serves its own
- * login form and checks a PBKDF2 hash in its D1 user directory. The old Wicket
- * CAS hand-off is a rollback-only path. Nothing in the cookie contract changed
- * (AuthIES plan §10, "Impact on Service Providers: none"), but two things did:
+ * AuthIES authenticates natively: the IdP serves its own login form and checks a
+ * PBKDF2 hash in its D1 user directory. The Wicket CAS hand-off is deleted, not
+ * merely switched off — there is no `AUTH_MODE`, and `ies-login.wicketcloud.com`
+ * appears in no code path. Nothing in the cookie contract changed (AuthIES plan
+ * §10, "Impact on Service Providers: none"), but two things did:
  *
  *  - the payload now carries `roles` (lowercase IdP role slugs from the
  *    directory, e.g. ["administrator","member"]) — modelled below, surfaced by

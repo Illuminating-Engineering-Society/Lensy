@@ -101,8 +101,9 @@ VITRIUM_API_URL = "https://api.vitrium.com"
 # scripts/sync-metadata.js --csv from Vitrium's document export.
 ENVIRONMENT = "production"
 # IES Auth IDP (AuthIES Worker) — where /login and /logout redirect and where
-# the ies_auth cookie comes from. It serves its own first-party login form
-# (AUTH_MODE=native); Lensy never sees credentials, only the resulting cookie.
+# the ies_auth cookie comes from. It serves its own first-party login form and
+# verifies credentials against its own D1; Lensy never sees credentials, only
+# the resulting cookie. (No Wicket CAS hand-off exists any more.)
 AUTH_IDP_BASE_URL = "https://auth.ies.org"
 # "false" → ONLY emails in invited_users may enter. Default (anything else):
 # IES members (isMember in the cookie) get in without an invite; the
