@@ -32,7 +32,10 @@ const DATA_VERSION_KEY = 'cache:data-version';
 //     guide came back byte-identical (still citing TM-30-24, still naming Class
 //     of Play), because they were served from the v5 entries generated minutes
 //     earlier. Bump this line in the same commit as any prompt change.
-const SEARCH_CACHE_SCHEMA = 'v6';
+// v7: comparison retrieval now excludes front/back matter (errata pages,
+//     reference lists, tables of contents) — see looksLikeFrontMatter().
+//     Different excerpts reach the model, so the stored answers are stale.
+const SEARCH_CACHE_SCHEMA = 'v7';
 
 function errMsg(err: unknown): string {
   return err instanceof Error ? err.message : String(err);

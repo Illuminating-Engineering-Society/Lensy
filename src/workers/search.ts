@@ -728,10 +728,15 @@ async function runSingleSearch(rawQuery: string, filters: SearchFilters, limit: 
     // the card. Raw table dumps and heading stubs render as an empty card
     // (client feedback: "transition and circulation space", "elevator"), so
     // only chunks with real prose are allowed to become standalone results.
+    // On a version comparison, packaging pages (errata, reference lists, TOC)
+    // are worse than useless: they crowd out the provisions the comparison is
+    // supposed to be about. Ordinary searches keep them.
+    const comparisonIntent = contentTypes.has('compare') || isVersionComparisonQuery(rawQuery);
     const displayableChunks = liveChunks.filter(m => {
       const meta = m.metadata || {};
       const text = String(meta.excerpt_text || '');
-      return meta.chunk_type !== 'table' && text.trim().length >= 60 && !isTableLike(text);
+      if (meta.chunk_type === 'table' || text.trim().length < 60 || isTableLike(text)) return false;
+      return !(comparisonIntent && looksLikeFrontMatter(text));
     });
     const chunkResults = buildChunkResults(displayableChunks, linkCtx, { perStandard: BODY_CHUNKS_PER_STANDARD });
     if (chunkResults.length > 0) {
@@ -1133,10 +1138,13 @@ async function searchDeprecatedForComparison(rawQuery: string, filters: SearchFi
       }));
     }
 
+    // Prose only, and only PROVISIONS: an errata notice or a reference list from
+    // the prior edition gives the comparison nothing to compare.
     const proseOnly = (list: VMatch[]): VMatch[] => list.filter((m: VMatch) => {
       const meta = m.metadata || {};
       const text = String(meta.excerpt_text || '');
-      return meta.chunk_type !== 'table' && text.trim().length >= 60 && !isTableLike(text);
+      return meta.chunk_type !== 'table' && text.trim().length >= 60
+        && !isTableLike(text) && !looksLikeFrontMatter(text);
     });
 
     let matches = proseOnly(candidates);
@@ -1221,6 +1229,7 @@ async function probeDeprecatedFamily(env: Env, scopePrefix: string, queryVector:
         const meta = v.metadata || {};
         const text = String(meta.excerpt_text || '');
         if (meta.chunk_type === 'table' || text.trim().length < 60 || isTableLike(text)) continue;
+        if (looksLikeFrontMatter(text)) continue; // packaging, not a provision
 
         const vals = v.values || [];
         let dot = 0, norm = 0;
@@ -1679,6 +1688,48 @@ async function backfillExcerpts(env: Env, queryVector: number[], apps: Applicati
       console.error(`excerpt backfill failed for ${std} (non-fatal):`, errMsg(err));
     }
   }));
+}
+
+// Front matter and back matter: pages that belong to a standard's packaging
+// rather than its provisions. Harmless as general search hits, but poison for a
+// version comparison — an errata notice or an Annex reference list has no
+// substantive content to compare, and the AI Guide can only report that the
+// passages show nothing (observed 2026-07-27: the RP-8 comparison leaned
+// entirely on the ERRATA page and "CONTINUED REFERENCES FOR ANNEX B").
+const FRONT_MATTER_PATTERNS: RegExp[] = [
+  /\bERRATA\b/,
+  /\bCONTINUED REFERENCES\b/i,
+  /\ball rights reserved\b/i,
+  /\bISBN\b/,
+  /©\s*\d{4}|\bcopyright\s+(?:©\s*)?\d{4}/i,
+  /\be-?mail your information\b/i,
+  /\bprinted in the united states\b/i,
+  /\btable of contents\b/i,
+  /\bsenior manager of technical content\b/i,
+  // Dot leaders — a table-of-contents line. PDF extraction often spaces them
+  // out ("New Light Sources . . . . . 143"), so allow whitespace between dots.
+  /(?:\.\s*){5,}/,
+];
+
+/**
+ * Is this chunk packaging rather than a provision?
+ *
+ * Two signals: an explicit front/back-matter marker, or bibliography density —
+ * a passage carrying several publication years AND several standards-body names
+ * is a reference list, not guidance. Both thresholds are deliberately high so a
+ * real provision that happens to cite two standards is never dropped.
+ *
+ * Applied ONLY on version-comparison retrieval, where a front-matter excerpt
+ * actively degrades the answer. Ordinary searches keep every chunk.
+ */
+export function looksLikeFrontMatter(text: string | null | undefined): boolean {
+  if (!text) return true;
+  const t = String(text);
+  if (FRONT_MATTER_PATTERNS.some(re => re.test(t))) return true;
+
+  const years = (t.match(/\b(?:19|20)\d{2}\b/g) || []).length;
+  const bodies = (t.match(/\b(?:ANSI|IES|CIE|ISO|IEC|IEEE|NFPA|ASTM|NEMA)\b/g) || []).length;
+  return years >= 3 && bodies >= 3;
 }
 
 /**

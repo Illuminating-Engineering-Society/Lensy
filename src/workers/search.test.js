@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   normalizeContentTypes, buildReferenceLink, curatedStandardInfo,
-  deriveLightingZone, reserveBodySlots, buildComparisonContext, matchesStandardScope, buildResult, buildChunkResults,
+  deriveLightingZone, reserveBodySlots, buildComparisonContext, matchesStandardScope, buildResult, buildChunkResults, looksLikeFrontMatter,
 } from './search';
 
 // ─── Content-type normalization ───────────────────────────────────────────────
@@ -400,5 +400,52 @@ describe('buildChunkResults per-standard cap', () => {
     expect(r.citationPage).toBe(20);
     expect(r.standardLink).toBe('https://view.protectedpdf.com/RP10');
     expect(r.excerpts[0].vitriumLink).toBe('https://view.protectedpdf.com/RP10#page=20');
+  });
+});
+
+// ─── DO25: comparison retrieval must return provisions, not packaging ────────
+// Observed 2026-07-27: the RP-8 comparison rested entirely on the ERRATA page
+// and "CONTINUED REFERENCES FOR ANNEX B", so the AI Guide could only report that
+// the passages showed nothing substantive. Correct, but useless.
+
+describe('looksLikeFrontMatter', () => {
+  it('rejects the exact passages the RP-8 comparison was leaning on', () => {
+    expect(looksLikeFrontMatter(
+      'ANSI/IES RP-8-25 ERRATA If you, as a user of ANSI/IES RP-8-25, believe you have located an error not '
+      + 'covered by the following revisions, you should e-mail your information to Pat McGillicuddy, '
+      + 'Senior Manager of Technical Content, IES, 85 Broad St. 17th Floor, New York, NY 10004.'
+    )).toBe(true);
+    expect(looksLikeFrontMatter(
+      '2024 Sep 17. 18. ANSI/ISO/IEC 7498-1:1994, Information Technology – Open Systems Interconnection. '
+      + 'B-25 ANSI/IES RP-8-25 + E2, Recommended Practice: Lighting Roadway and Parking Facilities '
+      + 'CONTINUED REFERENCES FOR ANNEX B 20. Institute of Electrical and Electronics Engineers.'
+    )).toBe(true);
+  });
+
+  it('rejects tables of contents and copyright pages', () => {
+    expect(looksLikeFrontMatter('9.12 New Light Sources . . . . . . . . . . . . . . 143')).toBe(true);
+    expect(looksLikeFrontMatter('© 2025 Illuminating Engineering Society. All rights reserved. ISBN 978-0-87995-000-0')).toBe(true);
+  });
+
+  it('rejects a dense bibliography block', () => {
+    expect(looksLikeFrontMatter(
+      'IES 2020. CIE 2018. ISO 2015. Assorted standards listed for the annex, with editions from 2020, 2018 and 2015.'
+    )).toBe(true);
+  });
+
+  it('KEEPS real provisions, including ones that cite a couple of standards', () => {
+    expect(looksLikeFrontMatter(
+      'Light loss factors, including luminaire dirt depreciation and lumen depreciation, shall be applied to the '
+      + 'maintained illuminance targets; refer to ANSI/IES LS-6 and ANSI/IES/NALMCO RP-36 for the procedure.'
+    )).toBe(false);
+    expect(looksLikeFrontMatter(
+      '17.4.3 Parking Lots and Parking Garages. New illuminance recommendations for EV charging positions apply '
+      + 'at the task surface, measured as an average across the charging bay.'
+    )).toBe(false);
+  });
+
+  it('treats missing text as packaging (nothing to compare)', () => {
+    expect(looksLikeFrontMatter('')).toBe(true);
+    expect(looksLikeFrontMatter(null)).toBe(true);
   });
 });
