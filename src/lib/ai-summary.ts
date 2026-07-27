@@ -175,9 +175,10 @@ export async function generateResponse(
   const mode: AIMode = opts.mode || 'guide';
   const userPrompt = buildPrompt(query, searchResults, mode, opts.comparison);
 
-  // The model-string overloads in workers-types don't cover this exact model's
-  // request/response shape, so narrow at this one boundary to the field we read.
-  const run = ai.run as unknown as (model: string, opts: unknown) => Promise<{ response: string }>;
+  // The model-string overloads in workers-types don't cover every model's
+  // request/response shape, so narrow at this one boundary and read the text
+  // through extractText().
+  const run = ai.run as unknown as (model: string, opts: unknown) => Promise<unknown>;
 
   let text: string | null = null;
   for (const model of MODELS) {
@@ -189,11 +190,18 @@ export async function generateResponse(
           { role: 'user', content: userPrompt },
         ],
       });
-      if (response?.response && response.response.trim()) {
-        text = response.response;
+      const extracted = extractText(response);
+      if (extracted) {
+        text = extracted;
         break;
       }
-      console.warn(`AI Guide model ${model} returned an empty response — trying next model`);
+      // Log the SHAPE, not just "empty": a response we can't read looks
+      // identical to a model failure from the outside, and that ambiguity is
+      // what made the DO24 fallback so hard to diagnose.
+      console.warn(
+        `AI Guide model ${model} returned no readable text — trying next model. Shape:`,
+        describeShape(response),
+      );
     } catch (err) {
       console.error(`AI Guide model ${model} failed — trying next model:`, err instanceof Error ? err.message : String(err));
     }
@@ -238,6 +246,60 @@ export async function generateResponse(
     mode,
     ...(opts.comparison ? { comparison: opts.comparison } : {}),
   };
+}
+
+// ─── Response reading ─────────────────────────────────────────────────────────
+
+/**
+ * Pull the generated text out of a Workers AI chat response.
+ *
+ * Workers AI is not uniform across models: the classic Llama models answer with
+ * `{ response: "..." }`, while several newer ones (and the OpenAI-compatible
+ * endpoint) answer with `{ choices: [{ message: { content } }] }`, and some wrap
+ * the payload in `result`. Reading only `.response` treats a perfectly good
+ * answer from those models as an empty one, which sends the AI Guide to its
+ * standards-list fallback — indistinguishable, from the outside, from the model
+ * being down (client DO24).
+ */
+export function extractText(response: unknown): string | null {
+  if (typeof response === 'string') return response.trim() || null;
+  if (!response || typeof response !== 'object') return null;
+
+  const r = response as Record<string, any>;
+  const parts = (value: unknown): string | null =>
+    Array.isArray(value)
+      ? (value.map(p => (typeof p === 'string' ? p : p?.text ?? p?.content ?? '')).join('').trim() || null)
+      : null;
+
+  const candidates: unknown[] = [
+    r.response,
+    r.response?.response,
+    r.result?.response,
+    r.result?.output_text,
+    r.output_text,
+    r.choices?.[0]?.message?.content,
+    r.choices?.[0]?.delta?.content,
+    r.choices?.[0]?.text,
+    parts(r.response),
+    parts(r.choices?.[0]?.message?.content),
+    parts(r.content),
+  ];
+
+  for (const c of candidates) {
+    if (typeof c === 'string' && c.trim()) return c;
+  }
+  return null;
+}
+
+/** Compact description of an unreadable response, for the diagnostic log line. */
+function describeShape(response: unknown): string {
+  if (response == null) return String(response);
+  if (typeof response !== 'object') return `${typeof response}: ${String(response).slice(0, 120)}`;
+  try {
+    return `keys=[${Object.keys(response as object).join(',')}] ${JSON.stringify(response).slice(0, 400)}`;
+  } catch {
+    return `keys=[${Object.keys(response as object).join(',')}]`;
+  }
 }
 
 // ─── Prompt building ──────────────────────────────────────────────────────────

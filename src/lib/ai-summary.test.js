@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { generateResponse } from './ai-summary';
+import { generateResponse, extractText } from './ai-summary';
 
 // Minimal result shape the prompt builder reads.
 const RESULTS = [
@@ -103,5 +103,42 @@ describe('generateResponse comparison mode', () => {
     expect(summary.comparison).toEqual(COMPARISON);
     expect(summary.text).toContain('What appears to be new');
     expect(summary.disclaimer).toMatch(/manual review/i);
+  });
+});
+
+// ─── DO24: read the answer whatever shape the model returns ──────────────────
+// Workers AI is not uniform: classic Llama models answer with `{ response }`,
+// newer ones (and the OpenAI-compatible endpoint) with
+// `{ choices: [{ message: { content } }] }`. Reading only `.response` made a
+// good answer look empty and sent the AI Guide to its standards-list fallback.
+
+describe('extractText', () => {
+  it('reads the classic Workers AI shape', () => {
+    expect(extractText({ response: 'Guidance text.' })).toBe('Guidance text.');
+  });
+
+  it('reads the OpenAI-compatible shape', () => {
+    expect(extractText({ choices: [{ message: { content: 'Guidance text.' } }] })).toBe('Guidance text.');
+    expect(extractText({ choices: [{ text: 'Guidance text.' }] })).toBe('Guidance text.');
+  });
+
+  it('reads wrapped and array-of-parts shapes', () => {
+    expect(extractText({ result: { response: 'Guidance text.' } })).toBe('Guidance text.');
+    expect(extractText({ response: [{ text: 'Guidance ' }, { text: 'text.' }] })).toBe('Guidance text.');
+  });
+
+  it('treats blank and unreadable payloads as no text', () => {
+    expect(extractText({ response: '   ' })).toBeNull();
+    expect(extractText({ usage: { tokens: 0 } })).toBeNull();
+    expect(extractText(null)).toBeNull();
+    expect(extractText(undefined)).toBeNull();
+  });
+
+  it('is used by generateResponse, so an OpenAI-shaped model is not a failure', async () => {
+    const ai = aiStub(async () => ({ choices: [{ message: { content: 'Real guidance citing ANSI/IES RP-8-25.' } }] }));
+    const summary = await generateResponse(ai, 'parking garages', RESULTS);
+    expect(summary.text).toContain('Real guidance');
+    expect(summary.degraded).toBeUndefined();
+    expect(ai.run).toHaveBeenCalledTimes(1); // first model accepted — no chain walk
   });
 });
