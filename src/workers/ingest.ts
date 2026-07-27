@@ -42,7 +42,7 @@
  */
 
 import { bumpDataVersion } from '../lib/cache';
-import { checkAuth } from '../lib/auth';
+import { requireAdminAccess } from './session';
 import type { ApplicationRow, IngestChunk, TableData } from '../types';
 
 function errMsg(err: unknown): string { return err instanceof Error ? err.message : String(err); }
@@ -54,12 +54,11 @@ const VECTORIZE_BATCH = 1000;  // Vectorize max per upsert
 const DELETE_BATCH = 200;      // Vectorize deleteByIds batch size
 
 export async function handleIngest(request: Request, env: Env): Promise<Response> {
-  // Ingest rewrites the searchable corpus — shared-secret protected, and
-  // fail-closed in production when no secret is configured (see lib/auth.js).
-  const auth = await checkAuth(request, env);
-  if (!auth.ok) {
-    return jsonResponse({ error: auth.reason || 'Unauthorized' }, auth.reason ? 503 : 401);
-  }
+  // Ingest rewrites the searchable corpus — staff only. In practice this is
+  // always the LUCIUS_API_SECRET bearer (scripts/ingest-pdfs.js); an SSO admin
+  // session is accepted too so the endpoints are reachable from the browser.
+  const denied = await requireAdminAccess(request, env);
+  if (denied) return denied;
 
   const url = new URL(request.url);
   const subPath = url.pathname.replace('/api/ingest', '').replace(/\/$/, '');

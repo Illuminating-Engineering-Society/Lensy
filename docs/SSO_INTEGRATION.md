@@ -32,7 +32,7 @@ Providers: none") — the crypto in `src/lib/sso.ts` still mirrors AuthIES
 | Change | Effect on Lensy |
 |---|---|
 | Login is a first-party form at `auth.ies.org`; the Wicket CAS leg is **deleted** (no `AUTH_MODE`, no `/oauth/callback`, no `ies-login.wicketcloud.com` in any code path) | Flow docs/comments only — Lensy's redirect is identical |
-| Payload gained `roles` (lowercase IdP role slugs) | Modelled on `SsoUser`, normalized to `[]` for older cookies, returned as `user.idpRoles`. **Not** used to grant access |
+| Payload gained `roles` (lowercase IdP role slugs) | Modelled on `SsoUser`, normalized to `[]` for older cookies, returned as `user.idpRoles`. One slug is acted on: `administrator` grants Lensy admin (below) |
 | Every pre-existing IES account starts `pending` and must set a password from an emailed link | Such users have no cookie at all → they reach Lensy as anonymous, so the sign-in screen explains the one-time password reset rather than erroring |
 
 `sub` is the IdP's `users.person_uuid`: the Wicket UUID for imported accounts, a
@@ -48,14 +48,52 @@ expiry.
 ## Access decision (src/lib/sso.ts `decideAccess`)
 
 1. Row in `invited_users` for the email → the row decides:
-   revoked/expired deny (even for IES members); otherwise allow with the
-   row's role. First login flips the row to `active` and stores `person_uuid`.
-2. No row → IES members (`isMember`) get in while
+   revoked/expired deny (even for IES members and administrators); otherwise
+   allow with the row's role. First login flips the row to `active` and stores
+   `person_uuid`.
+2. No row → IdP administrators get in, then IES members (`isMember`) while
    `ALLOW_MEMBERS_WITHOUT_INVITE` ≠ `"false"` (default on); everyone else is
    denied with a "request an invitation" screen.
 
-IdP roles are deliberately ignored here: an IdP-wide `administrator` is not
-automatically a Lensy admin. Lensy roles live in `invited_users.role`.
+## Admin rights (`/admin/*`, `/api/admin/*`, `/api/ingest*`)
+
+The decision also returns an `admin` flag, surfaced as `user.isAdmin` on
+`/api/auth/me`. It is true when **either**:
+
+- the cookie's `roles` contains the IdP slug **`administrator`** — the primary
+  path, since IES staff already carry it in the auth.ies.org directory and
+  should not need a second grant here; or
+- the email's `invited_users.role` is `admin` — the local escape hatch for an
+  admin who has no IdP role.
+
+A **revoked or expired invite row still denies**, administrator included: revoke
+has to remain the way to lock an account out of Lensy without editing the IdP
+directory.
+
+Enforcement is `requireAdminAccess()` in `src/workers/session.ts`, called by
+every handler in `admin.ts`, `users.ts` and `ingest.ts`. Two ways past it:
+
+| Caller | Credential | Notes |
+|---|---|---|
+| Browser (staff pages) | `ies_auth` cookie with `admin` | Writes also require a same-origin `Origin` header |
+| Scripts / cron / curl | `Authorization: Bearer LUCIUS_API_SECRET` | Tried first; a header that is present but wrong is a hard 401, never downgraded to a session check |
+
+**There is no admin key to type anywhere in the UI.** `/admin/users` is gated by
+`<script src="/utils/auth-gate.js" data-require-admin>` exactly like every other
+page; the bearer survives only as the machine path (ingest, cleanup, CI), and
+`LUCIUS_API_SECRET` is only consulted when a request actually sends an
+`Authorization` header — an unset secret never blocks a cookie-authenticated
+admin.
+
+Denial bodies name the wall that was hit so the gate can say the right thing:
+`authentication_required` (401, no session), `access_denied` (403, not a Lensy
+user), `admin_required` (403, a real user without staff rights),
+`bad_origin` (403, cookie-authenticated cross-origin write).
+
+CSRF: `ies_auth` is `SameSite=Lax`, so a cross-site POST never carries it; the
+`Origin` check on cookie-authenticated writes is the second lock. CORS is `*`
+with no `Allow-Credentials`, so no other origin can make a credentialed call at
+all.
 
 ## Failure modes
 
@@ -83,12 +121,12 @@ keeps working throughout.
 | Cookie verify/decrypt + failure classification + access decision | `src/lib/sso.ts` (tests: `sso.test.js`) |
 | `GET /api/auth/me`, `POST /api/auth/dev-login` (never in prod), read-API gate | `src/workers/session.ts` |
 | `/login`, `/logout` redirects + gates on `/api/search`, `/api/applications`, `/api/standards`, `/api/projects` | `src/workers/api.ts` |
-| Frontend gate (hides app, sign-in / no-access / misconfigured screens, user chip + Sign out) | `src/frontend/utils/auth-gate.js` (loaded first by `index.html`, `projects.html`) |
+| Frontend gate (hides app, sign-in / no-access / not-admin / misconfigured screens, user chip + Sign out) | `src/frontend/utils/auth-gate.js` (loaded first by `index.html`, `projects.html`, `admin/users.html`) |
+| Admin gate on `/api/admin/*` + `/api/ingest*` | `requireAdminAccess()` in `src/workers/session.ts` |
 | Guest allowlist + staff dashboard | `migrations/0007_invited_users.sql`, `/admin/users`, `src/workers/users.ts` |
 
 Staff scripts keep working: an explicit `Authorization: Bearer LUCIUS_API_SECRET`
-bypasses the session gate on the read API. Admin/ingest endpoints are
-unchanged (shared secret only).
+bypasses the session gate on both the read API and the admin/ingest endpoints.
 
 `/login` preserves the page the visitor was on, so a deep link survives the
 round-trip (including the activation detour). AuthIES's redirect allowlist
@@ -132,7 +170,17 @@ them before adding it.
 `POST /api/auth/dev-login` (only when `ENVIRONMENT` ≠ production) mints an
 `ies_auth` cookie with the `.dev.vars` placeholder secrets — the gate shows a
 "Dev login" button on localhost. It mints the same shape the IdP does, `roles`
-included, so local dev exercises the production parse path.
+included, so local dev exercises the production parse path. On a
+`data-require-admin` page the button asks for `["member","administrator"]`, so
+`/admin/users` is reachable locally; pass `roles` explicitly to test any other
+combination:
+
+```bash
+curl -sc jar -X POST localhost:8787/api/auth/dev-login \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"staffer@ies.org","roles":["user","administrator"]}'
+curl -b jar localhost:8787/api/admin/users
+```
 
 To exercise the real redirect flow, run the AuthIES Worker locally
 (`ENVIRONMENT=development`, `IDP_BASE_URL=http://localhost:8787`) and point
@@ -156,9 +204,10 @@ Verified 2026-07-26: a cookie minted by a real native login at
       IES — set to `"false"` to make the allowlist authoritative for everyone.
 - [ ] Replace the Projects `user_id` placeholder with the authenticated
       `person_uuid` (api.ts KNOWN GAP) and scope project queries per user.
-- [ ] Optionally move the staff dashboard (`/admin/users`) from the shared
-      secret to SSO role checks (`invited_users.role IN ('staff','admin')`,
-      optionally accepting the IdP's `administrator` role via `user.idpRoles`).
+- [x] Move the staff dashboard (`/admin/users`) off the shared secret onto SSO
+      role checks — done: IdP `administrator` or `invited_users.role = 'admin'`
+      (see "Admin rights" above). `invited_users.role = 'staff'` deliberately
+      does **not** confer admin; decide with IES whether it should.
 - [ ] Lensy has no entitlement check: AuthIES is building `entitlement_mappings`
       for Vitrium (which tiers may read what). If Lensy access should ever be
       tier- or org-pooled rather than "any member", that table is the source.

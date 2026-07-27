@@ -2,12 +2,12 @@
  * Lensy Invited-Users Endpoints (staff dashboard backend)
  *
  * Staff-managed guest-access allowlist (see migrations/0007_invited_users.sql).
- * Serves the dashboard at /admin/users.html. When the auth.ies.org SSO
- * integration lands, its callback will read this table via lib/invites
- * hasAccess() — these endpoints stay staff-only either way.
+ * Serves the dashboard at /admin/users.html and backs the SSO access decision
+ * (lib/sso.ts decideAccess reads the same table).
  *
- * Auth: same shared-secret gate as every admin endpoint (LUCIUS_API_SECRET,
- * fail-closed in production — lib/auth.ts).
+ * Auth: same gate as every admin endpoint — an SSO session with admin rights
+ * (IdP `administrator` role, or an invite row with role 'admin'), or the
+ * LUCIUS_API_SECRET bearer for scripts (workers/session.ts).
  *
  * Endpoints:
  *   GET    /api/admin/users            List + status counts (?q= text filter,
@@ -17,7 +17,7 @@
  *   DELETE /api/admin/users/:id        Remove the row entirely
  */
 
-import { checkAuth } from '../lib/auth';
+import { requireAdminAccess } from './session';
 import {
   parseInvite,
   normalizeExpiry,
@@ -33,10 +33,8 @@ import type { InvitedUserRow } from '../types';
 const LIST_CAP = 1000;
 
 export async function handleAdminUsers(request: Request, env: Env, url: URL): Promise<Response> {
-  const auth = await checkAuth(request, env);
-  if (!auth.ok) {
-    return json({ error: auth.reason || 'Unauthorized' }, auth.reason ? 503 : 401);
-  }
+  const denied = await requireAdminAccess(request, env);
+  if (denied) return denied;
 
   const parts = url.pathname.split('/').filter(Boolean); // ['api','admin','users',':id']
   const id = parts[3];

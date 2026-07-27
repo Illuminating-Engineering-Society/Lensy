@@ -2,17 +2,26 @@
  * Lensy SSO auth gate — include FIRST in <head> of every gated page:
  *   <script src="/utils/auth-gate.js"></script>
  *
+ * Staff pages under /admin add the admin requirement:
+ *   <script src="/utils/auth-gate.js" data-require-admin></script>
+ *
  * Hides the entire page until GET /api/auth/me confirms an authorized IdP
  * session (ies_auth cookie from auth.ies.org), then reveals the app and adds
  * a user chip + Sign out to the header nav. Unauthenticated visitors get a
  * branded sign-in screen; authenticated-but-not-invited visitors get an
- * access-denied screen. The API is gated server-side too — this overlay is
- * UX, not the security boundary.
+ * access-denied screen; with data-require-admin, signed-in non-admins get an
+ * "administrators only" screen. The API is gated server-side too (every
+ * /api/admin/* route runs requireAdminAccess) — this overlay is UX, not the
+ * security boundary.
  */
 (function () {
   'use strict';
 
   var GATE_ID = 'lensy-auth-gate';
+  // Read before any await: document.currentScript is only set while the tag
+  // is executing.
+  var REQUIRE_ADMIN =
+    !!(document.currentScript && document.currentScript.hasAttribute('data-require-admin'));
 
   // Hide everything before first paint. The gate overlay is exempt.
   document.documentElement.classList.add('auth-pending');
@@ -91,10 +100,13 @@
     var dev = document.getElementById('lensy-dev-login');
     if (dev) {
       dev.addEventListener('click', function () {
+        // On an admin page, mint the cookie the page needs — otherwise local
+        // dev could never reach /admin/*.
+        var roles = REQUIRE_ADMIN ? ['member', 'administrator'] : ['member'];
         fetch('/api/auth/dev-login', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email: 'dev@example.com', isMember: true, roles: ['member'] }),
+          body: JSON.stringify({ email: 'dev@example.com', isMember: true, roles: roles }),
         }).then(function () { location.reload(); });
       });
     }
@@ -129,6 +141,23 @@
       (data.email ? '<p style="color:#9ca3af;font-size:12px;margin:10px 0 0">Signed in as ' + esc(data.email) + '</p>' : '') +
       '<p style="color:#6b7280;font-size:13px;margin:14px 0 0">Contact IES staff to request an invitation.</p>' +
       '<div><a href="' + esc(data.logoutUrl || '/logout') + '" style="' + BTN + ';background:#3A5068">Sign out</a></div>'
+    );
+  }
+
+  // Signed in and allowed into Lensy, but this page is staff-only. Signing in
+  // again changes nothing, so the way out is back to the app — not /login.
+  function showNotAdmin(data) {
+    var user = data.user || {};
+    gateEl().innerHTML = card(
+      '<h1 style="font-size:20px;font-weight:700;margin:0 0 10px">Administrators only</h1>' +
+      '<p style="color:#6b7280;font-size:14px;margin:0">This is an IES staff page. Your account ' +
+      'does not have the administrator role.</p>' +
+      (user.email
+        ? '<p style="color:#9ca3af;font-size:12px;margin:10px 0 0">Signed in as ' + esc(user.email) + '</p>'
+        : '') +
+      '<div><a href="/" style="' + BTN + '">Back to Lensy</a></div>' +
+      '<p style="margin:12px 0 0"><a href="' + esc(data.logoutUrl || '/logout') +
+      '" style="color:#3A5068;font-size:13px">Sign in as someone else</a></p>'
     );
   }
 
@@ -176,7 +205,12 @@
         return res.json().then(function (data) { return { status: res.status, data: data }; });
       })
       .then(function (r) {
-        if (r.status === 200 && r.data.authorized) return reveal(r.data);
+        if (r.status === 200 && r.data.authorized) {
+          if (REQUIRE_ADMIN && !(r.data.user && r.data.user.isAdmin)) {
+            return showNotAdmin(r.data);
+          }
+          return reveal(r.data);
+        }
         if (r.status === 401) return showLogin(r.data.loginUrl);
         if (r.status === 403) return showDenied(r.data);
         if (r.status === 503 && r.data.reason === 'sso_misconfigured') {

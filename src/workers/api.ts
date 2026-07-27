@@ -27,8 +27,10 @@ import { handleAdminUsers } from './users';
 import { handleAuthMe, handleDevLogin, requireReadAccess } from './session';
 import { buildLoginUrl, buildLogoutUrl } from '../lib/sso';
 
-// CORS: the search/read API is public and credential-less; admin/ingest
-// routes require the bearer secret. KNOWN GAP (Phase 1 by design): the
+// CORS: `*` with no Allow-Credentials, so a cross-origin page can never make a
+// cookie-authenticated call — every session-gated route is effectively
+// same-origin only, and cross-origin callers must present the bearer secret.
+// KNOWN GAP (Phase 1 by design): the
 // /api/projects* routes are anonymous — user_id is a client-supplied
 // placeholder until Phase 3 SSO lands, so project data must be treated as
 // non-confidential until then. Tracked in README "Launch Operations".
@@ -77,7 +79,8 @@ export default {
         return withCors(await handleIngest(request, env));
       }
 
-      // ── Admin: orphan vector cleanup (shared-secret protected) ───────────
+      // ── Admin (SSO `administrator` role, or the staff bearer for scripts;
+      //    each handler calls requireAdminAccess — see workers/session.ts) ──
       if (path === '/api/admin/scan-orphans' && request.method === 'POST') {
         return withCors(await handleAdminScanOrphans(request, env));
       }
@@ -100,7 +103,7 @@ export default {
         return withCors(await handleAdminR2Multipart(request, env));
       }
 
-      // ── Admin: invited-users dashboard (shared-secret protected) ─────────
+      // ── Admin: invited-users dashboard backend ───────────────────────────
       if (path === '/api/admin/users' || path.startsWith('/api/admin/users/')) {
         return withCors(await handleAdminUsers(request, env, url));
       }

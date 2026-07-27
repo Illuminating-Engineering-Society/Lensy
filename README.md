@@ -250,9 +250,12 @@ search/UX overhaul):
 1. **Apply D1 migrations** — `npm run db:migrate:remote`
    (0006 adds `applications.Footnote_Marks` + per-standard index-coverage stats).
 2. **Set the API secret** — `wrangler secret put LUCIUS_API_SECRET`.
-   Ingest and admin endpoints **fail closed** in production without it.
-   Give the same value to the ingestion machine via the `LUCIUS_API_SECRET`
-   env var so `npm run ingest` can authenticate.
+   This is the **machine** credential: scripts and cron authenticate to
+   `/api/ingest*` and `/api/admin/*` with it, and a bearer presented in
+   production while it is unset **fails closed**. Give the same value to the
+   ingestion machine via the `LUCIUS_API_SECRET` env var so `npm run ingest`
+   can authenticate. Humans never type it — staff reach `/admin/*` through IES
+   sign-in with the `administrator` role (docs/SSO_INTEGRATION.md).
 3. **Create Vectorize metadata indexes** (once, before ingesting):
    ```
    wrangler vectorize create-metadata-index ies-standards-vectors --property-name=standard_code --type=string

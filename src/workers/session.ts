@@ -7,9 +7,19 @@
  *                             ies_auth cookie with the local .dev.vars secrets
  *                             so the flow is testable without running the IdP.
  *
- * Plus requireReadAccess(): the server-side gate in front of the read API
- * (/api/search etc.) — a valid ies_auth cookie that passes the access
- * decision, OR an explicit LUCIUS_API_SECRET bearer (staff scripts).
+ * Plus the two server-side gates every route goes through:
+ *
+ *   requireReadAccess()   read API (/api/search etc.) — a valid ies_auth
+ *                         cookie that passes the access decision, OR an
+ *                         explicit LUCIUS_API_SECRET bearer (staff scripts).
+ *   requireAdminAccess()  staff API (/api/admin/*, /api/ingest*) — the same
+ *                         cookie, additionally carrying admin rights (the
+ *                         IdP's `administrator` role, or a Lensy invite row
+ *                         with role 'admin'), OR the same bearer for scripts.
+ *
+ * The bearer stays as the MACHINE path: ingest/cleanup scripts and cron have
+ * no browser session. Humans no longer type it anywhere — /admin/users.html is
+ * gated by SSO like every other page.
  */
 
 import { checkAuth } from '../lib/auth';
@@ -20,6 +30,8 @@ import {
   buildLogoutUrl,
   buildAuthCookieValue,
   AUTH_COOKIE_NAME,
+  type AccessDecision,
+  type SsoState,
   type SsoUser,
 } from '../lib/sso';
 import type { InvitedUserRow } from '../types';
@@ -111,11 +123,80 @@ export async function handleAuthMe(request: Request, env: Env): Promise<Response
       isMember: user.isMember,
       memberTier: user.memberTier ?? null,
       role: decision.role,
-      // IdP-level role slugs, informational — Lensy access comes from `role`.
+      // What the /admin pages gate on. The API enforces it again server-side
+      // (requireAdminAccess) — this only decides what the UI offers.
+      isAdmin: decision.admin,
+      // Full IdP role slug list, informational.
       idpRoles: user.roles,
     },
     logoutUrl: buildLogoutUrl(env, request.url),
   });
+}
+
+// ─── Shared gate plumbing ─────────────────────────────────────────────────────
+
+type SessionGate =
+  | { ok: true; user: SsoUser; decision: AccessDecision }
+  | { ok: false; response: Response };
+
+/**
+ * Cookie → access decision, with the 401/403/503 both gates answer with when
+ * there is no usable session. Shared so the read gate and the admin gate can
+ * never drift on what "signed in and allowed" means.
+ */
+async function evaluateSession(request: Request, env: Env): Promise<SessionGate> {
+  const sso: SsoState = await getSsoState(request, env);
+
+  if (sso.state === 'misconfigured') {
+    console.error('sso_misconfigured', { detail: sso.detail });
+    return { ok: false, response: json({ error: 'sso_misconfigured', detail: sso.detail }, 503) };
+  }
+  if (sso.state === 'anonymous') {
+    return {
+      ok: false,
+      response: json({
+        error: 'authentication_required',
+        loginUrl: buildLoginUrl(env, request.url),
+      }, 401),
+    };
+  }
+
+  const row = await findInvite(env, sso.user.email);
+  const decision = decideAccess(sso.user, row, allowMembersWithoutInvite(env), Date.now());
+  if (!decision.authorized) {
+    return {
+      ok: false,
+      response: json({ error: 'access_denied', reason: decision.reason }, 403),
+    };
+  }
+  return { ok: true, user: sso.user, decision };
+}
+
+/**
+ * The bearer path, kept for scripts/cron that have no cookie. Returns null when
+ * no Authorization header was sent (→ fall through to the cookie), or the 401
+ * to answer with when a header was sent but is wrong. An explicitly-supplied
+ * bad token is never retried as a session: it is a broken script, not a user.
+ */
+async function bearerOutcome(request: Request, env: Env): Promise<Response | null | 'ok'> {
+  if (!request.headers.get('authorization')) return null;
+  const viaSecret = await checkAuth(request, env);
+  if (viaSecret.ok) return 'ok';
+  return json({ error: viaSecret.reason || 'unauthorized' }, viaSecret.reason ? 503 : 401);
+}
+
+/**
+ * CSRF guard for cookie-authenticated writes. `ies_auth` is SameSite=Lax, so a
+ * cross-site POST never carries it — this is the second lock: a browser always
+ * sends Origin on non-GET, so a mismatched or absent one on a write is not a
+ * request our own pages made. Bearer clients skip this (they are not browsers
+ * and hold a secret no other site can obtain).
+ */
+function originMismatch(request: Request): Response | null {
+  if (request.method === 'GET' || request.method === 'HEAD') return null;
+  const origin = request.headers.get('origin');
+  if (origin && origin === new URL(request.url).origin) return null;
+  return json({ error: 'bad_origin', detail: 'Cross-origin write rejected.' }, 403);
 }
 
 // ─── Read-API gate ────────────────────────────────────────────────────────────
@@ -130,30 +211,51 @@ export async function handleAuthMe(request: Request, env: Env): Promise<Response
  * header → the SSO cookie decides.
  */
 export async function requireReadAccess(request: Request, env: Env): Promise<Response | null> {
+  // A wrong bearer here falls through to the cookie rather than failing: the
+  // read API is also called by pages that may send a stale header.
   if (request.headers.get('authorization')) {
     const viaSecret = await checkAuth(request, env);
     if (viaSecret.ok) return null;
   }
 
-  const sso = await getSsoState(request, env);
-  if (sso.state === 'misconfigured') {
-    console.error('sso_misconfigured', { detail: sso.detail });
-    return json({ error: 'sso_misconfigured', detail: sso.detail }, 503);
-  }
-  if (sso.state === 'anonymous') {
-    return json({
-      error: 'authentication_required',
-      loginUrl: buildLoginUrl(env, request.url),
-    }, 401);
-  }
+  const gate = await evaluateSession(request, env);
+  return gate.ok ? null : gate.response;
+}
 
-  const user = sso.user;
-  const row = await findInvite(env, user.email);
-  const decision = decideAccess(user, row, allowMembersWithoutInvite(env), Date.now());
-  if (!decision.authorized) {
-    return json({ error: 'access_denied', reason: decision.reason }, 403);
+// ─── Admin/staff gate ─────────────────────────────────────────────────────────
+
+/**
+ * Gate for every staff endpoint (/api/admin/*, /api/ingest*). Returns null when
+ * the request may proceed, else the response to short-circuit with.
+ *
+ * Two ways in, in order:
+ *  1. `Authorization: Bearer LUCIUS_API_SECRET` — scripts, cron, curl. A header
+ *     that is present but wrong is a hard 401; we do not silently downgrade it
+ *     to a session check.
+ *  2. The `ies_auth` SSO cookie, where decideAccess() says `admin` — i.e. the
+ *     IdP's `administrator` role, or a Lensy invite row with role 'admin'.
+ *     Writes additionally require a same-origin Origin header.
+ *
+ * The 403 bodies name which wall was hit (`access_denied` = not a Lensy user at
+ * all; `admin_required` = a legitimate user without staff rights) so the gate
+ * can say the right thing instead of a generic "no".
+ */
+export async function requireAdminAccess(request: Request, env: Env): Promise<Response | null> {
+  const bearer = await bearerOutcome(request, env);
+  if (bearer === 'ok') return null;
+  if (bearer) return bearer;
+
+  const gate = await evaluateSession(request, env);
+  if (!gate.ok) return gate.response;
+
+  if (!gate.decision.admin) {
+    return json({
+      error: 'admin_required',
+      detail: 'This area is limited to IES administrators.',
+      email: gate.user.email,
+    }, 403);
   }
-  return null;
+  return originMismatch(request);
 }
 
 // ─── POST /api/auth/dev-login (never in production) ──────────────────────────

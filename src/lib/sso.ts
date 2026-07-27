@@ -13,7 +13,8 @@
  *
  *  - the payload now carries `roles` (lowercase IdP role slugs from the
  *    directory, e.g. ["administrator","member"]) — modelled below, surfaced by
- *    /api/auth/me, and deliberately NOT used to grant Lensy access;
+ *    /api/auth/me, and used for ONE thing: the `administrator` slug is what
+ *    makes someone a Lensy admin (see decideAccess). It grants nothing else;
  *  - every pre-existing IES account starts `pending` and must set a password
  *    from an emailed link before it can ever produce an ies_auth cookie. Such
  *    users reach Lensy as plain anonymous visitors, so the gate must invite
@@ -51,8 +52,8 @@ export interface SsoUser {
   memberTier?: string | null;
   /**
    * IdP role slugs, normalized lowercase. Always an array after parsing (`[]`
-   * for cookies minted before AuthIES added the field). Informational for
-   * Lensy: entry is decided by decideAccess() below, not by these.
+   * for cookies minted before AuthIES added the field). Only `administrator`
+   * is acted on (see decideAccess); the rest are informational.
    */
   roles: string[];
   exp: number; // unix seconds
@@ -216,8 +217,10 @@ function toSsoUser(v: unknown): SsoUser | null {
   }
   return {
     ...(o as unknown as SsoUser),
+    // Lowercased here as well as at the IdP: the admin check compares against a
+    // literal slug, and a stray "Administrator" must not silently miss.
     roles: Array.isArray(o.roles)
-      ? o.roles.filter((r): r is string => typeof r === 'string')
+      ? o.roles.filter((r): r is string => typeof r === 'string').map((r) => r.toLowerCase())
       : [],
   };
 }
@@ -320,25 +323,45 @@ export interface AccessDecision {
   reason?: 'revoked' | 'expired' | 'not_invited';
   /** invited_users.role, or 'member' for the members-without-invite path. */
   role?: string;
+  /**
+   * May use the staff surfaces (/admin/*, /api/admin/*, /api/ingest*). Always
+   * false on a denial — a denied session is not an admin session.
+   */
+  admin: boolean;
   /** True when the invite row should be activated (first SSO login). */
   firstLogin: boolean;
+}
+
+/** The IdP role slug that makes someone an IES administrator. */
+export const IDP_ADMIN_ROLE = 'administrator';
+
+/** Does the cookie carry the IdP-wide `administrator` role? */
+export function hasIdpAdminRole(user: SsoUser): boolean {
+  return user.roles.includes(IDP_ADMIN_ROLE);
 }
 
 /**
  * Who gets in:
  *  - a row in invited_users decides for its email — revoked/expired deny even
- *    for IES members (an explicit staff decision must win);
- *  - no row: IES members (isMember) get in iff allowMembersWithoutInvite
- *    (ALLOW_MEMBERS_WITHOUT_INVITE var); everyone else needs an invite.
+ *    for IES members AND for IdP administrators (an explicit staff decision
+ *    must win; revoke is how you lock someone out);
+ *  - no row: IdP administrators get in, then IES members (isMember) iff
+ *    allowMembersWithoutInvite (ALLOW_MEMBERS_WITHOUT_INVITE var); everyone
+ *    else needs an invite.
  *
  * `isMember` is now read from the IdP's D1 directory (kept fresh by its
  * read-only Wicket membership sync) rather than fetched from Wicket at each
  * login, so a lapsed membership stops granting the bypass only once that sync
  * lands. Guest access is unaffected — invited_users carries its own expiry.
  *
- * `user.roles` (IdP roles, e.g. "administrator") is intentionally NOT consulted:
- * an IdP-wide admin is not automatically a Lensy admin. Lensy roles live in
- * invited_users.role.
+ * Who is an ADMIN (the `admin` flag — staff pages and write endpoints):
+ * the IdP's `administrator` role slug, or a Lensy invite row with role
+ * 'admin'. The IdP role is the primary path: IES staff are administrators in
+ * the directory and should not need a second grant here. The invite row stays
+ * as the local escape hatch for an admin without the IdP role.
+ *
+ * Note admins are still ordinary members of the corpus gate — an administrator
+ * whose invite row is revoked is denied outright, admin flag included.
  */
 export function decideAccess(
   user: SsoUser,
@@ -346,18 +369,30 @@ export function decideAccess(
   allowMembersWithoutInvite: boolean,
   nowMs: number,
 ): AccessDecision {
+  const idpAdmin = hasIdpAdminRole(user);
+
   if (row) {
     const status = effectiveStatus(row, nowMs);
-    if (status === 'revoked') return { authorized: false, reason: 'revoked', firstLogin: false };
-    if (status === 'expired') return { authorized: false, reason: 'expired', firstLogin: false };
+    if (status === 'revoked') {
+      return { authorized: false, reason: 'revoked', admin: false, firstLogin: false };
+    }
+    if (status === 'expired') {
+      return { authorized: false, reason: 'expired', admin: false, firstLogin: false };
+    }
     return {
       authorized: true,
       role: row.role,
+      admin: idpAdmin || row.role === 'admin',
       firstLogin: status === 'invited' || !row.person_uuid,
     };
   }
-  if (allowMembersWithoutInvite && user.isMember) {
-    return { authorized: true, role: 'member', firstLogin: false };
+  if (idpAdmin) {
+    // IES staff reach the dashboard on their IdP role alone — no invite row,
+    // and no dependency on whether they hold a membership.
+    return { authorized: true, role: 'admin', admin: true, firstLogin: false };
   }
-  return { authorized: false, reason: 'not_invited', firstLogin: false };
+  if (allowMembersWithoutInvite && user.isMember) {
+    return { authorized: true, role: 'member', admin: false, firstLogin: false };
+  }
+  return { authorized: false, reason: 'not_invited', admin: false, firstLogin: false };
 }

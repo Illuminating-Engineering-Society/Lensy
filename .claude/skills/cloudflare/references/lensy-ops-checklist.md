@@ -39,12 +39,23 @@ public search feature, but it means a broken binding degrades silently. Don't
 "fix" this by making it fail closed without discussing the tradeoff — that would
 turn a rate-limiter bug into a search outage.
 
-## Ingest/admin auth fails closed
+## Ingest/admin auth: two doors, both fail closed
 
-Unlike the rate limiter, `LUCIUS_API_SECRET`-gated routes (`/api/ingest`,
-`/api/admin/*`) fail **closed** in production if the secret isn't set — this is
-correct and shouldn't be changed. Local dev without the secret set will 401 on
-these routes; that's expected, not a bug to route around.
+`/api/ingest*` and `/api/admin/*` go through `requireAdminAccess()`
+(`src/workers/session.ts`): an SSO session carrying admin rights (IdP
+`administrator` role, or `invited_users.role = 'admin'`), or the
+`LUCIUS_API_SECRET` bearer for scripts and cron.
+
+The bearer is only consulted when the request actually sends an `Authorization`
+header — so an unset secret never blocks a cookie-authenticated admin, but a
+bearer presented in production while the secret is unset fails **closed**. That
+is correct and shouldn't be changed. Locally, `wrangler dev` with no secret
+accepts any bearer; use `POST /api/auth/dev-login` with
+`roles: ["administrator"]` to exercise the cookie path instead.
+
+Cookie-authenticated writes additionally require a same-origin `Origin` header
+(403 `bad_origin`). Curl against these endpoints therefore needs either the
+bearer or an explicit `-H "Origin: <base>"`.
 
 ## No Durable Objects yet
 

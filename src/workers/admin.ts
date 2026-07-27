@@ -5,8 +5,9 @@
  * vectors" API; the Worker is the only context with a binding, so anything
  * that needs to walk the index lives here.
  *
- * Auth: shared-secret via the Authorization header. Set LUCIUS_API_SECRET
- * via `wrangler secret put`. Same secret used by the ingest endpoint.
+ * Auth: requireAdminAccess() — an SSO session with admin rights (the IdP
+ * `administrator` role, or a Lensy invite row with role 'admin'), or the
+ * LUCIUS_API_SECRET bearer for scripts and cron. See workers/session.ts.
  *
  * Endpoints:
  *   POST /api/admin/scan-orphans
@@ -34,7 +35,7 @@
  */
 
 import { bumpDataVersion, getDataVersion } from '../lib/cache';
-import { checkAuth } from '../lib/auth';
+import { requireAdminAccess } from './session';
 import type { StandardRow, SearchLogRow } from '../types';
 
 interface IndexStatusRow {
@@ -52,15 +53,10 @@ const SCAN_TOPK = 100;
 const DELETE_BATCH = 200;
 
 /**
- * Shared-secret gate for every admin endpoint. Timing-safe comparison and
- * fail-closed in production when the secret is missing (lib/auth.js).
- * Returns a Response to short-circuit with, or null when authorized.
+ * Gate for every admin endpoint: SSO admin session or staff bearer. Returns a
+ * Response to short-circuit with, or null when authorized.
  */
-async function requireAuth(request: Request, env: Env): Promise<Response | null> {
-  const auth = await checkAuth(request, env);
-  if (auth.ok) return null;
-  return jsonResponse({ error: auth.reason || 'Unauthorized' }, auth.reason ? 503 : 401);
-}
+const requireAuth = requireAdminAccess;
 
 /**
  * Discover orphan standard_ids in Vectorize.

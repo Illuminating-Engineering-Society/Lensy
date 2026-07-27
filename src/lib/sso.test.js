@@ -7,6 +7,7 @@ import {
   resolveReturnTo,
   buildLoginUrl,
   decideAccess,
+  hasIdpAdminRole,
 } from './sso';
 
 const ENC_KEY = 'test-session-encryption-key';
@@ -52,6 +53,8 @@ describe('ies_auth cookie round-trip (must mirror AuthIES crypto.ts)', () => {
       [{ roles: null }, []],
       [{ roles: 'administrator' }, []],           // not an array → ignored
       [{ roles: ['member', 7, null] }, ['member']], // non-strings dropped
+      // Lowercased on the way in: the admin check compares to a literal slug.
+      [{ roles: ['Administrator', 'MEMBER'] }, ['administrator', 'member']],
     ];
     for (const [overrides, expected] of cases) {
       const raw = payload();
@@ -193,7 +196,7 @@ describe('decideAccess', () => {
   it('an invite row grants access and flags first login', () => {
     const row = { status: 'invited', expires_at: null, role: 'guest', person_uuid: null };
     const d = decideAccess(guest, row, true, NOW);
-    expect(d).toEqual({ authorized: true, role: 'guest', firstLogin: true });
+    expect(d).toEqual({ authorized: true, role: 'guest', admin: false, firstLogin: true });
   });
 
   it('an already-active row is not a first login', () => {
@@ -206,28 +209,65 @@ describe('decideAccess', () => {
   it('revoked/expired rows deny — even for IES members', () => {
     const revoked = { status: 'revoked', expires_at: null, role: 'guest', person_uuid: null };
     const expired = { status: 'active', expires_at: '2026-01-01T00:00:00Z', role: 'guest', person_uuid: 'x' };
-    expect(decideAccess(member, revoked, true, NOW)).toEqual({ authorized: false, reason: 'revoked', firstLogin: false });
-    expect(decideAccess(member, expired, true, NOW)).toEqual({ authorized: false, reason: 'expired', firstLogin: false });
+    expect(decideAccess(member, revoked, true, NOW)).toEqual({ authorized: false, reason: 'revoked', admin: false, firstLogin: false });
+    expect(decideAccess(member, expired, true, NOW)).toEqual({ authorized: false, reason: 'expired', admin: false, firstLogin: false });
   });
 
   it('without a row: members pass iff the bypass is on, non-members never', () => {
-    expect(decideAccess(member, null, true, NOW)).toEqual({ authorized: true, role: 'member', firstLogin: false });
-    expect(decideAccess(member, null, false, NOW)).toEqual({ authorized: false, reason: 'not_invited', firstLogin: false });
-    expect(decideAccess(guest, null, true, NOW)).toEqual({ authorized: false, reason: 'not_invited', firstLogin: false });
+    expect(decideAccess(member, null, true, NOW)).toEqual({ authorized: true, role: 'member', admin: false, firstLogin: false });
+    expect(decideAccess(member, null, false, NOW)).toEqual({ authorized: false, reason: 'not_invited', admin: false, firstLogin: false });
+    expect(decideAccess(guest, null, true, NOW)).toEqual({ authorized: false, reason: 'not_invited', admin: false, firstLogin: false });
+  });
+});
+
+// The `administrator` IdP role is the one role slug Lensy acts on: it is what
+// opens /admin and every /api/admin/* endpoint.
+describe('decideAccess — admin rights', () => {
+  const idpAdmin = payload({
+    isMember: false,
+    email: 'staffer@ies.org',
+    roles: ['user', 'administrator'],
+  });
+  const member = payload({ isMember: true });
+
+  it('detects the administrator slug', () => {
+    expect(hasIdpAdminRole(idpAdmin)).toBe(true);
+    expect(hasIdpAdminRole(member)).toBe(false);
+    expect(hasIdpAdminRole(payload({ roles: [] }))).toBe(false);
   });
 
-  // An IdP-wide administrator is not a Lensy user: Lensy roles come from
-  // invited_users, so the cookie's roles array must not widen access.
-  it('ignores IdP roles — an IdP administrator still needs an invite', () => {
-    const idpAdmin = payload({
-      isMember: false,
-      email: 'staffer@ies.org',
-      roles: ['administrator', 'staff'],
+  it('an IdP administrator gets in and is an admin, with no invite and no membership', () => {
+    expect(decideAccess(idpAdmin, null, false, NOW)).toEqual({
+      authorized: true, role: 'admin', admin: true, firstLogin: false,
     });
-    expect(decideAccess(idpAdmin, null, true, NOW)).toEqual({
-      authorized: false, reason: 'not_invited', firstLogin: false,
-    });
-    const row = { status: 'revoked', expires_at: null, role: 'admin', person_uuid: null };
-    expect(decideAccess(idpAdmin, row, true, NOW).authorized).toBe(false);
   });
+
+  it('an ordinary member is not an admin', () => {
+    expect(decideAccess(member, null, true, NOW).admin).toBe(false);
+  });
+
+  it("an invite row with role 'admin' is the local grant path", () => {
+    const row = { status: 'active', expires_at: null, role: 'admin', person_uuid: 'x' };
+    expect(decideAccess(guestPayload(), row, true, NOW).admin).toBe(true);
+    const staffRow = { status: 'active', expires_at: null, role: 'staff', person_uuid: 'x' };
+    expect(decideAccess(guestPayload(), staffRow, true, NOW).admin).toBe(false);
+  });
+
+  it('the IdP role still makes an invited guest an admin', () => {
+    const row = { status: 'active', expires_at: null, role: 'guest', person_uuid: 'x' };
+    expect(decideAccess(idpAdmin, row, true, NOW).admin).toBe(true);
+  });
+
+  // Revoke has to be the final word, or there is no way to lock out a staff
+  // account short of editing the IdP directory.
+  it('a revoked row beats the administrator role', () => {
+    const row = { status: 'revoked', expires_at: null, role: 'admin', person_uuid: null };
+    expect(decideAccess(idpAdmin, row, true, NOW)).toEqual({
+      authorized: false, reason: 'revoked', admin: false, firstLogin: false,
+    });
+  });
+
+  function guestPayload() {
+    return payload({ isMember: false, email: 'guest@example.com', roles: [] });
+  }
 });

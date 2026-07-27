@@ -1,14 +1,17 @@
 /**
- * Shared-secret authentication for write/admin endpoints.
+ * Shared-secret authentication — the MACHINE path into the write/admin
+ * endpoints (/api/ingest*, /api/admin/*): scripts, cron and curl, which have no
+ * browser session. Humans go through SSO instead; workers/session.ts
+ * requireAdminAccess() tries this first, then the ies_auth cookie.
  *
- * All corpus-mutating endpoints (/api/ingest*, /api/admin/*) require the
- * LUCIUS_API_SECRET shared secret (set via `wrangler secret put`).
+ * Only consulted when the caller actually sends an Authorization header, so a
+ * missing LUCIUS_API_SECRET never blocks a cookie-authenticated admin.
  *
- * Fail-closed in production: if the secret is not configured and
- * ENVIRONMENT === 'production', every request is rejected — an unauthenticated
- * ingest endpoint would let anyone overwrite the indexed corpus. Outside
- * production (local `wrangler dev` has no secrets), requests are allowed so
- * the local pipeline still works.
+ * Fail-closed in production: if a bearer is presented and the secret is not
+ * configured while ENVIRONMENT === 'production', it is rejected — an
+ * unauthenticated ingest endpoint would let anyone overwrite the indexed
+ * corpus. Outside production (local `wrangler dev` has no secrets), any bearer
+ * is accepted so the local pipeline still works.
  */
 
 export interface AuthResult {
