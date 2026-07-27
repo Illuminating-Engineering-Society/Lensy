@@ -23,9 +23,16 @@ const DATA_VERSION_KEY = 'cache:data-version';
 // v4: full-title citations, content-type filters, footnote marks, reference
 //     results, referenceLink field.
 // v5: multi-excerpt results + split citation links + derived lighting zones +
-// mode-aware AI Guide (client feedback DO18–DO26). The bump also drops the
-// cached "here is a list of standards" AI fallbacks from the DO24 regression.
-const SEARCH_CACHE_SCHEMA = 'v5';
+//     mode-aware AI Guide (client feedback DO18–DO26).
+// v6: REQUIRED whenever the prompts or the retrieval scope change. The AI
+//     summary cache holds generated text for 7 days keyed on
+//     (schema, dataVersion, mode, query, top result codes) — none of which move
+//     when a prompt is edited. Observed 2026-07-27: after shipping the
+//     family-scope fix and the reworked prompts, both the comparison and the
+//     guide came back byte-identical (still citing TM-30-24, still naming Class
+//     of Play), because they were served from the v5 entries generated minutes
+//     earlier. Bump this line in the same commit as any prompt change.
+const SEARCH_CACHE_SCHEMA = 'v6';
 
 function errMsg(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
