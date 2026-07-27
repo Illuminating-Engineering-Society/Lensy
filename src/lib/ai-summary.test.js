@@ -142,3 +142,45 @@ describe('extractText', () => {
     expect(ai.run).toHaveBeenCalledTimes(1); // first model accepted — no chain walk
   });
 });
+
+// ─── Root cause of DO9 / DO24 / DO25 ─────────────────────────────────────────
+// `Ai#run` writes to a private class field, so a DETACHED reference
+// (`const run = ai.run; run(...)`) throws "Cannot set properties of undefined
+// (setting '#options')" for every model on every request — the model loop always
+// fell through to the standards-list fallback. Production logs, 2026-07-27:
+//   AI Guide model @cf/meta/llama-3.3-70b-instruct-fp8-fast failed — trying next
+//   model: Cannot set properties of undefined (setting '#options')
+// (…identically for all four models in the chain).
+
+describe('generateResponse calls env.AI.run as a method (never detached)', () => {
+  function bindingAwareAi() {
+    const ai = {
+      run: vi.fn(function (model, opts) {
+        // Mirrors the real binding: a lost receiver is fatal.
+        if (this !== ai) {
+          throw new TypeError("Cannot set properties of undefined (setting '#options')");
+        }
+        return Promise.resolve({ response: 'Real guidance citing ANSI/IES RP-8-25, Section 17.4.' });
+      }),
+    };
+    return ai;
+  }
+
+  it('preserves the receiver, so the answer is generated instead of falling back', async () => {
+    const ai = bindingAwareAi();
+    const summary = await generateResponse(ai, 'parking garages', RESULTS);
+
+    expect(summary.text).toContain('Real guidance');
+    expect(summary.degraded).toBeUndefined();
+    expect(ai.run).toHaveBeenCalledTimes(1); // first model succeeded
+    expect(ai.run.mock.instances[0]).toBe(ai);
+  });
+
+  it('preserves the receiver in comparison mode too', async () => {
+    const ai = bindingAwareAi();
+    const summary = await generateResponse(ai, "what's new in RP-8?", RESULTS, { mode: 'comparison' });
+
+    expect(summary.degraded).toBeUndefined();
+    expect(summary.mode).toBe('comparison');
+  });
+});

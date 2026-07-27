@@ -175,10 +175,22 @@ export async function generateResponse(
   const mode: AIMode = opts.mode || 'guide';
   const userPrompt = buildPrompt(query, searchResults, mode, opts.comparison);
 
+  // Invoke through `ai` — NEVER a detached reference.
+  //
+  // `const run = ai.run` loses the receiver: `Ai#run` writes to a private class
+  // field, so calling it with `this === undefined` throws
+  //   "Cannot set properties of undefined (setting '#options')"
+  // for EVERY model on EVERY request. That is the real root cause behind DO9
+  // ("AI Guide results are not populating"), DO24 ("only listing the documents")
+  // and DO25 (no comparison analysis): the model loop always fell through to the
+  // standards-list fallback. Embeddings were unaffected because they are called
+  // as `env.AI.run(...)`, a normal method call.
+  //
   // The model-string overloads in workers-types don't cover every model's
-  // request/response shape, so narrow at this one boundary and read the text
-  // through extractText().
-  const run = ai.run as unknown as (model: string, opts: unknown) => Promise<unknown>;
+  // request/response shape, so the cast narrows at this one boundary and the
+  // text is read through extractText().
+  const run = (model: string, opts: unknown): Promise<unknown> =>
+    (ai.run as unknown as (m: string, o: unknown) => Promise<unknown>).call(ai, model, opts);
 
   let text: string | null = null;
   for (const model of MODELS) {
@@ -211,17 +223,20 @@ export async function generateResponse(
   // degrades, the user must still get "[old] is deprecated and has been replaced
   // by [new]" with both editions hyperlinked (client DO25) — that advisory is
   // exactly what disappeared when the model failed.
+  // `degraded: true` on EVERY fallback path, not only the all-models-errored
+  // one: the flag is what keeps the answer out of the cache. A fallback from the
+  // copyright or empty-text path used to be stored like a real answer, pinning
+  // "here is a list of the documents I found" for the whole 7-day TTL.
   const fallback = (): AISummary => ({
     ...buildSafeFallback(query, searchResults, mode, opts.comparison),
     mode,
     ...(opts.comparison ? { comparison: opts.comparison } : {}),
+    degraded: true,
   });
 
   // Every model errored — degrade to the standards list instead of vanishing.
-  // The `degraded` flag stops this from being cached, so the next identical
-  // search retries the models.
   if (text == null) {
-    return { ...fallback(), degraded: true };
+    return fallback();
   }
 
   // Enforce the copyright limits by TRIMMING, not by discarding the answer
