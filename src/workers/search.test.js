@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   normalizeContentTypes, buildReferenceLink, curatedStandardInfo,
-  deriveLightingZone, reserveBodySlots, buildComparisonContext,
+  deriveLightingZone, reserveBodySlots, buildComparisonContext, matchesStandardScope,
 } from './search';
 
 // ─── Content-type normalization ───────────────────────────────────────────────
@@ -234,5 +234,39 @@ describe('buildComparisonContext', () => {
     const noDeprecated = buildComparisonContext([result('RP-8-25')]);
     expect(noDeprecated.current.id).toBe('RP-8-25');
     expect(noDeprecated.deprecated).toEqual([]);
+  });
+});
+
+// ─── DO25: a scoped search must scope its CHUNK results too ──────────────────
+// Vectorize has no LIKE operator, so `standard_prefix` was only applied in D1 —
+// to application rows. Body and reference chunks from every other standard came
+// through, and "what's new in RP-8?" fed the AI Guide excerpts from TM-30-24.
+
+describe('matchesStandardScope', () => {
+  it('is open when the request carries no standard filter', () => {
+    expect(matchesStandardScope({}, 'TM-30-24')).toBe(true);
+    expect(matchesStandardScope({}, null)).toBe(true);
+  });
+
+  it('matches every edition of a scoped family', () => {
+    const f = { standard_prefix: 'RP-8' };
+    expect(matchesStandardScope(f, 'RP-8-25+E2')).toBe(true);
+    expect(matchesStandardScope(f, 'RP-8-22')).toBe(true);
+    expect(matchesStandardScope(f, 'rp-8-21')).toBe(true);
+    expect(matchesStandardScope(f, 'RP-8')).toBe(true);
+  });
+
+  it('excludes other standards — including the number-prefix trap', () => {
+    const f = { standard_prefix: 'RP-8' };
+    expect(matchesStandardScope(f, 'TM-30-24')).toBe(false);   // the leak the client saw
+    expect(matchesStandardScope(f, 'RP-80-99')).toBe(false);
+    expect(matchesStandardScope(f, 'RP-2-20+E1')).toBe(false);
+    expect(matchesStandardScope(f, null)).toBe(false);
+  });
+
+  it('an exact standard filter admits only that edition', () => {
+    const f = { standard: 'RP-8-25+E2' };
+    expect(matchesStandardScope(f, 'RP-8-25+E2')).toBe(true);
+    expect(matchesStandardScope(f, 'RP-8-22')).toBe(false);
   });
 });

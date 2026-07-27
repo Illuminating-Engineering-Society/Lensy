@@ -390,7 +390,9 @@ Instructions — write a GUIDE, not a list (client requirement):
 - Open with 1–2 paragraphs that answer the question directly and orient the reader on how the IES standards treat this application or topic.
 - Then explain, standard by standard, WHAT the relevant guidance covers and WHY that section matters. Use the excerpts above as your only source.
 - Where the results include illuminance-table rows, explain how to read and apply them (Task vs Area, maintained targets, uniformity/ratio basis, measurement height) and point the user to the result cards for the values themselves.
-- Mention the governing criteria that apply here (±10% design tolerance, doubling for occupants over 65, S/P TM-24 variance, veiling reflection risk, Class of Play, lighting zone / curfew) whenever relevant.
+- Mention ONLY the governing criteria that genuinely apply to THIS application. Do not enumerate the rest: Class of Play belongs to sports venues, lighting zones and curfews to exterior applications, the S/P variance to Categories P–Y. Naming an irrelevant criterion makes the whole answer less trustworthy.
+- Every paragraph must add new information. Do not restate in paragraph 3 what paragraph 2 already said, and say "refer to the result cards for the values" once at most.
+- Aim for 3–5 substantial paragraphs. Stop when the results are exhausted rather than padding.
 - Close with "Further reading": at least one additional IES standard, with a sentence on what it adds.
 - Name each standard by its exact designation as printed above (e.g. ANSI/IES RP-2-20+E1) every time you refer to it.
 - Never quote more than 15 words from any single source; never repeat a quote from the same source.
@@ -420,6 +422,8 @@ Possible deletions
 Rules for every section:
 - Break the analysis up BY SECTION or chapter of the standard (e.g. "Chapter 17: Parking Lots and Parking Garages", "Annex H", "Section 11.3.1") so a reader can look each item up. One short bullet per item, with the section/page reference.
 - Use hedged, verifiable language: "appears to", "updates appear to include", "is no longer printed". You are inferring from excerpts, not from a diff of the full documents.
+- Base every item on a SUBSTANTIVE provision — recommended values, criteria, procedures, scope. Front matter is not a change: never present an errata notice, a copyright or contact page, a table of contents, or an entry in a reference list as new or updated content. If the excerpts only contain front matter, say plainly that the retrieved passages do not show substantive changes.
+- Discuss ONLY the two editions being compared. Other standards may appear in the results because they are cited; do not describe their contents as changes to this standard.
 - Frame possible deletions as historical context only, never as guidance, and note that the content may have been relocated rather than removed.
 - Recommend ONLY the current standard for further reading; the deprecated edition is referenced for comparison alone.
 - State plainly that the deprecated edition has been replaced by the current one.

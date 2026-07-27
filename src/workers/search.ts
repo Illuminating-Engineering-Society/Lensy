@@ -459,6 +459,25 @@ function buildStandardLinkMap(results: SearchResult[]): Record<string, string> {
   return map;
 }
 
+/**
+ * Does a standard id fall inside the request's standard/family scope?
+ *
+ * Mirrors the D1 predicates (`Standard = ?` / `Standard LIKE '<family>-%'`) for
+ * Vectorize results, which cannot express a LIKE filter. Without it a scoped
+ * search narrowed only its application rows while body and reference chunks from
+ * every other standard came through — the AI Guide then analysed the wrong
+ * document on a version comparison (client DO25).
+ */
+export function matchesStandardScope(filters: SearchFilters, id: string | null | undefined): boolean {
+  if (!filters.standard && !filters.standard_prefix) return true;
+  const upper = String(id || '').toUpperCase();
+  if (!upper) return false;
+  if (filters.standard) return upper === filters.standard.toUpperCase();
+  const family = String(filters.standard_prefix).toUpperCase();
+  // "RP-8" matches RP-8-25+E2 but never RP-80-*.
+  return upper === family || upper.startsWith(`${family}-`);
+}
+
 /** The family prefix of a standard id: "RP-8-25" → "RP-8", "TM-30-18" → "TM-30". */
 function standardFamily(id: string | null | undefined): string {
   if (!id) return '';
@@ -635,6 +654,20 @@ async function runSingleSearch(rawQuery: string, filters: SearchFilters, limit: 
   chunkMatches = chunkMatches.filter(notDeprecated);
   referenceMatches = referenceMatches.filter(notDeprecated);
 
+  // 4c. Honour a standard/family filter on CHUNK results too. Vectorize has no
+  //     LIKE operator, so `standard_prefix` was only ever applied in D1 — to
+  //     application rows — while body and reference chunks from every other
+  //     standard came through untouched. On a version comparison that is
+  //     actively wrong: "what's new in RP-8?" pinned the search to the RP-8
+  //     family, then fed the AI Guide excerpts from TM-30-24, and the analysis
+  //     discussed changes to a different document (client DO25).
+  const inStandardScope = (m: VMatch): boolean =>
+    matchesStandardScope(filters, m.metadata?.standard_id || m.metadata?.standard_code);
+  if (filters.standard || filters.standard_prefix) {
+    chunkMatches = chunkMatches.filter(inStandardScope);
+    referenceMatches = referenceMatches.filter(inStandardScope);
+  }
+
   // 5. Build excerpt index: standardId → best chunk match
   const excerptIndex = buildExcerptIndex(chunkMatches);
 
@@ -756,7 +789,12 @@ async function runSingleSearch(rawQuery: string, filters: SearchFilters, limit: 
     // ("Please verify that all attachments and references are relevant…") had
     // been indexed as reference chunks; content-level validation rejects it
     // here regardless of when the document was ingested.
-    const formalRefs = refPool.filter(m => looksLikeFormalReference(m.metadata?.excerpt_text || ''));
+    // The reference-scoped queries above re-fetch from Vectorize, whose filter
+    // cannot express a family prefix — re-apply the scope (see 4c).
+    const scopedRefPool = (filters.standard || filters.standard_prefix)
+      ? refPool.filter(inStandardScope)
+      : refPool;
+    const formalRefs = scopedRefPool.filter(m => looksLikeFormalReference(m.metadata?.excerpt_text || ''));
     const liveRefs = formalRefs.filter(m => {
       const id = m.metadata?.standard_id || m.metadata?.standard_code;
       return id && standardsIndex.has(id);
