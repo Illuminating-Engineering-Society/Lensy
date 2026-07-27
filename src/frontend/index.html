@@ -267,10 +267,13 @@
           </div>
           <div class="flex-1 min-w-0">
             <div class="flex items-center justify-between mb-1">
-              <h3 class="font-semibold text-gray-900 text-sm">AI Explanation</h3>
+              <h3 id="ai-summary-title" class="font-semibold text-gray-900 text-sm">AI Explanation</h3>
               <span class="text-xs text-gray-400 bg-gray-100 px-2 py-0.5 rounded">Beta</span>
             </div>
             <p id="ai-disclaimer" class="text-xs text-gray-500 mb-3"></p>
+            <!-- Version-comparison advisory (client DO25): both editions
+                 hyperlinked, with the deprecation stated plainly. -->
+            <div id="ai-comparison-notice" class="hidden text-xs text-gray-700 bg-white/70 border border-amber-200 rounded-lg px-3 py-2 mb-3 leading-relaxed"></div>
             <div id="ai-summary-text" class="text-sm text-gray-700 leading-relaxed"></div>
             <p id="ai-watermark" class="text-xs text-gray-400 mt-3 italic"></p>
           </div>
@@ -451,6 +454,11 @@
     let modalPendingCodes = []; // application codes waiting to be added
     let projectsCache = null;
     let activeDocFilter = null; // standard id chip currently narrowing results
+    // standard designation → Lighting Library front-cover URL, for hyperlinking
+    // the standards the AI Guide names in its prose (client DO24). The regex is
+    // rebuilt from the map's keys on every search.
+    let standardLinks = {};
+    let standardsLinkRegex = null;
 
     // ── Pagination ─────────────────────────────────────────────────────────────
     // The API returns a single pool of up to POOL_SIZE results (backend
@@ -567,6 +575,7 @@
       allResults = data.results || [];
       currentPage = 1;
       activeDocFilter = null;
+      setStandardLinks(data.standardLinks);
       updateBulkActionsUI();
 
       document.getElementById('results-meta').textContent = `for "${data.query}"`;
@@ -784,12 +793,152 @@
 
     function renderAISummary(summary) {
       document.getElementById('ai-disclaimer').textContent = summary.disclaimer || '';
+      document.getElementById('ai-summary-title').textContent =
+        summary.mode === 'comparison' ? 'AI Document Comparison'
+        : summary.mode === 'references' ? 'AI Reference Overview'
+        : 'AI Explanation';
+
+      // Comparison advisory above the analysis (client DO25): only the CURRENT
+      // standard is recommended for further reading, but both editions are
+      // hyperlinked so the user can compare them manually.
+      const notice = document.getElementById('ai-comparison-notice');
+      const noticeHtml = buildComparisonNotice(summary.comparison);
+      notice.innerHTML = noticeHtml;
+      notice.classList.toggle('hidden', !noticeHtml);
+
+      // Structured rendering (headings, bullets) with the standards the AI
+      // names hyperlinked to the Lighting Library (client DO24).
       const textEl = document.getElementById('ai-summary-text');
-      textEl.textContent = summary.text || '';
-      // Longer AI Guide answers arrive with paragraph breaks — preserve them.
-      textEl.classList.add('whitespace-pre-line');
+      textEl.innerHTML = renderAIText(summary.text || '');
+      textEl.classList.remove('whitespace-pre-line');
+
       document.getElementById('ai-watermark').textContent = summary.watermark || '';
       document.getElementById('ai-summary-card').classList.remove('hidden');
+    }
+
+    // "[old standard] is deprecated and has been replaced by [current standard]"
+    // — the tone the client specified for comparison results (DO25).
+    function buildComparisonNotice(comparison) {
+      if (!comparison) return '';
+      const current = comparison.current;
+      const deprecated = Array.isArray(comparison.deprecated) ? comparison.deprecated : [];
+      if (!current && deprecated.length === 0) return '';
+
+      const link = (ed, strong) => {
+        const label = escapeHtml(ed.name || ed.id || '');
+        const text = strong ? `<strong>${label}</strong>` : label;
+        return ed.url
+          ? `<a href="${escapeHtml(ed.url)}" target="_blank" rel="noopener" class="text-ies-blue hover:underline">${text}</a>`
+          : text;
+      };
+
+      const parts = ['If you need a verified comparison, please perform a manual review of both documents.'];
+      if (deprecated.length > 0 && current) {
+        parts.push(`${deprecated.map(d => link(d)).join(', ')} ${deprecated.length > 1 ? 'are' : 'is'} deprecated and ${deprecated.length > 1 ? 'have' : 'has'} been replaced by the current ${link(current, true)}.`);
+      } else if (current) {
+        parts.push(`${link(current, true)} is the current edition; only it is recommended for further reading.`);
+      }
+      return parts.join(' ');
+    }
+
+    // ── AI text rendering ────────────────────────────────────────────────────
+    // The AI Guide answers in prose with short headings and bullets (client
+    // DO24/DO25). Render that structure, then hyperlink every standard it names
+    // plus any URL/DOI it cites. Escaping happens first; link insertion skips
+    // the inside of existing anchors so nothing nests.
+    function renderAIText(raw) {
+      const lines = String(raw || '').split('\n');
+      const COMPARE_HEADINGS = /^(what appears to be new|likely technical updates|possible deletions|further reading)\b/i;
+
+      let html = '';
+      let inList = false;
+      const closeList = () => { if (inList) { html += '</ul>'; inList = false; } };
+
+      for (const line of lines) {
+        const t = line.trim();
+        if (!t) { closeList(); continue; }
+
+        const md = /^#{1,4}\s*(.+)$/.exec(t);
+        const bare = t.replace(/^\*\*|\*\*$/g, '').replace(/:$/, '').trim();
+        if (md || COMPARE_HEADINGS.test(bare)) {
+          closeList();
+          const label = (md ? md[1] : bare).replace(/^\*\*|\*\*$/g, '').replace(/:$/, '');
+          html += `<h4 class="font-display text-sm font-bold text-gray-900 mt-3 mb-1 first:mt-0">${inlineAI(label)}</h4>`;
+          continue;
+        }
+
+        const li = /^(?:[-*•]|\d{1,2}[.)])\s+(.*)$/.exec(t);
+        if (li) {
+          if (!inList) { html += '<ul class="list-disc pl-5 space-y-1 my-1.5">'; inList = true; }
+          html += `<li>${inlineAI(li[1])}</li>`;
+          continue;
+        }
+
+        closeList();
+        html += `<p class="mb-2">${inlineAI(t)}</p>`;
+      }
+      closeList();
+      return html;
+    }
+
+    function inlineAI(text) {
+      let html = escapeHtml(text || '')
+        .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+      html = transformTextSegments(html, seg => seg.replace(INLINE_LINK_RE, (match, url, doi) => {
+        const trailing = /[.,;:]+$/.exec(match);
+        const core = trailing ? match.slice(0, -trailing[0].length) : match;
+        const tail = trailing ? trailing[0] : '';
+        const href = url ? core : `https://doi.org/${core}`;
+        return `<a href="${href}" target="_blank" rel="noopener" class="text-ies-blue hover:underline break-all">${core}</a>${tail}`;
+      }));
+      html = transformTextSegments(html, linkifyStandards);
+      return html;
+    }
+
+    // Apply `fn` to the TEXT parts of an HTML string, skipping tags and the
+    // contents of existing <a> elements — so a second linkify pass can never
+    // produce a nested anchor.
+    function transformTextSegments(html, fn) {
+      let depth = 0;
+      return html.split(/(<[^>]+>)/g).map(part => {
+        if (part.startsWith('<')) {
+          if (/^<a\b/i.test(part)) depth++;
+          else if (/^<\/a\s*>/i.test(part)) depth = Math.max(0, depth - 1);
+          return part;
+        }
+        return depth > 0 ? part : fn(part);
+      }).join('');
+    }
+
+    // Hyperlink the standards named in AI prose to their Lighting Library front
+    // cover, using the standardLinks map the API returns for the current result
+    // set. Never fabricated: a standard absent from the map stays plain text.
+    function linkifyStandards(segment) {
+      if (!standardsLinkRegex) return segment;
+      return segment.replace(standardsLinkRegex, (match) => {
+        const url = standardLinks[match];
+        if (!url) return match;
+        return `<a href="${escapeHtml(url)}" target="_blank" rel="noopener"
+          class="text-ies-blue hover:underline font-medium"
+          title="Open ${escapeHtml(match)} in the IES Lighting Library">${match}</a>`;
+      });
+    }
+
+    function setStandardLinks(map) {
+      standardLinks = (map && typeof map === 'object') ? map : {};
+      const keys = Object.keys(standardLinks)
+        .filter(Boolean)
+        .sort((a, b) => b.length - a.length) // longest first: "ANSI/IES RP-2-20+E1" before "RP-2-20+E1"
+        .map(k => k.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&'));
+      if (!keys.length) { standardsLinkRegex = null; return; }
+      // Lookbehind keeps "RP-8-25" from matching inside a longer token. Older
+      // Safari throws on it — fall back to a plain alternation there rather
+      // than losing the whole render.
+      try {
+        standardsLinkRegex = new RegExp(`(?<![\\w-])(?:${keys.join('|')})(?![\\w-])`, 'g');
+      } catch (err) {
+        standardsLinkRegex = new RegExp(`\\b(?:${keys.join('|')})(?![\\w-])`, 'g');
+      }
     }
 
     // ── Footnote superscripts ────────────────────────────────────────────────
@@ -797,16 +946,64 @@
     // printed in the source table: { levels: { App_s1: [1] }, row: [3] }.
     // supFor() renders the marker for one hierarchy level; the note TEXT stays
     // in the collapsed "Application Task/Area Notes" disclosure below.
-    function supFor(app, colName) {
-      const nums = app?.footnoteMarks?.levels?.[colName];
+    //
+    // Markers are clickable: clicking one opens that card's notes disclosure,
+    // so the reader can see WHERE each footnote is referenced and what it says
+    // without hunting (client feedback DO19).
+    function supMarker(nums, onDark = false) {
       if (!nums || !nums.length) return '';
-      return `<sup class="text-[0.65em] font-bold text-ies-blue ml-0.5" title="See Application Task/Area Notes ${nums.join(', ')}">${nums.join(',')}</sup>`;
+      const label = nums.join(',');
+      const tone = onDark ? 'text-white/90' : 'text-ies-blue';
+      return `<sup class="footnote-mark cursor-pointer text-[0.65em] font-bold ${tone} ml-0.5"
+        data-fn="${escapeHtml(label)}"
+        title="Footnote ${escapeHtml(nums.join(', '))} — click to show the Application Task/Area Notes">${escapeHtml(label)}</sup>`;
+    }
+
+    function supFor(app, colName, onDark = false) {
+      return supMarker(app?.footnoteMarks?.levels?.[colName], onDark);
     }
 
     function supForRow(app) {
-      const nums = app?.footnoteMarks?.row;
-      if (!nums || !nums.length) return '';
-      return `<sup class="text-[0.65em] font-bold text-ies-blue ml-0.5" title="See Application Task/Area Notes ${nums.join(', ')}">${nums.join(',')}</sup>`;
+      return supMarker(app?.footnoteMarks?.row);
+    }
+
+    // Footnote numbers that actually have note TEXT on this row. Used as the
+    // guard for the glued-marker fallback below — without it, a label that
+    // legitimately ends in a digit would be misread as carrying a footnote.
+    function noteNumbersFor(app) {
+      const nums = new Set();
+      for (const chunk of [app?.appNotes, app?.footnotes, app?.generalNotes]) {
+        if (!chunk) continue;
+        for (const raw of String(chunk).split(/\n+/)) {
+          const m = /^(\d{1,2})[.)]\s*\S/.exec(raw.trim());
+          if (m) nums.add(m[1]);
+        }
+      }
+      return nums;
+    }
+
+    // A label whose trailing digit is part of the NAME, not a footnote marker:
+    // lighting zones ("Lz4", "L Z 4", "Lighting Zone 4", "Lz3 (and Lz4 curfew)").
+    const ZONE_LABEL_RE = /(?:^|\b)(?:lighting\s*zone|l\s*z)\s*[-:]?\s*[0-4]\b/i;
+
+    // One hierarchy crumb, rendered with its footnote marker exactly as the
+    // printed table shows it (client DO19: "display footnotes (superscript #)
+    // as they appear in table rows").
+    //
+    // Placement comes from footnoteMarks when the ingest captured it. When it
+    // did not, a marker GLUED to the printed label ("Emergency department
+    // entry1") is recovered — but only when a note with that number exists for
+    // the row, so "Court 2" / "Lz4" are never mistaken for markers.
+    function crumbHtml(app, crumb, onDark = false) {
+      const explicit = supFor(app, crumb.col, onDark);
+      const text = String(crumb.text ?? '');
+      if (explicit) return escapeHtml(text) + explicit;
+
+      const m = /^(.*[^\s\d])(\d{1,2})$/.exec(text.trim());
+      if (m && m[1].length >= 3 && !ZONE_LABEL_RE.test(text) && noteNumbersFor(app).has(m[2])) {
+        return escapeHtml(m[1]) + supMarker([m[2]], onDark);
+      }
+      return escapeHtml(text);
     }
 
     function renderResultCard(group, index) {
@@ -833,13 +1030,10 @@
 
       // Green Sub_Category banner (prominent, full-width). Banner-level
       // footnote markers render inside it, white like the rest of the banner.
-      const subCatSup = (app.footnoteMarks?.levels?.Sub_Category || []).length
-        ? `<sup class="text-[0.65em] font-bold text-white/90 ml-0.5" title="See Application Task/Area Notes ${app.footnoteMarks.levels.Sub_Category.join(', ')}">${app.footnoteMarks.levels.Sub_Category.join(',')}</sup>`
-        : '';
       const subCategoryBanner = app.subCategory ? `
         <span class="inline-block text-[11px] font-bold tracking-wider uppercase px-2.5 py-1 rounded"
               style="background-color: ${bannerHex}; color: #fff;">
-          ${escapeHtml(app.subCategory)}${subCatSup}
+          ${crumbHtml(app, { text: app.subCategory, col: 'Sub_Category' }, true)}
         </span>` : '';
 
       // Prominent application-name badge = the top-level App name. Printed
@@ -848,12 +1042,9 @@
       // footnote marker prints INSIDE the badge, next to the name it scopes
       // to — exactly where the source table shows it.
       const appName = app.category || app.fullName || app.code || 'Application';
-      const appLevelSup = (app.footnoteMarks?.levels?.App || []).length
-        ? `<sup class="text-[0.65em] font-bold text-white/90 ml-0.5" title="See Application Task/Area Notes ${app.footnoteMarks.levels.App.join(', ')}">${app.footnoteMarks.levels.App.join(',')}</sup>`
-        : '';
       const appBadge = `
         <span class="inline-block text-sm font-bold text-white px-2.5 py-1 rounded align-middle"
-              style="background-color: ${appBadgeHex};">${escapeHtml(appName)}${appLevelSup}</span>`;
+              style="background-color: ${appBadgeHex};">${crumbHtml(app, { text: appName, col: 'App' }, true)}</span>`;
 
       // Hierarchy crumbs shared by EVERY member print once next to the App
       // badge; each member row then shows only its differentiating tail.
@@ -875,7 +1066,7 @@
       const crumbSep = '<span class="mx-1.5 text-gray-300">›</span>';
       const sharedCrumbs = memberCrumbs[0].slice(0, prefixLen);
       const breadcrumb = sharedCrumbs.length
-        ? sharedCrumbs.map(c => escapeHtml(c.text) + supFor(app, c.col)).join(crumbSep)
+        ? sharedCrumbs.map(c => crumbHtml(app, c)).join(crumbSep)
         : '';
 
       // Indoor/outdoor badge — uses the banner color for stronger branding
@@ -991,7 +1182,7 @@
     function renderMemberSection(result, tailCrumbs, i, appName, crumbSep, seenExcerpts) {
       const app = result.application || {};
       const label = tailCrumbs.length
-        ? tailCrumbs.map(c => escapeHtml(c.text) + supFor(app, c.col)).join(crumbSep) + supForRow(app)
+        ? tailCrumbs.map(c => crumbHtml(app, c)).join(crumbSep) + supForRow(app)
         : (app.rowRef ? `Row ${escapeHtml(String(app.rowRef))}` : escapeHtml(app.fullName || app.code || '')) + supForRow(app);
       const name = tailCrumbs.length ? `${appName} › ${tailCrumbs.map(c => c.text).join(' › ')}` : appName;
 
@@ -1019,21 +1210,38 @@
       `;
     }
 
-    // Full-title citation line. When the backend supplies standardLink (the
-    // standard's Lighting Library URL with NO page fragment) the citation is a
-    // hyperlink that opens the FRONT of the referenced standard, so users can
-    // open it and read it through instead of jumping to a page inside
-    // (client feedback DO1R2). The page-targeted jump stays on the separate
-    // "Open in Library" button.
+    // Full-title citation line, split into TWO independent hyperlinks
+    // (client feedback DO18):
+    //   • the standard's name → the FRONT COVER of the document (standardLink,
+    //     no page fragment), for reading it through from the beginning
+    //   • ", p. 25"           → the internal reference the result came from
+    // A single link spanning both — with "p. 25" landing on the front cover —
+    // was the part that caused confusion. The page-targeted "Open in Library"
+    // button stays as the primary action.
+    //
+    // Falls back to the old single-link behaviour when a cached response
+    // predates citationName / citationPage.
     function citationHtml(result) {
-      const text = escapeHtml(result.citation || '');
-      if (!text) return '';
-      if (result.standardLink) {
-        return `<a href="${escapeHtml(result.standardLink)}" target="_blank" rel="noopener"
-          class="hover:text-ies-blue hover:underline underline-offset-2 decoration-gray-300 transition"
-          title="Open this standard from the beginning in the IES Lighting Library">${text}</a>`;
-      }
-      return text;
+      const name = result.citationName || result.citation || '';
+      if (!name) return '';
+
+      const nameHtml = result.standardLink
+        ? `<a href="${escapeHtml(result.standardLink)}" target="_blank" rel="noopener"
+             class="hover:text-ies-blue hover:underline underline-offset-2 decoration-gray-300 transition"
+             title="Open this standard from its front cover in the IES Lighting Library">${escapeHtml(name)}</a>`
+        : escapeHtml(name);
+
+      const page = result.citationPage;
+      if (page == null) return nameHtml;
+
+      const pageLabel = `p.&nbsp;${escapeHtml(String(page))}`;
+      const pageHtml = result.vitriumLink
+        ? `<a href="${escapeHtml(result.vitriumLink)}" target="_blank" rel="noopener"
+             class="text-gray-500 hover:text-ies-blue underline decoration-dotted decoration-gray-300 underline-offset-2 transition"
+             title="Jump straight to page ${escapeHtml(String(page))} in the IES Lighting Library">${pageLabel}</a>`
+        : pageLabel;
+
+      return `${nameHtml}, ${pageHtml}`;
     }
 
     // Per-row badges: Area/Task, TM-24, Veiling Risk (L/M/H), Class of Play
@@ -1169,7 +1377,7 @@
         return `<div class="mb-1">${escapeHtml(line)}</div>`;
       }).join('');
       return `
-        <details class="mt-2 pt-2 border-t border-gray-100 group">
+        <details class="notes-disclosure mt-2 pt-2 border-t border-gray-100 group">
           <summary class="cursor-pointer text-sm font-semibold text-gray-700 flex items-center gap-2 list-none select-none">
             <svg class="w-3.5 h-3.5 text-gray-400 transition-transform group-open:rotate-90 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
               <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/>
@@ -1193,13 +1401,20 @@
       // Environmental & Visual Considerations — labeled cards, each with a
       // sub-label pointing at the guidance type ("Max" / "See Notes"), per
       // requests #8 and #9. Spectrum now carries an explicit label.
+      //
+      // Lighting Zone (and its paired curfew zone) is resolved server-side from
+      // wherever the printed table puts it — a dedicated column OR a hierarchy
+      // label such as "Lz3 (and Lz4 curfew)" — so rows that differ only by zone
+      // are distinguishable (client DO20). Glare / Uplight / Controls / Spectrum
+      // arrive null unless the standard actually prints those columns, so the
+      // filter below hides them everywhere else (client DO21).
       const outdoor = app.outdoor || {};
       const envCards = [
         { label: 'Lighting Zone', value: outdoor.lightingZone,     sub: null },
+        { label: 'Curfew',        value: outdoor.curfewDimming,     sub: null },
         { label: 'Glare',         value: outdoor.maxGlareRating,    sub: 'Max' },
         { label: 'Uplight',       value: outdoor.maxUplight,        sub: 'Max' },
         { label: 'Controls',      value: outdoor.controlsRequired,  sub: 'See Notes' },
-        { label: 'Curfew',        value: outdoor.curfewDimming,     sub: 'See Notes' },
         { label: 'Spectrum',      value: outdoor.spectrumGuidance,  sub: 'See Notes' },
       ].filter(c => c.value != null && c.value !== '');
 
@@ -1228,12 +1443,15 @@
       // not on whichever sibling row happened to carry the text).
       const notesBlock = opts.suppressNotes ? '' : buildNotesBlock(collectNoteLines([app]));
 
-      // "From the Standard" — the search worker returns a single best excerpt
-      // (search.js: pickExcerptForApp). Only useful when it shows PROSE context
-      // from the body of the standard; a raw table dump just repeats the data
-      // already shown above, so we suppress it (request #10). Within a grouped
-      // card, an excerpt already printed by an earlier row is not repeated.
-      const excerpts = Array.isArray(result.excerpts)
+      // "From the Standard" — the search worker now returns up to
+      // EXCERPTS_PER_RESULT (10) relevant passages per result, page-near-first
+      // (client DO22). They render as a drop-down so the card stays compact,
+      // and EACH passage carries its own "Open in Library" link to the page it
+      // came from. Only prose is useful here: a raw table dump just repeats the
+      // data already shown above, so it is suppressed (request #10). Within a
+      // grouped card, a passage already printed by an earlier row is not
+      // repeated.
+      const excerpts = Array.isArray(result.excerpts) && result.excerpts.length > 0
         ? result.excerpts
         : (result.excerpt ? [result.excerpt] : []);
       // Reference entries bypass the table-dump heuristic: bibliography lines
@@ -1245,24 +1463,103 @@
           && !(seenExcerpts && seenExcerpts.has(e.text))
       );
       if (seenExcerpts) proseExcerpts.forEach(e => seenExcerpts.add(e.text));
-      const excerptHeading = result.resultType === 'reference' ? 'Reference Entry' : 'From the Standard';
-      const excerptBlock = proseExcerpts.length > 0 ? `
-        <div class="mt-2 pt-2 border-t border-gray-100">
-          <p class="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-1.5">${excerptHeading}</p>
-          ${proseExcerpts.slice(0, 2).map(e => {
-            // Reference entries render in full (they are short and their tail
-            // carries the year/publisher/DOI); body excerpts stay compact.
-            const cap = e.chunkType === 'reference' ? 500 : 240;
-            return `
-            <div class="text-xs text-gray-600 leading-relaxed mb-2 pl-3 border-l-2 border-gray-200">
-              "${escapeHtml((e.text || '').substring(0, cap))}${(e.text || '').length > cap ? '…' : ''}"
-              <span class="ml-1 text-gray-400">${e.section ? `§${escapeHtml(e.section)} · ` : ''}${e.pageNumber != null ? `p. ${e.pageNumber}` : ''}</span>
+
+      const isReference = result.resultType === 'reference';
+      const excerptHeading = isReference ? 'Reference Entry' : 'From the Standard';
+      const shown = proseExcerpts.slice(0, 10);
+
+      // One passage: quote, locator (§ / page), and its own Library link.
+      // Reference entries print IN FULL, however long (client DO26.2); body
+      // passages are capped, since they sit inside a drop-down.
+      const excerptEntry = (e) => {
+        const raw = e.text || '';
+        const cap = isReference ? Infinity : 400;
+        const clipped = raw.length > cap ? `${raw.substring(0, cap)}…` : raw;
+        const locator = [
+          e.section ? `§${escapeHtml(e.section)}` : '',
+          e.pageNumber != null ? `p. ${escapeHtml(String(e.pageNumber))}` : '',
+        ].filter(Boolean).join(' · ');
+        const link = e.vitriumLink ? `
+          <a href="${escapeHtml(e.vitriumLink)}" target="_blank" rel="noopener"
+             class="text-[11px] text-ies-blue hover:underline font-medium shrink-0"
+             title="Open this passage in the IES Lighting Library">Open in Library ↗</a>` : '';
+        return `
+          <div class="text-xs text-gray-600 leading-relaxed pl-3 border-l-2 border-gray-200">
+            <p>"${linkifyText(clipped)}"</p>
+            ${(locator || link) ? `
+              <div class="mt-0.5 flex items-center gap-2 flex-wrap">
+                ${locator ? `<span class="text-[11px] text-gray-400">${locator}</span>` : ''}
+                ${link}
+              </div>` : ''}
+          </div>`;
+      };
+
+      const preview = shown.length
+        ? escapeHtml((shown[0].text || '').substring(0, 150)) + ((shown[0].text || '').length > 150 ? '…' : '')
+        : '';
+
+      const excerptBlock = shown.length > 0 ? `
+        <details class="mt-2 pt-2 border-t border-gray-100 group" ${shown.length === 1 ? 'open' : ''}>
+          <summary class="cursor-pointer list-none select-none">
+            <div class="flex items-center gap-1.5">
+              <svg class="w-3 h-3 text-gray-400 transition-transform group-open:rotate-90 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/>
+              </svg>
+              <span class="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">${excerptHeading}</span>
+              ${shown.length > 1 ? `<span class="text-[10px] text-gray-400">— ${shown.length} passages</span>` : ''}
             </div>
-          `; }).join('')}
-        </div>
+            ${shown.length > 1 ? `<p class="mt-1 pl-[18px] text-xs text-gray-400 italic truncate group-open:hidden">"${preview}"</p>` : ''}
+          </summary>
+          <div class="mt-1.5 pl-[18px] space-y-2">${shown.map(excerptEntry).join('')}</div>
+        </details>
       ` : '';
 
-      return `${luxBlock}${outdoorBlock}${notesBlock}${excerptBlock}`;
+      return `${luxBlock}${outdoorBlock}${notesBlock}${excerptBlock}${referenceMarkersBlock(result)}`;
+    }
+
+    // ── Reference markers (client DO26.4) ───────────────────────────────────
+    // Standards whose References section lists the SAME cited work, with how
+    // many entries matched and a link to that page in the Library. In-body
+    // superscript reference markers are not indexed, so the link opens the
+    // References page — the closest indexed location to the cited item.
+    function referenceMarkersBlock(result) {
+      const markers = Array.isArray(result.referenceMarkers) ? result.referenceMarkers : [];
+      if (markers.length === 0) return '';
+
+      const chipClass = 'text-[11px] px-2 py-0.5 rounded-full border border-purple-200 bg-purple-50 text-purple-700';
+      const chip = (m) => {
+        const inner = `${escapeHtml(m.standard)} <span class="text-purple-400 tabular-nums">${escapeHtml(String(m.count))}</span>`;
+        const title = `${escapeHtml(m.standardFull || m.standard)} lists this reference${m.pageNumber != null ? ` (p. ${escapeHtml(String(m.pageNumber))})` : ''}`;
+        return m.url
+          ? `<a href="${escapeHtml(m.url)}" target="_blank" rel="noopener"
+               class="${chipClass} hover:bg-purple-100 transition" title="${title}">${inner}</a>`
+          : `<span class="${chipClass}" title="${title}">${inner}</span>`;
+      };
+
+      return `
+        <div class="mt-2 pt-2 border-t border-gray-100">
+          <p class="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-1">Reference markers</p>
+          <div class="flex flex-wrap gap-1.5">${markers.map(chip).join('')}</div>
+          <p class="text-[10px] text-gray-400 mt-1">IES Standards that list this reference — the link opens their References page in the Library.</p>
+        </div>`;
+    }
+
+    // ── Inline hyperlinks for online content (client DO26.3) ─────────────────
+    // URLs and DOIs inside an excerpt become links. ONE combined pass so the
+    // replacement output is never re-scanned (no nested anchors), over
+    // already-escaped text.
+    const INLINE_LINK_RE = /(https?:\/\/[^\s"'<>)\]]+)|(\b10\.\d{4,9}\/[^\s"'<>)\]]+)/gi;
+
+    function linkifyText(text) {
+      return escapeHtml(text || '').replace(INLINE_LINK_RE, (match, url, doi) => {
+        // Trailing sentence punctuation is not part of the locator.
+        const trailing = /[.,;:]+$/.exec(match);
+        const core = trailing ? match.slice(0, -trailing[0].length) : match;
+        const tail = trailing ? trailing[0] : '';
+        const href = url ? core : `https://doi.org/${core}`;
+        return `<a href="${href}" target="_blank" rel="noopener"
+          class="text-ies-blue hover:underline break-all">${core}</a>${tail}`;
+      });
     }
 
     // Heuristic for request #10: a "From the Standard" excerpt that is mostly
@@ -1533,6 +1830,7 @@
       allResults = [];
       currentPage = 1;
       activeDocFilter = null;
+      setStandardLinks(null);
       updateBulkActionsUI();
     }
 
@@ -1586,6 +1884,19 @@
 
     // Event delegation for dynamically-generated result cards
     document.getElementById('results-list').addEventListener('click', e => {
+      // A footnote superscript opens that card's notes disclosure, so the
+      // reader can see what the marker refers to (client DO19).
+      const mark = e.target.closest('.footnote-mark');
+      if (mark) {
+        const card = mark.closest('article');
+        const notes = card && card.querySelector('details.notes-disclosure');
+        if (notes) {
+          notes.open = true;
+          notes.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+        }
+        return;
+      }
+
       const btn = e.target.closest('.add-to-project-btn');
       if (btn) {
         openProjectModal(btn.dataset.code, btn.dataset.name, btn.dataset.citation);

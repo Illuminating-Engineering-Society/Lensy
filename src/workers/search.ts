@@ -65,6 +65,8 @@
 import { prepareQueryForEmbedding, splitMultiQuery, cleanQuery, isVersionComparisonQuery, isReferenceQuery } from '../lib/query-expander';
 import { generateResponse } from '../lib/ai-summary';
 import { formatCitation, composeStandardName } from '../lib/citations';
+import { looksLikeFormalReference, referenceCitationKey } from '../lib/references.js';
+import { hasEnvConsiderationColumns, parseLightingZoneLabel } from '../lib/illuminance-fields.js';
 import {
   getDataVersion,
   buildSearchCacheKey,
@@ -78,8 +80,9 @@ import {
 } from '../lib/cache';
 import standardsSchema from '../config/standards-schema.json';
 import type {
-  ApplicationRow, ContentType, FootnoteMarks, FormattedApplication, ReferenceLink,
-  RelatedApplication, SearchFilters, SearchResult, StandardIndexEntry, StandardRow, StandardsIndex, VectorMetadata,
+  AIMode, ApplicationRow, ComparisonContext, ContentType, Excerpt, FootnoteMarks, FormattedApplication,
+  OutdoorGuidance, ReferenceLink, ReferenceMarker, RelatedApplication, SearchFilters, SearchResult,
+  StandardIndexEntry, StandardRow, StandardsIndex, VectorMetadata,
 } from '../types';
 
 // ── Local shapes for internal plumbing ──────────────────────────────────────
@@ -102,6 +105,55 @@ const VECTOR_TOP_K = 50;      // Vectorize caps topK at 50 when returning metada
 const MAX_LIMIT = 50;         // upper bound on the result pool the UI paginates over (client-side; 25/page)
 const MIN_VECTOR_RESULTS = 3; // below this, run text fallback
 const STRONG_MATCH_THRESHOLD = 0.60; // top relevanceScore below this → flag noStrongMatch
+
+// "From the Standard" drop-down (client DO22): up to 10 relevant excerpts per
+// result card, each with its own page-targeted "Open in Library" link.
+const EXCERPTS_PER_RESULT = 10;
+
+// Document-body share of the result pool (client DO23): with Illuminance
+// Tables + Document Body both selected, application vectors outnumber prose
+// chunks so heavily that body excerpts were squeezed out of the top `limit`.
+// At least this fraction of the pool is reserved for body results when that
+// many are available.
+const BODY_RESULT_MIN_SHARE = 0.3;
+const BODY_CHUNKS_PER_STANDARD = 3; // body excerpts kept per standard (was 1)
+
+/**
+ * Resolve the lighting zone for an application row (client DO20/DO21).
+ *
+ * The zone is a hierarchy slot in the new table schema (it appears as App_s1…
+ * App_s6, e.g. RP-2 Table A-2 "Ramps, Stairs, and Steps › High activity › Lz4"),
+ * and only sometimes lands in the Lighting_Zone column — the extractor used to
+ * accept the bare `Lz4` form only, so every RP-2 curfew row ("Lz3 (and Lz4
+ * curfew)") produced a NULL zone and its card showed no Lighting Zone field at
+ * all, leaving several otherwise-identical rows indistinguishable.
+ *
+ * Derived here, at query time, so existing indexed data displays correctly
+ * without a re-ingest.
+ *
+ * @returns label as printed (for display), the normalized LZ code (for
+ *          filtering/sorting), and the curfew zone when the label pairs one.
+ */
+export function deriveLightingZone(app: {
+  Lighting_Zone?: string | null; Curfew_Dimming?: string | null;
+  App?: string | null; App_s1?: string | null; App_s2?: string | null; App_s3?: string | null;
+  App_s4?: string | null; App_s5?: string | null; App_s6?: string | null;
+}): { label: string | null; code: string | null; curfew: string | null } {
+  const candidates = [
+    app.Lighting_Zone,
+    // Deepest hierarchy level first: the zone is the most specific label on
+    // the row, so a deeper match beats a shallower one.
+    app.App_s6, app.App_s5, app.App_s4, app.App_s3, app.App_s2, app.App_s1, app.App,
+  ];
+
+  for (const raw of candidates) {
+    const parsed = parseLightingZoneLabel(raw);
+    if (!parsed) continue;
+    return { ...parsed, curfew: parsed.curfew || app.Curfew_Dimming || null };
+  }
+
+  return { label: null, code: null, curfew: app.Curfew_Dimming || null };
+}
 
 // Content-type filter (client filter overhaul): independent checkboxes for
 // what KINDS of results appear. Defaults mirror the UI (tables + body on,
@@ -275,14 +327,28 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
     ? getRelatedApplications(env, seed, [seed.code])
     : Promise.resolve([]);
 
+  // Which AI Guide prompt applies (client DO24 / DO25 / DO26.5): a comparison
+  // gets the three-section "what changed" analysis, a References-only search
+  // gets the reference-frequency answer, everything else gets guidance.
+  const referencesOnly = contentTypes.has('references') && !contentTypes.has('tables') && !contentTypes.has('body');
+  const aiMode: AIMode = isVersionComparison ? 'comparison' : (referencesOnly ? 'references' : 'guide');
+  const comparisonContext = aiMode === 'comparison'
+    ? buildComparisonContext(allResults.results)
+    : undefined;
+
   const aiPromise = (includeAISummary && allResults.results.length > 0)
     ? (async () => {
         try {
           const resultCodes = allResults.results.slice(0, 5).map(r => r.application?.code).filter(Boolean);
-          const aiKey = await buildAISummaryCacheKey(dataVersion, 'summary', rawQuery, resultCodes);
+          // The mode is part of the key: the same query+results can produce a
+          // guide OR a comparison, and they must not share a cache entry.
+          const aiKey = await buildAISummaryCacheKey(dataVersion, aiMode, rawQuery, resultCodes);
           const cached = body.debug ? null : await getCachedAISummary(kv, aiKey);
           if (cached) return cached;
-          const generated = await generateResponse(env.AI, rawQuery, allResults.results);
+          const generated = await generateResponse(env.AI, rawQuery, allResults.results, {
+            mode: aiMode,
+            comparison: comparisonContext,
+          });
           // Degraded summaries (every model errored) are never cached — the
           // next identical search retries the models instead of pinning the
           // fallback text for the cache TTL (client bug DO9).
@@ -299,6 +365,7 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
             text: 'The AI Guide could not generate a response for this search. The results below are unaffected — please try again in a moment.',
             watermark: null,
             disclaimer: 'AI Guide temporarily unavailable.',
+            mode: aiMode,
             degraded: true,
           };
         }
@@ -324,7 +391,6 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
   // The advisory doesn't apply to References or version-comparison searches
   // (client feedback DO11): reference entries legitimately score lower, and a
   // comparison isn't looking for lighting recommendations in the first place.
-  const referencesOnly = contentTypes.has('references') && !contentTypes.has('tables') && !contentTypes.has('body');
   const noStrongMatch = !referencesOnly && !isVersionComparison && topScore < STRONG_MATCH_THRESHOLD;
 
   // Comparison searches need the AI Guide to synthesize "what changed" across
@@ -347,6 +413,9 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
     aiGuideRequiredNotice,
     results: applyUnits(allResults.results, units),
     aiSummary,
+    // Front-cover Library URLs for every standard in this result set, so the UI
+    // can hyperlink the standards the AI Guide names in its prose (DO24).
+    standardLinks: buildStandardLinkMap(allResults.results),
     timestamp: new Date().toISOString(),
     _depDbg: depDbg || undefined,
   };
@@ -366,6 +435,81 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
   }
 
   return jsonResponse({ ...payload, cached: false });
+}
+
+/**
+ * Front-cover Lighting Library URL for every standard in a result set, keyed by
+ * BOTH its id ("RP-2-20+E1") and its full designation ("ANSI/IES RP-2-20+E1").
+ *
+ * The AI Guide names standards in prose; the UI turns those names into links
+ * (client DO24: "can standards referenced within the AI Explanation be
+ * hyperlinked to each document in Vitrium?"). Only standards actually in the
+ * result set are included — the model is instructed to cite from them, and a
+ * link is never fabricated for anything else.
+ */
+function buildStandardLinkMap(results: SearchResult[]): Record<string, string> {
+  const map: Record<string, string> = {};
+  for (const r of results) {
+    const url = r.standardLink;
+    if (!url) continue;
+    for (const key of [r.application?.standard, r.application?.standardFull]) {
+      if (key && !map[key]) map[key] = url;
+    }
+  }
+  return map;
+}
+
+/** The family prefix of a standard id: "RP-8-25" → "RP-8", "TM-30-18" → "TM-30". */
+function standardFamily(id: string | null | undefined): string {
+  if (!id) return '';
+  const upper = String(id).toUpperCase();
+  const m = /^(.+?)-\d{2}(?:R\d{2})?(?:\+E\d+)?$/.exec(upper);
+  return m ? m[1] : upper;
+}
+
+/**
+ * Which editions a version comparison is actually between (client DO25).
+ *
+ * The deprecated results carry a `supersededBy` pointer, so the current edition
+ * is resolved in that order: the explicitly-superseding result → any current
+ * result of the same family → the top current result. Both editions are
+ * hyperlinked in the UI even though only the current one is recommended for
+ * further reading.
+ */
+export function buildComparisonContext(results: SearchResult[]): ComparisonContext {
+  const deprecated: ComparisonContext['deprecated'] = [];
+  const seen = new Set<string>();
+  for (const r of results) {
+    if (!r.isDeprecated) continue;
+    const id = r.application?.standard;
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    deprecated.push({
+      id,
+      name: r.application?.standardFull || id,
+      url: r.standardLink || null,
+    });
+  }
+
+  const currents = results.filter(r => !r.isDeprecated && r.application?.standard);
+  const supersededBy = results.find(r => r.isDeprecated && r.supersededBy)?.supersededBy || null;
+  const family = deprecated.length > 0 ? standardFamily(deprecated[0].id) : '';
+  const pick =
+    (supersededBy && currents.find(r => r.application.standard === supersededBy)) ||
+    (family && currents.find(r => standardFamily(r.application.standard) === family)) ||
+    currents[0] ||
+    null;
+
+  return {
+    current: pick
+      ? {
+          id: pick.application.standard || '',
+          name: pick.application.standardFull || pick.application.standard || '',
+          url: pick.standardLink || null,
+        }
+      : null,
+    deprecated,
+  };
 }
 
 /**
@@ -556,11 +700,16 @@ async function runSingleSearch(rawQuery: string, filters: SearchFilters, limit: 
       const text = String(meta.excerpt_text || '');
       return meta.chunk_type !== 'table' && text.trim().length >= 60 && !isTableLike(text);
     });
-    const chunkResults = buildChunkResults(displayableChunks, linkCtx);
+    const chunkResults = buildChunkResults(displayableChunks, linkCtx, { perStandard: BODY_CHUNKS_PER_STANDARD });
     if (chunkResults.length > 0) {
-      results.push(...chunkResults);
-      results.sort(compareResults);
-      results = results.slice(0, limit);
+      const merged = [...results, ...chunkResults].sort(compareResults);
+      // Reserve a share of the pool for document-body excerpts (client DO23:
+      // "increase qty of results from body of document when both illuminance
+      // table and body of document are selected" — score ordering alone lets
+      // the far more numerous application rows take every slot).
+      results = includeTables
+        ? reserveBodySlots(merged, limit, chunkResults.length)
+        : merged.slice(0, limit);
     }
   }
 
@@ -601,10 +750,21 @@ async function runSingleSearch(rawQuery: string, filters: SearchFilters, limit: 
         console.error('reference chunk probe failed (non-fatal):', errMsg(err));
       }
     }
-    const liveRefs = refPool.filter(m => {
+    // Only entries that are actually listed as a FORMAL reference in the
+    // REFERENCES chapter may appear (client DO26.1). The chunker opens a
+    // reference run on any line reading "References", so form/checklist prose
+    // ("Please verify that all attachments and references are relevant…") had
+    // been indexed as reference chunks; content-level validation rejects it
+    // here regardless of when the document was ingested.
+    const formalRefs = refPool.filter(m => looksLikeFormalReference(m.metadata?.excerpt_text || ''));
+    const liveRefs = formalRefs.filter(m => {
       const id = m.metadata?.standard_id || m.metadata?.standard_code;
       return id && standardsIndex.has(id);
     });
+    // Which standards' References sections carry each cited work (DO26.4).
+    // Built from the whole formal pool, so a work cited by several standards
+    // lists them all even when only one entry became a result.
+    const markerIndex = buildReferenceMarkerIndex(formalRefs);
     // Every reference entry is its own result (perStandard: Infinity) — a
     // reference listing that collapsed to one entry per standard would be
     // useless as a bibliography view.
@@ -612,6 +772,7 @@ async function runSingleSearch(rawQuery: string, filters: SearchFilters, limit: 
       .map(r => ({
         ...r,
         referenceLink: buildReferenceLink(r.excerpt?.text || '', standardsIndex),
+        referenceMarkers: lookupReferenceMarkers(markerIndex, r.excerpt?.text || '', standardsIndex),
       }));
     if (refResults.length > 0) {
       results.push(...refResults);
@@ -625,6 +786,106 @@ async function runSingleSearch(rawQuery: string, filters: SearchFilters, limit: 
   //    feedback: Figure Skating Class I–IV / Recreational must follow the
   //    standard's row order, not raw vector-score order).
   return { results: clusterSiblings(results), expandedQuery };
+}
+
+/**
+ * Trim a merged result list to `limit` while keeping a minimum number of
+ * document-body excerpts in it (client DO23).
+ *
+ * With Illuminance Tables + Document Body both selected, application vectors
+ * outnumber prose chunks so heavily that pure score ordering pushed every body
+ * excerpt past the cut — the client saw 30 table rows and one body result for a
+ * broad conceptual query. Body results below the cut therefore displace the
+ * weakest application rows until the reserved share is filled; the pool size is
+ * unchanged and relevance ordering inside it is preserved.
+ */
+export function reserveBodySlots(all: SearchResult[], limit: number, availableBody: number): SearchResult[] {
+  const kept = all.slice(0, limit);
+  if (all.length <= limit) return kept;
+
+  const isBody = (r: SearchResult) => r.resultType === 'excerpt';
+  const target = Math.min(availableBody, Math.ceil(limit * BODY_RESULT_MIN_SHARE));
+  let have = kept.filter(isBody).length;
+  if (have >= target) return kept;
+
+  const out = [...kept];
+  for (const candidate of all.slice(limit).filter(isBody)) {
+    if (have >= target) break;
+    // Evict the weakest non-body result (the list is score-sorted, so that is
+    // the last one) to make room without growing the pool.
+    let idx = -1;
+    for (let i = out.length - 1; i >= 0; i--) {
+      if (!isBody(out[i])) { idx = i; break; }
+    }
+    if (idx < 0) break; // nothing left to trade away
+    out.splice(idx, 1);
+    out.push(candidate);
+    have++;
+  }
+  return out.sort(compareResults);
+}
+
+// ─── Reference markers (DO26.4) ───────────────────────────────────────────────
+
+/** citation key → standard id → { count, earliest page }. */
+type ReferenceMarkerIndex = Map<string, Map<string, { count: number; page: number | null }>>;
+
+const REFERENCE_MARKERS_MAX = 16;
+
+/**
+ * Group the reference pool by the WORK each entry cites, so a result card can
+ * show which other standards list the same item and where.
+ *
+ * Scope note: the index is built from the reference chunks this search
+ * retrieved, so it reports the standards we actually saw citing the work — not
+ * a corpus-wide census. In-body superscript reference markers are not indexed,
+ * so the link targets each standard's References page (the closest indexed
+ * location to the cited item).
+ */
+function buildReferenceMarkerIndex(matches: VMatch[]): ReferenceMarkerIndex {
+  const index: ReferenceMarkerIndex = new Map();
+  for (const m of matches) {
+    const key = referenceCitationKey(m.metadata?.excerpt_text || '');
+    if (!key) continue;
+    const std = m.metadata?.standard_id || m.metadata?.standard_code;
+    if (!std) continue;
+    if (!index.has(key)) index.set(key, new Map());
+    const byStandard = index.get(key)!;
+    const page = m.metadata?.page_number ?? null;
+    const prev = byStandard.get(std);
+    if (prev) {
+      prev.count++;
+      if (page != null && (prev.page == null || page < prev.page)) prev.page = page;
+    } else {
+      byStandard.set(std, { count: 1, page });
+    }
+  }
+  return index;
+}
+
+function lookupReferenceMarkers(index: ReferenceMarkerIndex, text: string, standardsIndex: StandardsIndex): ReferenceMarker[] {
+  const key = referenceCitationKey(text);
+  if (!key) return [];
+  const byStandard = index.get(key);
+  if (!byStandard) return [];
+
+  const out: ReferenceMarker[] = [];
+  for (const [std, info] of byStandard) {
+    const entry = standardsIndex.get(std);
+    // Never point a user at a deprecated edition (agent policy).
+    if (entry?.status === 'Deprecated') continue;
+    const webUrl = entry?.webUrl || null;
+    out.push({
+      standard: std,
+      standardFull: entry?.fullDesignation || null,
+      count: info.count,
+      pageNumber: info.page,
+      url: webUrl ? (info.page != null ? `${webUrl}#page=${info.page}` : webUrl) : null,
+    });
+  }
+  return out
+    .sort((a, b) => b.count - a.count || a.standard.localeCompare(b.standard))
+    .slice(0, REFERENCE_MARKERS_MAX);
 }
 
 /**
@@ -754,7 +1015,9 @@ export function curatedStandardInfo(id: string | null | undefined): CuratedInfo 
 // ─── Deprecated Standards (version comparison only) ───────────────────────────
 
 const DEPRECATED_TOP_K = 100;       // ids+scores pool from the deprecated index (max without metadata)
-const MAX_DEPRECATED_RESULTS = 3;   // flagged excerpts appended to the response
+// Raised 3→6 (client DO25): the three-section comparison needs enough of the
+// prior edition to say anything substantive about what changed.
+const MAX_DEPRECATED_RESULTS = 6;   // flagged excerpts appended to the response
 
 /**
  * Fetch excerpts from DEPRECATED standards for a version-comparison query.
@@ -872,6 +1135,7 @@ async function searchDeprecatedForComparison(rawQuery: string, filters: SearchFi
             ? `${name} is deprecated and has been replaced by ${supersededBy}.`
             : `${name} is deprecated.`,
           citation: `${r.citation} (deprecated)`,
+          citationName: `${r.citationName || r.citation} (deprecated)`,
         };
       });
   } catch (err) {
@@ -1243,12 +1507,20 @@ function buildResult(app: ApplicationRow, score: number, chunkMeta: Partial<Vect
   // descriptive title (from D1) makes the citation carry the FULL name:
   // "ANSI/IES RP-2-20+E1 Recommended Practice: Lighting Retail Spaces, ...".
   const stdInfo = linkCtx.standardsIndex?.get(app.Standard ?? '');
-  const citation = formatCitation(app, null, app.Page_Number ?? null, stdInfo?.title || null);
+  // Citation split in two (client DO18): the NAME opens the front cover, the
+  // page opens the internal reference. One hyperlink spanning both — with
+  // "p. 25" pointing at the cover — was the confusing part.
+  const citationName = formatCitation(app, null, null, stdInfo?.title || null);
+  const citationPage = app.Page_Number ?? null;
+  const citation = formatCitation(app, null, citationPage, stdInfo?.title || null);
   const vitriumLink = buildVitriumLink(app, linkCtx);
 
-  // Find the best PDF excerpt for this application — preferring a chunk
-  // near the application's table page over a globally top-scored chunk.
-  const excerpt = pickExcerptForApp(excerptIndex, app);
+  // Up to EXCERPTS_PER_RESULT PDF excerpts for this application — preferring
+  // chunks near the application's table page over globally top-scored ones
+  // (client DO22: the "From the Standard" drop-down shows several relevant
+  // passages, each with its own "Open in Library" link).
+  const excerpts = pickExcerptsForApp(excerptIndex, app)
+    .map(c => toExcerpt(c, app.Standard, linkCtx));
 
   return {
     resultType: 'application',
@@ -1257,18 +1529,32 @@ function buildResult(app: ApplicationRow, score: number, chunkMeta: Partial<Vect
     // itself — deliberately WITHOUT the #page fragment vitriumLink carries.
     standardLink: stdInfo?.webUrl || null,
     relevanceScore: Math.round(score * 1000) / 1000,
-    excerpt: excerpt ? {
-      text: excerpt.excerpt_text ?? '',
-      pageNumber: excerpt.page_number ?? null,
-      section: excerpt.section ?? null,
-      // Surface the chunk type so the UI can hide raw table dumps in the
-      // "From the Standard" panel — that section is only useful when it shows
-      // prose context from the body of the standard, not a repeat of the table.
-      chunkType: excerpt.chunk_type ?? 'text',
-    } : null,
+    // `excerpt` stays the single best passage (back-compat); `excerpts` carries
+    // the full drop-down list.
+    excerpt: excerpts[0] || null,
+    excerpts,
     citation,
+    citationName,
+    citationPage,
     vitriumLink,
     relatedApplications: [], // filled in for top result only
+  };
+}
+
+/** Vector-chunk metadata → wire Excerpt, with a page-targeted Library link. */
+function toExcerpt(c: ExcerptChunk, standard: string | null | undefined, linkCtx: LinkCtx): Excerpt {
+  return {
+    text: c.excerpt_text ?? '',
+    pageNumber: c.page_number ?? null,
+    section: c.section ?? null,
+    // Surface the chunk type so the UI can hide raw table dumps in the
+    // "From the Standard" panel — that section is only useful when it shows
+    // prose context from the body of the standard, not a repeat of the table.
+    chunkType: c.chunk_type ?? 'text',
+    vitriumLink: buildVitriumLink(
+      { Standard: standard ?? null, Page_Number: c.page_number ?? null },
+      linkCtx,
+    ),
   };
 }
 
@@ -1298,7 +1584,15 @@ function buildExcerptIndex(chunkMatches: VMatch[]): ExcerptIndex {
 // Raised 5→10 / 10→15 (client feedback DO4: "From the Standard" excerpts
 // should appear on more results — increase the frequency).
 const EXCERPT_BACKFILL_MAX = 10;   // standards backfilled per search
-const EXCERPT_BACKFILL_TOP_K = 15; // chunks fetched per backfilled standard
+// Vectorize caps topK at 20 when returnMetadata:'all' — take the maximum, since
+// the standard_code filter also returns that standard's application vectors and
+// only the prose ones are usable as excerpts.
+const EXCERPT_BACKFILL_TOP_K = 20; // chunks fetched per backfilled standard
+// Backfill now fires for standards that are merely THIN on prose, not only
+// those with none: the "From the Standard" drop-down holds up to 10 passages
+// (client DO22/DO4 — "continue to increase frequency ... increase contextual
+// search depth").
+const EXCERPT_BACKFILL_MIN_PROSE = 6;
 
 /**
  * Ensure the standards behind the top application results have at least one
@@ -1318,8 +1612,10 @@ async function backfillExcerpts(env: Env, queryVector: number[], apps: Applicati
     if (!std || seen.has(std)) continue;
     seen.add(std);
     const bucket = excerptIndex[std] || [];
-    const hasProse = bucket.some(c => c.chunk_type !== 'table' && !isTableLike(c.excerpt_text));
-    if (!hasProse) targets.push(std);
+    const proseCount = bucket.filter(c =>
+      c.chunk_type !== 'table' && c.chunk_type !== 'reference' && !isTableLike(c.excerpt_text)
+    ).length;
+    if (proseCount < EXCERPT_BACKFILL_MIN_PROSE) targets.push(std);
     if (targets.length >= EXCERPT_BACKFILL_MAX) break;
   }
   if (targets.length === 0) return;
@@ -1362,45 +1658,51 @@ function isTableLike(text: string | null | undefined): boolean {
 }
 
 /**
- * Pick the best PDF excerpt for a given application.
+ * Pick up to `max` PDF excerpts for a given application, best first
+ * (client DO22: "allow the drop-down to display multiple relevant results").
  *
- *  1. If the app has a Page_Number, prefer chunks within ±5 pages of that
- *     page. Among those, pick the highest-scoring NON-table chunk first —
- *     raw table dumps make poor excerpts because they read as truncated
- *     numbers when shown out of context. Tables are kept only as a last
- *     resort.
- *  2. Otherwise (or if no nearby chunk exists), fall back to the highest-
- *     scoring chunk for the standard, again preferring non-table.
- *  3. If the standard has no chunk matches at all, return null.
+ *  1. Prose is preferred over tables: a raw table dump reads as truncated
+ *     numbers out of context and just repeats the data already on the card.
+ *     Tables are used only when the standard yielded no prose at all.
+ *  2. Chunks within ±5 pages of the application's own table page come first,
+ *     nearest page first — that is the context AROUND the row the user matched.
+ *  3. The rest follow by relevance score.
+ *  4. Duplicate passages (same page + same opening) are collapsed.
  */
-function pickExcerptForApp(excerptIndex: ExcerptIndex, app: ApplicationRow): ExcerptChunk | null {
+function pickExcerptsForApp(excerptIndex: ExcerptIndex, app: ApplicationRow, max = EXCERPTS_PER_RESULT): ExcerptChunk[] {
   const bucket = app.Standard ? excerptIndex[app.Standard] : undefined;
-  if (!bucket || bucket.length === 0) return null;
+  if (!bucket || bucket.length === 0) return [];
 
   const isTable = (c: ExcerptChunk) => c.chunk_type === 'table';
+  // Reference entries are bibliography lines — never body context.
+  const usable = bucket.filter(c => c.excerpt_text && c.chunk_type !== 'reference');
+  const prose = usable.filter(c => !isTable(c) && !isTableLike(c.excerpt_text));
+  const pool = prose.length > 0 ? prose : usable;
+
   const appPage = app.Page_Number;
-
-  if (appPage != null) {
-    const NEAR_RADIUS = 5;
-    const inRadius = bucket.filter(c => c.page_number != null && Math.abs(c.page_number - appPage) <= NEAR_RADIUS);
-    const pickNearest = (pool: ExcerptChunk[]): ExcerptChunk | null => {
-      let best: ExcerptChunk | null = null, bestDist = Infinity;
-      for (const c of pool) {
-        const dist = Math.abs((c.page_number ?? 0) - appPage);
-        if (dist < bestDist || (dist === bestDist && (!best || c.score > best.score))) {
-          best = c; bestDist = dist;
-        }
-      }
-      return best;
-    };
-    const prose = inRadius.filter(c => !isTable(c));
-    if (prose.length > 0) return pickNearest(prose);
-    if (inRadius.length > 0) return pickNearest(inRadius);
+  const NEAR_RADIUS = 5;
+  const near: Array<{ c: ExcerptChunk; dist: number }> = [];
+  const far: ExcerptChunk[] = [];
+  for (const c of pool) {
+    const dist = (appPage != null && c.page_number != null)
+      ? Math.abs(c.page_number - appPage)
+      : Infinity;
+    if (dist <= NEAR_RADIUS) near.push({ c, dist });
+    else far.push(c);
   }
+  near.sort((a, b) => a.dist - b.dist || b.c.score - a.c.score);
+  far.sort((a, b) => b.score - a.score);
 
-  // Global fallback: highest-scoring prose chunk; table only if nothing else.
-  const proseAll = bucket.filter(c => !isTable(c));
-  return proseAll[0] || bucket[0];
+  const out: ExcerptChunk[] = [];
+  const seen = new Set<string>();
+  for (const c of [...near.map(n => n.c), ...far]) {
+    const key = `${c.page_number ?? '?'}|${(c.excerpt_text || '').slice(0, 80)}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(c);
+    if (out.length >= max) break;
+  }
+  return out;
 }
 
 // ─── Application Formatter ────────────────────────────────────────────────────
@@ -1469,15 +1771,11 @@ function formatApplication(app: ApplicationRow): FormattedApplication {
     // TM-24
     tm24Eligible: !!app.TM24_Eligible,
     tm24Notes:    app.TM24_Notes,
-    // Outdoor guidance (only for outdoor/both applications)
-    outdoor: (app.Indoor_Outdoor === 'Outdoor' || app.Indoor_Outdoor === 'Both') ? {
-      lightingZone:     app.Lighting_Zone,
-      maxGlareRating:   app.Max_Glare_Rating,
-      maxUplight:       app.Max_Uplight,
-      curfewDimming:    app.Curfew_Dimming,
-      spectrumGuidance: app.Spectrum_Guidance,
-      controlsRequired: app.Controls_Required,
-    } : null,
+    // Outdoor guidance. Lighting Zone / Curfew come from the row wherever the
+    // printed table puts them (column OR hierarchy label — client DO20);
+    // Glare / Uplight / Controls / Spectrum are shown ONLY for standards that
+    // actually print those columns (client DO21).
+    outdoor: buildOutdoorGuidance(app),
     // Notes
     footnotes:    app.Footnotes,
     // WHERE each footnote marker attaches in the printed table (see migration
@@ -1488,6 +1786,38 @@ function formatApplication(app: ApplicationRow): FormattedApplication {
     generalNotes: app.General_Notes,
     appNotes:     app.App_Notes,
   };
+}
+
+/**
+ * Environmental & Visual Considerations block for one application row.
+ *
+ * Two independent decisions (client DO20/DO21):
+ *   - Lighting Zone and Curfew are printed by several standards (RP-2, RP-43,
+ *     …) as a hierarchy label rather than a column, so they are DERIVED from
+ *     the row and shown whenever present — including for rows the extractor
+ *     never tagged Outdoor.
+ *   - Glare / Uplight / Controls / Spectrum are shown only for standards that
+ *     print those dedicated columns (RP-43-25 today). Elsewhere the row parser
+ *     infers them from stray tokens in the row text, which produced the wrong
+ *     "Controls: curfew" field on RP-2 cards.
+ */
+function buildOutdoorGuidance(app: ApplicationRow): OutdoorGuidance | null {
+  const zone = deriveLightingZone(app);
+  const isOutdoor = app.Indoor_Outdoor === 'Outdoor' || app.Indoor_Outdoor === 'Both';
+  const envOk = hasEnvConsiderationColumns(app.Standard);
+
+  const guidance: OutdoorGuidance = {
+    lightingZone:     zone.label,
+    curfewDimming:    zone.curfew,
+    maxGlareRating:   envOk ? app.Max_Glare_Rating : null,
+    maxUplight:       envOk ? app.Max_Uplight : null,
+    spectrumGuidance: envOk ? app.Spectrum_Guidance : null,
+    controlsRequired: envOk ? app.Controls_Required : null,
+  };
+
+  const hasAny = Object.values(guidance).some(v => v != null && v !== '');
+  if (!hasAny) return isOutdoor ? guidance : null;
+  return guidance;
 }
 
 function parseFootnoteMarks(raw: string | null | undefined): FootnoteMarks | null {
@@ -1557,6 +1887,14 @@ function buildChunkResults(chunkMatches: VMatch[], linkCtx: LinkCtx = {}, { perS
     const fullName = composeStandardName(designation, stdInfo?.title || null);
     const pageNum = match.metadata?.page_number || null;
 
+    const excerpt: Excerpt = {
+      text: match.metadata?.excerpt_text || '',
+      pageNumber: pageNum,
+      section: match.metadata?.section || null,
+      chunkType: match.metadata?.chunk_type || 'text',
+      vitriumLink: buildVitriumLink({ Standard: stdId, Page_Number: pageNum }, linkCtx),
+    };
+
     return {
       resultType: match.metadata?.chunk_type === 'reference' ? 'reference' : 'excerpt',
       // Chunk results have no application row, so synthesize the minimal
@@ -1593,13 +1931,13 @@ function buildChunkResults(chunkMatches: VMatch[], linkCtx: LinkCtx = {}, { perS
         appNotes: null,
       },
       relevanceScore: Math.round((match.score || 0) * 1000) / 1000,
-      excerpt: {
-        text: match.metadata?.excerpt_text || '',
-        pageNumber: pageNum,
-        section: match.metadata?.section || null,
-        chunkType: match.metadata?.chunk_type || 'text',
-      },
+      excerpt,
+      excerpts: [excerpt],
       citation: `${fullName}${pageNum ? `, p. ${pageNum}` : ''}`,
+      // Split for the two-link citation (DO18): name → front cover, page →
+      // internal reference.
+      citationName: fullName,
+      citationPage: pageNum,
       relatedApplications: [],
     };
   });

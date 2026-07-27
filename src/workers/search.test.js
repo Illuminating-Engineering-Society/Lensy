@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { normalizeContentTypes, buildReferenceLink, curatedStandardInfo } from './search';
+import {
+  normalizeContentTypes, buildReferenceLink, curatedStandardInfo,
+  deriveLightingZone, reserveBodySlots, buildComparisonContext,
+} from './search';
 
 // ─── Content-type normalization ───────────────────────────────────────────────
 
@@ -115,5 +118,121 @@ describe('curatedStandardInfo', () => {
     expect(curatedStandardInfo('rp-43-25')?.fullDesignation).toBe('ANSI/IES RP-43-25');
     expect(curatedStandardInfo(null)).toBeNull();
     expect(curatedStandardInfo('NOT-A-STANDARD-99')).toBeNull();
+  });
+});
+
+// ─── DO20/DO21: lighting zone resolved from wherever the table prints it ──────
+
+describe('deriveLightingZone', () => {
+  it('reads the dedicated column when populated', () => {
+    const z = deriveLightingZone({ Lighting_Zone: 'LZ2' });
+    expect(z.code).toBe('LZ2');
+    expect(z.label).toBe('LZ2');
+  });
+
+  it('falls back to the hierarchy label, keeping the printed form', () => {
+    // RP-2 Table A-2 prints the zone as a hierarchy level, not a column.
+    const z = deriveLightingZone({
+      App: 'Ramps, Stairs, and Steps', App_s1: 'Low activity', App_s2: 'Lz3 (and Lz4 curfew)',
+    });
+    expect(z.code).toBe('LZ3');
+    expect(z.label).toBe('Lz3 (and Lz4 curfew)');
+    expect(z.curfew).toBe('Lz4 curfew');
+  });
+
+  it('prefers the deepest hierarchy level', () => {
+    expect(deriveLightingZone({ App_s1: 'Lz1', App_s3: 'Lz4' }).code).toBe('LZ4');
+  });
+
+  it('keeps an explicit Curfew_Dimming value when the label has no curfew', () => {
+    expect(deriveLightingZone({ App_s1: 'Lz4', Curfew_Dimming: 'Dim to 50%' }).curfew).toBe('Dim to 50%');
+  });
+
+  it('returns nothing for rows without a zone', () => {
+    const z = deriveLightingZone({ App: 'Fitting room', App_s1: 'General' });
+    expect(z.label).toBeNull();
+    expect(z.code).toBeNull();
+  });
+});
+
+// ─── DO23: document-body results keep a share of the pool ─────────────────────
+
+describe('reserveBodySlots', () => {
+  const row = (i, type, score) => ({
+    resultType: type,
+    relevanceScore: score,
+    application: { code: `${type}-${i}`, standard: 'RP-2-20+E1', subCategory: null, category: null, sub1: null, rowRef: i },
+  });
+
+  it('pulls body excerpts above the cut, displacing the weakest table rows', () => {
+    const tables = Array.from({ length: 10 }, (_, i) => row(i, 'application', 0.9 - i * 0.01));
+    const bodies = Array.from({ length: 5 }, (_, i) => row(i, 'excerpt', 0.5 - i * 0.01));
+    const out = reserveBodySlots([...tables, ...bodies], 10, bodies.length);
+
+    expect(out.length).toBe(10);                                       // pool size unchanged
+    expect(out.filter(r => r.resultType === 'excerpt').length).toBe(3); // ceil(10 * 0.3)
+    // The strongest table rows survive; only the tail is traded away.
+    expect(out.some(r => r.application.code === 'application-0')).toBe(true);
+  });
+
+  it('never invents more body results than exist', () => {
+    const tables = Array.from({ length: 10 }, (_, i) => row(i, 'application', 0.9 - i * 0.01));
+    const out = reserveBodySlots([...tables, row(0, 'excerpt', 0.4)], 10, 1);
+    expect(out.filter(r => r.resultType === 'excerpt').length).toBe(1);
+  });
+
+  it('leaves a list that already meets the share untouched', () => {
+    const mixed = [row(0, 'excerpt', 0.9), row(1, 'excerpt', 0.8), row(2, 'application', 0.7), row(3, 'application', 0.6)];
+    expect(reserveBodySlots(mixed, 3, 2).length).toBe(3);
+  });
+
+  it('is a plain slice when nothing is below the cut', () => {
+    const two = [row(0, 'application', 0.9), row(1, 'excerpt', 0.8)];
+    expect(reserveBodySlots(two, 10, 1)).toEqual(two);
+  });
+});
+
+// ─── DO25: which editions a comparison is between ─────────────────────────────
+
+describe('buildComparisonContext', () => {
+  const result = (id, opts = {}) => ({
+    resultType: 'excerpt',
+    application: { standard: id, standardFull: `ANSI/IES ${id}` },
+    standardLink: `https://view.protectedpdf.com/${id}`,
+    ...opts,
+  });
+
+  it('pairs the deprecated edition with the standard that superseded it', () => {
+    const ctx = buildComparisonContext([
+      result('RP-9-20'),                                                   // unrelated family, scores first
+      result('RP-8-25'),
+      result('RP-8-22', { isDeprecated: true, supersededBy: 'RP-8-25' }),
+    ]);
+    expect(ctx.current.id).toBe('RP-8-25');
+    expect(ctx.current.url).toContain('RP-8-25');
+    expect(ctx.deprecated.map(d => d.id)).toEqual(['RP-8-22']);
+    expect(ctx.deprecated[0].name).toBe('ANSI/IES RP-8-22');
+  });
+
+  it('falls back to the same family when no supersedes pointer exists', () => {
+    const ctx = buildComparisonContext([
+      result('RP-9-20'),
+      result('RP-8-25'),
+      result('RP-8-22', { isDeprecated: true }),
+    ]);
+    expect(ctx.current.id).toBe('RP-8-25');
+  });
+
+  it('dedupes deprecated editions and survives a current-only result set', () => {
+    const ctx = buildComparisonContext([
+      result('RP-8-25'),
+      result('RP-8-22', { isDeprecated: true }),
+      result('RP-8-22', { isDeprecated: true }),
+    ]);
+    expect(ctx.deprecated.length).toBe(1);
+
+    const noDeprecated = buildComparisonContext([result('RP-8-25')]);
+    expect(noDeprecated.current.id).toBe('RP-8-25');
+    expect(noDeprecated.deprecated).toEqual([]);
   });
 });

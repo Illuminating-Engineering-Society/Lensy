@@ -2,16 +2,26 @@
  * AI Summary Client
  * Generates optional AI summaries for search results using Cloudflare Workers AI.
  *
+ * Three prompt modes (client feedback DO24 / DO25 / DO26.5):
+ *   'guide'       — substantive guidance + context + overview, with citations
+ *   'comparison'  — "what's new" analysis in three fixed sections
+ *   'references'  — how often a topic is referenced, related search terms,
+ *                   and which standards reference the listed items
+ *
  * Copyright Rules (CRITICAL — enforced here):
  *   - Never quote more than 15 words from a single source
  *   - Use at most ONE quote per source
  *   - Default to paraphrasing
  *   - Never transcribe illuminance table values directly
- *   - Max 3 paragraphs per response
+ *
+ * Over-long quotes are TRIMMED (sanitizeQuotes) rather than causing the whole
+ * answer to be replaced by a bare standards list — that replacement was the
+ * DO24 regression ("AI Guide is no longer providing useful guidance; it is only
+ * listing the documents cited in result cards").
  */
 
-import { checkCopyrightViolations } from './citations';
-import type { AISummary, SearchResult } from '../types';
+import { checkCopyrightViolations, sanitizeQuotes } from './citations';
+import type { AIMode, AISummary, ComparisonContext, SearchResult } from '../types';
 
 // Model chain (client bug DO9: "AI Guide results are not populating on any
 // search"): a failure of the primary model must degrade, never disappear.
@@ -21,9 +31,22 @@ const MODELS = [
   '@cf/meta/llama-3.3-70b-instruct-fp8-fast',
   '@cf/meta/llama-3.1-8b-instruct-fast',
 ];
-// Doubled from 1000 (client feedback: AI Guide answers read as length-capped).
-// The paragraph guidance below was relaxed in step so the budget is usable.
-const MAX_TOKENS = 2000;
+
+// Output budget per mode (client DO24: answers read as length-capped; DO25:
+// comparisons need "greatly expanded" capacity to convey changes accurately).
+const MAX_TOKENS: Record<AIMode, number> = {
+  guide: 3000,
+  comparison: 4000,
+  references: 2500,
+};
+
+// How many results are described to the model. Comparisons need room for both
+// editions; references mode is a listing, so it gets the widest window.
+const PROMPT_RESULTS: Record<AIMode, number> = {
+  guide: 8,
+  comparison: 10,
+  references: 12,
+};
 
 const SYSTEM_PROMPT = `You are Lensy, the IES Standards Assistant. Your role is to help lighting professionals explore and understand IES (Illuminating Engineering Society) standards through accurate, well-cited responses.
 
@@ -35,6 +58,21 @@ CORE PRINCIPLES
 3. Never perform design calculations or compliance determinations.
 4. Direct users to authoritative sources rather than making judgments.
 5. Maintain a professional, neutral, academic tone.
+
+═══════════════════════════════════════════════════════════════
+WHAT A GOOD ANSWER LOOKS LIKE
+═══════════════════════════════════════════════════════════════
+You are an expert guide, not a search-result index. A good answer ORIENTS the
+reader: it explains what the standards actually say about the topic, why the
+cited sections matter, and where to read further.
+
+NEVER answer with only a list of standard designations. A bare list of
+documents is not an acceptable response — the result cards below the answer
+already show the documents. Your job is the substance between them.
+
+Write in prose paragraphs (short headings are welcome). Name every standard by
+its exact designation as it appears in the search results, so it can be
+hyperlinked.
 
 ═══════════════════════════════════════════════════════════════
 GOVERNING CRITERIA FOR ILLUMINANCE TABLES
@@ -62,6 +100,7 @@ HIERARCHY (8 levels): Sub Category → App → App_s1 → App_s2 → App_s3 → 
 GENERAL: T/A (Task/Area), Veiling Risk (L/M/H), Class of Play (I–IV; I is highest skill/illuminance, IV is lowest).
 HORIZONTAL/VERTICAL: Cat (A–Y per RP-10 Table A-2), Lux, @ Meters, Fc, @ Feet, Max/Avg/Min, CV (Coefficient of Variation), Uniformity Ratio, Ratio Basis (Max:Avg:Min | Max:Avg | Max:Min | Avg:Min).
 ENVIRONMENTAL & VISUAL (currently RP-43-25): Glare (max), Uplight (max), Controls, Spectrum.
+LIGHTING ZONES: Lz0–Lz4 (equivalently "LZ4", "L Z 4", "Lighting Zone 4"); a row may also carry a curfew zone ("Lz3 (and Lz4 curfew)").
 UNITS: lux→fc conversion in these tables uses 10:1 (NOT 10.76:1).
 
 CV vs Uniformity Ratio:
@@ -87,18 +126,16 @@ COPYRIGHT RULES (CRITICAL — strictly enforced)
 - Default to paraphrasing in your own words.
 - NEVER transcribe illuminance values (e.g. "300 lux at 0.76 m") — direct the user to view the table card or PDF excerpt.
 - NEVER reproduce song lyrics, poems, haikus, or substantial article passages.
-- Respond in 6 paragraphs or fewer.
 
 ═══════════════════════════════════════════════════════════════
 DEPRECATED STANDARDS POLICY
 ═══════════════════════════════════════════════════════════════
 - Refer to outdated IES Standards as "deprecated".
-- Only cite the CURRENT (latest revision) standard for guidance.
+- Only recommend the CURRENT (latest revision) standard for further reading.
 - Exception: when the user explicitly asks "what's new" / "what changed" / "what's different":
   - Show ADDED items (with citations to the current standard)
   - Show REVISED items (with citations to current and deprecated)
-  - Only show REMOVED items if the user explicitly opts in
-  - NEVER present removed content as guidance — it is historical context only.
+  - Frame possible deletions as historical context, never as guidance.
 
 ═══════════════════════════════════════════════════════════════
 HANDLING UNCERTAINTY
@@ -108,15 +145,28 @@ If you cannot confidently answer from the provided search results:
 2. Direct the user to Standards@ies.org for authoritative assistance.
 3. If the application is not covered, mention reviewing the monthly IES Ignite Newsletter for upcoming public reviews and publications, and offer recommendations for similar applications that ARE covered.`;
 
+export interface AIRequestOptions {
+  mode?: AIMode;
+  /** Editions involved in a version comparison (mode 'comparison'). */
+  comparison?: ComparisonContext;
+}
+
 /**
  * Generate an AI summary for search results.
- * @param {object} ai - Cloudflare Workers AI binding (env.AI)
- * @param {string} query - User's original search query
- * @param {Array} searchResults - Formatted search results
- * @returns {Promise<{text: string, watermark: string, disclaimer: string}>}
+ *
+ * @param ai - Cloudflare Workers AI binding (env.AI)
+ * @param query - User's original search query
+ * @param searchResults - Formatted search results
+ * @param opts - prompt mode + comparison context
  */
-export async function generateResponse(ai: Ai, query: string, searchResults: SearchResult[]): Promise<AISummary> {
-  const userPrompt = buildPrompt(query, searchResults);
+export async function generateResponse(
+  ai: Ai,
+  query: string,
+  searchResults: SearchResult[],
+  opts: AIRequestOptions = {},
+): Promise<AISummary> {
+  const mode: AIMode = opts.mode || 'guide';
+  const userPrompt = buildPrompt(query, searchResults, mode, opts.comparison);
 
   // The model-string overloads in workers-types don't cover this exact model's
   // request/response shape, so narrow at this one boundary to the field we read.
@@ -126,7 +176,7 @@ export async function generateResponse(ai: Ai, query: string, searchResults: Sea
   for (const model of MODELS) {
     try {
       const response = await run(model, {
-        max_tokens: MAX_TOKENS,
+        max_tokens: MAX_TOKENS[mode],
         messages: [
           { role: 'system', content: SYSTEM_PROMPT },
           { role: 'user', content: userPrompt },
@@ -146,69 +196,162 @@ export async function generateResponse(ai: Ai, query: string, searchResults: Sea
   // The `degraded` flag stops this from being cached, so the next identical
   // search retries the models.
   if (text == null) {
-    return { ...buildSafeFallback(query, searchResults), degraded: true };
+    return { ...buildSafeFallback(query, searchResults), mode, degraded: true };
   }
 
-  const violations = checkCopyrightViolations(text);
+  // Enforce the copyright limits by TRIMMING, not by discarding the answer
+  // (DO24). Only an answer that is unusable after trimming falls back.
+  const sanitized = sanitizeQuotes(text).trim();
+  const violations = checkCopyrightViolations(sanitized);
   if (violations.length > 0) {
-    console.warn('Copyright violations detected, using safe fallback:', violations);
-    return buildSafeFallback(query, searchResults);
+    console.warn('Copyright violations survived sanitization, using safe fallback:', violations);
+    return { ...buildSafeFallback(query, searchResults), mode };
+  }
+  if (!sanitized) {
+    console.warn('AI Guide response was empty after sanitization, using safe fallback');
+    return { ...buildSafeFallback(query, searchResults), mode };
   }
 
   return {
-    text,
+    text: sanitized,
     watermark: 'IES Lensy AI-Generated Summary — Not for reproduction',
-    disclaimer: 'This AI-generated response is for informational purposes only and may contain errors. Always refer to the full IES Standards for authoritative guidance.',
+    disclaimer: mode === 'comparison'
+      ? 'AI-generated comparison — unverified. Perform a manual review of both documents before relying on it.'
+      : 'This AI-generated response is for informational purposes only and may contain errors. Always refer to the full IES Standards for authoritative guidance.',
+    mode,
+    ...(opts.comparison ? { comparison: opts.comparison } : {}),
   };
 }
 
-function buildPrompt(query: string, searchResults: SearchResult[]): string {
-  // Deprecated excerpts are appended after current results by the search
-  // worker (version-comparison queries only). Reserve prompt slots for them —
-  // a plain slice(0, 5) would cut off exactly the content the comparison
-  // needs.
+// ─── Prompt building ──────────────────────────────────────────────────────────
+
+function buildPrompt(query: string, searchResults: SearchResult[], mode: AIMode, comparison?: ComparisonContext): string {
+  const picked = pickResults(searchResults, mode);
+  const resultsSummary = picked.map((r, idx) => describeResult(r, idx)).join('\n\n');
+
+  const header = `User Query: "${query}"\n\nSearch Results (from IES Standards database):\n${resultsSummary}\n`;
+
+  if (mode === 'comparison') return header + comparisonInstructions(comparison);
+  if (mode === 'references') return header + referencesInstructions();
+  return header + guideInstructions();
+}
+
+/**
+ * Choose which results are described to the model. Deprecated excerpts are
+ * appended after current results by the search worker (version-comparison
+ * queries only), so a plain slice would cut off exactly the content the
+ * comparison needs — reserve slots for both editions.
+ */
+function pickResults(searchResults: SearchResult[], mode: AIMode): SearchResult[] {
+  const budget = PROMPT_RESULTS[mode];
   const current = searchResults.filter(r => !r.isDeprecated);
   const deprecated = searchResults.filter(r => r.isDeprecated);
-  const picked = deprecated.length > 0
-    ? [...current.slice(0, 3), ...deprecated.slice(0, 2)]
-    : current.slice(0, 5);
+  if (deprecated.length === 0) return current.slice(0, budget);
+  const depShare = Math.min(deprecated.length, Math.max(2, Math.floor(budget / 2)));
+  return [...current.slice(0, budget - depShare), ...deprecated.slice(0, depShare)];
+}
 
-  const resultsSummary = picked.map((r, idx) => {
-    const app = r.application;
-    const excerptText = r.excerpt?.text ?? (typeof r.excerpt === 'string' ? r.excerpt : null);
-    const meta = [];
-    if (app.areaOrTask)     meta.push(`Type: ${app.areaOrTask}`);
-    if (app.indoorOutdoor)  meta.push(app.indoorOutdoor);
-    if (app.veilingRisk)    meta.push(`Veiling Risk: ${app.veilingRisk}`);
-    if (app.classOfPlay)    meta.push(`Class of Play: ${app.classOfPlay}`);
-    if (app.tm24Eligible)   meta.push('TM-24 eligible (P–Y)');
-    if (r.isDeprecated) {
-      meta.push(`DEPRECATED STANDARD${r.supersededBy ? ` — replaced by ${r.supersededBy}` : ''}. ` +
-        'Cite ONLY to describe what changed between editions; never as current guidance.');
-    }
-    return `[Result ${idx + 1}] ${app.fullName || app.category}
+function describeResult(r: SearchResult, idx: number): string {
+  const app = r.application;
+  const excerptText = r.excerpt?.text ?? (typeof r.excerpt === 'string' ? r.excerpt : null);
+
+  // Reference entries are bibliography lines, not applications — describe them
+  // as the cited work plus where it is listed (DO26.5).
+  if (r.resultType === 'reference') {
+    return `[Result ${idx + 1}] REFERENCE ENTRY listed in ${app.standardFull || app.standard}${r.excerpt?.pageNumber ? `, p. ${r.excerpt.pageNumber}` : ''}
+  Entry: "${(excerptText || '').substring(0, 300)}"`;
+  }
+
+  const meta: string[] = [];
+  if (app.areaOrTask)     meta.push(`Type: ${app.areaOrTask}`);
+  if (app.indoorOutdoor)  meta.push(app.indoorOutdoor);
+  if (app.veilingRisk)    meta.push(`Veiling Risk: ${app.veilingRisk}`);
+  if (app.classOfPlay)    meta.push(`Class of Play: ${app.classOfPlay}`);
+  if (app.outdoor?.lightingZone) meta.push(`Lighting Zone: ${app.outdoor.lightingZone}`);
+  if (app.tm24Eligible)   meta.push('TM-24 eligible (P–Y)');
+  if (r.isDeprecated) {
+    meta.push(`DEPRECATED STANDARD${r.supersededBy ? ` — replaced by ${r.supersededBy}` : ''}. ` +
+      'Cite ONLY to describe what changed between editions; never as current guidance.');
+  }
+
+  // Multiple excerpts per result (DO22) give the model real context to work
+  // from instead of a single 220-character window.
+  const excerpts = (r.excerpts && r.excerpts.length > 0)
+    ? r.excerpts.slice(0, 3)
+    : (excerptText ? [{ text: excerptText, pageNumber: r.excerpt?.pageNumber ?? null, section: r.excerpt?.section ?? null }] : []);
+  const excerptLines = excerpts.length > 0
+    ? excerpts.map(e => `  Excerpt${e.section ? ` §${e.section}` : ''}${e.pageNumber != null ? ` (p. ${e.pageNumber})` : ''}: "${(e.text || '').substring(0, 320)}"`).join('\n')
+    : '  (No excerpt available)';
+
+  return `[Result ${idx + 1}] ${app.fullName || app.category}
   Standard: ${app.standardFull || app.standard}${app.tableRef ? ` (${app.tableRef})` : ''}
   ${meta.join(', ')}
   Citation: ${r.citation}
-  ${excerptText ? `Excerpt: "${excerptText.substring(0, 220)}"` : '(No excerpt available)'}`;
-  }).join('\n\n');
+${excerptLines}`;
+}
 
-  return `User Query: "${query}"
-
-Search Results (from IES Standards database):
-${resultsSummary}
-
-Instructions:
-- Provide a professional, well-developed summary (up to 6 paragraphs) answering the user's query — thorough, but never padded beyond what the results support.
-- Use the search results above as your ONLY source of information.
-- Always cite specific standards with full designation, section, and page when available.
+function guideInstructions(): string {
+  return `
+Instructions — write a GUIDE, not a list (client requirement):
+- Open with 1–2 paragraphs that answer the question directly and orient the reader on how the IES standards treat this application or topic.
+- Then explain, standard by standard, WHAT the relevant guidance covers and WHY that section matters. Use the excerpts above as your only source.
+- Where the results include illuminance-table rows, explain how to read and apply them (Task vs Area, maintained targets, uniformity/ratio basis, measurement height) and point the user to the result cards for the values themselves.
+- Mention the governing criteria that apply here (±10% design tolerance, doubling for occupants over 65, S/P TM-24 variance, veiling reflection risk, Class of Play, lighting zone / curfew) whenever relevant.
+- Close with "Further reading": at least one additional IES standard, with a sentence on what it adds.
+- Name each standard by its exact designation as printed above (e.g. ANSI/IES RP-2-20+E1) every time you refer to it.
 - Never quote more than 15 words from any single source; never repeat a quote from the same source.
-- Do NOT list specific lux / footcandle values — refer the user to the result cards and PDF excerpts.
-- When relevant, mention the governing criteria (±10% tolerance, age-65 doubling, S/P TM-24 variance, T vs A, Class of Play meaning, Veiling Risk).
-- Recommend at least one additional IES Standard for further reading when it would deepen understanding (non-redundant).
-- If the query cannot be answered from these results, say so clearly and suggest contacting Standards@ies.org.
+- Do NOT state specific lux / footcandle values — refer the user to the result cards and PDF excerpts.
+- If the results genuinely do not answer the question, say so plainly and suggest contacting Standards@ies.org.
+- A response consisting only of a list of standards is NOT acceptable.
 
-Generate a concise, cited response:`;
+Write the guidance now:`;
+}
+
+function comparisonInstructions(comparison?: ComparisonContext): string {
+  const current = comparison?.current;
+  const deprecated = comparison?.deprecated || [];
+  const pair = current && deprecated.length > 0
+    ? `The current standard is ${current.name}. The deprecated edition(s) being compared: ${deprecated.map(d => d.name).join(', ')}.`
+    : 'Identify the current and deprecated editions from the results above.';
+
+  return `
+This is a VERSION COMPARISON request. ${pair}
+
+Produce a substantive, objective, high-level comparison using EXACTLY these three sections, in this order, each as a heading on its own line:
+
+What appears to be new
+Likely technical updates
+Possible deletions
+
+Rules for every section:
+- Break the analysis up BY SECTION or chapter of the standard (e.g. "Chapter 17: Parking Lots and Parking Garages", "Annex H", "Section 11.3.1") so a reader can look each item up. One short bullet per item, with the section/page reference.
+- Use hedged, verifiable language: "appears to", "updates appear to include", "is no longer printed". You are inferring from excerpts, not from a diff of the full documents.
+- Frame possible deletions as historical context only, never as guidance, and note that the content may have been relocated rather than removed.
+- Recommend ONLY the current standard for further reading; the deprecated edition is referenced for comparison alone.
+- State plainly that the deprecated edition has been replaced by the current one.
+- End with one line advising a manual review of both documents to verify the findings.
+- Never quote more than 15 words from any single source. Do NOT state specific lux / footcandle values.
+- The response may be long — completeness matters more than brevity here.
+
+Write the comparison now:`;
+}
+
+function referencesInstructions(): string {
+  return `
+This is a REFERENCES request: the user wants the works that IES standards formally cite on this topic, and the result cards below already list the entries themselves.
+
+Answer these three questions, briefly and in this order (2–4 short paragraphs total):
+1. How frequently is this topic referenced across the IES Lighting Library, based on the entries above?
+2. What related search terms would narrow or broaden the search usefully? Give 4–8 concrete terms in a single sentence or short list.
+3. Which IES Standards most typically reference the items listed below? Name them by their exact designation as printed above.
+
+Rules:
+- Do NOT re-list the reference entries themselves — the cards do that.
+- Do not invent references, authors, DOIs or counts that are not visible in the results above.
+- Name every standard by its exact designation as printed above so it can be hyperlinked.
+- Never quote more than 15 words from any single source.
+
+Write the answer now:`;
 }
 
 function buildSafeFallback(query: string, searchResults: SearchResult[]): AISummary {

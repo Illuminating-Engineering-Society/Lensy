@@ -31,6 +31,8 @@
  * lux→fc conversion: 10:1 (per reference doc, NOT 10.764).
  */
 
+import { hasEnvConsiderationColumns, parseLightingZoneLabel } from './illuminance-fields.js';
+
 // ─── Structure Detection ──────────────────────────────────────────────────────
 
 // "… 30 lx @ 0.00 m 3 fc @ 0.0 ft …" — both units glued on one line. This is
@@ -303,14 +305,19 @@ function extractFromPages(tablePages, standardId, fullDesignation) {
 
       if (!parsed.hasData) {
         // Pure hierarchy line — fill the slot at this depth.
-        // Ignore lines that start to the right of the indent grid: those are
-        // stray column-header fragments ("Target Eh @ Height AFF", "Ratio
-        // Basis") that share a Y band with the table but are not hierarchy.
-        const deepestLevel = levels[levels.length - 1] ?? baseX;
-        if ((line.x ?? baseX) > deepestLevel + INDENT_TOLERANCE) continue;
         const { name: rawName, link } = splitNameAndLink(parsed.label);
         const { name, refs: gluedRefs } = stripGluedSuperscripts(rawName);
         if (name.length < 2) continue;
+        // Ignore lines that start to the right of the indent grid: those are
+        // stray column-header fragments ("Target Eh @ Height AFF", "Ratio
+        // Basis") that share a Y band with the table but are not hierarchy.
+        // EXCEPTION: a lighting-zone designation ("Lz3 (and Lz4 curfew)") is a
+        // real hierarchy level and is often printed deeper than the deepest
+        // established indent level. Dropping it left several sibling rows of
+        // RP-2 Table A-2 indistinguishable on screen (client DO20).
+        const deepestLevel = levels[levels.length - 1] ?? baseX;
+        const isZoneLabel = parseLightingZoneLabel(name) != null;
+        if (!isZoneLabel && (line.x ?? baseX) > deepestLevel + INDENT_TOLERANCE) continue;
         const effDepth = applyHierarchyAtDepth(hierarchy, depth, name);
         // This slot and everything deeper was just reset — stale refs go too.
         for (let d = effDepth; d < headerRefs.length; d++) headerRefs[d] = null;
@@ -340,6 +347,8 @@ function extractFromPages(tablePages, standardId, fullDesignation) {
 
       const tm24 = isTM24EligibleCat(parsed.horCat) || isTM24EligibleCat(parsed.verCat);
       const code = `${standardId.replace(/[^A-Z0-9]/gi, '')}_${String(rowIndex).padStart(4, '0')}`;
+      const zoneInfo = extractLightingZone(snapshot);
+      const envColumns = hasEnvConsiderationColumns(standardId);
 
       records.push({
         code,
@@ -390,13 +399,19 @@ function extractFromPages(tablePages, standardId, fullDesignation) {
         TM24_Eligible: tm24 ? 1 : 0,
         TM24_Notes:    null,
         // Lighting Zone is a hierarchy slot in the new schema (Lz0–Lz4 may
-        // appear as App_s1 etc.) — also surface explicitly for outdoor apps:
-        Lighting_Zone:     extractLightingZone(snapshot),
-        Max_Glare_Rating:  parsed.glareMax,
-        Max_Uplight:       parsed.uplightMax,
-        Curfew_Dimming:    null,
-        Spectrum_Guidance: parsed.spectrum,
-        Controls_Required: parsed.controls,
+        // appear as App_s1 etc.) — also surface explicitly for outdoor apps.
+        // Glare / Uplight / Controls / Spectrum are only stored for standards
+        // that actually PRINT those columns (client DO21): the parsers below
+        // infer them from stray row tokens, so elsewhere they are misreads —
+        // e.g. any percentage in the row becoming a "Glare max", or the word
+        // "curfew" inside the zone label "Lz3 (and Lz4 curfew)" becoming a
+        // Controls requirement.
+        Lighting_Zone:     zoneInfo.zone,
+        Max_Glare_Rating:  envColumns ? parsed.glareMax : null,
+        Max_Uplight:       envColumns ? parsed.uplightMax : null,
+        Curfew_Dimming:    zoneInfo.curfew,
+        Spectrum_Guidance: envColumns ? parsed.spectrum : null,
+        Controls_Required: envColumns ? parsed.controls : null,
         Footnotes:     null,
         Footnote_Marks: (Object.keys(headerLevels).length > 0 || rowMarks.length > 0)
           ? JSON.stringify({ levels: headerLevels, row: rowMarks })
@@ -918,13 +933,26 @@ function inferSectionFromStandard(standardId) {
   return 'Indoor';
 }
 
+/**
+ * The lighting zone printed on this row, as a hierarchy label.
+ *
+ * Every printed form triggers (client DO21): "Lz4", "LZ4", "L Z 4",
+ * "Lighting Zone 4" — and RP-2's curfew pairs, "Lz3 (and Lz4 curfew)". Matching
+ * only the bare `Lz4` form left every curfew row with a NULL zone, so the result
+ * cards for those rows showed no Lighting Zone field at all (DO20).
+ *
+ * Deepest level first: the zone is the most specific label on the row.
+ *
+ * @returns {{zone: string|null, curfew: string|null}} normalized zone code
+ *          ("LZ3", for filtering) and the paired curfew zone when printed.
+ */
 function extractLightingZone(snapshot) {
-  for (const v of [snapshot.s1, snapshot.s2, snapshot.s3, snapshot.s4, snapshot.s5, snapshot.s6]) {
-    if (typeof v === 'string' && /^Lz[0-4]$/i.test(v.trim())) {
-      return v.trim().toUpperCase();
-    }
+  const levels = [snapshot.s6, snapshot.s5, snapshot.s4, snapshot.s3, snapshot.s2, snapshot.s1];
+  for (const v of levels) {
+    const parsed = parseLightingZoneLabel(v);
+    if (parsed) return { zone: parsed.code, curfew: parsed.curfew };
   }
-  return null;
+  return { zone: null, curfew: null };
 }
 
 // ─── Indentation Grid (hierarchy depth) ───────────────────────────────────────
@@ -1053,6 +1081,11 @@ function detectTableRef(pageText) {
 }
 
 function cleanAppName(name) {
+  // A lighting-zone designation is returned verbatim: the trailing digit IS the
+  // zone number, and the "(and Lz4 curfew)" tail is part of the printed label
+  // (client DO20/DO21) — the footnote-marker and "(a)" strippers below would
+  // otherwise reduce "L Z 4" to "L Z".
+  if (parseLightingZoneLabel(name) != null) return name.trim();
   return name
     .replace(/\s*[¹²³⁴⁵⁶⁷⁸⁹⁰]+$/, '')
     .replace(/\s+\d+$/, '')

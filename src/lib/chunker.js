@@ -22,6 +22,8 @@
  *  5. Prepend "[Section X.X]" to continuation chunks for context
  */
 
+import { looksLikeFormalReference } from './references.js';
+
 const SECTION_RE = /^(?:(?:\d+(?:\.\d+)*)|(?:[A-Z](?:\.\d+)*))\s+[A-Z].{3,}/;
 const ANNEX_RE = /^(?:Annex|Appendix)\s+[A-Z]/i;
 const TABLE_PAGE_RE = /^Table\s+[A-Z0-9]-?\d*/im;
@@ -79,12 +81,26 @@ export function chunkIESDocument(pages, options = {}) {
     for (const entry of refEntries) {
       const text = entry.lines.join(' ').replace(/\s+/g, ' ').trim();
       const wordCount = text.split(/\s+/).filter(Boolean).length;
-      if (wordCount >= cfg.minReferenceWords) {
+      // Client DO26.1: only entries that are actually FORMAL references may
+      // enter the reference index. The heading detector opens a reference run
+      // on any line reading "References", so a form/checklist page could
+      // otherwise stream body prose in as bibliography entries. Rejected text
+      // falls through to the normal body-chunk path below, so nothing is lost
+      // from the document-body index.
+      if (wordCount >= cfg.minReferenceWords && looksLikeFormalReference(text)) {
         chunks.push({
           text,
           pageNumber: entry.pageNumber,
           section: currentSection || 'References',
           type: 'reference',
+          wordCount,
+        });
+      } else if (wordCount >= cfg.minWords) {
+        chunks.push({
+          text,
+          pageNumber: entry.pageNumber,
+          section: currentSection || 'References',
+          type: 'text',
           wordCount,
         });
       }

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { formatCitation, validateCitation, checkCopyrightViolations, composeStandardName } from './citations';
+import { formatCitation, validateCitation, checkCopyrightViolations, composeStandardName, sanitizeQuotes } from './citations';
 
 describe('composeStandardName', () => {
   it('appends the descriptive title to the designation', () => {
@@ -52,5 +52,39 @@ describe('citations', () => {
       '"This quoted passage intentionally contains far too many words to satisfy the policy limit for direct quoting in generated output."'
     );
     expect(violations.some(v => v.type === 'long_quote')).toBe(true);
+  });
+});
+
+// ─── DO24: an over-long quote must be TRIMMED, not cost us the whole answer ──
+// The AI Guide had regressed to "here is a list of the documents I found": one
+// long quote anywhere in an otherwise good answer tripped the copyright check
+// and the safe fallback replaced everything.
+
+describe('sanitizeQuotes', () => {
+  const LONG = '"This quoted passage intentionally contains far too many words to satisfy the policy limit for direct quoting in generated output."';
+
+  it('clips an over-long quote to 15 words and keeps the surrounding prose', () => {
+    const text = `According to ANSI/IES RP-8-25, ${LONG} — refer to Section 11.3 for the full provision.`;
+    const out = sanitizeQuotes(text);
+    expect(out).toContain('According to ANSI/IES RP-8-25');
+    expect(out).toContain('refer to Section 11.3');
+    expect(out).toContain('…');
+    expect(checkCopyrightViolations(out)).toEqual([]); // now inside the limit
+  });
+
+  it('leaves a compliant quote untouched', () => {
+    const text = 'The standard calls it "a consensus recommendation for maintained illuminance" in Section 4.';
+    expect(sanitizeQuotes(text)).toBe(text);
+  });
+
+  it('handles curly quotes and strips prohibited reproduction phrases', () => {
+    const curly = '“' + 'word '.repeat(30).trim() + '”';
+    const out = sanitizeQuotes(`Context. ${curly} All rights reserved.`);
+    expect(out).toContain('…');
+    expect(out.toLowerCase()).not.toContain('all rights reserved');
+  });
+
+  it('is null-safe', () => {
+    expect(sanitizeQuotes('')).toBe('');
   });
 });

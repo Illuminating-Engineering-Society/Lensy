@@ -25,6 +25,8 @@
     "src/lib/query-expander.*",
     "src/lib/ai-summary.*",
     "src/lib/embeddings.*",
+    "src/lib/references.*",
+    "src/lib/illuminance-fields.*",
     "src/types.ts",
     "worker-configuration.d.ts",
     "worker-env.d.ts"

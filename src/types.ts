@@ -242,6 +242,12 @@ export interface Excerpt {
   pageNumber: number | null;
   section: string | null;
   chunkType: string;
+  /**
+   * Page-targeted Lighting Library URL for THIS excerpt (client DO22: the
+   * "From the Standard" drop-down carries an "Open in Library" link per
+   * excerpt, not one link for the whole card).
+   */
+  vitriumLink?: string | null;
 }
 
 export interface RelatedApplication {
@@ -255,6 +261,20 @@ export interface RelatedApplication {
 
 export type ReferenceLink = { url: string; type: 'library' | 'doi' | 'url' } | null;
 
+/**
+ * One standard whose References section carries the same cited work as this
+ * reference result (client DO26.4). `url` opens that standard's References
+ * page in the Lighting Library — the closest indexed location to the cited
+ * item; in-body superscript reference markers are not indexed.
+ */
+export interface ReferenceMarker {
+  standard: string;
+  standardFull: string | null;
+  count: number;
+  pageNumber: number | null;
+  url: string | null;
+}
+
 export type ResultType = 'application' | 'excerpt' | 'reference';
 
 export interface SearchResult {
@@ -262,7 +282,20 @@ export interface SearchResult {
   application: FormattedApplication;
   relevanceScore: number;
   excerpt: Excerpt | null;
+  /**
+   * Up to EXCERPTS_PER_RESULT prose excerpts from the same standard, ranked
+   * page-near-first (client DO22). `excerpt` stays the best one for
+   * back-compatibility.
+   */
+  excerpts?: Excerpt[];
   citation: string;
+  /**
+   * The citation WITHOUT its ", p. N" tail, and the page on its own — the UI
+   * links the name to the front cover and the page to the internal reference
+   * (client DO18: one hyperlink covering both was confusing).
+   */
+  citationName?: string;
+  citationPage?: number | null;
   vitriumLink: string | null;
   /**
    * Front-of-document Lighting Library URL (no page fragment) — the UI links
@@ -272,15 +305,33 @@ export interface SearchResult {
   standardLink?: string | null;
   relatedApplications: RelatedApplication[];
   referenceLink?: ReferenceLink;
+  /** Standards whose References sections carry this same cited work (DO26.4). */
+  referenceMarkers?: ReferenceMarker[];
   isDeprecated?: boolean;
   supersededBy?: string | null;
   deprecationNotice?: string;
+}
+
+/** Which prompt the AI Guide ran (client DO24/DO25/DO26.5). */
+export type AIMode = 'guide' | 'comparison' | 'references';
+
+/** Editions involved in a version comparison, for the AI header advisory. */
+export interface ComparisonContext {
+  current: { id: string; name: string; url: string | null } | null;
+  deprecated: Array<{ id: string; name: string; url: string | null }>;
 }
 
 export interface AISummary {
   text: string;
   watermark: string | null;
   disclaimer: string;
+  /** Which prompt produced the text — drives how the UI frames it. */
+  mode?: AIMode;
+  /**
+   * Version-comparison header advisory (DO25): "…[old] is deprecated and has
+   * been replaced by the current [new]", with both editions hyperlinked.
+   */
+  comparison?: ComparisonContext;
   /**
    * True when the text is the no-model safe fallback produced because every
    * AI model attempt errored. Degraded summaries are never cached, so the
@@ -320,6 +371,12 @@ export interface SearchResponse {
   noStrongMatchMessage: string | null;
   results: SearchResult[];
   aiSummary: AISummary | null;
+  /**
+   * standard id / full designation → front-of-document Lighting Library URL,
+   * for every standard in this result set. The UI hyperlinks the standards the
+   * AI Guide names in its prose (client DO24).
+   */
+  standardLinks?: Record<string, string>;
   timestamp: string;
   cached?: boolean;
   _depDbg?: unknown;

@@ -22,7 +22,10 @@ const DATA_VERSION_KEY = 'cache:data-version';
 // Bump whenever the search pipeline changes what a cached response contains.
 // v4: full-title citations, content-type filters, footnote marks, reference
 //     results, referenceLink field.
-const SEARCH_CACHE_SCHEMA = 'v4';
+// v5: multi-excerpt results + split citation links + derived lighting zones +
+// mode-aware AI Guide (client feedback DO18–DO26). The bump also drops the
+// cached "here is a list of standards" AI fallbacks from the DO24 regression.
+const SEARCH_CACHE_SCHEMA = 'v5';
 
 function errMsg(err: unknown): string {
   return err instanceof Error ? err.message : String(err);

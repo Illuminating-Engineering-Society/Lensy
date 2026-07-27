@@ -101,6 +101,36 @@ export function validateCitation(text: string): { valid: boolean; issues: string
   return { valid: issues.length === 0, issues };
 }
 
+/** Straight and curly quote pairs a model may emit around a quoted passage. */
+const QUOTED_PASSAGE_RE = /(["“])([^"”“]{30,}?)(["”])/g;
+const PROHIBITED_PHRASES = ['all rights reserved', 'reproduced with permission', 'copyright ies'];
+
+/**
+ * Bring AI-generated text back inside the copyright limits instead of throwing
+ * the whole response away.
+ *
+ * Client feedback DO24: the AI Guide had stopped giving guidance and only
+ * listed the cited documents — that list IS the safe fallback, and a single
+ * over-long quote anywhere in an otherwise good answer was enough to trigger
+ * it. Trimming the offending passage preserves the guidance while still
+ * enforcing the ≤15-word rule.
+ *
+ * @returns the text with every quoted passage clipped to `maxWords` and any
+ *          prohibited reproduction phrase removed.
+ */
+export function sanitizeQuotes(text: string, maxWords = 15): string {
+  if (!text) return text;
+  let out = text.replace(QUOTED_PASSAGE_RE, (_match, open: string, inner: string, close: string) => {
+    const words = inner.trim().split(/\s+/);
+    if (words.length <= maxWords) return `${open}${inner}${close}`;
+    return `${open}${words.slice(0, maxWords).join(' ')}…${close}`;
+  });
+  for (const phrase of PROHIBITED_PHRASES) {
+    out = out.replace(new RegExp(`\\s*\\b${phrase}\\b[.,;]?`, 'gi'), '');
+  }
+  return out;
+}
+
 /**
  * Check AI-generated text for copyright violations.
  * Enforces: max 15 words per quoted passage; no prohibited reproduction phrases.
@@ -121,8 +151,7 @@ export function checkCopyrightViolations(text: string): CopyrightViolation[] {
   }
 
   // Check for prohibited reproduction phrases
-  const prohibited = ['all rights reserved', 'reproduced with permission', 'copyright ies'];
-  for (const phrase of prohibited) {
+  for (const phrase of PROHIBITED_PHRASES) {
     if (text.toLowerCase().includes(phrase)) {
       violations.push({ type: 'prohibited_phrase', detail: `Contains prohibited phrase: "${phrase}"` });
     }

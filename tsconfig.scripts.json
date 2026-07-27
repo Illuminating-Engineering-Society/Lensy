@@ -21,6 +21,8 @@
     "src/lib/table-extractor.*",
     "src/lib/chunker.*",
     "src/lib/applications-extractor.*",
+    "src/lib/references.*",
+    "src/lib/illuminance-fields.*",
     "src/types.ts"
   ],
   "exclude": ["node_modules", "dist", ".wrangler"]
