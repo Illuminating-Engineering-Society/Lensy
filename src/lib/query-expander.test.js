@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { splitMultiQuery, cleanQuery, expandQuery, prepareQueryForEmbedding, isReferenceQuery } from './query-expander';
+import {
+  splitMultiQuery, cleanQuery, expandQuery, prepareQueryForEmbedding, isReferenceQuery,
+  isVersionComparisonQuery, normalizeTypography,
+} from './query-expander';
 
 describe('query-expander', () => {
   it('splits comma-delimited multi-queries', () => {
@@ -62,5 +65,53 @@ describe('isReferenceQuery', () => {
     expect(isReferenceQuery('What are considerations for lighting parking garages?')).toBe(false);
     expect(isReferenceQuery('reference conditions during measurement')).toBe(false);
     expect(isReferenceQuery('')).toBe(false);
+  });
+});
+
+// ─── Pasted queries must behave like typed ones ──────────────────────────────
+// Found in the production search log (2026-07-27): six searches for
+// "What’s new in the latest version of RP-8?" — pasted from the feedback
+// document, so the apostrophe is U+2019 — were never treated as version
+// comparisons. The reviewer evaluating the feature is precisely the person who
+// pastes rather than types.
+
+describe('normalizeTypography', () => {
+  it('folds smart apostrophes, quotes, dashes and NBSP to ASCII', () => {
+    expect(normalizeTypography('What’s new')).toBe("What's new");
+    expect(normalizeTypography('“What’s new?”')).toBe('"What\'s new?"');
+    expect(normalizeTypography('RP–8 and RP‑8 and RP—8')).toBe('RP-8 and RP-8 and RP-8');
+    expect(normalizeTypography('RP-8\u00a0lighting')).toBe('RP-8 lighting');
+  });
+
+  it('leaves plain ASCII untouched and is null-safe', () => {
+    expect(normalizeTypography("What's new in RP-8?")).toBe("What's new in RP-8?");
+    expect(normalizeTypography('')).toBe('');
+    expect(normalizeTypography(null)).toBe('');
+  });
+});
+
+describe('version-comparison intent survives pasted punctuation', () => {
+  // The exact strings recorded in the search log.
+  const pasted = [
+    'What’s new in the latest version of RP-8?',
+    '“What’s new in the latest version of RP-8?',
+    'What’s different in RP-6-25?',
+  ];
+
+  it('recognizes every pasted variant', () => {
+    for (const q of pasted) {
+      expect(isVersionComparisonQuery(q), q).toBe(true);
+    }
+  });
+
+  it('still recognizes the typed variants', () => {
+    expect(isVersionComparisonQuery("What's new in the latest version of RP-8?")).toBe(true);
+    expect(isVersionComparisonQuery('What is new in RP-8?')).toBe(true);
+    expect(isVersionComparisonQuery('what changed in DG-17?')).toBe(true);
+  });
+
+  it('does not fire on ordinary searches', () => {
+    expect(isVersionComparisonQuery('fitting room')).toBe(false);
+    expect(isVersionComparisonQuery('new construction lighting for a church')).toBe(false);
   });
 });

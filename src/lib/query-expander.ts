@@ -205,12 +205,34 @@ export function splitMultiQuery(query: string): string[] {
  * Strip natural language question phrasing to extract the core topic.
  * "how bright should a spa be?" → "spa"
  */
+/**
+ * Fold typographic punctuation to ASCII before any pattern matching.
+ *
+ * Found in the production search log (2026-07-27): six searches for
+ * "What’s new in the latest version of RP-8?" — pasted from a Word/PDF document,
+ * so the apostrophe is U+2019 — were NOT recognized as version comparisons,
+ * because every intent pattern spells the contraction with a straight quote.
+ * The reviewer evaluating the feature was the most likely person to paste rather
+ * than type, so the one query shape that mattered most was the one that failed.
+ *
+ * Smart dashes matter just as much: a pasted "RP‑8" (U+2011) or "RP–8" (en dash)
+ * defeats the standard-id patterns that scope a comparison to its family.
+ */
+export function normalizeTypography(query: string): string {
+  return String(query || '')
+    .replace(/[‘’‚‛′]/g, "'")   // ‘ ’ ‚ ‛ ′
+    .replace(/[“”„‟″]/g, '"')   // “ ” „ ‟ ″
+    .replace(/[‐‑‒–—―−]/g, '-') // ‐ ‑ ‒ – — ― −
+    .replace(/ /g, ' ');                            // non-breaking space
+}
+
 export function cleanQuery(query: string): string {
-  let q = query.trim();
+  const original = normalizeTypography(query).trim();
+  let q = original;
 
   for (const pattern of QUESTION_PATTERNS) {
     q = q.replace(pattern, '');
-    if (q !== query.trim()) break; // stop after first match
+    if (q !== original) break; // stop after first match
   }
 
   for (const pattern of TRAILING_NOISE) {
@@ -220,7 +242,7 @@ export function cleanQuery(query: string): string {
   // Strip leading articles left over
   q = q.replace(/^(a|an|the)\s+/i, '').trim();
 
-  return q || query.trim(); // fallback to original if over-stripped
+  return q || original; // fallback to original if over-stripped
 }
 
 // ─── Query Expansion ──────────────────────────────────────────────────────────
@@ -289,7 +311,8 @@ const VERSION_COMPARE_PATTERNS = [
  */
 export function isVersionComparisonQuery(query: string): boolean {
   if (!query) return false;
-  return VERSION_COMPARE_PATTERNS.some(re => re.test(query));
+  // Normalize first: a pasted "What’s new …" must behave like a typed one.
+  return VERSION_COMPARE_PATTERNS.some(re => re.test(normalizeTypography(query)));
 }
 
 // ─── Reference-Seeking Intent Detection ───────────────────────────────────────
@@ -319,7 +342,7 @@ const REFERENCE_QUERY_PATTERNS = [
  */
 export function isReferenceQuery(query: string): boolean {
   if (!query) return false;
-  return REFERENCE_QUERY_PATTERNS.some(re => re.test(query));
+  return REFERENCE_QUERY_PATTERNS.some(re => re.test(normalizeTypography(query)));
 }
 
 function escapeRegex(str: string): string {

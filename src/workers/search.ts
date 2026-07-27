@@ -62,7 +62,10 @@
  *    }
  */
 
-import { prepareQueryForEmbedding, splitMultiQuery, cleanQuery, isVersionComparisonQuery, isReferenceQuery } from '../lib/query-expander';
+import {
+  prepareQueryForEmbedding, splitMultiQuery, cleanQuery,
+  isVersionComparisonQuery, isReferenceQuery, normalizeTypography,
+} from '../lib/query-expander';
 import { generateResponse } from '../lib/ai-summary';
 import { formatCitation, composeStandardName } from '../lib/citations';
 import { looksLikeFormalReference, referenceCitationKey } from '../lib/references.js';
@@ -2063,8 +2066,11 @@ function buildVectorFilter(filters: SearchFilters): Record<string, string | bool
  *
  * Caller-supplied filters take precedence (see mergedFilters in handleSearch).
  */
-function inferFiltersFromQuery(query: string, forceComparison = false): SearchFilters {
+export function inferFiltersFromQuery(rawQuery: string, forceComparison = false): SearchFilters {
   const out: SearchFilters = {};
+  // Fold smart punctuation first: a pasted "RP–8" (en dash) or "RP‑8"
+  // (non-breaking hyphen) must still scope the comparison to the RP-8 family.
+  const query = normalizeTypography(rawQuery);
 
   const lzMatch = /\b(?:lz)\s*([0-4])\b/i.exec(query);
   if (lzMatch) out.lighting_zone = `LZ${lzMatch[1]}`;
