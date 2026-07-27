@@ -1537,7 +1537,7 @@ async function textFallback(db: D1Database, query: string, filters: SearchFilter
 
 // ─── Result Builder ───────────────────────────────────────────────────────────
 
-function buildResult(app: ApplicationRow, score: number, chunkMeta: Partial<VectorMetadata> | undefined, excerptIndex: ExcerptIndex, linkCtx: LinkCtx): SearchResult {
+export function buildResult(app: ApplicationRow, score: number, chunkMeta: Partial<VectorMetadata> | undefined, excerptIndex: ExcerptIndex, linkCtx: LinkCtx): SearchResult {
   const formatted = formatApplication(app);
   // Pass the application's own page (where its table row lives), not the
   // excerpt's page — the citation should point at the source row, while
@@ -1897,7 +1897,7 @@ function applyUnits(results: SearchResult[], units: string): SearchResult[] {
 // ─── Chunk Fallback Builder ───────────────────────────────────────────────────
 // When no structured application records exist yet, surface PDF chunks directly.
 
-function buildChunkResults(chunkMatches: VMatch[], linkCtx: LinkCtx = {}, { perStandard = 1 }: { perStandard?: number } = {}): SearchResult[] {
+export function buildChunkResults(chunkMatches: VMatch[], linkCtx: LinkCtx = {}, { perStandard = 1 }: { perStandard?: number } = {}): SearchResult[] {
   // Group by standard_id. Body-excerpt mode keeps the single best chunk per
   // standard; references mode keeps EVERY entry (perStandard: Infinity) —
   // each bibliography entry is its own result.

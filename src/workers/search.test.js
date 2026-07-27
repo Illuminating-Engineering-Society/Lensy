@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   normalizeContentTypes, buildReferenceLink, curatedStandardInfo,
-  deriveLightingZone, reserveBodySlots, buildComparisonContext, matchesStandardScope,
+  deriveLightingZone, reserveBodySlots, buildComparisonContext, matchesStandardScope, buildResult, buildChunkResults,
 } from './search';
 
 // ─── Content-type normalization ───────────────────────────────────────────────
@@ -268,5 +268,137 @@ describe('matchesStandardScope', () => {
     const f = { standard: 'RP-8-25+E2' };
     expect(matchesStandardScope(f, 'RP-8-25+E2')).toBe(true);
     expect(matchesStandardScope(f, 'RP-8-22')).toBe(false);
+  });
+});
+
+// ─── The wire contract buildResult() actually emits (DO18 / DO20 / DO21 / DO22)
+// buildResult is pure — no bindings — so the fields the UI depends on can be
+// asserted against real code instead of read off the source.
+
+describe('buildResult wire contract', () => {
+  const STD_INDEX = new Map([
+    ['RP-2-20+E1', {
+      webUrl: 'https://view.protectedpdf.com/RP2', status: 'Active',
+      title: 'Recommended Practice: Lighting Retail Spaces',
+      fullDesignation: 'ANSI/IES RP-2-20+E1', docId: null, supersededBy: null,
+    }],
+    ['RP-43-25', {
+      webUrl: 'https://view.protectedpdf.com/RP43', status: 'Active',
+      title: 'Recommended Practice: Lighting Design for Outdoor Pedestrian Applications',
+      fullDesignation: 'ANSI/IES RP-43-25', docId: null, supersededBy: null,
+    }],
+  ]);
+  const linkCtx = { standardsIndex: STD_INDEX };
+
+  // An RP-2 curfew row: the zone lives in the HIERARCHY, and the row parser has
+  // mis-tagged Controls from the word "curfew" inside that very label.
+  const rp2Row = {
+    code: 'RP220E1_0154',
+    Standard: 'RP-2-20+E1', Standard_Full: 'ANSI/IES RP-2-20+E1',
+    Table_Ref: 'Table A-2', Row_Ref: 'Row 154', Page_Number: 72,
+    App: 'Centers, Outdoors', App_s1: 'Ramps, Stairs, and Steps',
+    App_s2: 'High activity', App_s3: 'Lz2 (and Lz3 curfew)',
+    Indoor_Outdoor: 'Outdoor', Area_or_Task: 'Area',
+    Hor_Lux: 6, Hor_Fc: 0.6, Hor_Height_m: 1.52, Hor_Avg_Max_Min: 'Avg',
+    Lighting_Zone: null, Curfew_Dimming: null,
+    Controls_Required: 'curfew', Max_Glare_Rating: '3%', Max_Uplight: null, Spectrum_Guidance: null,
+    TM24_Eligible: 0,
+  };
+
+  const excerptIndex = {
+    'RP-2-20+E1': Array.from({ length: 14 }, (_, i) => ({
+      standard_id: 'RP-2-20+E1',
+      excerpt_text: `Passage ${i} about pedestrian arcades, outdoor merchandising and the visual `
+        + `considerations that apply where shoppers move between areas of differing luminance.`,
+      page_number: 70 + i, section: `D.${i}`, chunk_type: 'text', score: 0.7 - i * 0.01,
+    })),
+  };
+
+  it('DO18: splits the citation into name and page', () => {
+    const r = buildResult(rp2Row, 0.6, undefined, {}, linkCtx);
+    expect(r.citation).toContain('p. 72');
+    expect(r.citationName).not.toContain('p. 72');       // the cover link's text
+    expect(r.citationName).toContain('ANSI/IES RP-2-20+E1 Recommended Practice: Lighting Retail Spaces');
+    expect(r.citationPage).toBe(72);
+    expect(r.standardLink).toBe('https://view.protectedpdf.com/RP2');   // no fragment
+    expect(r.vitriumLink).toBe('https://view.protectedpdf.com/RP2#page=72');
+  });
+
+  it('DO20: derives the lighting zone from the hierarchy label, with its curfew', () => {
+    const { outdoor } = buildResult(rp2Row, 0.6, undefined, {}, linkCtx).application;
+    expect(outdoor.lightingZone).toBe('Lz2 (and Lz3 curfew)'); // as printed
+    expect(outdoor.curfewDimming).toBe('Lz3 curfew');
+  });
+
+  it('DO21: suppresses Controls/Glare outside standards that print those columns', () => {
+    const { outdoor } = buildResult(rp2Row, 0.6, undefined, {}, linkCtx).application;
+    expect(outdoor.controlsRequired).toBeNull();  // "curfew" misread — never shown
+    expect(outdoor.maxGlareRating).toBeNull();    // any stray percentage — never shown
+
+    const rp43Row = { ...rp2Row, Standard: 'RP-43-25', Standard_Full: 'ANSI/IES RP-43-25' };
+    const rp43 = buildResult(rp43Row, 0.6, undefined, {}, linkCtx).application;
+    expect(rp43.outdoor.controlsRequired).toBe('curfew');
+    expect(rp43.outdoor.maxGlareRating).toBe('3%');
+  });
+
+  it('DO22: returns up to 10 excerpts, each linked to its own page', () => {
+    const r = buildResult(rp2Row, 0.6, undefined, excerptIndex, linkCtx);
+    expect(r.excerpts.length).toBe(10);
+    expect(r.excerpt).toEqual(r.excerpts[0]);   // back-compat single excerpt
+    for (const e of r.excerpts) {
+      expect(e.vitriumLink).toBe(`https://view.protectedpdf.com/RP2#page=${e.pageNumber}`);
+    }
+    // Page-near-first: the row is on p. 72, so p. 70–77 come before p. 83.
+    expect(Math.abs(r.excerpts[0].pageNumber - 72)).toBeLessThanOrEqual(5);
+    expect(new Set(r.excerpts.map(e => e.pageNumber)).size).toBe(10); // no duplicates
+  });
+
+  it('DO22: a standard with no chunks yields no excerpts instead of failing', () => {
+    const r = buildResult({ ...rp2Row, Standard: 'RP-43-25' }, 0.6, undefined, excerptIndex, linkCtx);
+    expect(r.excerpts).toEqual([]);
+    expect(r.excerpt).toBeNull();
+  });
+});
+
+// ─── DO23: body chunks per standard (the other half of the share fix) ────────
+// Was hard-coded to ONE excerpt per standard, so a broad conceptual query
+// returned a single document-body result no matter how much prose matched.
+
+describe('buildChunkResults per-standard cap', () => {
+  const linkCtx = {
+    standardsIndex: new Map([
+      ['RP-10-20+E2', {
+        webUrl: 'https://view.protectedpdf.com/RP10', status: 'Active',
+        title: 'Recommended Practice: Lighting Common Applications',
+        fullDesignation: 'ANSI/IES RP-10-20+E2', docId: null, supersededBy: null,
+      }],
+    ]),
+  };
+  const matches = Array.from({ length: 6 }, (_, i) => ({
+    id: `RP-10-20+E2-chunk-${i}`,
+    score: 0.7 - i * 0.02,
+    metadata: {
+      standard_id: 'RP-10-20+E2', chunk_type: 'text', page_number: 20 + i,
+      section: `3.${i}`, excerpt_text: `Transition space prose ${i}.`,
+    },
+  }));
+
+  it('keeps the requested number of excerpts per standard, best first', () => {
+    const three = buildChunkResults(matches, linkCtx, { perStandard: 3 });
+    expect(three.length).toBe(3);
+    expect(three[0].relevanceScore).toBeGreaterThan(three[2].relevanceScore);
+    expect(three.every(r => r.resultType === 'excerpt')).toBe(true);
+  });
+
+  it('still defaults to one per standard when no cap is given', () => {
+    expect(buildChunkResults(matches, linkCtx).length).toBe(1);
+  });
+
+  it('carries the split citation and a page-targeted link on chunk results', () => {
+    const [r] = buildChunkResults(matches, linkCtx, { perStandard: 1 });
+    expect(r.citationName).toBe('ANSI/IES RP-10-20+E2 Recommended Practice: Lighting Common Applications');
+    expect(r.citationPage).toBe(20);
+    expect(r.standardLink).toBe('https://view.protectedpdf.com/RP10');
+    expect(r.excerpts[0].vitriumLink).toBe('https://view.protectedpdf.com/RP10#page=20');
   });
 });
