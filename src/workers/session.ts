@@ -5,7 +5,7 @@
  *                             the whole UI on this response.
  *   POST /api/auth/dev-login  LOCAL DEV ONLY (404 in production): mints an
  *                             ies_auth cookie with the local .dev.vars secrets
- *                             so the flow is testable without Wicket/the IdP.
+ *                             so the flow is testable without running the IdP.
  *
  * Plus requireReadAccess(): the server-side gate in front of the read API
  * (/api/search etc.) — a valid ies_auth cookie that passes the access
@@ -14,7 +14,7 @@
 
 import { checkAuth } from '../lib/auth';
 import {
-  getSsoUser,
+  getSsoState,
   decideAccess,
   buildLoginUrl,
   buildLogoutUrl,
@@ -62,14 +62,29 @@ async function recordLogin(
 // ─── GET /api/auth/me ─────────────────────────────────────────────────────────
 
 export async function handleAuthMe(request: Request, env: Env): Promise<Response> {
-  const user = await getSsoUser(request, env);
-  if (!user) {
+  const sso = await getSsoState(request, env);
+
+  // Secrets out of step with the IdP: the cookie is real but unreadable here,
+  // so /login would hand back the same one forever. Report it as a 503 config
+  // fault (the gate shows an explicit message) instead of looping.
+  if (sso.state === 'misconfigured') {
+    console.error('sso_misconfigured', { detail: sso.detail });
+    return json({
+      authenticated: false,
+      authorized: false,
+      reason: 'sso_misconfigured',
+      detail: sso.detail,
+    }, 503);
+  }
+
+  if (sso.state === 'anonymous') {
     return json({
       authenticated: false,
       loginUrl: buildLoginUrl(env, request.url),
     }, 401);
   }
 
+  const user = sso.user;
   const row = await findInvite(env, user.email);
   const decision = decideAccess(user, row, allowMembersWithoutInvite(env), Date.now());
 
@@ -96,6 +111,8 @@ export async function handleAuthMe(request: Request, env: Env): Promise<Response
       isMember: user.isMember,
       memberTier: user.memberTier ?? null,
       role: decision.role,
+      // IdP-level role slugs, informational — Lensy access comes from `role`.
+      idpRoles: user.roles,
     },
     logoutUrl: buildLogoutUrl(env, request.url),
   });
@@ -118,14 +135,19 @@ export async function requireReadAccess(request: Request, env: Env): Promise<Res
     if (viaSecret.ok) return null;
   }
 
-  const user = await getSsoUser(request, env);
-  if (!user) {
+  const sso = await getSsoState(request, env);
+  if (sso.state === 'misconfigured') {
+    console.error('sso_misconfigured', { detail: sso.detail });
+    return json({ error: 'sso_misconfigured', detail: sso.detail }, 503);
+  }
+  if (sso.state === 'anonymous') {
     return json({
       error: 'authentication_required',
       loginUrl: buildLoginUrl(env, request.url),
     }, 401);
   }
 
+  const user = sso.user;
   const row = await findInvite(env, user.email);
   const decision = decideAccess(user, row, allowMembersWithoutInvite(env), Date.now());
   if (!decision.authorized) {
@@ -153,21 +175,31 @@ export async function handleDevLogin(request: Request, env: Env): Promise<Respon
 
   const email = typeof body.email === 'string' && body.email.trim()
     ? body.email.trim().toLowerCase() : 'dev@example.com';
+  const isMember = body.isMember === true;
   const nowSec = Math.floor(Date.now() / 1000);
   const user: SsoUser = {
     sub: typeof body.sub === 'string' && body.sub ? body.sub : `dev-${crypto.randomUUID()}`,
     email,
     firstName: typeof body.firstName === 'string' ? body.firstName : 'Dev',
     lastName: typeof body.lastName === 'string' ? body.lastName : 'User',
-    isMember: body.isMember === true,
-    memberTier: null,
+    isMember,
+    memberTier: typeof body.memberTier === 'string' ? body.memberTier : null,
+    // Mirror what the IdP actually mints: it always sends `roles`, and derives
+    // "member" from the directory. Keeping the shapes identical means local dev
+    // exercises the same parse path as production.
+    roles: Array.isArray(body.roles)
+      ? body.roles.filter((r): r is string => typeof r === 'string').map((r) => r.toLowerCase())
+      : isMember ? ['member'] : [],
     iat: nowSec,
     exp: nowSec + 8 * 3600,
     sid: `dev-${crypto.randomUUID()}`,
   };
 
   const value = await buildAuthCookieValue(user, encKey, sigKey);
-  const response = json({ ok: true, user: { email: user.email, isMember: user.isMember } });
+  const response = json({
+    ok: true,
+    user: { email: user.email, isMember: user.isMember, roles: user.roles },
+  });
   // No Domain attribute → host-only cookie, works on localhost.
   response.headers.append(
     'Set-Cookie',

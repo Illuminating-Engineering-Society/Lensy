@@ -29,7 +29,20 @@
 # the AuthIES Worker's (they decrypt/verify the cookie it mints):
 #   wrangler secret put SESSION_ENCRYPTION_KEY
 #   wrangler secret put COOKIE_SIGNING_SECRET
-# Without them every SSO check fails → nobody can log in (staff bearer still works).
+# Without them /api/auth/me answers 503 sso_misconfigured and the gate says so
+# outright — it does NOT loop through login (staff bearer still works). Same
+# answer if either secret is rotated on only one side: rotate both together.
+#
+# AuthIES secrets are PER-ENVIRONMENT. auth-staging.ies.org and auth.ies.org
+# mint cookies with different keys, and both scope the cookie to `.ies.org`, so
+# a Lensy deployment can only ever verify ONE of them — the pair it holds.
+# To point a Lensy deployment at the staging IdP, override the var below:
+#   AUTH_IDP_BASE_URL = "https://auth-staging.ies.org"
+# and load that environment's secret pair. Staging Lensy must also be listed in
+# the `lensy` SP's allowed_redirect_uris (AuthIES scripts/seed-sps.ts) or the
+# IdP rejects the redirect. A separate [env.staging] block here would need its
+# own D1/R2/KV/Vectorize resources (wrangler does not inherit bindings into
+# named environments) — create them first, then add the block.
 
 name = "lensy"
 main = "src/workers/api.ts"
@@ -88,7 +101,8 @@ VITRIUM_API_URL = "https://api.vitrium.com"
 # scripts/sync-metadata.js --csv from Vitrium's document export.
 ENVIRONMENT = "production"
 # IES Auth IDP (AuthIES Worker) — where /login and /logout redirect and where
-# the ies_auth cookie comes from.
+# the ies_auth cookie comes from. It serves its own first-party login form
+# (AUTH_MODE=native); Lensy never sees credentials, only the resulting cookie.
 AUTH_IDP_BASE_URL = "https://auth.ies.org"
 # "false" → ONLY emails in invited_users may enter. Default (anything else):
 # IES members (isMember in the cookie) get in without an invite; the

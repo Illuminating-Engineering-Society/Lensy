@@ -2,6 +2,10 @@ import { describe, it, expect } from 'vitest';
 import {
   buildAuthCookieValue,
   parseAuthCookieValue,
+  verifyAuthCookieValue,
+  isSecretMismatch,
+  resolveReturnTo,
+  buildLoginUrl,
   decideAccess,
 } from './sso';
 
@@ -9,6 +13,7 @@ const ENC_KEY = 'test-session-encryption-key';
 const SIG_KEY = 'test-cookie-signing-secret';
 const NOW = Date.parse('2026-07-26T12:00:00Z');
 
+// Mirrors what AuthIES sessionToCookiePayload() emits today, `roles` included.
 function payload(overrides = {}) {
   const nowSec = Math.floor(NOW / 1000);
   return {
@@ -18,6 +23,7 @@ function payload(overrides = {}) {
     lastName: 'Ruiz',
     isMember: true,
     memberTier: 'Individual',
+    roles: ['member'],
     iat: nowSec,
     exp: nowSec + 3600,
     sid: 'sid-abc',
@@ -31,6 +37,29 @@ describe('ies_auth cookie round-trip (must mirror AuthIES crypto.ts)', () => {
     expect(value.split('.')).toHaveLength(3);
     const parsed = await parseAuthCookieValue(value, ENC_KEY, SIG_KEY, NOW);
     expect(parsed).toEqual(payload());
+  });
+
+  it('carries the IdP roles array through verbatim', async () => {
+    const roles = ['administrator', 'member', 'staff'];
+    const value = await buildAuthCookieValue(payload({ roles }), ENC_KEY, SIG_KEY);
+    const parsed = await parseAuthCookieValue(value, ENC_KEY, SIG_KEY, NOW);
+    expect(parsed.roles).toEqual(roles);
+  });
+
+  it('normalizes roles when the IdP omits or mangles the field', async () => {
+    const cases = [
+      [{}, []],                                   // cookie minted before roles existed
+      [{ roles: null }, []],
+      [{ roles: 'administrator' }, []],           // not an array → ignored
+      [{ roles: ['member', 7, null] }, ['member']], // non-strings dropped
+    ];
+    for (const [overrides, expected] of cases) {
+      const raw = payload();
+      delete raw.roles;
+      const value = await buildAuthCookieValue({ ...raw, ...overrides }, ENC_KEY, SIG_KEY);
+      const parsed = await parseAuthCookieValue(value, ENC_KEY, SIG_KEY, NOW);
+      expect(parsed.roles).toEqual(expected);
+    }
   });
 
   it('rejects an expired cookie', async () => {
@@ -68,6 +97,95 @@ describe('ies_auth cookie round-trip (must mirror AuthIES crypto.ts)', () => {
   });
 });
 
+// A rotated secret and a lapsed session both fail to parse, but they need
+// opposite handling: re-login fixes one and loops forever on the other.
+describe('verifyAuthCookieValue failure classification', () => {
+  async function failureOf(value, encKey = ENC_KEY, sigKey = SIG_KEY) {
+    const result = await verifyAuthCookieValue(value, encKey, sigKey, NOW);
+    expect(result.ok).toBe(false);
+    return result.failure;
+  }
+
+  it('flags an out-of-step SESSION_ENCRYPTION_KEY as a secret mismatch', async () => {
+    const value = await buildAuthCookieValue(payload(), 'rotated-enc-key', SIG_KEY);
+    const failure = await failureOf(value);
+    expect(failure).toBe('undecryptable');
+    expect(isSecretMismatch(failure)).toBe(true);
+  });
+
+  it('flags an out-of-step COOKIE_SIGNING_SECRET as a secret mismatch', async () => {
+    const value = await buildAuthCookieValue(payload(), ENC_KEY, 'rotated-sig-secret');
+    const failure = await failureOf(value);
+    expect(failure).toBe('bad_signature');
+    expect(isSecretMismatch(failure)).toBe(true);
+  });
+
+  it('treats an expired session as ordinary, not a misconfiguration', async () => {
+    const nowSec = Math.floor(NOW / 1000);
+    const value = await buildAuthCookieValue(payload({ exp: nowSec - 1 }), ENC_KEY, SIG_KEY);
+    const failure = await failureOf(value);
+    expect(failure).toBe('expired');
+    expect(isSecretMismatch(failure)).toBe(false);
+  });
+
+  it('treats junk cookies as malformed, not a misconfiguration', async () => {
+    for (const junk of ['', 'garbage', 'a.b', 'a.b.c']) {
+      const failure = await failureOf(junk);
+      expect(failure).toBe('malformed');
+      expect(isSecretMismatch(failure)).toBe(false);
+    }
+  });
+
+  it('flags a signed cookie whose payload lost required fields', async () => {
+    const raw = payload();
+    delete raw.sub;
+    const value = await buildAuthCookieValue(raw, ENC_KEY, SIG_KEY);
+    const failure = await failureOf(value);
+    expect(failure).toBe('bad_payload');
+    expect(isSecretMismatch(failure)).toBe(true);
+  });
+});
+
+// A deep link must survive the IdP round-trip, but redirect_uri is
+// caller-influenced — it may never leave lensy.ies.org.
+describe('resolveReturnTo / buildLoginUrl', () => {
+  const ORIGIN = 'https://lensy.ies.org';
+
+  it('honours an explicit same-origin returnTo path', () => {
+    expect(resolveReturnTo(`${ORIGIN}/api/auth/me?returnTo=%2Fprojects.html`))
+      .toBe(`${ORIGIN}/projects.html`);
+    expect(resolveReturnTo(`${ORIGIN}/api/auth/me?returnTo=%2Fprojects.html%3Fid%3D7`))
+      .toBe(`${ORIGIN}/projects.html?id=7`);
+  });
+
+  it('refuses off-site and scheme-bearing returnTo values', () => {
+    const hostile = [
+      'https%3A%2F%2Fevil.example%2Fx',   // absolute URL
+      '%2F%2Fevil.example%2Fx',           // protocol-relative
+      '%5C%5Cevil.example',               // backslash host
+      'projects.html',                    // not rooted
+    ];
+    for (const value of hostile) {
+      expect(resolveReturnTo(`${ORIGIN}/api/auth/me?returnTo=${value}`)).toBe(`${ORIGIN}/`);
+    }
+  });
+
+  it('falls back to the requested page, or "/" for API and auth routes', () => {
+    expect(resolveReturnTo(`${ORIGIN}/projects.html`)).toBe(`${ORIGIN}/projects.html`);
+    expect(resolveReturnTo(`${ORIGIN}/api/search`)).toBe(`${ORIGIN}/`);
+    expect(resolveReturnTo(`${ORIGIN}/login`)).toBe(`${ORIGIN}/`);
+    expect(resolveReturnTo(`${ORIGIN}/logout`)).toBe(`${ORIGIN}/`);
+  });
+
+  it('builds the IdP login URL with sp=lensy and an encoded redirect_uri', () => {
+    const env = { AUTH_IDP_BASE_URL: 'https://auth.ies.org' };
+    expect(buildLoginUrl(env, `${ORIGIN}/api/auth/me?returnTo=%2Fprojects.html`)).toBe(
+      'https://auth.ies.org/login?sp=lensy&redirect_uri=' +
+        encodeURIComponent('https://lensy.ies.org/projects.html'),
+    );
+  });
+});
+
 describe('decideAccess', () => {
   const member = payload({ isMember: true });
   const guest = payload({ isMember: false, email: 'guest@example.com' });
@@ -96,5 +214,20 @@ describe('decideAccess', () => {
     expect(decideAccess(member, null, true, NOW)).toEqual({ authorized: true, role: 'member', firstLogin: false });
     expect(decideAccess(member, null, false, NOW)).toEqual({ authorized: false, reason: 'not_invited', firstLogin: false });
     expect(decideAccess(guest, null, true, NOW)).toEqual({ authorized: false, reason: 'not_invited', firstLogin: false });
+  });
+
+  // An IdP-wide administrator is not a Lensy user: Lensy roles come from
+  // invited_users, so the cookie's roles array must not widen access.
+  it('ignores IdP roles — an IdP administrator still needs an invite', () => {
+    const idpAdmin = payload({
+      isMember: false,
+      email: 'staffer@ies.org',
+      roles: ['administrator', 'staff'],
+    });
+    expect(decideAccess(idpAdmin, null, true, NOW)).toEqual({
+      authorized: false, reason: 'not_invited', firstLogin: false,
+    });
+    const row = { status: 'revoked', expires_at: null, role: 'admin', person_uuid: null };
+    expect(decideAccess(idpAdmin, row, true, NOW).authorized).toBe(false);
   });
 });

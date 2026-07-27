@@ -5,6 +5,19 @@
  * sets the shared `ies_auth` cookie on `.ies.org`, and lensy.ies.org verifies
  * and decrypts it here — no OAuth round-trips, no token storage.
  *
+ * AuthIES now runs NATIVE auth (`AUTH_MODE=native`): the IdP serves its own
+ * login form and checks a PBKDF2 hash in its D1 user directory. The old Wicket
+ * CAS hand-off is a rollback-only path. Nothing in the cookie contract changed
+ * (AuthIES plan §10, "Impact on Service Providers: none"), but two things did:
+ *
+ *  - the payload now carries `roles` (lowercase IdP role slugs from the
+ *    directory, e.g. ["administrator","member"]) — modelled below, surfaced by
+ *    /api/auth/me, and deliberately NOT used to grant Lensy access;
+ *  - every pre-existing IES account starts `pending` and must set a password
+ *    from an emailed link before it can ever produce an ies_auth cookie. Such
+ *    users reach Lensy as plain anonymous visitors, so the gate must invite
+ *    them to sign in rather than report an error.
+ *
  * Cookie scheme (MUST stay byte-identical to AuthIES src/lib/crypto.ts):
  *   value     = {b64url(iv)}.{b64url(AES-256-GCM ciphertext+tag)}.{b64url(HMAC)}
  *   AES key   = SHA-256(SESSION_ENCRYPTION_KEY)          (32 bytes)
@@ -24,12 +37,23 @@ export const AUTH_COOKIE_NAME = 'ies_auth';
 
 /** Payload inside ies_auth (AuthIES types.ts AuthCookiePayload). */
 export interface SsoUser {
-  sub: string; // Wicket personUuid
+  /**
+   * AuthIES `users.person_uuid`: the Wicket UUID for accounts imported from
+   * Wicket, a freshly generated UUID for IdP-local accounts. Stable per
+   * account either way — safe to persist as invited_users.person_uuid.
+   */
+  sub: string;
   email: string;
   firstName: string;
   lastName: string;
   isMember: boolean;
   memberTier?: string | null;
+  /**
+   * IdP role slugs, normalized lowercase. Always an array after parsing (`[]`
+   * for cookies minted before AuthIES added the field). Informational for
+   * Lensy: entry is decided by decideAccess() below, not by these.
+   */
+  roles: string[];
   exp: number; // unix seconds
   iat: number;
   sid: string; // IdP session id
@@ -90,46 +114,111 @@ export async function buildAuthCookieValue(
   return `${enc}.${b64urlEncode(sig)}`;
 }
 
-/** Verify HMAC, decrypt, validate shape + expiry. Null on ANY failure. */
+/**
+ * Why a cookie was rejected. The split matters operationally:
+ *
+ *  - `expired` / `malformed` are normal — a session that simply ran out, or a
+ *    stale/truncated cookie. The visitor is treated as anonymous and offered
+ *    sign-in.
+ *  - `bad_signature` / `undecryptable` / `bad_payload` mean this Worker and the
+ *    IdP disagree about the secrets (a rotation applied on one side only). The
+ *    cookie is valid to the IdP, so bouncing the user to /login just hands the
+ *    same unreadable cookie back — an infinite loop. These surface as an
+ *    explicit configuration error instead.
+ */
+export type CookieFailure =
+  | 'malformed'
+  | 'bad_signature'
+  | 'undecryptable'
+  | 'bad_payload'
+  | 'expired';
+
+export type CookieResult =
+  | { ok: true; user: SsoUser }
+  | { ok: false; failure: CookieFailure };
+
+/** True when the failure means "secrets don't match the IdP", not "no session". */
+export function isSecretMismatch(failure: CookieFailure): boolean {
+  return failure === 'bad_signature' || failure === 'undecryptable' || failure === 'bad_payload';
+}
+
+/** Verify HMAC, decrypt, validate shape + expiry, reporting why on failure. */
+export async function verifyAuthCookieValue(
+  value: string,
+  encryptionKey: string,
+  signingSecret: string,
+  nowMs: number,
+): Promise<CookieResult> {
+  const parts = value.split('.');
+  if (parts.length !== 3 || !parts[0] || !parts[1] || !parts[2]) {
+    return { ok: false, failure: 'malformed' };
+  }
+  const enc = `${parts[0]}.${parts[1]}`;
+
+  let signatureValid: boolean;
+  try {
+    const hmacKey = await importHmacKey(signingSecret);
+    signatureValid = await crypto.subtle.verify(
+      'HMAC', hmacKey, b64urlDecode(parts[2]), encoder.encode(enc),
+    );
+  } catch {
+    // Non-base64url signature segment — junk, not a key disagreement.
+    return { ok: false, failure: 'malformed' };
+  }
+  if (!signatureValid) return { ok: false, failure: 'bad_signature' };
+
+  // Past this point the HMAC matched, so COOKIE_SIGNING_SECRET agrees and the
+  // cookie really came from the IdP: any further failure is our own config.
+  let payload: unknown;
+  try {
+    const aesKey = await deriveAesKey(encryptionKey);
+    const plaintext = await crypto.subtle.decrypt(
+      { name: 'AES-GCM', iv: b64urlDecode(parts[0]) }, aesKey, b64urlDecode(parts[1]),
+    );
+    payload = JSON.parse(decoder.decode(plaintext));
+  } catch {
+    return { ok: false, failure: 'undecryptable' };
+  }
+
+  const user = toSsoUser(payload);
+  if (!user) return { ok: false, failure: 'bad_payload' };
+  if (user.exp <= Math.floor(nowMs / 1000)) return { ok: false, failure: 'expired' };
+  return { ok: true, user };
+}
+
+/** Back-compat wrapper: the authenticated user, or null on any failure. */
 export async function parseAuthCookieValue(
   value: string,
   encryptionKey: string,
   signingSecret: string,
   nowMs: number,
 ): Promise<SsoUser | null> {
-  const parts = value.split('.');
-  if (parts.length !== 3 || !parts[0] || !parts[1] || !parts[2]) return null;
-  const enc = `${parts[0]}.${parts[1]}`;
-
-  try {
-    const hmacKey = await importHmacKey(signingSecret);
-    const valid = await crypto.subtle.verify(
-      'HMAC', hmacKey, b64urlDecode(parts[2]), encoder.encode(enc),
-    );
-    if (!valid) return null;
-
-    const aesKey = await deriveAesKey(encryptionKey);
-    const plaintext = await crypto.subtle.decrypt(
-      { name: 'AES-GCM', iv: b64urlDecode(parts[0]) }, aesKey, b64urlDecode(parts[1]),
-    );
-    const payload: unknown = JSON.parse(decoder.decode(plaintext));
-    if (!isSsoUser(payload)) return null;
-    if (payload.exp <= Math.floor(nowMs / 1000)) return null;
-    return payload;
-  } catch {
-    return null;
-  }
+  const result = await verifyAuthCookieValue(value, encryptionKey, signingSecret, nowMs);
+  return result.ok ? result.user : null;
 }
 
-function isSsoUser(v: unknown): v is SsoUser {
-  if (typeof v !== 'object' || v === null) return false;
+/**
+ * Validate the decrypted payload and normalize `roles`. Mirrors AuthIES
+ * parseAuthCookie(): the same four required fields, and roles coerced to a
+ * string[] so a cookie minted before the field existed still parses.
+ */
+function toSsoUser(v: unknown): SsoUser | null {
+  if (typeof v !== 'object' || v === null) return null;
   const o = v as Record<string, unknown>;
-  return (
-    typeof o.sub === 'string' &&
-    typeof o.email === 'string' &&
-    typeof o.exp === 'number' &&
-    typeof o.sid === 'string'
-  );
+  if (
+    typeof o.sub !== 'string' ||
+    typeof o.email !== 'string' ||
+    typeof o.exp !== 'number' ||
+    typeof o.sid !== 'string'
+  ) {
+    return null;
+  }
+  return {
+    ...(o as unknown as SsoUser),
+    roles: Array.isArray(o.roles)
+      ? o.roles.filter((r): r is string => typeof r === 'string')
+      : [],
+  };
 }
 
 // ── request helpers ──────────────────────────────────────────────────────────
@@ -149,28 +238,72 @@ export function parseCookies(request: Request): Record<string, string> {
 }
 
 /**
- * Authenticated IdP user from the request's ies_auth cookie, or null.
- * Null also when the SSO secrets aren't configured on this Worker.
+ * The request's SSO state. Distinguishes the four cases the gate must handle
+ * differently: a signed-in user, nobody, a secret disagreement with the IdP,
+ * and this Worker having no SSO secrets at all.
  */
-export async function getSsoUser(request: Request, env: Env): Promise<SsoUser | null> {
+export type SsoState =
+  | { state: 'ok'; user: SsoUser }
+  | { state: 'anonymous' }
+  | { state: 'misconfigured'; detail: 'secrets_missing' | CookieFailure };
+
+export async function getSsoState(request: Request, env: Env): Promise<SsoState> {
   const encKey = env.SESSION_ENCRYPTION_KEY;
   const sigKey = env.COOKIE_SIGNING_SECRET;
-  if (!encKey || !sigKey) return null;
+  // Deploy-order mistake, not a visitor problem: say so instead of looping the
+  // whole site through a login that can never be verified.
+  if (!encKey || !sigKey) return { state: 'misconfigured', detail: 'secrets_missing' };
+
   const cookie = parseCookies(request)[AUTH_COOKIE_NAME];
-  if (!cookie) return null;
-  return parseAuthCookieValue(cookie, encKey, sigKey, Date.now());
+  if (!cookie) return { state: 'anonymous' };
+
+  const result = await verifyAuthCookieValue(cookie, encKey, sigKey, Date.now());
+  if (result.ok) return { state: 'ok', user: result.user };
+  if (isSecretMismatch(result.failure)) {
+    return { state: 'misconfigured', detail: result.failure };
+  }
+  return { state: 'anonymous' }; // expired or junk → offer sign-in
+}
+
+/**
+ * Where to send the browser back to after the IdP round-trip. The path is
+ * preserved so a deep link survives login — including the activation detour,
+ * which carries sp/redirect_uri/state through the emailed set-password link.
+ * AuthIES validates this against the `lensy` SP's registered origins, whose
+ * "/" path prefix admits any path under them (AuthIES lib/redirect.ts).
+ *
+ * `?returnTo=` names the page to come back to. The gate sends it because it
+ * calls /api/auth/me, which cannot otherwise know which page is being gated.
+ * Only a same-origin absolute path is honoured — a caller-supplied value must
+ * never be able to redirect off-site.
+ */
+export function resolveReturnTo(requestUrl: string): string {
+  const url = new URL(requestUrl);
+  const requested = url.searchParams.get('returnTo');
+  if (requested && isSafePath(requested)) return url.origin + requested;
+
+  // No hint: bounce to the requested page, unless it is an API/auth route that
+  // is never a landing page.
+  const isRoute =
+    url.pathname.startsWith('/api/') || url.pathname === '/login' || url.pathname === '/logout';
+  return url.origin + (isRoute ? '/' : url.pathname + url.search);
+}
+
+/** A rooted path, not a protocol-relative ("//host") or scheme-bearing URL. */
+function isSafePath(value: string): boolean {
+  return value.startsWith('/') && !value.startsWith('//') && !value.includes('\\');
 }
 
 /** URL to start the SSO flow at the IdP and land back on this deployment. */
 export function buildLoginUrl(env: Env, requestUrl: string): string {
-  const returnTo = new URL(requestUrl).origin + '/';
-  return `${env.AUTH_IDP_BASE_URL}/login?sp=lensy&redirect_uri=${encodeURIComponent(returnTo)}`;
+  const back = encodeURIComponent(resolveReturnTo(requestUrl));
+  return `${env.AUTH_IDP_BASE_URL}/login?sp=lensy&redirect_uri=${back}`;
 }
 
 /** IdP single-logout URL that returns to this deployment. */
 export function buildLogoutUrl(env: Env, requestUrl: string): string {
-  const returnTo = new URL(requestUrl).origin + '/';
-  return `${env.AUTH_IDP_BASE_URL}/logout?redirect_uri=${encodeURIComponent(returnTo)}`;
+  const home = new URL(requestUrl).origin + '/';
+  return `${env.AUTH_IDP_BASE_URL}/logout?redirect_uri=${encodeURIComponent(home)}`;
 }
 
 // ── access decision (pure — see invites.ts for the allowlist semantics) ─────
@@ -196,6 +329,15 @@ export interface AccessDecision {
  *    for IES members (an explicit staff decision must win);
  *  - no row: IES members (isMember) get in iff allowMembersWithoutInvite
  *    (ALLOW_MEMBERS_WITHOUT_INVITE var); everyone else needs an invite.
+ *
+ * `isMember` is now read from the IdP's D1 directory (kept fresh by its
+ * read-only Wicket membership sync) rather than fetched from Wicket at each
+ * login, so a lapsed membership stops granting the bypass only once that sync
+ * lands. Guest access is unaffected — invited_users carries its own expiry.
+ *
+ * `user.roles` (IdP roles, e.g. "administrator") is intentionally NOT consulted:
+ * an IdP-wide admin is not automatically a Lensy admin. Lensy roles live in
+ * invited_users.role.
  */
 export function decideAccess(
   user: SsoUser,

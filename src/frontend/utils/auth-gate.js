@@ -80,6 +80,12 @@
       '<p style="color:#6b7280;font-size:14px;margin:0 0 4px">IES Standards Assistant</p>' +
       '<p style="color:#6b7280;font-size:14px;margin:12px 0 0">Sign in with your IES account to search the standards library.</p>' +
       '<div><a href="' + esc(loginUrl || '/login') + '" style="' + BTN + '">Sign in with IES</a></div>' +
+      // IES sign-in is now first-party (auth.ies.org): every pre-existing
+      // account sets a new password once, from an emailed link. Framing that
+      // here keeps the detour from reading as a failure.
+      '<p style="color:#9ca3af;font-size:12px;margin:16px 0 0;line-height:1.5">' +
+      'First time since the IES sign-in upgrade? You&rsquo;ll be asked to set a new ' +
+      'password &mdash; look for an email from IES after entering your address.</p>' +
       devBtn
     );
     var dev = document.getElementById('lensy-dev-login');
@@ -88,10 +94,25 @@
         fetch('/api/auth/dev-login', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email: 'dev@example.com', isMember: true }),
+          body: JSON.stringify({ email: 'dev@example.com', isMember: true, roles: ['member'] }),
         }).then(function () { location.reload(); });
       });
     }
+  }
+
+  // The ies_auth cookie is present and genuinely from the IdP, but this Worker
+  // cannot read it — SESSION_ENCRYPTION_KEY / COOKIE_SIGNING_SECRET drifted out
+  // of step with auth.ies.org. Signing in again cannot help, so don't offer it.
+  function showMisconfigured(data) {
+    gateEl().innerHTML = card(
+      '<h1 style="font-size:20px;font-weight:700;margin:0 0 10px">Sign-in unavailable</h1>' +
+      '<p style="color:#6b7280;font-size:14px;margin:0">Lensy cannot verify IES sign-in right now. ' +
+      'This is a configuration problem on our side, not with your account.</p>' +
+      '<p style="color:#9ca3af;font-size:12px;margin:12px 0 0">Please try again shortly, or contact ' +
+      '<a href="mailto:Standards@ies.org" style="color:#3A5068">Standards@ies.org</a> if it persists.' +
+      (data && data.detail ? ' (' + esc(data.detail) + ')' : '') + '</p>' +
+      '<div><button onclick="location.reload()" style="' + BTN + '">Retry</button></div>'
+    );
   }
 
   var DENY_TEXT = {
@@ -141,9 +162,16 @@
     document.dispatchEvent(new CustomEvent('lensy:auth', { detail: data.user }));
   }
 
+  // /api/auth/me mints the login URL, but only this page knows which page is
+  // being gated — pass it so the IdP round-trip returns here, not to the root.
+  function meUrl() {
+    return '/api/auth/me?returnTo=' +
+      encodeURIComponent(location.pathname + location.search);
+  }
+
   function boot() {
     showChecking();
-    fetch('/api/auth/me', { headers: { Accept: 'application/json' } })
+    fetch(meUrl(), { headers: { Accept: 'application/json' } })
       .then(function (res) {
         return res.json().then(function (data) { return { status: res.status, data: data }; });
       })
@@ -151,6 +179,9 @@
         if (r.status === 200 && r.data.authorized) return reveal(r.data);
         if (r.status === 401) return showLogin(r.data.loginUrl);
         if (r.status === 403) return showDenied(r.data);
+        if (r.status === 503 && r.data.reason === 'sso_misconfigured') {
+          return showMisconfigured(r.data);
+        }
         return showError();
       })
       .catch(showError);
