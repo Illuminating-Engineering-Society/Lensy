@@ -58,6 +58,50 @@ describe('generateResponse model fallback (DO9: AI Guide must never vanish)', ()
     expect(summary).not.toBeNull();
     expect(summary.degraded).toBe(true);
     expect(summary.text).toContain('ANSI/IES RP-8-25');
-    expect(ai.run).toHaveBeenCalledTimes(2); // both models attempted
+
+    // The whole chain is attempted, each model exactly once. A chain with only
+    // one WORKING link is how DO24 regressed: the second id
+    // ('@cf/meta/llama-3.1-8b-instruct-fast') was not a real Workers AI model,
+    // so any hiccup on the primary went straight to the fallback.
+    const tried = ai.run.mock.calls.map(c => c[0]);
+    expect(tried.length).toBeGreaterThan(1);
+    expect(new Set(tried).size).toBe(tried.length);
+  });
+});
+
+// ─── DO25: a degraded comparison still states the deprecation ────────────────
+
+describe('generateResponse comparison mode', () => {
+  const COMPARISON = {
+    current: { id: 'RP-8-25', name: 'ANSI/IES RP-8-25', url: 'https://view.protectedpdf.com/RP8' },
+    deprecated: [{ id: 'RP-8-22', name: 'ANSI/IES RP-8-22', url: 'https://view.protectedpdf.com/RP8OLD' }],
+  };
+
+  it('keeps the comparison context and the deprecation statement when every model fails', async () => {
+    const ai = aiStub(async () => { throw new Error('capacity'); });
+    const summary = await generateResponse(ai, "what's new in RP-8?", RESULTS, {
+      mode: 'comparison',
+      comparison: COMPARISON,
+    });
+
+    expect(summary.mode).toBe('comparison');
+    // The UI renders the hyperlinked advisory from this — it must survive.
+    expect(summary.comparison).toEqual(COMPARISON);
+    expect(summary.text).toContain('ANSI/IES RP-8-22 is deprecated');
+    expect(summary.text).toContain('ANSI/IES RP-8-25');
+    expect(summary.text).toMatch(/manual review/i);
+  });
+
+  it('carries the mode and context through on a successful generation', async () => {
+    const ai = aiStub(async () => ({ response: 'What appears to be new\n- Chapter 17 adds EV charging guidance (§17.4.3).' }));
+    const summary = await generateResponse(ai, "what's new in RP-8?", RESULTS, {
+      mode: 'comparison',
+      comparison: COMPARISON,
+    });
+
+    expect(summary.mode).toBe('comparison');
+    expect(summary.comparison).toEqual(COMPARISON);
+    expect(summary.text).toContain('What appears to be new');
+    expect(summary.disclaimer).toMatch(/manual review/i);
   });
 });

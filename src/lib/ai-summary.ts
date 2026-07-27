@@ -27,9 +27,16 @@ import type { AIMode, AISummary, ComparisonContext, SearchResult } from '../type
 // search"): a failure of the primary model must degrade, never disappear.
 // Each model is tried in order; if every one errors, a safe standards-list
 // fallback is returned (flagged `degraded` so it is never cached).
+//
+// Every id here MUST exist in `wrangler ai models` — the previous second entry
+// ('@cf/meta/llama-3.1-8b-instruct-fast') does not, so the chain had exactly
+// one working link: any hiccup on the 70B model went straight to the bare
+// standards-list fallback the client reported in DO24.
 const MODELS = [
   '@cf/meta/llama-3.3-70b-instruct-fp8-fast',
-  '@cf/meta/llama-3.1-8b-instruct-fast',
+  '@cf/meta/llama-4-scout-17b-16e-instruct',
+  '@cf/mistralai/mistral-small-3.1-24b-instruct',
+  '@cf/meta/llama-3.1-8b-instruct-fp8',
 ];
 
 // Output budget per mode (client DO24: answers read as length-capped; DO25:
@@ -192,11 +199,21 @@ export async function generateResponse(
     }
   }
 
+  // Every fallback keeps the mode AND the comparison context: when a comparison
+  // degrades, the user must still get "[old] is deprecated and has been replaced
+  // by [new]" with both editions hyperlinked (client DO25) — that advisory is
+  // exactly what disappeared when the model failed.
+  const fallback = (): AISummary => ({
+    ...buildSafeFallback(query, searchResults, mode, opts.comparison),
+    mode,
+    ...(opts.comparison ? { comparison: opts.comparison } : {}),
+  });
+
   // Every model errored — degrade to the standards list instead of vanishing.
   // The `degraded` flag stops this from being cached, so the next identical
   // search retries the models.
   if (text == null) {
-    return { ...buildSafeFallback(query, searchResults), mode, degraded: true };
+    return { ...fallback(), degraded: true };
   }
 
   // Enforce the copyright limits by TRIMMING, not by discarding the answer
@@ -205,11 +222,11 @@ export async function generateResponse(
   const violations = checkCopyrightViolations(sanitized);
   if (violations.length > 0) {
     console.warn('Copyright violations survived sanitization, using safe fallback:', violations);
-    return { ...buildSafeFallback(query, searchResults), mode };
+    return fallback();
   }
   if (!sanitized) {
     console.warn('AI Guide response was empty after sanitization, using safe fallback');
-    return { ...buildSafeFallback(query, searchResults), mode };
+    return fallback();
   }
 
   return {
@@ -354,10 +371,33 @@ Rules:
 Write the answer now:`;
 }
 
-function buildSafeFallback(query: string, searchResults: SearchResult[]): AISummary {
+function buildSafeFallback(
+  query: string,
+  searchResults: SearchResult[],
+  mode: AIMode = 'guide',
+  comparison?: ComparisonContext,
+): AISummary {
   const standardsList = [...new Set(
     searchResults.map(r => r.application?.standardFull || r.application?.standard).filter(Boolean)
   )].map(s => `- ${s}`).join('\n');
+
+  // A degraded COMPARISON still has to say the one thing the client asked for:
+  // which edition is deprecated and what replaced it (DO25). The UI renders the
+  // hyperlinked advisory from `comparison` above this text.
+  if (mode === 'comparison') {
+    const current = comparison?.current?.name;
+    const deprecated = (comparison?.deprecated || []).map(d => d.name).join(', ');
+    const lead = (current && deprecated)
+      ? `${deprecated} ${comparison!.deprecated.length > 1 ? 'are' : 'is'} deprecated and ${comparison!.deprecated.length > 1 ? 'have' : 'has'} been replaced by the current ${current}.`
+      : 'The current and deprecated editions appear in the results below.';
+    return {
+      text: `An automated comparison could not be generated for this search. ${lead}\n\n`
+        + 'Please perform a manual review of both documents; the excerpts below show the passages retrieved from each edition.\n\n'
+        + `Editions referenced:\n${standardsList}`,
+      watermark: null,
+      disclaimer: 'Comparison unavailable — this response lists the editions involved without AI interpretation.',
+    };
+  }
 
   return {
     text: `For "${query}", I found relevant IES standards in the results below. Please review the application cards for specific illuminance values and standard references.\n\nRelevant standards:\n${standardsList}`,
