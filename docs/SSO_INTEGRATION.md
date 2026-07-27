@@ -95,6 +95,51 @@ CSRF: `ies_auth` is `SameSite=Lax`, so a cross-site POST never carries it; the
 with no `Allow-Credentials`, so no other origin can make a credentialed call at
 all.
 
+## Invitation email
+
+Adding someone at `/admin/users` emails them a link to Lensy
+(`src/lib/email.ts`, via the native `SEND_EMAIL` Cloudflare Email Service
+binding — no third-party provider, no API key).
+
+Sender is **`noreply@lensy.ies.org`** — a subdomain on purpose. The `ies.org`
+apex is Microsoft 365 with a strict `-all` SPF record; onboarding the apex would
+add a second SPF record and break mail for the whole organization. AuthIES sends
+from `noreply@auth.ies.org` for the same reason.
+
+The mail carries **no token**. Lensy has no credential of its own — access comes
+from the `ies_auth` cookie the IdP mints — so there is nothing secret to leak and
+an intercepted invitation grants nothing. It does spell out that a password will
+have to be set on first sign-in, because every pre-existing IES account starts
+`pending` at the IdP and gets that link in a *separate* email; unexplained, the
+detour reads as a broken invitation.
+
+**Sending fails soft, by design.** A mail failure never rolls back the invite: the
+allowlist row is valid regardless and the link can be passed along by hand. The
+reason is stored on the row (`invite_send_error`) and shown in the dashboard's
+"Invite email" column, so "added but never emailed" is distinguishable from "the
+invitee is ignoring it" — the two are identical at `status='invited'` otherwise.
+
+| Situation | What happens |
+|---|---|
+| `lensy.ies.org` not onboarded onto Email Sending | Invite created; row shows `E_SENDER_NOT_VERIFIED` |
+| Address previously bounced | Invite created; row shows `E_RECIPIENT_SUPPRESSED` |
+| Local `wrangler dev` (3.x) | Binding is absent at runtime, so nothing is sent and the row says so — no accidental real mail while testing |
+
+`POST /api/admin/users/:id/resend` re-sends. It is the only way to notify rows
+created before this feature existed (`invite_sent_at IS NULL`). Revoked and
+expired invites are refused (409): "your access is ready" to someone whose
+access was deliberately withdrawn is worse than no email. `POST
+/api/admin/users?email=0` adds people without notifying, for backfills.
+
+**Known limitation.** An invitee who is not already in the IdP directory cannot
+sign in at all, and no email from Lensy can fix that: nothing in AuthIES creates
+user accounts except the one-off Wicket import (`scripts/import-wicket-users.ts`)
+— there is no signup, and `/account/activate` on an unknown address renders
+"check your email" and sends nothing (enumeration safety). The invite modal warns
+staff about this. Genuinely external guests need account provisioning at the
+IdP — `users.source = 'local'` exists in its schema for exactly that but nothing
+writes it yet.
+
 ## Failure modes
 
 `getSsoState()` separates "no session" from "we can't read the session", because
@@ -124,6 +169,7 @@ keeps working throughout.
 | Frontend gate (hides app, sign-in / no-access / not-admin / misconfigured screens, user chip + Sign out) | `src/frontend/utils/auth-gate.js` (loaded first by `index.html`, `projects.html`, `admin/users.html`) |
 | Admin gate on `/api/admin/*` + `/api/ingest*` | `requireAdminAccess()` in `src/workers/session.ts` |
 | Guest allowlist + staff dashboard | `migrations/0007_invited_users.sql`, `/admin/users`, `src/workers/users.ts` |
+| Invitation email | `src/lib/email.ts` (tests: `email.test.js`), `migrations/0008_invite_email.sql` |
 
 Staff scripts keep working: an explicit `Authorization: Bearer LUCIUS_API_SECRET`
 bypasses the session gate on both the read API and the admin/ingest endpoints.
@@ -140,7 +186,13 @@ treats a registered `/` path as a prefix, so no per-page registration is needed.
 **Lensy**
 1. `wrangler secret put SESSION_ENCRYPTION_KEY` — SAME value as AuthIES.
 2. `wrangler secret put COOKIE_SIGNING_SECRET` — SAME value as AuthIES.
-3. `npm run db:migrate:remote` (if 0007 not applied yet) and `npm run deploy`.
+3. `npm run db:migrate:remote` (0007 + 0008) and `npm run deploy`.
+4. Onboard **`lensy.ies.org`** onto Email Sending (Cloudflare dashboard → Email
+   Service → Email Sending → add domain), which publishes SPF/DKIM/DMARC for the
+   subdomain only. Until then invites are created but not emailed, and the
+   dashboard says `E_SENDER_NOT_VERIFIED` on each row. Nothing else breaks.
+   Note `wrangler email sending …` does not exist in wrangler 3.x — this step is
+   dashboard-only until the repo moves to wrangler 4.
 
 Until both secrets are set, every visitor sees "Sign-in unavailable" (503
 `sso_misconfigured`) — not a login loop. The staff bearer still works.

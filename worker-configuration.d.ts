@@ -6,9 +6,12 @@ interface Env {
 	AUTH_IDP_BASE_URL: "https://auth.ies.org";
 	ALLOW_MEMBERS_WITHOUT_INVITE: "true";
 	ENVIRONMENT: string;
+	SESSION_ENCRYPTION_KEY: string;
+	COOKIE_SIGNING_SECRET: string;
 	PDFS: R2Bucket;
 	DB: D1Database;
 	SEARCH_RATE_LIMITER: RateLimit;
+	SEND_EMAIL: SendEmail;
 	VECTORIZE: VectorizeIndex;
 	VECTORIZE_DEPRECATED: VectorizeIndex;
 	AI: Ai;

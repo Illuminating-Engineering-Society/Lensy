@@ -248,7 +248,10 @@ Run through this before every production deploy (added July 2026 with the
 search/UX overhaul):
 
 1. **Apply D1 migrations** — `npm run db:migrate:remote`
-   (0006 adds `applications.Footnote_Marks` + per-standard index-coverage stats).
+   (0006 adds `applications.Footnote_Marks` + per-standard index-coverage stats;
+   0008 adds the invitation-email status columns. Invites and their emails still
+   work without 0008 — the status write is caught and logged — but the dashboard
+   then shows every row as "not sent", so apply it.)
 2. **Set the API secret** — `wrangler secret put LUCIUS_API_SECRET`.
    This is the **machine** credential: scripts and cron authenticate to
    `/api/ingest*` and `/api/admin/*` with it, and a bearer presented in
@@ -278,7 +281,13 @@ search/UX overhaul):
 7. **Caching** — searches, embeddings, and AI Guide summaries are KV-cached;
    every ingest bumps the corpus data-version, invalidating cached responses.
    After out-of-band D1 edits, call `POST /api/admin/flush-cache`.
-8. **Known gap — Projects auth**: the `/api/projects*` routes are anonymous
+8. **Onboard the invitation sender** — `lensy.ies.org` must be added to
+   Cloudflare Email Service → Email Sending, or invites are created but never
+   emailed (`E_SENDER_NOT_VERIFIED`, shown per row in the dashboard). Subdomain
+   only: never onboard the `ies.org` apex — it is Microsoft 365 with SPF `-all`
+   and a second SPF record would break mail org-wide. See
+   docs/SSO_INTEGRATION.md "Invitation email".
+9. **Known gap — Projects auth**: the `/api/projects*` routes are anonymous
    (`user_id` is a client-supplied placeholder until Phase 3 SSO). Do not
    store confidential client information in Projects until member login
    ships; anyone who can reach the API can read/modify project records.

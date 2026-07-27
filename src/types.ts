@@ -405,4 +405,8 @@ export interface InvitedUserRow {
   created_at: string;
   updated_at: string;
   last_login_at: string | null;
+  /** When the invitation email last went out; NULL means never (migration 0008). */
+  invite_sent_at: string | null;
+  /** Reason the last send failed, cleared on success. */
+  invite_send_error: string | null;
 }

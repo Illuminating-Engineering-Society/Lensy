@@ -78,6 +78,28 @@ index_name = "ies-standards-deprecated-vectors"
 binding = "SESSIONS"
 id = "42532fedadc54caf899f190ec3d7eea7"
 
+# ─── Email Sending: invitation mail ──────────────────────────────────────────
+# Native Cloudflare Email Service binding (no third-party API, no API key).
+#
+# REQUIRES lensy.ies.org to be onboarded onto Email Sending first (Cloudflare
+# dashboard → Email Service → Email Sending → add domain; it publishes the
+# SPF/DKIM/DMARC records for the SUBDOMAIN only). Until that is done every send
+# throws E_SENDER_NOT_VERIFIED — invites are still created, and the dashboard
+# shows the reason per row (src/lib/email.ts fails soft by design).
+#
+# Deliberately a subdomain sender: the ies.org apex is Microsoft 365 with a
+# strict `-all` SPF record, and onboarding the apex would add a second SPF
+# record and break mail for the whole organization. Same reasoning as AuthIES,
+# which sends from noreply@auth.ies.org.
+#
+# NOTE: `allowed_sender_addresses` (which would pin the From so a bug elsewhere
+# in the Worker could not send as anyone else) is NOT set: wrangler 3.114 does
+# not recognise the field — it warns "Unexpected fields" and leaves the binding
+# unrestricted anyway. Add it when this repo moves to wrangler 4.x; until then
+# the single sender is enforced in code (src/lib/email.ts FROM_ADDRESS).
+[[send_email]]
+name = "SEND_EMAIL"
+
 # ─── Workers AI: Embeddings + AI Summaries ───────────────────────────────────
 [ai]
 binding = "AI"

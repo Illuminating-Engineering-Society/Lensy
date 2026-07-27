@@ -110,6 +110,7 @@
                 <th class="px-4 py-3">Organization</th>
                 <th class="px-4 py-3">Role</th>
                 <th class="px-4 py-3">Status</th>
+                <th class="px-4 py-3">Invite email</th>
                 <th class="px-4 py-3">Expires</th>
                 <th class="px-4 py-3">Last login</th>
                 <th class="px-4 py-3 text-right">Actions</th>
@@ -161,9 +162,14 @@
             <input id="inv-notes" type="text" placeholder="e.g. 2026 conference guests" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg" />
           </div>
         </div>
+        <label class="flex items-center gap-2 text-xs text-gray-600">
+          <input type="checkbox" id="inv-notify" checked class="rounded border-gray-300">
+          Email each person an invitation with a link to Lensy
+        </label>
         <p class="text-xs text-gray-400">
-          No email is sent — this adds people to the access list that IES sign-in checks at login.
-          They still need an auth.ies.org account (or will be asked to set a password on first sign-in).
+          Invitees sign in with their IES account and set a password on first use. Anyone
+          <strong>not</strong> already in the IES directory cannot sign in yet — they will be added to the
+          list but the link will not let them in.
         </p>
         <div id="invite-result" class="hidden text-sm rounded-lg px-3 py-2"></div>
         <div class="flex justify-end gap-2 pt-1">
@@ -287,6 +293,18 @@
       revoked: 'bg-red-100 text-red-700',
     };
 
+    // Three distinct states, because "no email yet" and "email bounced" call for
+    // different actions: send it, versus fix the address or the sender domain.
+    function inviteEmailCell(u) {
+      if (u.invite_send_error) {
+        return `<span class="text-red-600" title="${esc(u.invite_send_error)}">failed ⚠</span>`;
+      }
+      if (u.invite_sent_at) {
+        return `<span class="text-gray-500" title="Sent ${esc(u.invite_sent_at)}">${esc(u.invite_sent_at.slice(0, 10))}</span>`;
+      }
+      return '<span class="text-amber-700">not sent</span>';
+    }
+
     function render() {
       // Chips
       document.getElementById('chips').innerHTML = CHIP_DEFS.map(([s, label]) => {
@@ -314,15 +332,23 @@
         const revokeBtn = u.status === 'revoked'
           ? `<button onclick="quickStatus(${u.id}, 'invited')" class="text-green-700 hover:underline">Reinstate</button>`
           : `<button onclick="quickStatus(${u.id}, 'revoked')" class="text-red-600 hover:underline">Revoke</button>`;
+        // Resending an invite to a revoked/expired row is refused server-side —
+        // don't offer it.
+        const mailable = u.effective_status !== 'revoked' && u.effective_status !== 'expired';
+        const resendBtn = mailable
+          ? `<button onclick="resendInvite(${u.id}, '${esc(u.email)}')" class="text-brand-secondary hover:underline">${u.invite_sent_at ? 'Resend' : 'Send invite'}</button>`
+          : '';
         return `<tr class="border-b border-gray-100 hover:bg-gray-50">
           <td class="px-4 py-3 font-mono text-xs">${esc(u.email)}</td>
           <td class="px-4 py-3">${esc(u.name) || '<span class="text-gray-300">—</span>'}</td>
           <td class="px-4 py-3">${esc(u.organization) || '<span class="text-gray-300">—</span>'}</td>
           <td class="px-4 py-3">${esc(u.role)}</td>
           <td class="px-4 py-3"><span class="inline-block px-2 py-0.5 rounded-full text-xs font-medium ${badge}">${esc(u.effective_status)}</span></td>
+          <td class="px-4 py-3 text-xs">${inviteEmailCell(u)}</td>
           <td class="px-4 py-3 text-xs text-gray-500">${u.expires_at ? esc(u.expires_at.slice(0, 10)) : '—'}</td>
-          <td class="px-4 py-3 text-xs text-gray-500">${u.last_login_at ? esc(u.last_login_at.slice(0, 10)) : '<span title="Will populate once SSO login is live">never</span>'}</td>
+          <td class="px-4 py-3 text-xs text-gray-500">${u.last_login_at ? esc(u.last_login_at.slice(0, 10)) : 'never'}</td>
           <td class="px-4 py-3 text-right whitespace-nowrap space-x-3 text-xs">
+            ${resendBtn}
             ${revokeBtn}
             <button onclick="openEdit(${u.id})" class="text-brand-secondary hover:underline">Edit</button>
             <button onclick="removeUser(${u.id}, '${esc(u.email)}')" class="text-gray-400 hover:text-red-600 hover:underline">Delete</button>
@@ -357,19 +383,31 @@
       });
       if (payload.length === 0) return false;
 
+      const notify = document.getElementById('inv-notify').checked;
       const btn = document.getElementById('invite-submit');
       btn.disabled = true;
       try {
-        const { data } = await api('/api/admin/users', { method: 'POST', body: JSON.stringify(payload) });
+        const { data } = await api('/api/admin/users' + (notify ? '' : '?email=0'),
+          { method: 'POST', body: JSON.stringify(payload) });
         const box = document.getElementById('invite-result');
         const parts = [];
         if (data.inserted?.length) parts.push(`${data.inserted.length} added`);
         if (data.skipped?.length)  parts.push(`${data.skipped.length} already invited`);
         if (data.rejected?.length) parts.push(`${data.rejected.length} rejected: ` +
           data.rejected.map(r => `${r.email ?? '(no email)'} (${r.reason})`).join('; '));
+        // A failed send is the thing staff most need to see — name the reason
+        // rather than leaving them to guess why nobody replied.
+        const em = data.emailed;
+        if (em?.skipped) parts.push('no email sent (by choice)');
+        else if (em) {
+          if (em.sent) parts.push(`${em.sent} emailed`);
+          if (em.failed?.length) parts.push(`${em.failed.length} NOT emailed: ` +
+            em.failed.map(f => `${f.email} (${f.error})`).join('; '));
+        }
+        const trouble = data.rejected?.length || em?.failed?.length;
         box.textContent = parts.join(' · ') || 'Nothing to do.';
         box.className = 'text-sm rounded-lg px-3 py-2 ' +
-          (data.rejected?.length ? 'bg-amber-50 text-amber-800' : 'bg-green-50 text-green-800');
+          (trouble ? 'bg-amber-50 text-amber-800' : 'bg-green-50 text-green-800');
         box.classList.remove('hidden');
         if (data.inserted?.length) document.getElementById('inv-emails').value = '';
         await loadUsers();
@@ -377,6 +415,13 @@
         btn.disabled = false;
       }
       return false;
+    }
+
+    async function resendInvite(id, email) {
+      if (!confirm(`Email the Lensy invitation to ${email}?`)) return;
+      const { status, data } = await api(`/api/admin/users/${id}/resend`, { method: 'POST' });
+      if (status >= 400) alert(`Could not send: ${data.error || 'unknown error'}`);
+      await loadUsers();
     }
 
     // ── Edit / quick actions ──────────────────────────────────────────────
