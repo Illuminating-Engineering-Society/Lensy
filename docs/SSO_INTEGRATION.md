@@ -39,6 +39,15 @@ Providers: none") — the crypto in `src/lib/sso.ts` still mirrors AuthIES
 generated UUID for IdP-local ones. Stable per account either way, so it stays
 safe to persist as `invited_users.person_uuid`.
 
+**Nothing here changes if IES moves password custody back to Wicket.** AuthIES is
+building a `CREDENTIAL_SOURCE=wicket` mode (its plan §1a) where the password is
+verified back-channel against Wicket instead of against a local hash. The sign-in
+form, the session, the `ies_auth` cookie and its payload are all identical — only
+who checks the password differs. One consequence worth knowing when reading Lensy
+logs: under that mode `sub` is always the Wicket UUID, and a Wicket outage means
+no new logins arrive (existing sessions keep working for their 8h window), which
+Lensy sees simply as fewer authenticated visitors, not as an error.
+
 `isMember` now comes from the IdP's D1 directory (refreshed by its read-only
 Wicket membership sync) instead of a per-login Wicket call. A lapsed membership
 therefore stops granting the `ALLOW_MEMBERS_WITHOUT_INVITE` bypass only once
