@@ -39,6 +39,7 @@
  *   node scripts/ingest-pdfs.js --dir pdfs/                  # batch all PDFs (recursive)
  *   node scripts/ingest-pdfs.js --dir "pdfs/Deprecated Standards"  # deprecated only
  *   node scripts/ingest-pdfs.js --applications-only          # re-embed D1 apps
+ *   node scripts/ingest-pdfs.js --sweep-r2-only              # report R2 orphans
  *
  * Options:
  *   --file <path>      Single PDF file to ingest
@@ -50,6 +51,12 @@
  *   --applications-only  Re-embed all D1 application rows into Vectorize
  *   --new-table-only   In batch mode, ingest only PDFs detected as NEW_TABLE
  *   --force-structure <new_table|standard>  Override structure auto-detection
+ *   --no-prune         Keep application rows this parse no longer produces
+ *                      (default is to delete them — see Step 7b)
+ *   --sweep-r2-only    Compare R2 against D1 and report orphaned PDFs, nothing
+ *                      else. Combine with --sweep-r2 to delete them.
+ *   --sweep-r2         Actually delete the R2 objects the sweep reports
+ *                      (off by default: a removed PDF is not recoverable here)
  *   --local            Target local wrangler dev (http://localhost:8787)
  *   --dry-run          Parse and chunk without sending to Worker
  *   --verbose          Print chunk details during processing
@@ -144,6 +151,13 @@ async function main() {
     return reindexApplications();
   }
 
+  // Standalone R2 sweep. A full ingest already reports orphaned objects at the
+  // end, but ACTING on that report should not cost a second re-embed of the whole
+  // corpus — this mode just compares the bucket against D1 and exits.
+  if (args.includes('--sweep-r2-only')) {
+    return sweepR2Only();
+  }
+
   if (dirArg >= 0) {
     return ingestDirectory(resolve(process.cwd(), args[dirArg + 1]));
   }
@@ -158,6 +172,7 @@ async function main() {
   console.log('  node scripts/ingest-pdfs.js --file pdfs/RP-9-20.pdf --id RP-9-20');
   console.log('  node scripts/ingest-pdfs.js --dir pdfs/');
   console.log('  node scripts/ingest-pdfs.js --applications-only');
+  console.log('  node scripts/ingest-pdfs.js --sweep-r2-only [--sweep-r2]');
   process.exit(1);
 }
 
@@ -539,6 +554,39 @@ function uploadToR2(filePath, r2Key) {
 }
 
 // ─── Applications Re-index ────────────────────────────────────────────────────
+
+/**
+ * Compare the R2 bucket against D1 and report (or delete) objects with no
+ * standards row. Reports only unless --sweep-r2 is also passed: a raw PDF removed
+ * from R2 cannot be recovered from Lensy.
+ */
+async function sweepR2Only() {
+  console.log(`R2 sweep — comparing the bucket against D1${CONFIG.sweepR2 ? '' : ' (report only)'}...\n`);
+
+  if (CONFIG.dryRun) {
+    console.log('[DRY RUN] Would POST to /api/ingest/r2-sweep');
+    return;
+  }
+
+  const sweep = await postToWorker('/api/ingest/r2-sweep', { confirm: CONFIG.sweepR2 });
+
+  if (sweep.orphans === 0) {
+    console.log(`✓ ${sweep.examined} object(s) in R2, no orphans.\n`);
+    return;
+  }
+
+  console.log(`${sweep.orphans} of ${sweep.examined} object(s) have no standards row:`);
+  for (const key of sweep.keys || []) console.log(`  ${key}`);
+  if (sweep.orphans > (sweep.keys || []).length) {
+    console.log(`  … and ${sweep.orphans - sweep.keys.length} more`);
+  }
+
+  if (sweep.dryRun) {
+    console.log('\nNothing deleted. Re-run with --sweep-r2 to delete these objects.\n');
+  } else {
+    console.log(`\n✓ Deleted ${sweep.deleted} of ${sweep.orphans}.\n`);
+  }
+}
 
 async function reindexApplications() {
   console.log('Re-indexing all application rows from D1 into Vectorize...\n');
