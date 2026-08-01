@@ -269,16 +269,59 @@ async function getProject(env: Env, projectId: string): Promise<Response> {
 
   if (!project) return json({ error: 'Project not found' }, 404);
 
-  const applications = await env.DB.prepare(`
-    SELECT pa.*, a.App, a.App_s1, a.App_s2, a.Standard, a.Standard_Full,
+  const rows = await env.DB.prepare(`
+    SELECT pa.*, a.code AS live_code, a.App, a.App_s1, a.App_s2, a.Standard, a.Standard_Full,
            a.Hor_Lux, a.Hor_Fc, a.Ver_Lux, a.Ver_Fc, a.Indoor_Outdoor
     FROM project_applications pa
     LEFT JOIN applications a ON pa.application_code = a.code
     WHERE pa.project_id = ?
     ORDER BY pa.sort_order, pa.added_at
-  `).bind(projectId).all();
+  `).bind(projectId).all<Record<string, any>>();
 
-  return json({ project, applications: applications.results });
+  // A saved project item must not change meaning when the corpus is re-ingested.
+  //
+  // Application codes are `<STDID>_<rowIndex>`, so any extractor change that
+  // shifts row numbering re-points a code at a DIFFERENT row — and the ingest
+  // prune deletes codes a new parse no longer produces. Either way the live join
+  // is no longer authoritative for something the user deliberately saved. That is
+  // exactly why `snapshot_data` is written at save time; this is where it is
+  // finally read.
+  //
+  // The snapshot wins for every displayed field; the join is used only to say
+  // whether the row still exists in the current corpus, so the UI can flag an
+  // item worth re-checking against the standard.
+  const applications = (rows.results || []).map(row => {
+    const snapshot = parseSnapshot(row.snapshot_data);
+    if (!snapshot) return { ...row, snapshotMissing: row.live_code == null };
+
+    const fromSnapshot = {
+      App: snapshot.App, App_s1: snapshot.App_s1, App_s2: snapshot.App_s2,
+      Standard: snapshot.Standard, Standard_Full: snapshot.Standard_Full,
+      Hor_Lux: snapshot.Hor_Lux, Hor_Fc: snapshot.Hor_Fc,
+      Ver_Lux: snapshot.Ver_Lux, Ver_Fc: snapshot.Ver_Fc,
+      Indoor_Outdoor: snapshot.Indoor_Outdoor,
+    };
+    // "Moved" = the code still resolves, but to a different application than the
+    // one saved. "Removed" = the code is gone from the corpus entirely.
+    const removed = row.live_code == null;
+    const moved = !removed && row.Standard != null &&
+      (row.App !== snapshot.App || row.App_s1 !== snapshot.App_s1 || row.Standard !== snapshot.Standard);
+
+    return { ...row, ...fromSnapshot, removedFromCorpus: removed, reindexed: moved };
+  });
+
+  return json({ project, applications });
+}
+
+/** project_applications.snapshot_data → the 68-column row saved at add time. */
+function parseSnapshot(raw: unknown): Record<string, any> | null {
+  if (typeof raw !== 'string' || !raw.trim()) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    return (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) ? parsed : null;
+  } catch {
+    return null;
+  }
 }
 
 async function createProject(request: Request, env: Env): Promise<Response> {

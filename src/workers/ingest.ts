@@ -96,6 +96,8 @@ export async function handleIngest(request: Request, env: Env): Promise<Response
       return ingestDefinitions(request, env);
     case '/definitions/prune':
       return pruneDefinitions(request, env);
+    case '/r2-sweep':
+      return sweepR2(request, env);
     case '/r2-upload-url':
       return getR2UploadUrl(request, env);
     case '':
@@ -554,6 +556,13 @@ async function ingestParsedPDF(request: Request, env: Env): Promise<Response> {
     applicationsUpserted = await upsertApplications(env.DB, applications);
   }
 
+  // ── 6. R2: drop the copy under the prefix this standard no longer belongs to ─
+  // Only on a document ingest — an applications-only batch says nothing about
+  // where the PDF lives.
+  const r2Removed = chunks.length > 0
+    ? await deleteCounterpartPdf(env, standardId, isDeprecated)
+    : null;
+
   // Corpus changed — invalidate all cached search responses.
   await bumpDataVersion(env.SESSIONS);
 
@@ -565,6 +574,7 @@ async function ingestParsedPDF(request: Request, env: Env): Promise<Response> {
     vectorsUpserted: vectors.length,
     staleVectorsDeleted: staleDeleted,
     applicationsUpserted,
+    r2ObjectRemoved: r2Removed,
     coverage: chunks.length > 0 ? { ...coverage, pageCount } : null,
   });
 }
@@ -828,6 +838,115 @@ function buildApplicationEmbedText(app: ApplicationRow): string {
   ];
 
   return parts.filter(Boolean).join('. ');
+}
+
+// ─── R2 garbage collection ────────────────────────────────────────────────────
+//
+// Raw PDFs live at `standards/<id>.pdf`, or `deprecated/<id>.pdf` for prior
+// editions. Two ways objects go stale:
+//
+//   1. A standard's status flips. The new object is written under the OTHER
+//      prefix, so both copies then exist. Handled inline on every ingest
+//      (deleteCounterpartPdf) — the run knows the id, so no listing is needed.
+//   2. A standard is renamed or dropped from `pdfs/`. Nothing in the run
+//      mentions it, so only a full sweep can find it. That is what this
+//      endpoint is for; unlike Vectorize, R2 has a list API, so this is exact
+//      rather than a probe.
+//
+// Dry-run by default: it reports what it would delete and deletes nothing unless
+// `confirm: true`. Deleting a raw PDF is not recoverable from Lensy.
+
+const R2_PREFIXES = ['standards/', 'deprecated/'] as const;
+const R2_LIST_LIMIT = 1000;
+
+/** The R2 key a standard's PDF belongs at, given its status. */
+function pdfKeyFor(standardId: string, status: string): string {
+  return `${status === 'Deprecated' ? 'deprecated' : 'standards'}/${standardId}.pdf`;
+}
+
+/**
+ * Remove the same standard's PDF from the prefix it no longer belongs to.
+ * Runs on every document ingest; fail-open (a leftover object costs storage,
+ * never correctness).
+ */
+async function deleteCounterpartPdf(env: Env, standardId: string, isDeprecated: boolean): Promise<string | null> {
+  if (!env.PDFS) return null;
+  const counterpart = pdfKeyFor(standardId, isDeprecated ? 'Active' : 'Deprecated');
+  try {
+    const existing = await env.PDFS.head(counterpart);
+    if (!existing) return null;
+    await env.PDFS.delete(counterpart);
+    return counterpart;
+  } catch (err) {
+    console.error(`R2 counterpart cleanup failed for ${counterpart} (non-fatal):`, errMsg(err));
+    return null;
+  }
+}
+
+async function sweepR2(request: Request, env: Env): Promise<Response> {
+  if (!env.PDFS) return jsonResponse({ error: 'PDFS R2 binding is not configured.' }, 500);
+
+  let body: any = {};
+  try { body = await request.json(); } catch { /* body is optional */ }
+  const confirm = body?.confirm === true;
+
+  // Every key D1 says should exist, by status.
+  const rows = await env.DB.prepare('SELECT id, status, r2_key FROM standards').all<{
+    id: string; status: string; r2_key: string | null;
+  }>();
+  const expected = new Set<string>();
+  for (const r of rows.results || []) {
+    expected.add(pdfKeyFor(r.id, r.status));
+    // Honour a curated r2_key that does not follow the convention.
+    if (r.r2_key) expected.add(r.r2_key);
+  }
+
+  const orphans: string[] = [];
+  let examined = 0;
+  for (const prefix of R2_PREFIXES) {
+    let cursor: string | undefined;
+    do {
+      const listed = await env.PDFS.list({ prefix, limit: R2_LIST_LIMIT, cursor });
+      for (const obj of listed.objects) {
+        examined++;
+        if (!expected.has(obj.key)) orphans.push(obj.key);
+      }
+      cursor = listed.truncated ? listed.cursor : undefined;
+    } while (cursor);
+  }
+
+  // Refuse a sweep that would empty the bucket: an empty or half-written
+  // standards table would otherwise read as "delete everything".
+  if (orphans.length > 0 && orphans.length === examined) {
+    return jsonResponse({
+      error: `Every one of the ${examined} object(s) in R2 looks orphaned, which means the standards table is empty ` +
+             'or unreadable rather than that the bucket is garbage. Refusing to sweep — check D1 first.',
+      examined,
+    }, 409);
+  }
+
+  if (!confirm) {
+    return jsonResponse({
+      success: true, dryRun: true, examined,
+      orphans: orphans.length, keys: orphans.slice(0, 50),
+      note: 'Nothing was deleted. Re-send with { "confirm": true } to delete these objects.',
+    });
+  }
+
+  let deleted = 0;
+  for (const key of orphans) {
+    try {
+      await env.PDFS.delete(key);
+      deleted++;
+    } catch (err) {
+      console.error(`R2 sweep failed to delete ${key} (non-fatal):`, errMsg(err));
+    }
+  }
+
+  return jsonResponse({
+    success: true, dryRun: false, examined,
+    orphans: orphans.length, deleted, keys: orphans.slice(0, 50),
+  });
 }
 
 // ─── R2 Upload URL ────────────────────────────────────────────────────────────

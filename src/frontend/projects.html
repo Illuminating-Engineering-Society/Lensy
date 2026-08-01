@@ -428,14 +428,34 @@
       const crumbs = [app.App, app.App_s1, app.App_s2].filter(Boolean);
       const title = crumbs[crumbs.length - 1] || appEntry.application_code;
 
-      const horLux = appEntry.override_hor_lux ?? app.Hor_Lux_Maint;
-      const verLux = appEntry.override_ver_lux ?? app.Ver_Lux_Maint;
+      // `Hor_Lux` / `Ver_Lux` are the column names in the applications table (and
+      // therefore the keys in snapshot_data). This read used to say
+      // `Hor_Lux_Maint`, which exists nowhere in the schema, so every saved row
+      // rendered with no illuminance values at all and the CSV exported blanks.
+      const horLux = appEntry.override_hor_lux ?? app.Hor_Lux;
+      const verLux = appEntry.override_ver_lux ?? app.Ver_Lux;
+
+      // A saved row is always shown as it was SAVED (from the snapshot). When a
+      // re-ingest has since changed the corpus underneath it, say so rather than
+      // let it drift silently: application codes carry the source table's row
+      // number, so an extractor change can re-point a code at a different
+      // application or drop it entirely.
+      const corpusNotice = appEntry.removedFromCorpus
+        ? `<p class="text-xs text-amber-700 mt-1" title="This row is no longer produced by the current edition. The values below are the ones you saved.">
+             ⚠ No longer in the current standard — showing the values you saved.
+           </p>`
+        : appEntry.reindexed
+        ? `<p class="text-xs text-amber-700 mt-1" title="The source table was re-numbered, so this code now points at a different application. The values below are the ones you saved.">
+             ⚠ Source table re-numbered — re-check against the standard.
+           </p>`
+        : '';
 
       return `
         <div class="bg-white rounded-xl border border-gray-100 shadow-sm p-4 flex flex-wrap items-center gap-4">
           <div class="flex-1 min-w-0">
             <p class="font-semibold text-gray-900 truncate">${escapeHtml(title)}</p>
             <p class="text-xs text-gray-400 mt-0.5">${escapeHtml(appEntry.application_code)}</p>
+            ${corpusNotice}
             ${appEntry.room_names ? `<p class="text-xs text-gray-500 mt-1">Rooms: ${escapeHtml(appEntry.room_names)}</p>` : ''}
             ${appEntry.custom_notes ? `<p class="text-xs text-gray-400 mt-0.5 italic">${escapeHtml(appEntry.custom_notes)}</p>` : ''}
           </div>
@@ -518,8 +538,8 @@
           return [
             a.application_code,
             snap.App_s2 || snap.App_s1 || snap.App || '',
-            a.override_hor_lux ?? snap.Hor_Lux_Maint ?? '',
-            a.override_ver_lux ?? snap.Ver_Lux_Maint ?? '',
+            a.override_hor_lux ?? snap.Hor_Lux ?? '',
+            a.override_ver_lux ?? snap.Ver_Lux ?? '',
             snap.Standard || '',
             a.room_names || '',
             a.custom_notes || '',

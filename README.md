@@ -320,23 +320,43 @@ search/UX overhaul):
      batches still leave it untouched.
    - *Retired definitions.* `ingest:definitions` prunes slugs the IES glossary no
      longer publishes (same empty-list guard).
+   - *Stale R2 objects.* Two cases. A standard whose status flipped left a copy
+     under the old prefix (`standards/X.pdf` **and** `deprecated/X.pdf`); each
+     ingest now deletes the counterpart key. A standard renamed or dropped from
+     `pdfs/` can only be found by listing the bucket, so a **whole-directory**
+     run ends with a sweep against D1 (`POST /api/ingest/r2-sweep`) — the only
+     moment the full set of standards that should exist is known. It **reports
+     and deletes nothing** by default; add `--sweep-r2` after reading the report,
+     since a raw PDF removed from R2 is not recoverable from Lensy. The sweep
+     also refuses when *every* object looks orphaned (that means the standards
+     table is empty or unreadable, not that the bucket is garbage) and is skipped
+     when any file in the batch failed.
    - *Cached responses.* Every ingest bumps the corpus data-version, and
      `SEARCH_CACHE_SCHEMA` moved to `v8`, so no pre-existing search result or AI
      summary can be served.
 
+   **Saved projects are protected from the above.** Application codes carry the
+   source table's row number, so a re-ingest can re-point a code at a different
+   application, and the prune can delete one outright. `GET /api/projects/:id` now
+   reads the display fields from `project_applications.snapshot_data` — written at
+   save time and, until now, never read back — so a saved schedule always shows
+   the values the user saved, and returns `reindexed` / `removedFromCorpus` so the
+   UI can flag an item worth re-checking. Before this, a re-numbering silently
+   rewrote saved rows to a different application's values.
+
    **What it does NOT clean up — check these by hand:**
    - *Standards whose PDF was removed or renamed.* Their `standards` row,
      `applications` rows and chunk vectors all survive, because nothing in the
-     run mentions them. `node scripts/cleanup-orphan-vectors.js --scan` finds
-     orphan chunk vectors whose `standard_id` is gone from D1, but not the
-     reverse. Compare `GET /api/standards?status=all` against `pdfs/` and delete
-     what no longer belongs.
+     run mentions them (the R2 sweep above covers only the PDF object).
+     `node scripts/cleanup-orphan-vectors.js --scan` finds orphan chunk vectors
+     whose `standard_id` is gone from D1, but not the reverse. Compare
+     `GET /api/standards?status=all` against `pdfs/` and delete what no longer
+     belongs.
    - *The deprecated index.* `npm run ingest` only walks `pdfs/`, so
      `VECTORIZE_DEPRECATED` keeps its existing 350-word chunks. For consistent
      version comparisons the prior editions should be re-chunked at the same
      sizing as the current ones — run `npm run ingest:deprecated` with the
      deprecated PDFs in place.
-   - *R2 objects* for standards that no longer exist (harmless, but they bill).
 
 4b. **Index the ANSI/IES LS-1 definitions** — `node scripts/ingest-definitions.js`
    (client DO33). Reads the ~1,300 published definitions from the IES glossary

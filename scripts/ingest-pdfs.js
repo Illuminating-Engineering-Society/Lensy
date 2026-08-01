@@ -113,6 +113,10 @@ const CONFIG = {
   // Escape hatch only — leaving stale rows in D1 is what makes an extractor
   // change surface old data in search (see Step 7b).
   skipPrune: args.includes('--no-prune'),
+  // Actually delete the R2 objects the end-of-batch sweep reports. Off by
+  // default: a raw PDF removed from R2 cannot be recovered from Lensy, so the
+  // report is meant to be read first.
+  sweepR2: args.includes('--sweep-r2'),
   // Chunking parameters. These MIRROR the DEFAULTS in src/lib/chunker.js and are
   // passed explicitly, so both places must move together — editing only the
   // library leaves the pipeline on the old sizing.
@@ -220,6 +224,36 @@ async function ingestDirectory(dirPath) {
   console.log(`Batch complete: ${success} processed, ${failed} failed.`);
   console.log(`  NEW_TABLE: ${byStructure.new_table}   STANDARD: ${byStructure.standard}   skipped: ${byStructure.skipped}`);
   if (ingestedDeprecated.size > 0) console.log(`  Deprecated standards indexed: ${ingestedDeprecated.size}`);
+
+  // R2 garbage collection — a whole-directory run is the only moment we know the
+  // complete set of standards that should exist, so it is the only moment a
+  // bucket sweep is safe. A per-file run can only ever clean up that file's own
+  // counterpart-prefix copy, which ingestFile already does.
+  //
+  // Reports by default and deletes nothing: removing a raw PDF is not
+  // recoverable from Lensy. Pass --sweep-r2 to actually delete, after reading the
+  // report. Skipped when the batch had failures — a partial run's D1 is not a
+  // trustworthy picture of what should exist.
+  if (!CONFIG.dryRun) {
+    if (failed > 0) {
+      console.log(`  R2 sweep skipped: ${failed} file(s) failed, so D1 does not yet describe the full corpus.`);
+    } else {
+      try {
+        const sweep = await postToWorker('/api/ingest/r2-sweep', { confirm: CONFIG.sweepR2 });
+        if (sweep.orphans === 0) {
+          console.log(`  R2: ${sweep.examined} object(s), no orphans.`);
+        } else if (sweep.dryRun) {
+          console.log(`  R2: ${sweep.orphans} of ${sweep.examined} object(s) have no standards row — ` +
+            `${(sweep.keys || []).slice(0, 5).join(', ')}${sweep.orphans > 5 ? ', …' : ''}`);
+          console.log('     Re-run with --sweep-r2 to delete them.');
+        } else {
+          console.log(`  R2: deleted ${sweep.deleted} of ${sweep.orphans} orphaned object(s).`);
+        }
+      } catch (err) {
+        console.warn(`  R2 sweep unavailable (non-fatal): ${err.message}`);
+      }
+    }
+  }
   console.log('');
 }
 
