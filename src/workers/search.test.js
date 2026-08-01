@@ -2,6 +2,8 @@ import { describe, it, expect } from 'vitest';
 import {
   normalizeContentTypes, buildReferenceLink, curatedStandardInfo,
   deriveLightingZone, reserveBodySlots, buildComparisonContext, matchesStandardScope, buildResult, buildChunkResults, looksLikeFrontMatter,
+  editionYear, orderComparisonResults, requestedDeprecatedEdition, spreadAcrossSections,
+  isResolvableDoi, isBrokenDoiUrl, definitionSearchTerm,
 } from './search';
 
 // ─── Content-type normalization ───────────────────────────────────────────────
@@ -170,7 +172,7 @@ describe('reserveBodySlots', () => {
     const out = reserveBodySlots([...tables, ...bodies], 10, bodies.length);
 
     expect(out.length).toBe(10);                                       // pool size unchanged
-    expect(out.filter(r => r.resultType === 'excerpt').length).toBe(3); // ceil(10 * 0.3)
+    expect(out.filter(r => r.resultType === 'excerpt').length).toBe(4); // ceil(10 * BODY_RESULT_MIN_SHARE)
     // The strongest table rows survive; only the tail is traded away.
     expect(out.some(r => r.application.code === 'application-0')).toBe(true);
   });

@@ -35,7 +35,12 @@ const DATA_VERSION_KEY = 'cache:data-version';
 // v7: comparison retrieval now excludes front/back matter (errata pages,
 //     reference lists, tables of contents) — see looksLikeFrontMatter().
 //     Different excerpts reach the model, so the stored answers are stale.
-const SEARCH_CACHE_SCHEMA = 'v7';
+// v8: client feedback DO23/DO27/DO28/DO31/DO33 — comparison results are ordered
+//     current → newest deprecated and sampled across chapters, the comparison
+//     prompt forbids invented locators, document-body recall was widened, DOI
+//     links are validated, and Definitions became a content type. Every stored
+//     result set and generated summary predates all of it.
+const SEARCH_CACHE_SCHEMA = 'v8';
 
 function errMsg(err: unknown): string {
   return err instanceof Error ? err.message : String(err);

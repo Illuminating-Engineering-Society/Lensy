@@ -1371,6 +1371,34 @@ This architecture prioritizes:
 - **Internal UI:** Deprecated content surfaces ONLY on version-comparison queries ("what's new in RP-6?") that name a standard; results are flagged `isDeprecated` with a `deprecationNotice` and render with an amber "Deprecated" banner.
 - **External API (Phase 5):** Never bind/query `VECTORIZE_DEPRECATED` — deprecated content is structurally unreachable from the main index.
 - **Agent behavior:** Never cite deprecated standards for current guidance; only reference them when user explicitly asks "what changed" or "what is new"
+- **Comparison scope (client DO27):** result cards print the CURRENT edition first, then the deprecated editions newest → oldest. The AI comparison is against exactly ONE prior edition — the most recent deprecated one, unless the query names another explicitly ("what changed between RP-8-25 and RP-8-18?"). Older editions stay in the cards (and in `comparison.alsoDeprecated`) but never reach the prompt; feeding four prior editions at once is what produced an answer claiming RP-8-25+E2 replaced RP-8-14.
+- **Comparison grounding (client DO28):** the prompt forbids naming any section, annex, chapter, table, figure or page that does not appear verbatim in the retrieved excerpts, and forbids describing the standard's subject matter from prior knowledge. Both rules exist because the prompt's own illustrative locators ("Annex H", "Section 11.3.1") were being echoed back as findings, and an RP-9 (hospitality) comparison was answered with RP-29 (healthcare) content.
+- **Comparison depth (client DO28):** the deprecated index is probed from several topical anchors — the top current excerpts, one per page — and the result window is spread across sections (`spreadAcrossSections`) so a long standard like RP-8 is sampled across chapters rather than within one.
+
+### Content Types (search filter)
+
+`filters.content_types` selects which KINDS of result a search returns. All are independent; `compare` is a modifier rather than a kind.
+
+| Value | Result card | Source |
+|---|---|---|
+| `tables` | **Illuminance Table** | `applications` rows (D1) + application vectors |
+| `body` | **Document** | prose chunks (`chunk_type` `text`/`general_notes`) |
+| `references` | **Reference** | References/Bibliography entries (`chunk_type=reference`) |
+| `definitions` | **Definition** | ANSI/IES LS-1 glossary (`chunk_type=definition` + `definitions` table) |
+| `compare` | — | modifier: forces version-comparison handling |
+
+Defaults are `tables` + `body`. A reference-seeking or definition-seeking query replaces that default automatically (`isReferenceQuery` / `isDefinitionQuery` in `query-expander.ts`); a caller who customized the filters keeps their choices and gets the detected kind added.
+
+The UI label for each kind matches the filter label exactly — "Documents" filters for "Document" cards (client DO32; the label used to read "Document Body") — and each kind owns one border line style and one chip palette (`RESULT_TYPE_STYLES` in `index.html`).
+
+### LS-1 Definitions (client DO33)
+
+The definitions are published at <https://ies.org/standards/definitions/>, a WordPress `glossary` custom post type, so `scripts/ingest-definitions.js` reads the REST collection rather than scraping the A–Z index. Each definition becomes a `definitions` row (sanitized rich text, printed IN FULL on the card, may include emphasis, inline math and figures) plus one main-index vector.
+
+- Every Definition card is titled with the current LS-1 designation regardless of whether LS-1 itself is indexed as a PDF.
+- Retrieval unions an exact/prefix term match in D1 with the semantic match, and the term match always outranks it — a search for "Color" must return the `color` definition, not whichever definition mentions colour most.
+- The client expects this source to move into Vitrium as a normal PDF around late 2027. At that point the normal ingest path replaces the script; the `chunk_type=definition` and `definitions`-table contracts stay as they are.
+- `img-src` in `src/frontend/_headers` allows `ies.org` so definition figures render; the HTML itself is sanitized to an allowlist server-side in `src/lib/definitions.js`.
 
 The Cloudflare stack provides:
 - **Global edge deployment** for low latency

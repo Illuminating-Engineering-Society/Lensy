@@ -51,7 +51,10 @@ const MAX_TOKENS: Record<AIMode, number> = {
 // editions; references mode is a listing, so it gets the widest window.
 const PROMPT_RESULTS: Record<AIMode, number> = {
   guide: 8,
-  comparison: 10,
+  // Raised 10→18 (client DO28: "greater depth of responses and greater
+  // accuracy"). The search worker now returns up to 12 prior-edition excerpts
+  // spread across chapters; the prompt has to be able to hold both editions.
+  comparison: 18,
   references: 12,
 };
 
@@ -320,7 +323,7 @@ function describeShape(response: unknown): string {
 // ─── Prompt building ──────────────────────────────────────────────────────────
 
 function buildPrompt(query: string, searchResults: SearchResult[], mode: AIMode, comparison?: ComparisonContext): string {
-  const picked = pickResults(searchResults, mode);
+  const picked = pickResults(searchResults, mode, comparison);
   const resultsSummary = picked.map((r, idx) => describeResult(r, idx)).join('\n\n');
 
   const header = `User Query: "${query}"\n\nSearch Results (from IES Standards database):\n${resultsSummary}\n`;
@@ -335,11 +338,25 @@ function buildPrompt(query: string, searchResults: SearchResult[], mode: AIMode,
  * appended after current results by the search worker (version-comparison
  * queries only), so a plain slice would cut off exactly the content the
  * comparison needs — reserve slots for both editions.
+ *
+ * On a comparison, only the TARGET prior edition's excerpts are shown (client
+ * DO27: compare against the most recent deprecated edition). Older editions
+ * stay in the result cards but never reach the prompt, so the model cannot
+ * mistake one of them for the edition that was replaced.
  */
-function pickResults(searchResults: SearchResult[], mode: AIMode): SearchResult[] {
+function pickResults(searchResults: SearchResult[], mode: AIMode, comparison?: ComparisonContext): SearchResult[] {
   const budget = PROMPT_RESULTS[mode];
   const current = searchResults.filter(r => !r.isDeprecated);
-  const deprecated = searchResults.filter(r => r.isDeprecated);
+  let deprecated = searchResults.filter(r => r.isDeprecated);
+
+  const targets = (comparison?.deprecated || []).map(d => d.id.toUpperCase());
+  if (mode === 'comparison' && targets.length > 0) {
+    const scoped = deprecated.filter(r => targets.includes(String(r.application?.standard || '').toUpperCase()));
+    // Never end up with zero prior-edition context: if the target edition
+    // produced no excerpts, fall back to whatever prior-edition text we have.
+    if (scoped.length > 0) deprecated = scoped;
+  }
+
   if (deprecated.length === 0) return current.slice(0, budget);
   const depShare = Math.min(deprecated.length, Math.max(2, Math.floor(budget / 2)));
   return [...current.slice(0, budget - depShare), ...deprecated.slice(0, depShare)];
@@ -354,6 +371,13 @@ function describeResult(r: SearchResult, idx: number): string {
   if (r.resultType === 'reference') {
     return `[Result ${idx + 1}] REFERENCE ENTRY listed in ${app.standardFull || app.standard}${r.excerpt?.pageNumber ? `, p. ${r.excerpt.pageNumber}` : ''}
   Entry: "${(excerptText || '').substring(0, 300)}"`;
+  }
+
+  // LS-1 terminology (client DO33): the definition IS the authority, so it is
+  // given verbatim and the model is told not to restate it as its own wording.
+  if (r.resultType === 'definition' && r.definition) {
+    return `[Result ${idx + 1}] DEFINITION of "${r.definition.term}" from ${app.standardFull || app.standard}${r.definition.clause ? ` §${r.definition.clause}` : ''}
+  Definition (authoritative — cite it, do not reword it as your own): "${(excerptText || '').substring(0, 600)}"`;
   }
 
   const meta: string[] = [];
@@ -406,12 +430,19 @@ Write the guidance now:`;
 function comparisonInstructions(comparison?: ComparisonContext): string {
   const current = comparison?.current;
   const deprecated = comparison?.deprecated || [];
+  const older = comparison?.alsoDeprecated || [];
   const pair = current && deprecated.length > 0
-    ? `The current standard is ${current.name}. The deprecated edition(s) being compared: ${deprecated.map(d => d.name).join(', ')}.`
-    : 'Identify the current and deprecated editions from the results above.';
+    ? `The current standard is ${current.name}. Compare it against exactly ONE prior edition: ${deprecated.map(d => d.name).join(', ')}.`
+    : 'Identify the current and the most recent deprecated edition from the results above, and compare only those two.';
+  // Older editions are in the result cards but must not enter the analysis
+  // (client DO27) — naming four prior editions is what produced the DO28 answer
+  // that said RP-8-25+E2 replaced RP-8-14.
+  const olderNote = older.length > 0
+    ? `\nOlder editions (${older.map(d => d.id).join(', ')}) also appear in the results. Do NOT compare against them and do NOT name them as the edition that was replaced.`
+    : '';
 
   return `
-This is a VERSION COMPARISON request. ${pair}
+This is a VERSION COMPARISON request. ${pair}${olderNote}
 
 Produce a substantive, objective, high-level comparison using EXACTLY these three sections, in this order, each as a heading on its own line:
 
@@ -419,14 +450,19 @@ What appears to be new
 Likely technical updates
 Possible deletions
 
+GROUNDING — the single most important rule:
+- Every section number, annex letter, chapter title, table number, figure number and page number you write MUST appear verbatim in the excerpts above. If an excerpt does not give you a locator, describe the change without one. NEVER invent, guess, or pattern-fill a locator, and never write "(or similar)" after one.
+- Use ONLY the excerpts above to determine what these documents are about. Do not draw on any prior knowledge of what this standard covers — designations are easily confused with one another, and describing the wrong subject matter is worse than saying less. If the excerpts do not tell you the topic of a change, do not name a topic.
+- If the excerpts do not support a section, write one sentence saying the retrieved passages do not show changes of that kind, and move on. That is a correct answer; a plausible-sounding invented one is not.
+
 Rules for every section:
-- Break the analysis up BY SECTION or chapter of the standard (e.g. "Chapter 17: Parking Lots and Parking Garages", "Annex H", "Section 11.3.1") so a reader can look each item up. One short bullet per item, with the section/page reference.
+- Organize by the sections or chapters that the excerpts actually name, so a reader can look each item up. One short bullet per item, with its locator quoted from the excerpt.
 - Use hedged, verifiable language: "appears to", "updates appear to include", "is no longer printed". You are inferring from excerpts, not from a diff of the full documents.
-- Base every item on a SUBSTANTIVE provision — recommended values, criteria, procedures, scope. Front matter is not a change: never present an errata notice, a copyright or contact page, a table of contents, or an entry in a reference list as new or updated content. If the excerpts only contain front matter, say plainly that the retrieved passages do not show substantive changes.
+- Base every item on a SUBSTANTIVE provision — recommended values, criteria, procedures, scope. Front matter is not a change: never present an errata notice, a copyright or contact page, a table of contents, or an entry in a reference list as new or updated content.
 - Discuss ONLY the two editions being compared. Other standards may appear in the results because they are cited; do not describe their contents as changes to this standard.
 - Frame possible deletions as historical context only, never as guidance, and note that the content may have been relocated rather than removed.
 - Recommend ONLY the current standard for further reading; the deprecated edition is referenced for comparison alone.
-- State plainly that the deprecated edition has been replaced by the current one.
+- State plainly that the deprecated edition has been replaced by the current one, naming the edition given above and no other.
 - End with one line advising a manual review of both documents to verify the findings.
 - Never quote more than 15 words from any single source. Do NOT state specific lux / footcandle values.
 - The response may be long — completeness matters more than brevity here.

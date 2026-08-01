@@ -35,9 +35,21 @@ const TABLE_PAGE_RE = /^Table\s+[A-Z0-9]-?\d*/im;
 const REFERENCES_HEADING_RE =
   /^(?:(?:\d+(?:\.\d+)*|Annex\s+[A-Z]|Appendix\s+[A-Z])[\s.:—-]*)?(?:Normative\s+|Informative\s+)?(?:References?|Bibliography)\s*$/i;
 
+// Chunk sizing (client DO23: "possibly less aggressive 'chunking' will help
+// this?" — a broad conceptual query returned a single document-body result).
+//
+// 350 words is ~2 pages of a standard, so a passage about one narrow concept was
+// diluted by everything printed around it: the chunk's embedding drifted toward
+// the page's dominant topic and the concept lost to unrelated application rows.
+// 200 words keeps a chunk close to a single idea, roughly doubles the number of
+// retrievable passages per document, and — with the overlap raised in step — no
+// longer splits a provision away from its own heading.
+//
+// Cost: ~1.75× the vectors per standard. Requires a re-ingest to take effect;
+// existing 350-word chunks keep working, they just stay coarse.
 const DEFAULTS = {
-  targetWords: 350,   // ~500 tokens at 1.4 words/token
-  overlapWords: 40,   // overlap between adjacent chunks for context continuity
+  targetWords: 200,   // ~285 tokens at 1.4 words/token
+  overlapWords: 60,   // overlap between adjacent chunks for context continuity
   minWords: 30,       // discard body chunks shorter than this
   minReferenceWords: 5, // reference entries are legitimately short
 };

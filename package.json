@@ -12,6 +12,7 @@
     "ingest": "node scripts/ingest-pdfs.js --dir pdfs/",
     "ingest:deprecated": "node scripts/ingest-pdfs.js --dir \"pdfs/Deprecated Standards\"",
     "ingest:apps": "node scripts/ingest-pdfs.js --applications-only",
+    "ingest:definitions": "node scripts/ingest-definitions.js",
     "rename:deprecated": "node scripts/rename-deprecated.js",
     "extract": "node scripts/extract-applications-from-pdf.js",
     "sync-metadata": "node scripts/sync-metadata.js",

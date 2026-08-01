@@ -345,6 +345,34 @@ export function isReferenceQuery(query: string): boolean {
   return REFERENCE_QUERY_PATTERNS.some(re => re.test(normalizeTypography(query)));
 }
 
+// ─── Definition-Seeking Intent Detection (client DO33) ────────────────────────
+
+// As narrow as the reference patterns, and for the same reason: a match REPLACES
+// the default tables+body selection with definitions-only. "definition" used
+// descriptively ("high-definition display", "the definition of the task area in
+// §5") must not trigger — every pattern requires either an explicit lookup verb
+// or the "definition/meaning OF <term>" construction.
+const DEFINITION_QUERY_PATTERNS = [
+  /\bdefine\s+\S/i,
+  /\b(?:definitions?|meaning)\s+(?:of|for)\b/i,
+  /\bwhat\s+(?:does|do)\b[^.?!]{0,60}?\bmean\b/i,
+  /\bwhat\s+is\s+(?:the\s+)?(?:term|definition)\b/i,
+  /\b(?:LS-?1|nomenclature)\b[^.?!]{0,30}?\b(?:definitions?|terms?|terminology)\b/i,
+  /\b(?:defined|definition)\s+in\s+(?:ANSI\/IES\s+)?LS-?1\b/i,
+  /\bglossary\b/i,
+];
+
+/**
+ * Detect a terminology lookup ("define mesopic adaptation", "what does veiling
+ * reflection mean"). The search layer scopes these to the ANSI/IES LS-1
+ * definitions index (chunk_type 'definition') so the user gets the authoritative
+ * definition rather than body prose that happens to use the word.
+ */
+export function isDefinitionQuery(query: string): boolean {
+  if (!query) return false;
+  return DEFINITION_QUERY_PATTERNS.some(re => re.test(normalizeTypography(query)));
+}
+
 function escapeRegex(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }

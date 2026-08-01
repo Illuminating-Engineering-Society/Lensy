@@ -65,6 +65,7 @@ import { execSync } from 'child_process';
 import { parsePDFNode } from '../src/lib/pdf-parser.js';
 import { extractIESTables, extractGeneralNotes } from '../src/lib/table-extractor.js';
 import { chunkIESDocument } from '../src/lib/chunker.js';
+import { extractReferenceMarkers } from '../src/lib/reference-markers.js';
 import {
   extractApplicationsFromPages,
   reportExtractionQuality,
@@ -377,6 +378,17 @@ async function ingestFile(filePath, standardId, status = 'current') {
     console.warn('  ⚠ A References heading was detected but no reference chunks were produced — reference search will miss this standard.');
   }
 
+  // Step 5b: In-body reference markers — superscripted numerals citing the
+  // References section, mapped to the first page that prints each one. Lets a
+  // Reference result link to where the work is CITED, not to the bibliography
+  // page (client DO31.4).
+  const referenceMarkers = extractReferenceMarkers(pages);
+  const markerCount = Object.keys(referenceMarkers).length;
+  console.log(`  In-body reference markers: ${markerCount}`);
+  if (byType.reference && markerCount === 0) {
+    console.warn('  ⚠ Reference entries were indexed but no in-body superscript markers were found — Reference chips will link to the References page instead of the citing page.');
+  }
+
   if (CONFIG.verbose) {
     for (const [i, chunk] of chunks.entries()) {
       const preview = chunk.text.substring(0, 70).replace(/\n/g, ' ');
@@ -406,6 +418,7 @@ async function ingestFile(filePath, standardId, status = 'current') {
     chunks,
     tables,
     applications: [],  // sent separately below to avoid request size limits
+    referenceMarkers,
     r2Key,
   });
 

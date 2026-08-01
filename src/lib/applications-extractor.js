@@ -118,12 +118,33 @@ export function extractApplicationsFromPages(pages, standardId, standardMeta = {
  */
 function finalizeFootnotes(records, allPages, tablePages) {
   const bodyFont = medianDataFont(tablePages);
-  const docNotes = new Map();
+
+  // Notes are scoped PER TABLE, not per document (client DO30: "always print
+  // footnotes accurately"). RP-11-26 prints notes 1–20 for Table A-1 and a
+  // DIFFERENT 1–17 for Table A-2; a document-wide "first definition wins" map
+  // gave every Table A-2 row Table A-1's note text. The notes block usually
+  // carries its own "Table A-n." title line, so each page's notes are filed
+  // under that table and rows resolve against their own Table_Ref first.
+  const notesByTable = new Map();  // "Table A-1" → Map<num, text>
+  const anyTableNotes = new Map(); // fallback for rows whose table has no block
+  const notesPageByTable = new Map(); // "Table A-1" → first page printing its notes
   for (const page of allPages) {
-    for (const [n, text] of collectPageNotes(page, bodyFont)) {
-      if (!docNotes.has(n)) docNotes.set(n, text); // first definition wins
+    const pageNotes = collectPageNotes(page, bodyFont);
+    if (pageNotes.size === 0) continue;
+    const tableRef = detectTableRef(page.text);
+    if (tableRef) {
+      if (!notesByTable.has(tableRef)) notesByTable.set(tableRef, new Map());
+      if (!notesPageByTable.has(tableRef)) notesPageByTable.set(tableRef, page.number);
+      const bucket = notesByTable.get(tableRef);
+      for (const [n, text] of pageNotes) if (!bucket.has(n)) bucket.set(n, text);
     }
+    for (const [n, text] of pageNotes) if (!anyTableNotes.has(n)) anyTableNotes.set(n, text);
   }
+
+  const notesFor = (rec) => {
+    const scoped = rec.Table_Ref ? notesByTable.get(rec.Table_Ref) : null;
+    return { scoped, fallback: anyTableNotes };
+  };
 
   let hasRowRefs = records.some(r => r.Footnotes != null);
   for (const rec of records) {
@@ -131,21 +152,38 @@ function finalizeFootnotes(records, allPages, tablePages) {
     if (!refs) continue;
     delete rec._noteRefs;
     hasRowRefs = true;
-    const resolved = refs
-      .map(n => (docNotes.get(n) ? `${n}. ${docNotes.get(n)}` : null))
-      .filter(Boolean);
-    rec.Footnotes = resolved.length > 0
-      ? resolved.join('\n')
-      : `See Application Task/Area Notes: ${refs.join(', ')}`;
+    const { scoped, fallback } = notesFor(rec);
+    const resolved = [];
+    const unresolved = [];
+    for (const n of refs) {
+      const text = (scoped && scoped.get(n)) || fallback.get(n);
+      if (text) resolved.push(`${n}. ${text}`);
+      else unresolved.push(n);
+    }
+    // Some prototype exports interleave two text layers on the notes page
+    // (RP-29-25 p. 142), leaving the tail of the notes list unrecoverable. Never
+    // print a garbled note as if it were the standard's text — point the reader
+    // at the printed page instead, which is at least actionable.
+    if (unresolved.length > 0) {
+      const notesPage = rec.Table_Ref ? notesPageByTable.get(rec.Table_Ref) : null;
+      resolved.push(
+        `See Application Task/Area Notes ${unresolved.join(', ')}` +
+        (notesPage != null ? ` — printed on p. ${notesPage}` : '')
+      );
+    }
+    rec.Footnotes = resolved.join('\n');
   }
 
-  if (!hasRowRefs && docNotes.size > 0) {
-    const all = [...docNotes.entries()]
-      .sort((a, b) => a[0] - b[0])
-      .map(([n, t]) => `${n}. ${t}`)
-      .join('\n');
-    const capped = all.length > 2000 ? `${all.slice(0, 2000)}…` : all;
-    for (const rec of records) rec.General_Notes = capped;
+  if (!hasRowRefs && anyTableNotes.size > 0) {
+    for (const rec of records) {
+      const { scoped, fallback } = notesFor(rec);
+      const source = (scoped && scoped.size > 0) ? scoped : fallback;
+      const all = [...source.entries()]
+        .sort((a, b) => a[0] - b[0])
+        .map(([n, t]) => `${n}. ${t}`)
+        .join('\n');
+      rec.General_Notes = all.length > 2000 ? `${all.slice(0, 2000)}…` : all;
+    }
   }
 }
 
@@ -590,6 +628,20 @@ function collectHeaderMarks(snapshot, headerRefs) {
 const MAX_NOTE_LENGTH = 600;
 
 /**
+ * The heading that opens a notes block.
+ *
+ * Deliberately tolerant of a truncated opening word: PDF text extraction drops
+ * the leading glyph run of this heading in several prototypes — RP-11-26 p. 106
+ * extracts as "plication Task/Area Notes", so an anchored
+ * /^Application Task\/Area Notes/ found nothing and every note on that page went
+ * unresolved. Rows then displayed the "See Application Task/Area Notes: 18"
+ * placeholder instead of note 18's text (client DO30). "Task/Area Notes" is
+ * distinctive enough on its own — the column header "APPLICATION TASK/AREA" is
+ * never followed by "Notes".
+ */
+const NOTES_HEADING_RE = /(?:^|\b)(?:[a-z]*lication\s+)?task\s*\/\s*area\s+notes\b/i;
+
+/**
  * Collect the "Application Task/Area Notes" definitions printed on a criteria
  * page: numbered notes ("1 General principles…") at the prose font, with
  * unnumbered continuation lines appended to the current note. Table-body
@@ -598,7 +650,7 @@ const MAX_NOTE_LENGTH = 600;
 function collectPageNotes(page, bodyFont) {
   const noteMap = new Map();
   const lines = page.lines || [];
-  const startIdx = lines.findIndex(l => /^Application Task\/Area Notes\b/i.test((l.text || '').trim()));
+  const startIdx = lines.findIndex(l => NOTES_HEADING_RE.test((l.text || '').trim()));
   if (startIdx < 0) return noteMap;
 
   let currentNum = null;

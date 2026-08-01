@@ -64,11 +64,15 @@
 
 import {
   prepareQueryForEmbedding, splitMultiQuery, cleanQuery,
-  isVersionComparisonQuery, isReferenceQuery, normalizeTypography,
+  isVersionComparisonQuery, isReferenceQuery, isDefinitionQuery, normalizeTypography,
 } from '../lib/query-expander';
+import {
+  DEFINITIONS_STANDARD_FULL, DEFINITIONS_STANDARD_TITLE,
+} from '../lib/definitions.js';
 import { generateResponse } from '../lib/ai-summary';
 import { formatCitation, composeStandardName } from '../lib/citations';
 import { looksLikeFormalReference, referenceCitationKey } from '../lib/references.js';
+import { referenceEntryNumber } from '../lib/reference-markers.js';
 import { hasEnvConsiderationColumns, parseLightingZoneLabel } from '../lib/illuminance-fields.js';
 import {
   getDataVersion,
@@ -118,8 +122,10 @@ const EXCERPTS_PER_RESULT = 10;
 // chunks so heavily that body excerpts were squeezed out of the top `limit`.
 // At least this fraction of the pool is reserved for body results when that
 // many are available.
-const BODY_RESULT_MIN_SHARE = 0.3;
-const BODY_CHUNKS_PER_STANDARD = 3; // body excerpts kept per standard (was 1)
+// Raised 0.3→0.4 and 3→5 (client DO23, second pass): with both boxes ticked a
+// broad conceptual query still came back with a single document-body card.
+const BODY_RESULT_MIN_SHARE = 0.4;
+const BODY_CHUNKS_PER_STANDARD = 5; // body excerpts kept per standard (was 1, then 3)
 
 /**
  * Resolve the lighting zone for an application row (client DO20/DO21).
@@ -162,7 +168,7 @@ export function deriveLightingZone(app: {
 // what KINDS of results appear. Defaults mirror the UI (tables + body on,
 // references off). 'compare' additionally forces version-comparison handling.
 const DEFAULT_CONTENT_TYPES: ContentType[] = ['tables', 'body'];
-const VALID_CONTENT_TYPES = new Set(['tables', 'body', 'references', 'compare']);
+const VALID_CONTENT_TYPES = new Set(['tables', 'body', 'references', 'definitions', 'compare']);
 
 export function normalizeContentTypes(filters: SearchFilters | undefined, rawQuery: string): Set<ContentType> {
   const raw = Array.isArray(filters?.content_types) ? filters.content_types : null;
@@ -191,6 +197,19 @@ export function normalizeContentTypes(filters: SearchFilters | undefined, rawQue
       ct.delete('body');
     }
     ct.add('references');
+  }
+
+  // Same rule for definition-seeking phrasing ("define illuminance", "what does
+  // mesopic mean") — client DO33 adds Definitions as its own content type, and
+  // an explicit request for terminology should not have to be filtered by hand.
+  if (isDefinitionQuery(rawQuery)) {
+    const isDefaultSelection = cleaned.length === 0 ||
+      (ct.has('tables') && ct.has('body') && !ct.has('definitions') && substantive.length === 2);
+    if (isDefaultSelection) {
+      ct.delete('tables');
+      ct.delete('body');
+    }
+    ct.add('definitions');
   }
   return ct;
 }
@@ -309,9 +328,17 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
     // Topical anchor: the current edition's best excerpt. Embedding the raw
     // "what's new in X?" phrasing retrieves TOC lines from the deprecated
     // index ("9.12 New Light Sources . . ."), not substantive provisions.
-    const topicHint = allResults.results[0]?.excerpt?.text || '';
-    const deprecatedResults = await searchDeprecatedForComparison(rawQuery, mergedFilters, env, topicHint, depDbg);
+    // Several anchors, not one: RP-8 is a long document and "all standards
+    // contain critical details throughout each chapter" (client DO28). One
+    // anchor retrieved one chapter's worth of prior-edition text, so the
+    // comparison could only speak about that chapter. Anchor on the top few
+    // current excerpts from DIFFERENT pages so the prior edition is sampled
+    // across the document.
+    const topicHints = collectTopicHints(allResults.results);
+    const deprecatedResults = await searchDeprecatedForComparison(rawQuery, mergedFilters, env, topicHints, depDbg);
     allResults.results.push(...deprecatedResults);
+    // Current edition first, then prior editions newest → oldest (client DO27).
+    allResults.results = orderComparisonResults(allResults.results);
   }
 
   // ── Related applications + optional AI summary (run concurrently) ────────────
@@ -334,9 +361,14 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
   // gets the three-section "what changed" analysis, a References-only search
   // gets the reference-frequency answer, everything else gets guidance.
   const referencesOnly = contentTypes.has('references') && !contentTypes.has('tables') && !contentTypes.has('body');
+  // A Definitions-only search is a terminology lookup, not a request for lighting
+  // recommendations (client DO33) — the low-confidence advisory does not apply.
+  const definitionsOnly = contentTypes.has('definitions')
+    && !contentTypes.has('tables') && !contentTypes.has('body') && !contentTypes.has('references');
   const aiMode: AIMode = isVersionComparison ? 'comparison' : (referencesOnly ? 'references' : 'guide');
+  const currentIdForComparison = allResults.results.find(r => !r.isDeprecated)?.application?.standard || null;
   const comparisonContext = aiMode === 'comparison'
-    ? buildComparisonContext(allResults.results)
+    ? buildComparisonContext(allResults.results, requestedDeprecatedEdition(rawQuery, currentIdForComparison))
     : undefined;
 
   const aiPromise = (includeAISummary && allResults.results.length > 0)
@@ -394,7 +426,8 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
   // The advisory doesn't apply to References or version-comparison searches
   // (client feedback DO11): reference entries legitimately score lower, and a
   // comparison isn't looking for lighting recommendations in the first place.
-  const noStrongMatch = !referencesOnly && !isVersionComparison && topScore < STRONG_MATCH_THRESHOLD;
+  const noStrongMatch = !referencesOnly && !definitionsOnly && !isVersionComparison
+    && topScore < STRONG_MATCH_THRESHOLD;
 
   // Comparison searches need the AI Guide to synthesize "what changed" across
   // editions — without it the user just sees raw excerpts. Tell them to turn
@@ -490,32 +523,97 @@ function standardFamily(id: string | null | undefined): string {
 }
 
 /**
- * Which editions a version comparison is actually between (client DO25).
+ * The publication year encoded in a standard id, as a full 4-digit year.
+ * "RP-8-25" → 2025, "RP-8-99" → 1999, "LM-63-19R25" → 2019 (the edition, not
+ * the reaffirmation), "RP-8-25+E2" → 2025.
+ *
+ * IES ids carry two digits, so the century is inferred: anything above the
+ * current two-digit year window belongs to the 1900s. Used to order deprecated
+ * editions newest → oldest (client DO27).
+ */
+export function editionYear(id: string | null | undefined): number {
+  if (!id) return -1;
+  const m = /-(\d{2})(?:R\d{2})?(?:\+E\d+)?$/.exec(String(id).toUpperCase());
+  if (!m) return -1;
+  const yy = Number(m[1]);
+  // 00–49 → 2000s, 50–99 → 1900s. No IES standard in this corpus predates 1950
+  // and none is dated past 2049.
+  return yy <= 49 ? 2000 + yy : 1900 + yy;
+}
+
+/**
+ * Order a comparison result list the way the client specified (DO27):
+ *
+ *   1. the CURRENT standard's results first, in relevance order
+ *   2. then the deprecated editions, newest → oldest, each edition's excerpts
+ *      kept together and in relevance order
+ *
+ * "Easy access to quickly open both files for manual comparison" — the reader
+ * scans down from the current edition through the prior ones in publication
+ * order, so the pairing is obvious without reading match percentages.
+ */
+export function orderComparisonResults(results: SearchResult[]): SearchResult[] {
+  const current = results.filter(r => !r.isDeprecated);
+  const deprecated = results.filter(r => r.isDeprecated);
+  if (deprecated.length === 0) return results;
+
+  // Group by edition so an edition's excerpts never interleave with another's.
+  const byEdition = new Map<string, SearchResult[]>();
+  for (const r of deprecated) {
+    const id = r.application?.standard || '';
+    if (!byEdition.has(id)) byEdition.set(id, []);
+    byEdition.get(id)!.push(r);
+  }
+  const orderedDeprecated = [...byEdition.entries()]
+    .sort((a, b) => editionYear(b[0]) - editionYear(a[0]) || b[0].localeCompare(a[0]))
+    .flatMap(([, group]) => group.sort((x, y) => (y.relevanceScore || 0) - (x.relevanceScore || 0)));
+
+  return [...current, ...orderedDeprecated];
+}
+
+/**
+ * Which editions a version comparison is actually between (client DO25 / DO27).
  *
  * The deprecated results carry a `supersededBy` pointer, so the current edition
  * is resolved in that order: the explicitly-superseding result → any current
- * result of the same family → the top current result. Both editions are
- * hyperlinked in the UI even though only the current one is recommended for
- * further reading.
+ * result of the same family → the top current result.
+ *
+ * `deprecated` holds ONLY the edition the analysis is against — the most recent
+ * deprecated one, unless the query names a different edition explicitly (client
+ * DO27: "in AI Summary, only compare the current standard to the most recent
+ * deprecated standard unless otherwise requested by user"). The older editions
+ * move to `alsoDeprecated`, which the UI still lists and links but the model is
+ * told to leave alone. Comparing against four prior editions at once is what
+ * produced the DO28 answer that named RP-8-14 as the edition RP-8-25+E2
+ * replaced.
  */
-export function buildComparisonContext(results: SearchResult[]): ComparisonContext {
-  const deprecated: ComparisonContext['deprecated'] = [];
+export function buildComparisonContext(results: SearchResult[], requestedEdition?: string | null): ComparisonContext {
+  const editions: NonNullable<ComparisonContext['deprecated']> = [];
   const seen = new Set<string>();
   for (const r of results) {
     if (!r.isDeprecated) continue;
     const id = r.application?.standard;
     if (!id || seen.has(id)) continue;
     seen.add(id);
-    deprecated.push({
+    editions.push({
       id,
       name: r.application?.standardFull || id,
       url: r.standardLink || null,
     });
   }
+  // Newest first, so [0] is the comparison target.
+  editions.sort((a, b) => editionYear(b.id) - editionYear(a.id) || b.id.localeCompare(a.id));
+
+  const wanted = requestedEdition ? requestedEdition.toUpperCase() : null;
+  const targetIdx = wanted
+    ? Math.max(0, editions.findIndex(e => e.id.toUpperCase().startsWith(wanted)))
+    : 0;
+  const target = editions[targetIdx] ? [editions[targetIdx]] : [];
+  const alsoDeprecated = editions.filter((_, i) => i !== targetIdx);
 
   const currents = results.filter(r => !r.isDeprecated && r.application?.standard);
   const supersededBy = results.find(r => r.isDeprecated && r.supersededBy)?.supersededBy || null;
-  const family = deprecated.length > 0 ? standardFamily(deprecated[0].id) : '';
+  const family = editions.length > 0 ? standardFamily(editions[0].id) : '';
   const pick =
     (supersededBy && currents.find(r => r.application.standard === supersededBy)) ||
     (family && currents.find(r => standardFamily(r.application.standard) === family)) ||
@@ -530,8 +628,26 @@ export function buildComparisonContext(results: SearchResult[]): ComparisonConte
           url: pick.standardLink || null,
         }
       : null,
-    deprecated,
+    deprecated: target,
+    alsoDeprecated,
   };
+}
+
+/**
+ * A specific prior edition named in the query ("what changed between RP-8-25
+ * and RP-8-18?"), so the comparison targets that edition instead of the most
+ * recent deprecated one. Returns the bare edition id, or null.
+ */
+export function requestedDeprecatedEdition(rawQuery: string, currentId?: string | null): string | null {
+  const query = normalizeTypography(rawQuery).toUpperCase();
+  const re = /\b((?:RP|TM|HB|LM|LP|LS|DG|LEM|G)-\d+(?:\.\d+)?-\d{2}(?:\+E\d+)?)\b/g;
+  const named = [...query.matchAll(re)].map(m => m[1]);
+  if (named.length === 0) return null;
+  const current = (currentId || '').toUpperCase();
+  // An edition the query names that is NOT the current one is the requested
+  // prior edition. Errata suffixes are ignored when comparing against current.
+  const base = (id: string) => id.replace(/\+E\d+$/, '');
+  return named.find(id => base(id) !== base(current)) || null;
 }
 
 /**
@@ -570,6 +686,7 @@ async function runSingleSearch(rawQuery: string, filters: SearchFilters, limit: 
   const includeTables = contentTypes.has('tables');
   const includeBody = contentTypes.has('body');
   const includeRefs = contentTypes.has('references');
+  const includeDefs = contentTypes.has('definitions');
 
   // 1. Embed — KV-cached. Embeddings are deterministic per model, so a
   //    repeated query (or a sub-query of a repeated multi-query) skips the
@@ -722,8 +839,32 @@ async function runSingleSearch(rawQuery: string, filters: SearchFilters, limit: 
   //    filter drops orphan vectors from deleted/renamed standards.
   //    compareResults handles the final order: score first, and its
   //    hierarchy tie-break favors application rows on near-equal scores.
-  if (includeBody && chunkMatches.length > 0) {
-    const liveChunks = chunkMatches.filter(m => {
+  if (includeBody) {
+    // 8a. Harvest the backfill's prose into the body pool (client DO23, second
+    //     pass: "increase qty of results from body of document"). Step 6.5
+    //     already pulled up to 20 chunks per top standard through a
+    //     standard_code-filtered query, and those chunks are strictly better
+    //     body candidates than what survives in the shared top-50 pool — where
+    //     application vectors crowd prose out. Reusing them costs no extra
+    //     Vectorize calls, and it works even when the chunk_type metadata index
+    //     post-dates the corpus (the case that silently emptied the
+    //     body-scoped query in step 3b).
+    const poolIds = new Set(chunkMatches.map(m => m.id));
+    const harvested: VMatch[] = [];
+    for (const [stdId, bucket] of Object.entries(excerptIndex)) {
+      for (const c of bucket) {
+        if (c.chunk_type === 'application' || c.chunk_type === 'reference') continue;
+        // Synthesize the deterministic-looking id the pool dedupes on. The
+        // excerpt index drops vector ids, so key on (standard, page, opening).
+        const id = `harvest:${stdId}:${c.page_number ?? '?'}:${(c.excerpt_text || '').slice(0, 40)}`;
+        if (poolIds.has(id)) continue;
+        poolIds.add(id);
+        harvested.push({ id, score: c.score, metadata: { ...c, standard_id: c.standard_id || stdId } });
+      }
+    }
+    const bodyPool = [...chunkMatches, ...harvested];
+
+    const liveChunks = bodyPool.filter(m => {
       const id = m.metadata?.standard_id || m.metadata?.standard_code;
       return id && standardsIndex.has(id);
     });
@@ -735,11 +876,19 @@ async function runSingleSearch(rawQuery: string, filters: SearchFilters, limit: 
     // are worse than useless: they crowd out the provisions the comparison is
     // supposed to be about. Ordinary searches keep them.
     const comparisonIntent = contentTypes.has('compare') || isVersionComparisonQuery(rawQuery);
+    // Content-level dedupe: the harvested backfill chunks and the shared pool
+    // legitimately overlap (same vector reached both ways) but carry different
+    // ids, so identity alone would print the same passage twice.
+    const seenPassages = new Set<string>();
     const displayableChunks = liveChunks.filter(m => {
       const meta = m.metadata || {};
       const text = String(meta.excerpt_text || '');
       if (meta.chunk_type === 'table' || text.trim().length < 60 || isTableLike(text)) return false;
-      return !(comparisonIntent && looksLikeFrontMatter(text));
+      if (comparisonIntent && looksLikeFrontMatter(text)) return false;
+      const key = `${meta.standard_id || meta.standard_code || ''}|${meta.page_number ?? '?'}|${text.slice(0, 80)}`;
+      if (seenPassages.has(key)) return false;
+      seenPassages.add(key);
+      return true;
     });
     const chunkResults = buildChunkResults(displayableChunks, linkCtx, { perStandard: BODY_CHUNKS_PER_STANDARD });
     if (chunkResults.length > 0) {
@@ -827,11 +976,206 @@ async function runSingleSearch(rawQuery: string, filters: SearchFilters, limit: 
     }
   }
 
+  // 12. Definitions mode (client DO33) — ANSI/IES LS-1 terminology as its own
+  //     result type. Definition vectors live in the main index tagged
+  //     chunk_type='definition'; the rich text is hydrated from D1 so the card
+  //     can print the definition in full, tables and images included.
+  if (includeDefs) {
+    try {
+      const defResults = await searchDefinitions(env, queryVector, rawQuery, limit, linkCtx);
+      if (defResults.length > 0) {
+        const definitionsOnly = !includeTables && !includeBody && !includeRefs;
+        // A Definitions-only search IS the definition list — never let a stray
+        // application row outrank a term the user explicitly asked to look up.
+        results = definitionsOnly
+          ? defResults.slice(0, limit)
+          : [...results, ...defResults].sort(compareResults).slice(0, limit);
+      }
+    } catch (err) {
+      console.error('definition search failed (non-fatal):', errMsg(err));
+    }
+  }
+
   // 9. Publication-order clustering — sibling rows of the same application
   //    block print together, ordered as in the source table (client
   //    feedback: Figure Skating Class I–IV / Recreational must follow the
   //    standard's row order, not raw vector-score order).
   return { results: clusterSiblings(results), expandedQuery };
+}
+
+// ─── Definitions (client DO33) ────────────────────────────────────────────────
+
+const DEFINITION_TOP_K = 30;
+// An exact term hit is never merely "relevant" — it is the answer. Scored above
+// any vector match so "Color" returns the `color` definition first, whatever the
+// embedding thinks.
+const DEFINITION_EXACT_SCORE = 1;
+const DEFINITION_PREFIX_SCORE = 0.95;
+
+/**
+ * Search the ANSI/IES LS-1 definitions.
+ *
+ * Two retrieval paths, unioned:
+ *   1. Exact / prefix term match in D1 — a bare term query ("color", "mesopic")
+ *      must land on that term's own definition, and this also carries the mode
+ *      when the Vectorize chunk_type metadata index post-dates the definition
+ *      ingest (the failure that silently emptied References mode, DO12).
+ *   2. Semantic match over definition vectors, for descriptive queries
+ *      ("the ratio of absorbed flux to incident flux").
+ *
+ * Rich text always comes from D1: Vectorize metadata holds a truncated plain-text
+ * copy, but the card prints the definition IN FULL with its original emphasis,
+ * inline math and images (client DO33).
+ */
+export async function searchDefinitions(
+  env: Env, queryVector: number[], rawQuery: string, limit: number, linkCtx: LinkCtx = {},
+): Promise<SearchResult[]> {
+  const term = definitionSearchTerm(rawQuery);
+  const scores = new Map<string, number>(); // slug → score
+
+  // 1. Term match in D1.
+  if (term) {
+    const rows = await env.DB.prepare(`
+      SELECT slug, term FROM definitions
+      WHERE LOWER(term) = ?1 OR LOWER(term) LIKE ?2 OR LOWER(term) LIKE ?3
+      LIMIT 25
+    `).bind(term, `${term}, %`, `${term} %`).all<{ slug: string; term: string }>();
+    for (const r of rows.results || []) {
+      const exact = r.term.toLowerCase() === term;
+      scores.set(r.slug, exact ? DEFINITION_EXACT_SCORE : DEFINITION_PREFIX_SCORE);
+    }
+  }
+
+  // 2. Semantic match. Fail-open: without the chunk_type metadata index this
+  //    query errors or returns nothing, and the term match above still answers.
+  try {
+    const res = await env.VECTORIZE.query(queryVector, {
+      topK: DEFINITION_TOP_K,
+      returnMetadata: 'all',
+      filter: { chunk_type: 'definition' },
+    });
+    for (const m of (res.matches || []) as unknown as VMatch[]) {
+      const slug = (m.metadata as { definition_slug?: string } | undefined)?.definition_slug;
+      if (!slug) continue;
+      const prev = scores.get(slug);
+      // Cap semantic scores below the term-match band so an exact term always wins.
+      const score = Math.min(m.score, DEFINITION_PREFIX_SCORE - 0.01);
+      if (prev == null || prev < score) scores.set(slug, score);
+    }
+  } catch (err) {
+    console.error('definition vector query failed, using term match only (non-fatal):', errMsg(err));
+  }
+
+  if (scores.size === 0) return [];
+
+  const slugs = [...scores.keys()]
+    .sort((a, b) => (scores.get(b) || 0) - (scores.get(a) || 0))
+    .slice(0, limit);
+
+  const placeholders = slugs.map(() => '?').join(',');
+  const rows = await env.DB.prepare(
+    `SELECT slug, term, clause, html, text, source_url, standard_id FROM definitions WHERE slug IN (${placeholders})`
+  ).bind(...slugs).all<{
+    slug: string; term: string; clause: string | null; html: string;
+    text: string; source_url: string | null; standard_id: string;
+  }>();
+
+  const bySlug = new Map((rows.results || []).map(r => [r.slug, r]));
+  return slugs
+    .map(slug => {
+      const row = bySlug.get(slug);
+      return row ? buildDefinitionResult(row, scores.get(slug) || 0, linkCtx) : null;
+    })
+    .filter((r): r is SearchResult => r !== null);
+}
+
+/**
+ * The TERM a query is looking up, or null when it is not a term lookup.
+ *
+ * Strips the lookup phrasing ("define …", "definition of …", "what does … mean")
+ * and rejects anything long enough to be a question rather than a term — a
+ * seven-word phrase is not going to match `definitions.term` exactly, and running
+ * the LIKE against it only costs a round-trip.
+ */
+export function definitionSearchTerm(rawQuery: string): string | null {
+  let q = normalizeTypography(rawQuery).trim().toLowerCase();
+  q = q
+    .replace(/^(?:please\s+)?(?:define|definition\s+of|definitions\s+of|meaning\s+of|what\s+is\s+the\s+(?:term|definition)\s+(?:of\s+)?|what\s+does|what\s+do)\s+/i, '')
+    .replace(/\s+mean(?:ing)?s?\s*\??$/i, '')
+    .replace(/\s+(?:in|per|according\s+to)\s+(?:ansi\/ies\s+)?ls-?1(?:-\d{2})?\s*\??$/i, '')
+    .replace(/[?.!]+$/, '')
+    .replace(/^(?:a|an|the)\s+/i, '')
+    .trim();
+  if (!q || q.length < 2) return null;
+  if (q.split(/\s+/).length > 6) return null;
+  return q;
+}
+
+/** One D1 definitions row → a Definition result card. */
+function buildDefinitionResult(
+  row: { slug: string; term: string; clause: string | null; html: string; text: string; source_url: string | null; standard_id: string },
+  score: number,
+  linkCtx: LinkCtx,
+): SearchResult {
+  // Every Definition card is titled with the current LS-1 designation (client
+  // DO33), whether or not LS-1 itself is indexed as a PDF yet.
+  const stdInfo = linkCtx.standardsIndex?.get(row.standard_id);
+  const designation = stdInfo?.fullDesignation || DEFINITIONS_STANDARD_FULL;
+  const title = stdInfo?.title || DEFINITIONS_STANDARD_TITLE;
+  const fullName = composeStandardName(designation, title);
+  // Until the glossary moves into Vitrium (client: expected late 2027) the
+  // authoritative location is the ies.org page, so that is what the card opens.
+  const link = row.source_url || stdInfo?.webUrl || null;
+
+  const excerpt: Excerpt = {
+    text: row.text,
+    pageNumber: null,
+    section: row.clause,
+    chunkType: 'definition',
+    vitriumLink: link,
+  };
+
+  return {
+    resultType: 'definition',
+    definition: {
+      slug: row.slug,
+      term: row.term,
+      clause: row.clause,
+      html: row.html,
+      sourceUrl: row.source_url,
+    },
+    vitriumLink: link,
+    // Front-of-document link ONLY (DO1R2) — deliberately NOT the definition's own
+    // page. buildStandardLinkMap turns this into the URL the AI Guide's mentions
+    // of "ANSI/IES LS-1-25" hyperlink to, and pointing that at one definition
+    // would mislabel the whole standard. Null until LS-1 is in the Library, in
+    // which case the citation title simply renders unlinked.
+    standardLink: stdInfo?.webUrl || null,
+    application: {
+      code: `definition:${row.slug}`,
+      category: row.term,
+      sub1: null, sub2: null, sub3: null,
+      fullName: row.term,
+      standard: row.standard_id,
+      standardFull: designation,
+      standardTitle: title,
+      tableRef: null,
+      rowRef: null,
+      areaOrTask: null,
+      indoorOutdoor: null,
+      horizontal: null, vertical: null, task: null,
+      tm24Eligible: false, tm24Notes: null,
+      outdoor: null,
+      footnotes: null, footnoteMarks: null, generalNotes: null, appNotes: null,
+    },
+    relevanceScore: Math.round(score * 1000) / 1000,
+    excerpt,
+    excerpts: [excerpt],
+    citation: row.clause ? `${fullName}, §${row.clause}` : fullName,
+    citationName: fullName,
+    citationPage: null,
+    relatedApplications: [],
+  };
 }
 
 /**
@@ -873,8 +1217,8 @@ export function reserveBodySlots(all: SearchResult[], limit: number, availableBo
 
 // ─── Reference markers (DO26.4) ───────────────────────────────────────────────
 
-/** citation key → standard id → { count, earliest page }. */
-type ReferenceMarkerIndex = Map<string, Map<string, { count: number; page: number | null }>>;
+/** citation key → standard id → { count, earliest References page, entry # }. */
+type ReferenceMarkerIndex = Map<string, Map<string, { count: number; page: number | null; entryNumber: number | null }>>;
 
 const REFERENCE_MARKERS_MAX = 16;
 
@@ -884,26 +1228,32 @@ const REFERENCE_MARKERS_MAX = 16;
  *
  * Scope note: the index is built from the reference chunks this search
  * retrieved, so it reports the standards we actually saw citing the work — not
- * a corpus-wide census. In-body superscript reference markers are not indexed,
- * so the link targets each standard's References page (the closest indexed
- * location to the cited item).
+ * a corpus-wide census.
+ *
+ * Each standard's own entry NUMBER is recorded alongside, because that is the
+ * numeral its body superscripts (client DO31.4): the same work is reference 6 in
+ * LS-5-25 and reference 8 in RP-30-25, so the citing page can only be resolved
+ * per standard.
  */
 function buildReferenceMarkerIndex(matches: VMatch[]): ReferenceMarkerIndex {
   const index: ReferenceMarkerIndex = new Map();
   for (const m of matches) {
-    const key = referenceCitationKey(m.metadata?.excerpt_text || '');
+    const text = m.metadata?.excerpt_text || '';
+    const key = referenceCitationKey(text);
     if (!key) continue;
     const std = m.metadata?.standard_id || m.metadata?.standard_code;
     if (!std) continue;
     if (!index.has(key)) index.set(key, new Map());
     const byStandard = index.get(key)!;
     const page = m.metadata?.page_number ?? null;
+    const entryNumber = referenceEntryNumber(text);
     const prev = byStandard.get(std);
     if (prev) {
       prev.count++;
       if (page != null && (prev.page == null || page < prev.page)) prev.page = page;
+      if (prev.entryNumber == null) prev.entryNumber = entryNumber;
     } else {
-      byStandard.set(std, { count: 1, page });
+      byStandard.set(std, { count: 1, page, entryNumber });
     }
   }
   return index;
@@ -921,12 +1271,26 @@ function lookupReferenceMarkers(index: ReferenceMarkerIndex, text: string, stand
     // Never point a user at a deprecated edition (agent policy).
     if (entry?.status === 'Deprecated') continue;
     const webUrl = entry?.webUrl || null;
+
+    // Prefer the page in the BODY where this standard superscripts its own
+    // reference number — the location the client asked the chip to open
+    // (DO31.4). Falls back to the References page for standards ingested before
+    // markers were captured, or that cite by author-date rather than by number.
+    const markerPage = (info.entryNumber != null && entry?.referenceMarkers)
+      ? entry.referenceMarkers[String(info.entryNumber)] ?? null
+      : null;
+    const targetPage = markerPage ?? info.page;
+
     out.push({
       standard: std,
       standardFull: entry?.fullDesignation || null,
       count: info.count,
-      pageNumber: info.page,
-      url: webUrl ? (info.page != null ? `${webUrl}#page=${info.page}` : webUrl) : null,
+      pageNumber: targetPage,
+      referenceNumber: info.entryNumber,
+      // 'citation' = the page in the body that cites the work; 'references' =
+      // the bibliography page. The UI words its tooltip from this.
+      target: markerPage != null ? 'citation' : 'references',
+      url: webUrl ? (targetPage != null ? `${webUrl}#page=${targetPage}` : webUrl) : null,
     });
   }
   return out
@@ -987,16 +1351,43 @@ export function buildReferenceLink(text: string, standardsIndex?: StandardsIndex
   const doiMatch = /\b10\.\d{4,9}\/[^\s"<>]+/.exec(text);
   if (doiMatch) {
     const doi = doiMatch[0].replace(/[).,;:\]]+$/, '');
-    return { url: `https://doi.org/${doi}`, type: 'doi' };
+    if (isResolvableDoi(doi)) return { url: `https://doi.org/${doi}`, type: 'doi' };
   }
 
   // 3. Bare URL
   const urlMatch = /\bhttps?:\/\/[^\s"<>)]+/i.exec(text);
   if (urlMatch) {
-    return { url: urlMatch[0].replace(/[.,;:\]]+$/, ''), type: 'url' };
+    const url = urlMatch[0].replace(/[.,;:\]]+$/, '');
+    // A doi.org URL carrying only the registrant prefix resolves to doi.org's
+    // "DOI Not Found — you have requested a DOI prefix only" page (client
+    // DO31.3). That happens when the printed entry itself stops at the prefix,
+    // or when PDF extraction dropped the suffix. Better no link than a link to
+    // an error page: fall through and let the UI render the entry unlinked.
+    if (!isBrokenDoiUrl(url)) return { url, type: 'url' };
   }
 
   return null;
+}
+
+/**
+ * Does this DOI have a real item suffix, not just a registrant prefix?
+ *
+ * A DOI is `10.<registrant>/<suffix>`. doi.org rejects a bare `10.<registrant>`
+ * (and a trailing-slash-only form) with "you have requested a DOI prefix only".
+ * The suffix must also carry at least one alphanumeric character — extraction
+ * artifacts leave things like "10.1080/-" behind.
+ */
+export function isResolvableDoi(doi: string): boolean {
+  const m = /^10\.\d{4,9}\/(.+)$/.exec(String(doi || '').trim());
+  if (!m) return false;
+  return /[a-z0-9]/i.test(m[1]);
+}
+
+/** A doi.org URL that would land on the "DOI prefix only" error page. */
+export function isBrokenDoiUrl(url: string): boolean {
+  const m = /^https?:\/\/(?:dx\.)?doi\.org\/(.*)$/i.exec(String(url || '').trim());
+  if (!m) return false;
+  return !isResolvableDoi(decodeURIComponent(m[1]));
 }
 
 /**
@@ -1013,7 +1404,7 @@ export function buildReferenceLink(text: string, standardsIndex?: StandardsIndex
  */
 async function fetchStandardsIndex(db: D1Database): Promise<StandardsIndex> {
   const result = await db.prepare(
-    'SELECT id, title, full_designation, status, superseded_by, vitrium_doc_id, vitrium_web_url FROM standards'
+    'SELECT id, title, full_designation, status, superseded_by, vitrium_doc_id, vitrium_web_url, reference_markers_json FROM standards'
   ).all<StandardRow>();
   return new Map<string, StandardIndexEntry>((result.results || []).map((r): [string, StandardIndexEntry] => {
     const curated = curatedStandardInfo(r.id);
@@ -1024,6 +1415,8 @@ async function fetchStandardsIndex(db: D1Database): Promise<StandardsIndex> {
         webUrl: r.vitrium_web_url || null,
         status: r.status || 'Active',
         supersededBy: r.superseded_by || null,
+        // marker number → first body page citing it (DO31.4); null pre-0009.
+        referenceMarkers: parseReferenceMarkers(r.reference_markers_json),
         // Full-title citations (client requirement DO1): designation +
         // descriptive title on EVERY result. D1 title first (synced metadata),
         // then the curated schema title — PDF metadata is often missing or
@@ -1033,6 +1426,17 @@ async function fetchStandardsIndex(db: D1Database): Promise<StandardsIndex> {
       },
     ];
   }));
+}
+
+/** standards.reference_markers_json → { markerNumber: pageNumber }. */
+function parseReferenceMarkers(raw: string | null | undefined): Record<string, number> | null {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    return (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) ? parsed : null;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -1061,9 +1465,41 @@ export function curatedStandardInfo(id: string | null | undefined): CuratedInfo 
 // ─── Deprecated Standards (version comparison only) ───────────────────────────
 
 const DEPRECATED_TOP_K = 100;       // ids+scores pool from the deprecated index (max without metadata)
-// Raised 3→6 (client DO25): the three-section comparison needs enough of the
-// prior edition to say anything substantive about what changed.
-const MAX_DEPRECATED_RESULTS = 6;   // flagged excerpts appended to the response
+// Raised 3→6 (client DO25), then 6→12 (client DO28: "indexing may be too shallow
+// for the level of detail needed"): a long standard like RP-8 needs prior-edition
+// passages from several chapters before the comparison can say anything concrete.
+const MAX_DEPRECATED_RESULTS = 12;  // flagged excerpts appended to the response
+// Distinct anchors used to sample the prior edition. Each is a top current
+// excerpt from a different page, so the probes spread across the document
+// instead of all landing in one chapter (client DO28).
+const DEPRECATED_TOPIC_HINTS = 3;
+// Chapter diversity: no more than this many prior-edition excerpts from the same
+// section. Without it, one dense chapter fills the whole comparison window.
+const MAX_DEPRECATED_PER_SECTION = 3;
+
+/**
+ * Topical anchors for the deprecated-index probes: the best current-edition
+ * excerpts, one per page, so each anchor pulls a different part of the prior
+ * edition. Embedding "what's new in X?" directly retrieves table-of-contents
+ * lines, not provisions — the anchor supplies the subject matter.
+ */
+function collectTopicHints(results: SearchResult[], max = DEPRECATED_TOPIC_HINTS): string[] {
+  const hints: string[] = [];
+  const seenPages = new Set<number>();
+  for (const r of results) {
+    if (r.isDeprecated) continue;
+    for (const e of (r.excerpts && r.excerpts.length > 0 ? r.excerpts : (r.excerpt ? [r.excerpt] : []))) {
+      const text = (e?.text || '').trim();
+      if (text.length < 60) continue;
+      const page = e?.pageNumber ?? -1;
+      if (page >= 0 && seenPages.has(page)) continue;
+      if (page >= 0) seenPages.add(page);
+      hints.push(text);
+      if (hints.length >= max) return hints;
+    }
+  }
+  return hints;
+}
 
 /**
  * Fetch excerpts from DEPRECATED standards for a version-comparison query.
@@ -1080,7 +1516,7 @@ const MAX_DEPRECATED_RESULTS = 6;   // flagged excerpts appended to the response
  * Fail-open: any error returns [] and the comparison proceeds with current
  * content only.
  */
-async function searchDeprecatedForComparison(rawQuery: string, filters: SearchFilters, env: Env, topicHint = '', dbg: DepDbg | null = null): Promise<SearchResult[]> {
+async function searchDeprecatedForComparison(rawQuery: string, filters: SearchFilters, env: Env, topicHints: string[] = [], dbg: DepDbg | null = null): Promise<SearchResult[]> {
   const D = dbg || {};
   if (!env.VECTORIZE_DEPRECATED) { D.step = 'no-binding'; return []; }
 
@@ -1101,44 +1537,62 @@ async function searchDeprecatedForComparison(rawQuery: string, filters: SearchFi
   try {
     // "What's new in X?" is meta-phrasing: embedded as-is it matches TOC
     // lines ("9.12 New Light Sources . . . .") instead of substantive
-    // content. Anchor the deprecated-index query on the family's TOPIC —
-    // the current edition's best excerpt — so the excerpts pulled for
+    // content. Anchor the deprecated-index queries on the family's TOPIC —
+    // the current edition's best excerpts — so the excerpts pulled for
     // comparison are real provisions about the same subject.
-    const embedText = topicHint.trim().length >= 60
-      ? `${scope} ${topicHint.slice(0, 400)}`
-      : prepareQueryForEmbedding(rawQuery);
+    //
+    // One anchor per current excerpt (client DO28): a single anchor sampled a
+    // single chapter, which is why the RP-8 comparison could only report that
+    // the retrieved passages showed nothing substantive.
+    const embedTexts = topicHints
+      .filter(h => h.trim().length >= 60)
+      .map(h => `${scope} ${h.slice(0, 400)}`);
+    if (embedTexts.length === 0) embedTexts.push(prepareQueryForEmbedding(rawQuery));
+    D.anchors = embedTexts.length;
 
-    let queryVector = await getCachedEmbedding(env.SESSIONS, EMBED_MODEL, embedText);
-    if (!queryVector) {
-      const embResult = await env.AI.run(EMBED_MODEL, { text: [embedText] }) as unknown as { data: number[][] };
-      queryVector = embResult.data[0];
-      await putCachedEmbedding(env.SESSIONS, EMBED_MODEL, embedText, queryVector);
+    const queryVectors: number[][] = [];
+    for (const embedText of embedTexts) {
+      let vec = await getCachedEmbedding(env.SESSIONS, EMBED_MODEL, embedText);
+      if (!vec) {
+        const embResult = await env.AI.run(EMBED_MODEL, { text: [embedText] }) as unknown as { data: number[][] };
+        vec = embResult.data[0];
+        await putCachedEmbedding(env.SESSIONS, EMBED_MODEL, embedText, vec);
+      }
+      queryVectors.push(vec);
     }
 
     // The deprecated index has no metadata index (filters only apply to
     // vectors inserted after one exists), so scoping happens client-side.
     // With returnMetadata:'all' Vectorize caps topK at 20 — too small a pool
     // for one family among ~150 deprecated standards. Instead: fetch 100
-    // ids+scores, scope by vector-id prefix (`<standardId>-chunk-<i>`), then
-    // pull metadata for just the scoped hits via getByIds.
-    const res = await env.VECTORIZE_DEPRECATED.query(queryVector, {
-      topK: DEPRECATED_TOP_K,
-      returnMetadata: 'none',
-    });
+    // ids+scores per anchor, scope by vector-id prefix
+    // (`<standardId>-chunk-<i>`), then pull metadata for the scoped hits.
+    const bestScoreById = new Map<string, number>();
+    for (const queryVector of queryVectors) {
+      const res = await env.VECTORIZE_DEPRECATED.query(queryVector, {
+        topK: DEPRECATED_TOP_K,
+        returnMetadata: 'none',
+      });
+      // Keep only chunks of the compared standard family (RP-6 → RP-6-15,
+      // RP-6-20, ...). `RP-6-` never matches RP-60-* since ids are `RP-60-...`.
+      for (const m of (res.matches || [])) {
+        if (!String(m.id).toUpperCase().startsWith(scopePrefix)) continue;
+        const prev = bestScoreById.get(m.id);
+        if (prev == null || prev < m.score) bestScoreById.set(m.id, m.score);
+      }
+    }
 
-    // Keep only chunks of the compared standard family (RP-6 → RP-6-15,
-    // RP-6-20, ...). `RP-6-` never matches RP-60-* since ids are `RP-60-...`.
-    const scoped = (res.matches || []).filter(m =>
-      String(m.id).toUpperCase().startsWith(scopePrefix)
-    ).slice(0, 20);
+    const scoped = [...bestScoreById.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, MAX_DEPRECATED_RESULTS * 3);
 
     let candidates: VMatch[] = [];
-    if (scoped.length > 0) {
-      const scoreById = new Map(scoped.map(m => [m.id, m.score]));
-      const fetched = await env.VECTORIZE_DEPRECATED.getByIds(scoped.map(m => m.id));
-      candidates = (fetched || []).map(v => ({
-        id: v.id, score: scoreById.get(v.id) || 0, metadata: v.metadata as Partial<VectorMetadata>,
-      }));
+    for (let i = 0; i < scoped.length; i += PROBE_BATCH) {
+      const batch = scoped.slice(i, i + PROBE_BATCH);
+      const fetched = await env.VECTORIZE_DEPRECATED.getByIds(batch.map(([id]) => id));
+      candidates.push(...(fetched || []).map(v => ({
+        id: v.id, score: bestScoreById.get(v.id) || 0, metadata: v.metadata as Partial<VectorMetadata>,
+      })));
     }
 
     // Prose only, and only PROVISIONS: an errata notice or a reference list from
@@ -1157,10 +1611,13 @@ async function searchDeprecatedForComparison(rawQuery: string, filters: SearchFi
     // Fallback: the global top-100 pool often misses small families entirely
     // (or surfaces only their TOC chunks). Vector ids are deterministic
     // (`<standardId>-chunk-<n>`), so probe the family's chunks directly via
-    // getByIds and rank them against the query vector in-process.
-    if (matches.length === 0) {
-      const probed = await probeDeprecatedFamily(env, scopePrefix, queryVector, D);
-      matches = proseOnly(probed);
+    // getByIds and rank them against the query vector in-process. Also runs
+    // when the ANN pool was THIN (not only empty): a handful of hits from one
+    // chapter is exactly the shallow coverage the client flagged (DO28).
+    if (matches.length < MAX_DEPRECATED_RESULTS) {
+      const probed = await probeDeprecatedFamily(env, scopePrefix, queryVectors, D);
+      const seenIds = new Set(matches.map(m => m.id));
+      matches.push(...proseOnly(probed).filter(m => !seenIds.has(m.id)));
       D.probedRaw = probed.length;
       D.probedProse = matches.length;
     }
@@ -1169,9 +1626,11 @@ async function searchDeprecatedForComparison(rawQuery: string, filters: SearchFi
     const standardsIndex = await fetchStandardsIndex(env.DB);
     const linkCtx = { standardsIndex };
 
-    return buildChunkResults(matches, linkCtx)
-      .sort((a, b) => (b.relevanceScore || 0) - (a.relevanceScore || 0))
-      .slice(0, MAX_DEPRECATED_RESULTS)
+    return spreadAcrossSections(
+      buildChunkResults(matches, linkCtx)
+        .sort((a, b) => (b.relevanceScore || 0) - (a.relevanceScore || 0)),
+      MAX_DEPRECATED_RESULTS,
+    )
       .map(r => {
         const info = standardsIndex.get(r.application.standard ?? '');
         const supersededBy = info?.supersededBy || null;
@@ -1195,33 +1654,85 @@ async function searchDeprecatedForComparison(rawQuery: string, filters: SearchFi
   }
 }
 
-// Chunk-probe parameters for the deprecated-family fallback. 300 chunks
-// (~105k words) covers the substantive front of even the largest standards;
-// getByIds rejects batches over 20 ids.
+// Chunk-probe parameters for the deprecated-family fallback. 600 chunks
+// (~210k words) covers even RP-8-class documents end to end — the client's DO28
+// point was precisely that "all standards contain critical details throughout
+// each chapter", so a probe that stops a third of the way in cannot support a
+// comparison. getByIds rejects batches over 20 ids.
 const PROBE_BATCH = 20;
-const PROBE_MAX_CHUNKS = 300;
+const PROBE_MAX_CHUNKS = 600;
+
+/**
+ * Keep a ranked list from collapsing into one chapter.
+ *
+ * Walks the list in relevance order and admits an item only while its section
+ * (falling back to its page band) is under quota; a second pass fills any
+ * remaining slots from what was skipped. The result is still relevance-ordered,
+ * but spans the document — which is what a "what changed" analysis needs to say
+ * anything per chapter (client DO27/DO28).
+ */
+export function spreadAcrossSections(results: SearchResult[], limit: number, perSection = MAX_DEPRECATED_PER_SECTION): SearchResult[] {
+  if (results.length <= limit) return results;
+
+  const keyOf = (r: SearchResult) => {
+    const section = r.excerpt?.section;
+    if (section) return `s:${section}`;
+    const page = r.excerpt?.pageNumber;
+    // 10-page bands stand in for chapters when a chunk carries no section.
+    return page != null ? `p:${Math.floor(page / 10)}` : 'unknown';
+  };
+
+  const counts = new Map<string, number>();
+  const kept: SearchResult[] = [];
+  const skipped: SearchResult[] = [];
+  for (const r of results) {
+    const key = keyOf(r);
+    const n = counts.get(key) || 0;
+    if (kept.length < limit && n < perSection) {
+      counts.set(key, n + 1);
+      kept.push(r);
+    } else {
+      skipped.push(r);
+    }
+  }
+  for (const r of skipped) {
+    if (kept.length >= limit) break;
+    kept.push(r);
+  }
+  return kept.slice(0, limit);
+}
 
 /**
  * Directly fetch a deprecated family's chunk vectors by deterministic id
- * (`<standardId>-chunk-<n>`) and rank them against the query vector with
- * in-process cosine similarity. Used when the family is absent from the
- * global ANN pool — guarantees recall for any indexed family at the cost
- * of a few getByIds round-trips.
+ * (`<standardId>-chunk-<n>`) and rank them against the query vectors with
+ * in-process cosine similarity (best score across anchors). Used when the
+ * family is absent from — or thinly represented in — the global ANN pool;
+ * guarantees recall for any indexed family at the cost of a few getByIds
+ * round-trips.
  */
-async function probeDeprecatedFamily(env: Env, scopePrefix: string, queryVector: number[], D: DepDbg = {}): Promise<VMatch[]> {
+async function probeDeprecatedFamily(env: Env, scopePrefix: string, queryVectors: number[][], D: DepDbg = {}): Promise<VMatch[]> {
   const rows = await env.DB.prepare(
     "SELECT id FROM standards WHERE status = 'Deprecated' AND id LIKE ?"
   ).bind(`${scopePrefix}%`).all<{ id: string }>();
   const members = (rows.results || []).map(r => r.id);
   D.probeMembers = members;
-  if (members.length === 0) return [];
+  if (members.length === 0 || queryVectors.length === 0) return [];
 
-  let qNorm = 0;
-  for (const x of queryVector) qNorm += x * x;
-  qNorm = Math.sqrt(qNorm) || 1;
+  // Only the edition(s) the comparison actually targets are worth probing —
+  // newest deprecated first (client DO27). Probing five prior editions of a long
+  // family would blow the subrequest budget before reaching the relevant one.
+  members.sort((a, b) => editionYear(b) - editionYear(a) || b.localeCompare(a));
+  const targets = members.slice(0, 2);
+  D.probeTargets = targets;
+
+  const qNorms = queryVectors.map(vec => {
+    let n = 0;
+    for (const x of vec) n += x * x;
+    return Math.sqrt(n) || 1;
+  });
 
   const scored: VMatch[] = [];
-  for (const member of members) {
+  for (const member of targets) {
     for (let start = 0; start < PROBE_MAX_CHUNKS; start += PROBE_BATCH) {
       const ids = Array.from({ length: PROBE_BATCH }, (_, j) => `${member}-chunk-${start + j}`);
       const got = await env.VECTORIZE_DEPRECATED.getByIds(ids);
@@ -1235,22 +1746,27 @@ async function probeDeprecatedFamily(env: Env, scopePrefix: string, queryVector:
         if (looksLikeFrontMatter(text)) continue; // packaging, not a provision
 
         const vals = v.values || [];
-        let dot = 0, norm = 0;
-        for (let k = 0; k < vals.length; k++) {
-          dot += vals[k] * queryVector[k];
-          norm += vals[k] * vals[k];
+        let norm = 0;
+        for (let k = 0; k < vals.length; k++) norm += vals[k] * vals[k];
+        const vNorm = Math.sqrt(norm) || 1;
+
+        // Best similarity across anchors: a chunk that answers ANY chapter's
+        // anchor earns its slot.
+        let best = -1;
+        for (let q = 0; q < queryVectors.length; q++) {
+          const queryVector = queryVectors[q];
+          let dot = 0;
+          for (let k = 0; k < vals.length; k++) dot += vals[k] * queryVector[k];
+          const sim = dot / (qNorms[q] * vNorm);
+          if (sim > best) best = sim;
         }
-        scored.push({
-          id: v.id,
-          score: dot / (qNorm * (Math.sqrt(norm) || 1)),
-          metadata: v.metadata,
-        });
+        scored.push({ id: v.id, score: best, metadata: v.metadata });
       }
       if (got.length < PROBE_BATCH) break;
     }
   }
 
-  return scored.sort((a, b) => b.score - a.score).slice(0, 20);
+  return scored.sort((a, b) => b.score - a.score).slice(0, MAX_DEPRECATED_RESULTS * 3);
 }
 
 // Reference-probe parameters (References-mode fallback, DO12). References

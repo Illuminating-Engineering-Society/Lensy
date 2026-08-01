@@ -37,17 +37,41 @@
  *     Re-embed all D1 application rows into Vectorize.
  *     Can be called after seeding or after PDF-extracted records are in D1.
  *
+ *   POST /api/ingest/definitions
+ *     Index ANSI/IES LS-1 definitions (client DO33). Sent in batches by
+ *     scripts/ingest-definitions.js, which reads them from the IES glossary.
+ *     Body: { standardId?, definitions: [{ slug, term, clause, html, text, sourceUrl }] }
+ *     Each definition → one D1 `definitions` row (rich text, displayed in full)
+ *     plus one main-index vector tagged chunk_type='definition'.
+ *
  *   POST /api/ingest/r2-upload-url
  *     Return R2 key and wrangler command for uploading the raw PDF.
  */
 
 import { bumpDataVersion } from '../lib/cache';
 import { requireAdminAccess } from './session';
+import {
+  DEFINITIONS_STANDARD_ID, buildDefinitionEmbedText, definitionVectorId,
+} from '../lib/definitions.js';
 import type { ApplicationRow, IngestChunk, TableData } from '../types';
 
 function errMsg(err: unknown): string { return err instanceof Error ? err.message : String(err); }
 
 const EMBED_MODEL = '@cf/baai/bge-base-en-v1.5';
+
+/**
+ * How much chunk text is stored in Vectorize metadata.
+ *
+ * Body chunks only need enough for an excerpt card; reference entries and
+ * definitions are displayed IN FULL and their locator (DOI or URL) sits at the
+ * very END of the text, so a 500-char cut silently truncated the DOI and left
+ * the UI linking a registrant prefix — doi.org's "DOI prefix only" error page
+ * (client DO31.3). Vectorize allows 10 KiB of metadata per vector, so 1500
+ * characters is comfortably inside the budget.
+ */
+function excerptBudget(type: string | undefined): number {
+  return (type === 'reference' || type === 'definition') ? 1500 : 500;
+}
 const EMBED_BATCH = 100;       // Workers AI max per call
 const EMBED_MAX_ATTEMPTS = 3;  // retries per embedding batch (transient AI errors)
 const VECTORIZE_BATCH = 1000;  // Vectorize max per upsert
@@ -66,12 +90,97 @@ export async function handleIngest(request: Request, env: Env): Promise<Response
   switch (subPath) {
     case '/applications':
       return ingestApplications(env);
+    case '/definitions':
+      return ingestDefinitions(request, env);
     case '/r2-upload-url':
       return getR2UploadUrl(request, env);
     case '':
     default:
       return ingestParsedPDF(request, env);
   }
+}
+
+// ─── LS-1 Definitions Ingestion (client DO33) ─────────────────────────────────
+// Called by scripts/ingest-definitions.js in batches. Each definition becomes
+// one D1 row (rich text, for full display) plus one Vectorize vector tagged
+// chunk_type='definition' (for the Definitions-only search mode).
+
+async function ingestDefinitions(request: Request, env: Env): Promise<Response> {
+  let body: any;
+  try {
+    body = await request.json();
+  } catch {
+    return jsonResponse({ error: 'Invalid JSON body' }, 400);
+  }
+
+  const definitions = Array.isArray(body?.definitions) ? body.definitions : null;
+  if (!definitions) return jsonResponse({ error: 'definitions must be an array' }, 400);
+  if (definitions.length === 0) return jsonResponse({ success: true, definitionsIndexed: 0 });
+
+  for (const [i, d] of definitions.entries()) {
+    if (!d?.slug || !d?.term || !d?.text) {
+      return jsonResponse({ error: `definitions[${i}] needs slug, term and text` }, 400);
+    }
+  }
+
+  const standardId = String(body?.standardId || DEFINITIONS_STANDARD_ID);
+
+  // 1. Embed. The term is weighted in buildDefinitionEmbedText so a bare-term
+  //    query ("color") reaches its own definition first.
+  const embeddings = await embedInBatches(env.AI, definitions.map(buildDefinitionEmbedText));
+  if (embeddings.length !== definitions.length) {
+    return jsonResponse({
+      error: `Embedding count mismatch: ${embeddings.length} for ${definitions.length} definitions — aborting.`,
+    }, 500);
+  }
+
+  // 2. Vectorize. Definition vectors live in the MAIN index (they are current
+  //    content) under their own id scheme, so the `<id>-chunk-<n>` range
+  //    cleanup can never delete them.
+  const vectors = definitions.map((d: { slug: string; term: string; clause?: string | null; text: string }, i: number) => ({
+    id: definitionVectorId(d.slug),
+    values: embeddings[i],
+    metadata: {
+      standard_id: standardId,
+      standard_code: standardId,
+      application_code: null,
+      chunk_type: 'definition',
+      definition_slug: d.slug,
+      definition_term: d.term,
+      page_number: null,
+      section: d.clause || null,
+      excerpt_text: d.text.substring(0, excerptBudget('definition')),
+      indoor_outdoor: null,
+      tm24_eligible: null,
+      status: 'current',
+    },
+  }));
+  for (let i = 0; i < vectors.length; i += VECTORIZE_BATCH) {
+    await env.VECTORIZE.upsert(vectors.slice(i, i + VECTORIZE_BATCH) as unknown as VectorizeVector[]);
+  }
+
+  // 3. D1 — one statement per row (D1 caps bound variables per statement).
+  for (const d of definitions) {
+    await env.DB.prepare(`
+      INSERT INTO definitions (slug, term, clause, html, text, source_url, standard_id, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+      ON CONFLICT(slug) DO UPDATE SET
+        term = excluded.term,
+        clause = excluded.clause,
+        html = excluded.html,
+        text = excluded.text,
+        source_url = excluded.source_url,
+        standard_id = excluded.standard_id,
+        updated_at = CURRENT_TIMESTAMP
+    `).bind(
+      d.slug, d.term, d.clause || null, d.html || d.text, d.text,
+      d.sourceUrl || null, standardId,
+    ).run();
+  }
+
+  await bumpDataVersion(env.SESSIONS);
+
+  return jsonResponse({ success: true, definitionsIndexed: definitions.length, standardId });
 }
 
 // ─── PDF Chunk Ingestion ───────────────────────────────────────────────────────
@@ -92,6 +201,7 @@ async function ingestParsedPDF(request: Request, env: Env): Promise<Response> {
     chunks = [],
     tables = [],
     applications = [],  // extracted application records from PDF tables
+    referenceMarkers = null, // { "<marker#>": firstBodyPage } — client DO31.4
     r2Key = null,
   } = body;
 
@@ -168,7 +278,7 @@ async function ingestParsedPDF(request: Request, env: Env): Promise<Response> {
       chunk_type: chunk.type || 'text',       // 'text' | 'table' | 'general_notes' | 'reference'
       page_number: chunk.pageNumber || null,
       section: chunk.section || null,         // e.g. "3.5" from IES section numbering
-      excerpt_text: chunk.text.substring(0, 500), // metadata size limit ~1KB
+      excerpt_text: chunk.text.substring(0, excerptBudget(chunk.type)),
       indoor_outdoor: null,
       tm24_eligible: null,
       status,                                 // 'current' | 'deprecated'
@@ -238,12 +348,19 @@ async function ingestParsedPDF(request: Request, env: Env): Promise<Response> {
   const coverage = buildCoverageStats(chunks);
   const pageCount = Number.isFinite(metadata.pageCount) ? metadata.pageCount : null;
 
+  // In-body reference markers (DO31.4). Only overwrite when this ingest actually
+  // produced some — an applications-only batch must not wipe the map.
+  const markersJson = (referenceMarkers && typeof referenceMarkers === 'object'
+    && Object.keys(referenceMarkers).length > 0)
+    ? JSON.stringify(referenceMarkers)
+    : null;
+
   if (chunks.length > 0 || tables.length > 0 || metadata.title) await env.DB.prepare(`
     INSERT INTO standards
       (id, title, description, author, year, full_designation, r2_key,
        tables_json, status, superseded_by, chunk_count, page_count,
-       coverage_json, indexed_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+       coverage_json, reference_markers_json, indexed_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
     ON CONFLICT(id) DO UPDATE SET
       title        = excluded.title,
       description  = excluded.description,
@@ -257,6 +374,7 @@ async function ingestParsedPDF(request: Request, env: Env): Promise<Response> {
       chunk_count  = COALESCE(excluded.chunk_count, standards.chunk_count),
       page_count   = COALESCE(excluded.page_count, standards.page_count),
       coverage_json = COALESCE(excluded.coverage_json, standards.coverage_json),
+      reference_markers_json = COALESCE(excluded.reference_markers_json, standards.reference_markers_json),
       indexed_at   = CURRENT_TIMESTAMP,
       updated_at   = CURRENT_TIMESTAMP
   `).bind(
@@ -273,6 +391,7 @@ async function ingestParsedPDF(request: Request, env: Env): Promise<Response> {
     chunks.length > 0 ? chunks.length : null,
     pageCount,
     chunks.length > 0 ? JSON.stringify(coverage) : null,
+    markersJson,
   ).run();
 
   // ── 5. Upsert extracted application records into D1 ──────────────────────

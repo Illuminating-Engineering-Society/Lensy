@@ -251,7 +251,10 @@ search/UX overhaul):
    (0006 adds `applications.Footnote_Marks` + per-standard index-coverage stats;
    0008 adds the invitation-email status columns. Invites and their emails still
    work without 0008 — the status write is caught and logged — but the dashboard
-   then shows every row as "not sent", so apply it.)
+   then shows every row as "not sent", so apply it.
+   0009 adds `standards.reference_markers_json` and the `definitions` table.
+   Without it, Reference chips keep linking to the References page instead of
+   the citing page (DO31.4) and the Definitions filter returns nothing (DO33).)
 2. **Set the API secret** — `wrangler secret put LUCIUS_API_SECRET`.
    This is the **machine** credential: scripts and cron authenticate to
    `/api/ingest*` and `/api/admin/*` with it, and a bearer presented in
@@ -271,6 +274,37 @@ search/UX overhaul):
    powering the References search mode), captures footnote placement
    (`Footnote_Marks`), and deletes stale tail vectors on shrinking re-ingests.
    Watch for `⚠ LOW COVERAGE` warnings in the output.
+
+   **A re-ingest is REQUIRED for the 260729 feedback round** — four of those
+   fixes are ingest-side and do nothing to already-indexed data:
+   - **DO20** Lighting Zone: the extractor now keeps a zone printed as a
+     hierarchy label ("Lz3 (and Lz4 curfew)") even when it sits deeper than the
+     established indent grid. Verified on RP-2-20+E1: 218 of 343 rows now carry
+     `Lighting_Zone`, where the currently-indexed rows carry none — which is why
+     five otherwise-identical "Ramps, Stairs, and Steps · Low activity" cards
+     were indistinguishable.
+   - **DO23** less aggressive chunking: `targetWords` 350 → 200, `overlapWords`
+     40 → 60. About 1.75× the vectors per standard, and each one closer to a
+     single idea.
+   - **DO30** footnotes: the "Application Task/Area Notes" heading detector now
+     tolerates the truncated first word PDF extraction produces
+     ("plication Task/Area Notes", RP-11-26 p. 106), and notes resolve per TABLE
+     rather than per document, so Table A-2 rows stop inheriting Table A-1's
+     notes.
+   - **DO31.4** in-body reference markers: superscripted reference numerals are
+     captured per standard and stored on the standards row.
+
+   Then re-index the definitions (see step 4b) and re-embed the application rows
+   (`npm run ingest:apps`) so the new hierarchy reaches Vectorize.
+
+4b. **Index the ANSI/IES LS-1 definitions** — `node scripts/ingest-definitions.js`
+   (client DO33). Reads the ~1,300 published definitions from the IES glossary
+   REST collection, sanitizes the rich text, and indexes them as
+   `chunk_type=definition` + rows in the `definitions` table. Re-run whenever IES
+   publishes revised terminology; the upsert is keyed on the definition slug.
+   `--dry-run` fetches and normalizes without writing. Note the client's
+   expectation that this source becomes a Vitrium PDF around late 2027, at which
+   point the normal ingest path replaces this script.
 5. **Verify full indexing** — `GET /api/admin/index-status` (Bearer secret).
    Confirms, per standard: chunk counts, page-coverage %, chunk-type mix,
    application-row counts, and a live Vectorize spot-check that first/middle/

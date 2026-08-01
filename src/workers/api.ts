@@ -184,9 +184,16 @@ async function handleStandards(request: Request, env: Env, url: URL): Promise<Re
   const id = parts[2];
 
   if (!id) {
-    // GET /api/standards — list all
+    // GET /api/standards — list all. Includes the Lighting Library viewer URL so
+    // the Table of Contents page (client DO32) can link each standard, and
+    // page/chunk counts so staff can see coverage at a glance. Deprecated
+    // editions are excluded by default — the Table of Contents lists the current
+    // library — but reachable with ?status=all for the comparison tooling.
+    const status = url.searchParams.get('status');
+    const where = status === 'all' ? '' : " WHERE status = 'Active'";
     const result = await env.DB.prepare(
-      "SELECT id, title, full_designation, year, status FROM standards ORDER BY id"
+      'SELECT id, title, full_designation, year, status, vitrium_web_url, page_count' +
+      ` FROM standards${where} ORDER BY id`
     ).all();
     return json({ standards: result.results });
   }

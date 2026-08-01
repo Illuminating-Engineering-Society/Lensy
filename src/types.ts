@@ -109,6 +109,8 @@ export interface StandardRow {
   chunk_count: number | null;
   page_count: number | null;
   coverage_json: string | null;
+  /** { "<markerNumber>": firstBodyPage } — migration 0009, client DO31.4. */
+  reference_markers_json: string | null;
   indexed_at: string | null;
   created_at: string;
   updated_at: string;
@@ -168,6 +170,12 @@ export interface StandardIndexEntry {
   supersededBy: string | null;
   title: string | null;
   fullDesignation: string | null;
+  /**
+   * In-body reference markers: marker number → first page printing it
+   * (client DO31.4). null for standards ingested before migration 0009, or for
+   * standards that cite by author-date rather than by number.
+   */
+  referenceMarkers?: Record<string, number> | null;
 }
 export type StandardsIndex = Map<string, StandardIndexEntry>;
 
@@ -272,10 +280,29 @@ export interface ReferenceMarker {
   standardFull: string | null;
   count: number;
   pageNumber: number | null;
+  /** The number this standard printed the entry under, when recoverable. */
+  referenceNumber?: number | null;
+  /**
+   * What pageNumber/url point at (client DO31.4):
+   *   'citation'   — the body page where this standard superscripts the marker
+   *   'references' — the bibliography page (fallback when no marker was indexed)
+   */
+  target?: 'citation' | 'references';
   url: string | null;
 }
 
-export type ResultType = 'application' | 'excerpt' | 'reference';
+export type ResultType = 'application' | 'excerpt' | 'reference' | 'definition';
+
+/** One ANSI/IES LS-1 definition on a Definition result card (client DO33). */
+export interface DefinitionPayload {
+  slug: string;
+  term: string;
+  /** LS-1 clause number the definition is printed under ('4.1'), when present. */
+  clause: string | null;
+  /** Sanitized rich text — printed IN FULL, may carry emphasis/math/images. */
+  html: string;
+  sourceUrl: string | null;
+}
 
 export interface SearchResult {
   resultType: ResultType;
@@ -307,6 +334,8 @@ export interface SearchResult {
   referenceLink?: ReferenceLink;
   /** Standards whose References sections carry this same cited work (DO26.4). */
   referenceMarkers?: ReferenceMarker[];
+  /** Present only on resultType 'definition' (client DO33). */
+  definition?: DefinitionPayload;
   isDeprecated?: boolean;
   supersededBy?: string | null;
   deprecationNotice?: string;
@@ -318,7 +347,18 @@ export type AIMode = 'guide' | 'comparison' | 'references';
 /** Editions involved in a version comparison, for the AI header advisory. */
 export interface ComparisonContext {
   current: { id: string; name: string; url: string | null } | null;
+  /**
+   * The prior edition the analysis is actually against — the most recent
+   * deprecated one (client DO27), or the edition the query named explicitly.
+   * Exactly one entry in practice; an array for wire compatibility with
+   * responses cached before DO27.
+   */
   deprecated: Array<{ id: string; name: string; url: string | null }>;
+  /**
+   * Older deprecated editions present in the result set. Listed and linked by
+   * the UI so the reader can open them, but excluded from the AI comparison.
+   */
+  alsoDeprecated?: Array<{ id: string; name: string; url: string | null }>;
 }
 
 export interface AISummary {
@@ -340,7 +380,7 @@ export interface AISummary {
   degraded?: boolean;
 }
 
-export type ContentType = 'tables' | 'body' | 'references' | 'compare';
+export type ContentType = 'tables' | 'body' | 'references' | 'definitions' | 'compare';
 
 export interface SearchFilters {
   indoor_outdoor?: IndoorOutdoor;

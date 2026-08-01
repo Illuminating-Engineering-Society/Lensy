@@ -335,9 +335,63 @@ function groupItemsIntoLines(sortedItems, headerFooterSet) {
       x: group[0].x,
       fontSize: avgFontSize,
       bold: isBold,
+      marks: detectSuperscriptMarks(group),
     });
   }
   return lines;
+}
+
+/**
+ * Superscript reference markers printed inside a line of body prose.
+ *
+ * IES standards cite their References section with a raised numeral: "…is
+ * available in CIE 015:2018.⁶ The first five…". pdfjs returns that numeral as its
+ * own text item — smaller font, baseline raised a few points — and
+ * joinItemsWithSpacing then glues it into the line text ("2018.6"), which is
+ * unrecoverable from the string alone. Capturing it here is what lets a
+ * Reference result link to the place in the body where the work is cited, rather
+ * than to the References page (client DO31.4).
+ *
+ * Two signals, both required, so a normal digit run is never mistaken for a
+ * marker: the item is entirely digits (optionally comma-separated, "3,4"), and
+ * it is BOTH visibly smaller than the line's dominant font AND raised above the
+ * line's baseline.
+ *
+ * @returns {number[]} marker numbers in reading order (empty for most lines)
+ */
+function detectSuperscriptMarks(group) {
+  if (group.length < 2) return [];
+
+  // Dominant font of the line = the size covering the most characters, so one
+  // small item cannot drag the reference size down with it.
+  const charsBySize = new Map();
+  for (const item of group) {
+    const size = Math.round(item.fontSize * 2) / 2; // 0.5pt buckets
+    charsBySize.set(size, (charsBySize.get(size) || 0) + item.str.length);
+  }
+  let bodySize = 0, bestChars = -1;
+  for (const [size, chars] of charsBySize) {
+    if (chars > bestChars) { bestChars = chars; bodySize = size; }
+  }
+  if (!bodySize) return [];
+
+  // Baseline of the line = the y shared by the body-size items.
+  const baseItems = group.filter(i => Math.abs(i.fontSize - bodySize) <= 0.6);
+  if (baseItems.length === 0) return [];
+  const baselineY = baseItems.reduce((s, i) => s + i.y, 0) / baseItems.length;
+
+  const marks = [];
+  for (const item of group) {
+    const str = item.str.trim();
+    if (!/^\d{1,3}(?:\s*,\s*\d{1,3})*$/.test(str)) continue;
+    if (item.fontSize > bodySize - 1.2) continue;   // not visibly smaller
+    if (item.y >= baselineY - 0.8) continue;        // not raised (y grows downward)
+    for (const part of str.split(/\s*,\s*/)) {
+      const n = Number(part);
+      if (n >= 1 && n <= 999) marks.push(n);
+    }
+  }
+  return marks;
 }
 
 /**
