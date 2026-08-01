@@ -284,8 +284,11 @@ search/UX overhaul):
      five otherwise-identical "Ramps, Stairs, and Steps · Low activity" cards
      were indistinguishable.
    - **DO23** less aggressive chunking: `targetWords` 350 → 200, `overlapWords`
-     40 → 60. About 1.75× the vectors per standard, and each one closer to a
-     single idea.
+     40 → 60, in **both** `src/lib/chunker.js` (the defaults) and
+     `scripts/ingest-pdfs.js` `CONFIG` (which passes them explicitly — editing
+     only the library leaves the pipeline on the old sizing). Measured on
+     LP-3-20+E1: 484 → 586 chunks, average 164 → 135 words, so each chunk sits
+     closer to a single idea. Budget ~20–25% more vectors per standard.
    - **DO30** footnotes: the "Application Task/Area Notes" heading detector now
      tolerates the truncated first word PDF extraction produces
      ("plication Task/Area Notes", RP-11-26 p. 106), and notes resolve per TABLE
@@ -296,6 +299,44 @@ search/UX overhaul):
 
    Then re-index the definitions (see step 4b) and re-embed the application rows
    (`npm run ingest:apps`) so the new hierarchy reaches Vectorize.
+
+   **What the re-ingest cleans up on its own:**
+   - *Stale application rows.* The upsert is keyed on `code` = `<STDID>_<rowIndex>`,
+     so an extractor change that shifts row numbering used to leave the tail of
+     the previous parse live in D1 (`Active = 1`) — and `ingest:apps` faithfully
+     re-embedded it, so old parse data kept showing up in search as ordinary
+     illuminance rows. Every ingest now ends by declaring the complete set of
+     codes it produced (`POST /api/ingest/applications/prune`); anything else on
+     that standard is deleted from D1 *and* Vectorize, and the count is printed.
+     The endpoint refuses an empty keep-list, so a parse that breaks cannot
+     delete a standard's data. `--no-prune` opts out.
+   - *Stale chunk vectors.* Ids are `<STDID>-chunk-<n>`, so a growing chunk count
+     (which is what the DO23 change produces) overwrites every previous vector.
+     Shrinking re-ingests delete the tail, including for rows predating
+     migration 0006 (`chunk_count IS NULL` → probe mode).
+   - *Stale reference markers.* A document re-ingest now REPLACES
+     `reference_markers_json` rather than coalescing, so a new edition under the
+     same id cannot keep the previous edition's marker pages. Applications-only
+     batches still leave it untouched.
+   - *Retired definitions.* `ingest:definitions` prunes slugs the IES glossary no
+     longer publishes (same empty-list guard).
+   - *Cached responses.* Every ingest bumps the corpus data-version, and
+     `SEARCH_CACHE_SCHEMA` moved to `v8`, so no pre-existing search result or AI
+     summary can be served.
+
+   **What it does NOT clean up — check these by hand:**
+   - *Standards whose PDF was removed or renamed.* Their `standards` row,
+     `applications` rows and chunk vectors all survive, because nothing in the
+     run mentions them. `node scripts/cleanup-orphan-vectors.js --scan` finds
+     orphan chunk vectors whose `standard_id` is gone from D1, but not the
+     reverse. Compare `GET /api/standards?status=all` against `pdfs/` and delete
+     what no longer belongs.
+   - *The deprecated index.* `npm run ingest` only walks `pdfs/`, so
+     `VECTORIZE_DEPRECATED` keeps its existing 350-word chunks. For consistent
+     version comparisons the prior editions should be re-chunked at the same
+     sizing as the current ones — run `npm run ingest:deprecated` with the
+     deprecated PDFs in place.
+   - *R2 objects* for standards that no longer exist (harmless, but they bill).
 
 4b. **Index the ANSI/IES LS-1 definitions** — `node scripts/ingest-definitions.js`
    (client DO33). Reads the ~1,300 published definitions from the IES glossary

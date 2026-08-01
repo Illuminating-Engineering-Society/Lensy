@@ -109,9 +109,18 @@ const CONFIG = {
     }
     return v;
   })(),
-  // Chunking parameters
-  chunkTargetWords: 350,   // ~500 tokens at 1.4 words/token
-  chunkOverlapWords: 40,   // overlap between adjacent chunks for context continuity
+  // Skip the post-ingest prune of application rows a parse no longer produces.
+  // Escape hatch only — leaving stale rows in D1 is what makes an extractor
+  // change surface old data in search (see Step 7b).
+  skipPrune: args.includes('--no-prune'),
+  // Chunking parameters. These MIRROR the DEFAULTS in src/lib/chunker.js and are
+  // passed explicitly, so both places must move together — editing only the
+  // library leaves the pipeline on the old sizing.
+  // 350 → 200 words per chunk (client DO23: "possibly less aggressive 'chunking'
+  // will help this?"). A 350-word chunk is ~2 pages of a standard, so a passage
+  // about one narrow concept was diluted by everything printed around it.
+  chunkTargetWords: 200,   // ~285 tokens at 1.4 words/token
+  chunkOverlapWords: 60,   // overlap between adjacent chunks for context continuity
   minChunkWords: 30,       // discard chunks shorter than this
 };
 
@@ -440,7 +449,28 @@ async function ingestFile(filePath, standardId, status = 'current') {
     }
   }
 
-  console.log(`  ✓ ${result.chunksIndexed} chunks indexed, ${result.tablesFound} tables stored, ${applicationsUpserted} application records upserted`);
+  // Step 7b: prune rows this parse no longer produces.
+  //
+  // Application codes are `<STDID>_<rowIndex>`, so ANY extractor change that
+  // shifts the row numbering leaves the tail of the previous run behind — live in
+  // D1 with Active = 1, and re-embedded by `ingest:apps` — showing up in search
+  // as illuminance rows carrying data from the old parse. The upserts above
+  // cannot detect that; only the complete code list can.
+  let applicationsPruned = 0;
+  if (applications.length > 0 && !CONFIG.skipPrune) {
+    const pruned = await postToWorker('/api/ingest/applications/prune', {
+      standardId,
+      keepCodes: applications.map(a => a.code),
+    });
+    applicationsPruned = pruned.deleted || 0;
+    if (applicationsPruned > 0) {
+      console.log(`  Pruned ${applicationsPruned} stale application row(s) from a previous parse` +
+        ` (${pruned.vectorsDeleted || 0} vectors): ${(pruned.sample || []).slice(0, 5).join(', ')}${applicationsPruned > 5 ? ', …' : ''}`);
+    }
+  }
+
+  console.log(`  ✓ ${result.chunksIndexed} chunks indexed, ${result.tablesFound} tables stored, ` +
+    `${applicationsUpserted} application records upserted${applicationsPruned ? `, ${applicationsPruned} pruned` : ''}`);
   return { structure };
 }
 

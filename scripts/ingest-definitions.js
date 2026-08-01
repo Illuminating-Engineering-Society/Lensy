@@ -28,9 +28,10 @@
  * Options
  *   --local          Target http://localhost:8787
  *   --dry-run        Do everything except POST
- *   --limit <n>      Stop after n definitions (smoke tests)
+ *   --limit <n>      Stop after n definitions (smoke tests; implies --no-prune)
  *   --out <path>     Write the normalized definitions to a JSON file
  *   --source <url>   Override the glossary REST endpoint
+ *   --no-prune       Keep definitions IES has retired (default is to remove them)
  *   --verbose        Print every definition as it is normalized
  *
  * Environment
@@ -66,6 +67,10 @@ const CONFIG = {
   verbose: flag('--verbose'),
   limit: value('--limit') ? Number(value('--limit')) : null,
   out: value('--out'),
+  // --limit fetches a SUBSET, so pruning against it would delete every
+  // definition outside that subset. Refuse automatically rather than rely on the
+  // operator remembering --no-prune.
+  noPrune: flag('--no-prune') || !!value('--limit'),
 };
 
 // The REST collection caps per_page at 100. Batches POSTed to the Worker are
@@ -123,6 +128,20 @@ async function main() {
     });
     indexed += result.definitionsIndexed || 0;
     console.log(`  Indexed ${indexed}/${definitions.length}`);
+  }
+
+  // Prune terms IES has retired: the upsert refreshes what still exists but
+  // cannot know what disappeared, and a Definition card citing a definition that
+  // is no longer published is worse than no card. The Worker refuses an empty
+  // keep-list, so a failed fetch can never wipe the glossary.
+  if (!CONFIG.noPrune) {
+    const pruned = await postToWorker('/api/ingest/definitions/prune', {
+      keepSlugs: definitions.map(d => d.slug),
+    });
+    if (pruned.deleted > 0) {
+      console.log(`  Pruned ${pruned.deleted} retired definition(s) (${pruned.vectorsDeleted || 0} vectors): ` +
+        `${(pruned.sample || []).slice(0, 5).join(', ')}${pruned.deleted > 5 ? ', …' : ''}`);
+    }
   }
 
   console.log(`\n✓ ${indexed} definitions indexed as ${DEFINITIONS_STANDARD_ID}.\n`);

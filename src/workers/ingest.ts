@@ -90,14 +90,160 @@ export async function handleIngest(request: Request, env: Env): Promise<Response
   switch (subPath) {
     case '/applications':
       return ingestApplications(env);
+    case '/applications/prune':
+      return pruneApplications(request, env);
     case '/definitions':
       return ingestDefinitions(request, env);
+    case '/definitions/prune':
+      return pruneDefinitions(request, env);
     case '/r2-upload-url':
       return getR2UploadUrl(request, env);
     case '':
     default:
       return ingestParsedPDF(request, env);
   }
+}
+
+// ─── Prune: remove rows a re-ingest no longer produces ────────────────────────
+//
+// The upserts above are additive — ON CONFLICT DO UPDATE refreshes a row that
+// still exists but never removes one that stopped existing. Whenever an
+// extractor change shifts the row numbering (application codes are
+// `<STDID>_<rowIndex>`), the TAIL of the previous run survives in D1 with
+// Active = 1 and stale hierarchy/values, and the next `ingest:apps` faithfully
+// re-embeds it into Vectorize. Those rows then show up in search as ordinary
+// illuminance rows carrying data from the OLD parse.
+//
+// So every ingest that produces application records ends by declaring the
+// complete set of codes it produced; anything else on that standard is deleted
+// from D1 and from Vectorize.
+
+const PRUNE_DELETE_BATCH = 50; // codes per DELETE statement (D1 bound-param budget)
+
+async function pruneApplications(request: Request, env: Env): Promise<Response> {
+  let body: any;
+  try {
+    body = await request.json();
+  } catch {
+    return jsonResponse({ error: 'Invalid JSON body' }, 400);
+  }
+
+  const standardId = body?.standardId;
+  const keepCodes: unknown = body?.keepCodes;
+  if (!standardId) return jsonResponse({ error: 'standardId is required' }, 400);
+  if (!Array.isArray(keepCodes)) return jsonResponse({ error: 'keepCodes must be an array' }, 400);
+
+  // Refuse to prune against an empty keep-list. A parse that suddenly yields no
+  // rows is a regression, not an instruction to delete the standard's data —
+  // deleting it would turn a bad parse into silent data loss.
+  if (keepCodes.length === 0) {
+    return jsonResponse({
+      error: 'keepCodes is empty — refusing to prune. An extraction that produced no application rows is a parse ' +
+             'failure, not a reason to delete this standard\'s rows. Investigate the parse, or delete them explicitly.',
+    }, 400);
+  }
+
+  const keep = new Set(keepCodes.map(String));
+  const existing = await env.DB.prepare(
+    'SELECT code FROM applications WHERE Standard = ?'
+  ).bind(standardId).all<{ code: string }>();
+
+  const stale = (existing.results || []).map(r => r.code).filter(code => !keep.has(code));
+  if (stale.length === 0) {
+    return jsonResponse({ success: true, standardId, examined: (existing.results || []).length, deleted: 0 });
+  }
+
+  // D1 first: a row the UI can no longer reach is the urgent part. Vectorize
+  // next — an orphan vector whose D1 row is gone yields no result anyway
+  // (fetchApplications drops it), so a failure here degrades rather than breaks.
+  for (let i = 0; i < stale.length; i += PRUNE_DELETE_BATCH) {
+    const batch = stale.slice(i, i + PRUNE_DELETE_BATCH);
+    await env.DB.prepare(
+      `DELETE FROM applications WHERE code IN (${batch.map(() => '?').join(',')})`
+    ).bind(...batch).run();
+  }
+
+  let vectorsDeleted = 0;
+  try {
+    // Application vector ids ARE the application codes (see ingestApplications).
+    for (let i = 0; i < stale.length; i += DELETE_BATCH) {
+      const batch = stale.slice(i, i + DELETE_BATCH);
+      const res = await env.VECTORIZE.deleteByIds(batch);
+      vectorsDeleted += res?.count ?? batch.length;
+    }
+  } catch (err) {
+    console.error(`prune: Vectorize cleanup failed for ${standardId} (non-fatal):`, errMsg(err));
+  }
+
+  await bumpDataVersion(env.SESSIONS);
+
+  return jsonResponse({
+    success: true,
+    standardId,
+    examined: (existing.results || []).length,
+    deleted: stale.length,
+    vectorsDeleted,
+    sample: stale.slice(0, 10),
+  });
+}
+
+/**
+ * Same contract for the LS-1 glossary: a term IES retires must disappear from
+ * Lensy rather than linger as a Definition card citing a definition that is no
+ * longer published.
+ */
+async function pruneDefinitions(request: Request, env: Env): Promise<Response> {
+  let body: any;
+  try {
+    body = await request.json();
+  } catch {
+    return jsonResponse({ error: 'Invalid JSON body' }, 400);
+  }
+
+  const keepSlugs: unknown = body?.keepSlugs;
+  if (!Array.isArray(keepSlugs)) return jsonResponse({ error: 'keepSlugs must be an array' }, 400);
+  if (keepSlugs.length === 0) {
+    return jsonResponse({
+      error: 'keepSlugs is empty — refusing to prune. An empty fetch from the IES glossary is a source or network ' +
+             'failure, not a reason to delete every definition.',
+    }, 400);
+  }
+
+  const keep = new Set(keepSlugs.map(String));
+  const existing = await env.DB.prepare('SELECT slug FROM definitions').all<{ slug: string }>();
+  const stale = (existing.results || []).map(r => r.slug).filter(slug => !keep.has(slug));
+  if (stale.length === 0) {
+    return jsonResponse({ success: true, examined: (existing.results || []).length, deleted: 0 });
+  }
+
+  for (let i = 0; i < stale.length; i += PRUNE_DELETE_BATCH) {
+    const batch = stale.slice(i, i + PRUNE_DELETE_BATCH);
+    await env.DB.prepare(
+      `DELETE FROM definitions WHERE slug IN (${batch.map(() => '?').join(',')})`
+    ).bind(...batch).run();
+  }
+
+  let vectorsDeleted = 0;
+  try {
+    const ids = stale.map(definitionVectorId);
+    for (let i = 0; i < ids.length; i += DELETE_BATCH) {
+      const batch = ids.slice(i, i + DELETE_BATCH);
+      const res = await env.VECTORIZE.deleteByIds(batch);
+      vectorsDeleted += res?.count ?? batch.length;
+    }
+  } catch (err) {
+    console.error('prune: Vectorize definition cleanup failed (non-fatal):', errMsg(err));
+  }
+
+  await bumpDataVersion(env.SESSIONS);
+
+  return jsonResponse({
+    success: true,
+    examined: (existing.results || []).length,
+    deleted: stale.length,
+    vectorsDeleted,
+    sample: stale.slice(0, 10),
+  });
 }
 
 // ─── LS-1 Definitions Ingestion (client DO33) ─────────────────────────────────
@@ -348,8 +494,12 @@ async function ingestParsedPDF(request: Request, env: Env): Promise<Response> {
   const coverage = buildCoverageStats(chunks);
   const pageCount = Number.isFinite(metadata.pageCount) ? metadata.pageCount : null;
 
-  // In-body reference markers (DO31.4). Only overwrite when this ingest actually
-  // produced some — an applications-only batch must not wipe the map.
+  // In-body reference markers (DO31.4). An applications-only batch carries no
+  // markers and must not wipe the map; a real document re-ingest REPLACES it,
+  // including with null — a new edition under the same id must not keep the
+  // previous edition's marker pages, which would send Reference chips to the
+  // wrong page. `chunk_count` below is non-null exactly on a document ingest, so
+  // the UPDATE keys the choice off that.
   const markersJson = (referenceMarkers && typeof referenceMarkers === 'object'
     && Object.keys(referenceMarkers).length > 0)
     ? JSON.stringify(referenceMarkers)
@@ -374,7 +524,9 @@ async function ingestParsedPDF(request: Request, env: Env): Promise<Response> {
       chunk_count  = COALESCE(excluded.chunk_count, standards.chunk_count),
       page_count   = COALESCE(excluded.page_count, standards.page_count),
       coverage_json = COALESCE(excluded.coverage_json, standards.coverage_json),
-      reference_markers_json = COALESCE(excluded.reference_markers_json, standards.reference_markers_json),
+      reference_markers_json = CASE
+        WHEN excluded.chunk_count IS NOT NULL THEN excluded.reference_markers_json
+        ELSE standards.reference_markers_json END,
       indexed_at   = CURRENT_TIMESTAMP,
       updated_at   = CURRENT_TIMESTAMP
   `).bind(
