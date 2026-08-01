@@ -147,6 +147,13 @@ async function main() {
   console.log(`Target: ${CONFIG.apiUrl}`);
   console.log(`Mode:   ${CONFIG.dryRun ? 'DRY RUN (no network calls)' : 'Live'}\n`);
 
+  // Fail fast, before parsing anything. Every PDF parses independently of the
+  // Worker, so an unreachable or unauthorized endpoint used to surface only at
+  // the POST — after the whole corpus had been parsed and chunked. Observed:
+  // 220 files parsed, all 220 failed with "fetch failed", because LUCIUS_API_URL
+  // was unset and the default is localhost.
+  if (!CONFIG.dryRun) await preflight();
+
   if (args.includes('--applications-only')) {
     return reindexApplications();
   }
@@ -556,6 +563,63 @@ function uploadToR2(filePath, r2Key) {
 // ─── Applications Re-index ────────────────────────────────────────────────────
 
 /**
+ * Verify the Worker is reachable, authorized, and running a build that has the
+ * endpoints this script needs — before a single PDF is parsed.
+ *
+ * Two side-effect-free probes:
+ *   1. /api/ingest/r2-upload-url just echoes a key back → proves reach + auth.
+ *   2. /api/ingest/applications/prune with an empty keep-list is REFUSED by
+ *      design (400), so a 404 here means the deployed Worker predates the prune
+ *      and the ingest would fail per-file at the very end of each document.
+ */
+async function preflight() {
+  const isLocal = CONFIG.apiUrl.includes('localhost') || CONFIG.apiUrl.includes('127.0.0.1');
+  const urlHint = process.env.LUCIUS_API_URL
+    ? ''
+    : `\n   LUCIUS_API_URL is not set, so the target defaulted to ${CONFIG.apiUrl}.` +
+      '\n   Export it (e.g. LUCIUS_API_URL=https://lensy.ies.org) or pass --local for wrangler dev.';
+
+  try {
+    await postToWorker('/api/ingest/r2-upload-url', { standardId: '__preflight__' });
+  } catch (err) {
+    const msg = String(err.message || err);
+    if (/fetch failed|ECONNREFUSED|ENOTFOUND|other side closed/i.test(msg)) {
+      throw new Error(`Cannot reach the Worker at ${CONFIG.apiUrl}.${urlHint}` +
+        (isLocal ? '\n   For local dev, start it first: npx wrangler dev' : ''));
+    }
+    if (/\b(401|403)\b/.test(msg)) {
+      throw new Error(`The Worker at ${CONFIG.apiUrl} rejected the ingest credential.` +
+        '\n   LUCIUS_API_SECRET must match the value set with `wrangler secret put LUCIUS_API_SECRET`.' +
+        `\n   Server said: ${msg}`);
+    }
+    throw new Error(`Preflight against ${CONFIG.apiUrl} failed: ${msg}${urlHint}`);
+  }
+
+  // NOTE the inverted logic here, which is not a mistake: handleIngest routes an
+  // unrecognized sub-path to `default: ingestParsedPDF`, so a build without the
+  // prune endpoint does NOT answer 404 — it treats the probe as an empty document
+  // ingest and answers 200. Success is therefore the failure signal; the refusal
+  // is what proves the endpoint exists.
+  let pruneRefused = false;
+  try {
+    await postToWorker('/api/ingest/applications/prune', { standardId: '__preflight__', keepCodes: [] });
+  } catch (err) {
+    const msg = String(err.message || err);
+    if (/keepCodes is empty/.test(msg)) pruneRefused = true;
+    else throw new Error(`Preflight prune probe failed unexpectedly: ${msg}`);
+  }
+  if (!pruneRefused) {
+    throw new Error(`The Worker at ${CONFIG.apiUrl} is running a build without /api/ingest/applications/prune ` +
+      '(the probe fell through to the generic ingest handler).' +
+      '\n   Deploy the current code first (npm run deploy), then re-run the ingest —' +
+      '\n   otherwise stale application rows from the previous parse stay live in D1 and' +
+      '\n   get re-embedded by `npm run ingest:apps`.');
+  }
+
+  console.log(`Preflight: ${CONFIG.apiUrl} reachable, authorized, prune endpoint present.\n`);
+}
+
+/**
  * Compare the R2 bucket against D1 and report (or delete) objects with no
  * standards row. Reports only unless --sweep-r2 is also passed: a raw PDF removed
  * from R2 cannot be recovered from Lensy.
@@ -568,7 +632,20 @@ async function sweepR2Only() {
     return;
   }
 
-  const sweep = await postToWorker('/api/ingest/r2-sweep', { confirm: CONFIG.sweepR2 });
+  let sweep;
+  try {
+    sweep = await postToWorker('/api/ingest/r2-sweep', { confirm: CONFIG.sweepR2 });
+  } catch (err) {
+    const msg = String(err.message || err);
+    // A 409 is the endpoint's own safety refusal (every object looked orphaned,
+    // i.e. the standards table is empty or unreadable). That is the sweep working
+    // as designed — report it as a warning, not a crash.
+    if (/\b409\b/.test(msg)) {
+      console.warn(`R2 sweep declined for safety:\n  ${msg.replace(/^Worker returned 409: /, '')}\n`);
+      return;
+    }
+    throw err;
+  }
 
   if (sweep.orphans === 0) {
     console.log(`✓ ${sweep.examined} object(s) in R2, no orphans.\n`);

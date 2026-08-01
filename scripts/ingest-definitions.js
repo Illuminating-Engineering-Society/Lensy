@@ -85,6 +85,10 @@ async function main() {
   console.log(`  Source: ${CONFIG.source}`);
   console.log(`  Target: ${CONFIG.dryRun ? '(dry run)' : CONFIG.apiUrl}`);
 
+  // Fail fast before fetching ~1,300 definitions over 14 requests: an
+  // unreachable or unauthorized Worker should not cost the whole download.
+  if (!CONFIG.dryRun) await preflight();
+
   const posts = await fetchAllGlossaryPosts();
   console.log(`  Fetched: ${posts.length} glossary entries`);
 
@@ -145,6 +149,48 @@ async function main() {
   }
 
   console.log(`\n✓ ${indexed} definitions indexed as ${DEFINITIONS_STANDARD_ID}.\n`);
+}
+
+/**
+ * Verify the Worker is reachable, authorized, and running a build that has the
+ * definitions endpoint — before downloading the glossary.
+ *
+ * The probe is an empty definitions batch, which the endpoint answers with
+ * `definitionsIndexed: 0` without writing anything.
+ */
+async function preflight() {
+  const urlHint = process.env.LUCIUS_API_URL
+    ? ''
+    : `\n   LUCIUS_API_URL is not set, so the target defaulted to ${CONFIG.apiUrl}.` +
+      '\n   Export it (e.g. LUCIUS_API_URL=https://lensy.ies.org) or pass --local for wrangler dev.';
+
+  try {
+    await postToWorker('/api/ingest/definitions', { definitions: [] });
+  } catch (err) {
+    const msg = String(err.message || err);
+    if (/fetch failed|ECONNREFUSED|ENOTFOUND|other side closed/i.test(msg)) {
+      throw new Error(`Cannot reach the Worker at ${CONFIG.apiUrl}.${urlHint}`);
+    }
+    if (/\b(401|403)\b/.test(msg)) {
+      throw new Error(`The Worker at ${CONFIG.apiUrl} rejected the ingest credential.` +
+        '\n   LUCIUS_API_SECRET must match the value set with `wrangler secret put LUCIUS_API_SECRET`.' +
+        `\n   Server said: ${msg}`);
+    }
+    // handleIngest routes an unrecognized sub-path to the generic document
+    // handler, which rejects a body with no standardId. That 400 is the signal
+    // that this build predates the definitions endpoint — not a 404.
+    if (/\b404\b/.test(msg) || /standardId is required/.test(msg)) {
+      throw new Error(`The Worker at ${CONFIG.apiUrl} is running a build without /api/ingest/definitions.` +
+        '\n   Deploy the current code first (npm run deploy), then re-run this script.');
+    }
+    if (/no such table|no such column/i.test(msg)) {
+      throw new Error('The `definitions` table does not exist yet.' +
+        '\n   Apply migration 0009 first: npm run db:migrate:remote');
+    }
+    throw new Error(`Preflight against ${CONFIG.apiUrl} failed: ${msg}${urlHint}`);
+  }
+
+  console.log(`  Preflight: ${CONFIG.apiUrl} reachable, authorized, definitions endpoint present.`);
 }
 
 /**
