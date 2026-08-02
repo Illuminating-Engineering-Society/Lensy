@@ -32,10 +32,61 @@ export const DEFINITIONS_STANDARD_FULL = 'ANSI/IES LS-1-25';
 export const DEFINITIONS_STANDARD_TITLE =
   'Lighting Science: Nomenclature and Definitions for Illuminating Engineering';
 
-/** Vector id for one definition. Distinct from the `<id>-chunk-<n>` scheme so
- *  the chunk-range cleanup and probe helpers can never touch these. */
+// Vectorize rejects any vector id over 64 BYTES (VECTOR_UPSERT_ERROR 40008).
+// Fourteen LS-1 slugs blow past it once prefixed — the worst is
+// "table-t-5b-color-matching-functions-and-chromaticity-coordinates-of-cie-1964-
+// supplementary-standard-colorimetric-observer" at 130 bytes.
+const VECTOR_ID_MAX_BYTES = 63; // one under the limit, for margin
+const DEFINITION_ID_PREFIX = 'LS-1-DEF-';
+
+const encoder = new TextEncoder();
+const byteLength = (s) => encoder.encode(s).length;
+
+/**
+ * Vector id for one definition. Distinct from the `<id>-chunk-<n>` scheme so the
+ * chunk-range cleanup and probe helpers can never touch these.
+ *
+ * The plain `LS-1-DEF-<slug>` form is kept whenever it fits, which is ~99% of the
+ * glossary — that keeps ids readable in the index AND means changing this
+ * function does not re-key the definitions already indexed under the plain form
+ * (a re-key would leave every one of them behind as an orphan vector). Only the
+ * handful of over-long slugs fall back to truncation plus a hash of the FULL
+ * slug, so two slugs sharing a 45-character prefix still get distinct ids.
+ *
+ * The hash is a 32-bit FNV-1a rather than SHA-256 because this has to stay
+ * synchronous (crypto.subtle is async) and it only ever disambiguates a few
+ * dozen items; the collision probability across the whole 1,311-term glossary is
+ * ~2 in 10,000, and across the ~14 items that actually use it, negligible.
+ */
 export function definitionVectorId(slug) {
-  return `LS-1-DEF-${slug}`;
+  const plain = `${DEFINITION_ID_PREFIX}${slug}`;
+  if (byteLength(plain) <= VECTOR_ID_MAX_BYTES) return plain;
+
+  const digest = fnv1a32(slug).toString(16).padStart(8, '0');
+  const budget = VECTOR_ID_MAX_BYTES - byteLength(DEFINITION_ID_PREFIX) - 1 - digest.length;
+  return `${DEFINITION_ID_PREFIX}${truncateToBytes(slug, budget)}-${digest}`;
+}
+
+/** 32-bit FNV-1a. Deterministic across Node and Workers — the id must be stable. */
+function fnv1a32(str) {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return h >>> 0;
+}
+
+/** Longest prefix of `str` that encodes to at most `maxBytes`, cut on a whole
+ *  character so a multi-byte sequence is never split. */
+function truncateToBytes(str, maxBytes) {
+  if (byteLength(str) <= maxBytes) return str;
+  let out = '';
+  for (const ch of str) {
+    if (byteLength(out + ch) > maxBytes) break;
+    out += ch;
+  }
+  return out;
 }
 
 // Tags a definition may legitimately use. Everything else is unwrapped (its text

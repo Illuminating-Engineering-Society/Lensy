@@ -77,8 +77,15 @@ const CONFIG = {
 // smaller: each definition carries its full rich text, and the Worker embeds the
 // whole batch in one Workers AI call.
 const FETCH_PER_PAGE = 100;
-const POST_BATCH = 50;
+// 50 → 25. Each definition in a batch costs one D1 statement, so a 50-item batch
+// spent ~52 subrequests inside one Worker invocation (1 Workers AI call, 1
+// Vectorize upsert, 50 D1 writes, 1 KV bump) — right at the edge of the
+// per-request subrequest budget. Halving it also halves the blast radius when a
+// batch does fail.
+const POST_BATCH = 25;
 const FETCH_RETRIES = 3;
+const BATCH_RETRIES = 3;      // attempts per batch before bisecting
+const MAX_BISECT_DEPTH = 6;   // 25 items bisects to 1 in 5 levels
 
 async function main() {
   console.log('\nANSI/IES LS-1 definitions → Lensy');
@@ -123,15 +130,22 @@ async function main() {
     return;
   }
 
+  // Distinct from the `skipped` list above, which holds posts that could not be
+  // NORMALIZED. These are definitions the Worker refused to index.
   let indexed = 0;
+  const notIndexed = [];
   for (let i = 0; i < definitions.length; i += POST_BATCH) {
     const batch = definitions.slice(i, i + POST_BATCH);
-    const result = await postToWorker('/api/ingest/definitions', {
-      standardId: DEFINITIONS_STANDARD_ID,
-      definitions: batch,
-    });
-    indexed += result.definitionsIndexed || 0;
-    console.log(`  Indexed ${indexed}/${definitions.length}`);
+    const outcome = await postBatch(batch, i);
+    indexed += outcome.indexed;
+    notIndexed.push(...outcome.skipped);
+    console.log(`  Indexed ${indexed}/${definitions.length}${notIndexed.length ? ` (${notIndexed.length} failed)` : ''}`);
+  }
+
+  if (notIndexed.length > 0) {
+    console.warn(`\n⚠ ${notIndexed.length} definition(s) could not be indexed:`);
+    for (const s of notIndexed) console.warn(`    ${s.slug}: ${s.reason}`);
+    console.warn('  Everything else WAS indexed. Re-running retries only what is still missing.');
   }
 
   // Prune terms IES has retired: the upsert refreshes what still exists but
@@ -149,6 +163,73 @@ async function main() {
   }
 
   console.log(`\n✓ ${indexed} definitions indexed as ${DEFINITIONS_STANDARD_ID}.\n`);
+}
+
+/**
+ * POST one batch, surviving both kinds of failure a 1,311-item run hits.
+ *
+ * A single failed batch used to abort the whole script, throwing away the work
+ * already done and telling the operator only a batch number. Instead:
+ *
+ *   • Retryable failures (Workers AI capacity, a Vectorize hiccup — the Worker
+ *     flags these) get a few attempts with backoff.
+ *   • A batch that still fails is BISECTED, so the failure is attributed to the
+ *     definition that actually causes it instead of to its 49 neighbours. The
+ *     upsert is idempotent and keyed on slug, so re-sending halves is safe.
+ *   • A single definition that fails on its own is reported and skipped; the run
+ *     completes and names it.
+ *
+ * @returns {{indexed: number, skipped: Array<{slug: string, reason: string}>}}
+ */
+async function postBatch(batch, offset, depth = 0) {
+  let lastErr;
+  for (let attempt = 1; attempt <= BATCH_RETRIES; attempt++) {
+    try {
+      const result = await postToWorker('/api/ingest/definitions', {
+        standardId: DEFINITIONS_STANDARD_ID,
+        definitions: batch,
+      });
+      return { indexed: result.definitionsIndexed || 0, skipped: [] };
+    } catch (err) {
+      lastErr = err;
+      // The Worker flags transient stages (Workers AI capacity, a Vectorize
+      // hiccup) explicitly. A D1 failure is deterministic — retrying it just
+      // multiplies the wait before the bisect that actually locates it. Fall
+      // back to the status only for errors from an older build with no flag.
+      const retryable = err.body
+        ? err.body.retryable === true
+        : (err.status === 429 || err.status === 503 || err.status >= 500);
+      if (!retryable || attempt === BATCH_RETRIES) break;
+      const waitMs = attempt * 3000;
+      console.warn(`  Batch at ${offset} failed (attempt ${attempt}/${BATCH_RETRIES}), retrying in ${waitMs / 1000}s: ${short(err)}`);
+      await new Promise(r => setTimeout(r, waitMs));
+    }
+  }
+
+  // One definition on its own that still fails is the culprit — name it, skip it,
+  // keep going.
+  if (batch.length === 1) {
+    console.warn(`  ✗ Skipping "${batch[0].slug}": ${short(lastErr)}`);
+    return { indexed: 0, skipped: [{ slug: batch[0].slug, reason: short(lastErr) }] };
+  }
+
+  if (depth >= MAX_BISECT_DEPTH) {
+    console.warn(`  ✗ Skipping ${batch.length} definition(s) at ${offset} (bisect limit): ${short(lastErr)}`);
+    return { indexed: 0, skipped: batch.map(d => ({ slug: d.slug, reason: short(lastErr) })) };
+  }
+
+  const mid = Math.ceil(batch.length / 2);
+  console.warn(`  Bisecting the failing batch at ${offset} (${batch.length} → ${mid} + ${batch.length - mid})…`);
+  const left = await postBatch(batch.slice(0, mid), offset, depth + 1);
+  const right = await postBatch(batch.slice(mid), offset + mid, depth + 1);
+  return { indexed: left.indexed + right.indexed, skipped: [...left.skipped, ...right.skipped] };
+}
+
+/** The useful part of a Worker error: its message, without the HTTP preamble. */
+function short(err) {
+  return String(err?.message || err)
+    .replace(/^\/api\/ingest\/definitions → HTTP \d+: /, '')
+    .slice(0, 300);
 }
 
 /**
@@ -254,7 +335,13 @@ async function postToWorker(path, body) {
   let json;
   try { json = JSON.parse(text); } catch { json = { raw: text }; }
   if (!res.ok) {
-    throw new Error(`${path} → HTTP ${res.status}: ${json.error || text.slice(0, 300)}`);
+    const err = new Error(`${path} → HTTP ${res.status}: ${json.error || text.slice(0, 300)}`);
+    // Carry the structured body: the definitions endpoint reports which stage
+    // failed and whether it is worth retrying, and postBatch decides from that
+    // rather than from pattern-matching the HTTP status out of the message.
+    err.status = res.status;
+    err.body = json;
+    throw err;
   }
   return json;
 }

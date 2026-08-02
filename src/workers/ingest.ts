@@ -273,13 +273,28 @@ async function ingestDefinitions(request: Request, env: Env): Promise<Response> 
 
   const standardId = String(body?.standardId || DEFINITIONS_STANDARD_ID);
 
+  // Each stage reports WHICH stage failed, and for D1 which definition — the
+  // router masks error detail in production, so a bare 500 here left an operator
+  // with a batch number and nothing else. These endpoints are staff-only
+  // (requireAdminAccess above), so the detail is appropriate to return.
+  const failed = (stage: string, err: unknown, extra: Record<string, unknown> = {}) => jsonResponse({
+    error: `Definitions ingest failed at the ${stage} stage: ${errMsg(err)}`,
+    stage,
+    standardId,
+    batchSize: definitions.length,
+    ...extra,
+  }, 500);
+
   // 1. Embed. The term is weighted in buildDefinitionEmbedText so a bare-term
   //    query ("color") reaches its own definition first.
-  const embeddings = await embedInBatches(env.AI, definitions.map(buildDefinitionEmbedText));
+  let embeddings: number[][];
+  try {
+    embeddings = await embedInBatches(env.AI, definitions.map(buildDefinitionEmbedText));
+  } catch (err) {
+    return failed('embedding', err, { retryable: true });
+  }
   if (embeddings.length !== definitions.length) {
-    return jsonResponse({
-      error: `Embedding count mismatch: ${embeddings.length} for ${definitions.length} definitions — aborting.`,
-    }, 500);
+    return failed('embedding', `count mismatch: ${embeddings.length} for ${definitions.length} definitions`);
   }
 
   // 2. Vectorize. Definition vectors live in the MAIN index (they are current
@@ -303,27 +318,50 @@ async function ingestDefinitions(request: Request, env: Env): Promise<Response> 
       status: 'current',
     },
   }));
-  for (let i = 0; i < vectors.length; i += VECTORIZE_BATCH) {
-    await env.VECTORIZE.upsert(vectors.slice(i, i + VECTORIZE_BATCH) as unknown as VectorizeVector[]);
+  // Vectorize rejects ids over 64 bytes, and does so for the whole batch — the
+  // error names no slug, so locating the offender used to mean bisecting the
+  // batch. definitionVectorId() now bounds the id, and this check keeps that
+  // promise honest: if it is ever broken again, the response says which slug.
+  const oversized = definitions
+    .map((d: { slug: string }, i: number) => ({ slug: d.slug, id: vectors[i].id }))
+    .filter((v: { id: string }) => new TextEncoder().encode(v.id).length > 64);
+  if (oversized.length > 0) {
+    return failed('vectorize', `vector id exceeds Vectorize's 64-byte limit: ${oversized[0].id}`, {
+      slugs: oversized.map((v: { slug: string }) => v.slug),
+    });
+  }
+
+  try {
+    for (let i = 0; i < vectors.length; i += VECTORIZE_BATCH) {
+      await env.VECTORIZE.upsert(vectors.slice(i, i + VECTORIZE_BATCH) as unknown as VectorizeVector[]);
+    }
+  } catch (err) {
+    return failed('vectorize', err, { retryable: true });
   }
 
   // 3. D1 — one statement per row (D1 caps bound variables per statement).
-  for (const d of definitions) {
-    await env.DB.prepare(`
-      INSERT INTO definitions (slug, term, clause, html, text, source_url, standard_id, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-      ON CONFLICT(slug) DO UPDATE SET
-        term = excluded.term,
-        clause = excluded.clause,
-        html = excluded.html,
-        text = excluded.text,
-        source_url = excluded.source_url,
-        standard_id = excluded.standard_id,
-        updated_at = CURRENT_TIMESTAMP
-    `).bind(
-      d.slug, d.term, d.clause || null, d.html || d.text, d.text,
-      d.sourceUrl || null, standardId,
-    ).run();
+  let current = '';
+  try {
+    for (const d of definitions) {
+      current = d.slug;
+      await env.DB.prepare(`
+        INSERT INTO definitions (slug, term, clause, html, text, source_url, standard_id, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(slug) DO UPDATE SET
+          term = excluded.term,
+          clause = excluded.clause,
+          html = excluded.html,
+          text = excluded.text,
+          source_url = excluded.source_url,
+          standard_id = excluded.standard_id,
+          updated_at = CURRENT_TIMESTAMP
+      `).bind(
+        d.slug, d.term, d.clause || null, d.html || d.text, d.text,
+        d.sourceUrl || null, standardId,
+      ).run();
+    }
+  } catch (err) {
+    return failed('d1', err, { slug: current });
   }
 
   await bumpDataVersion(env.SESSIONS);

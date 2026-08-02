@@ -14,7 +14,7 @@ import {
 import { extractReferenceMarkers, referenceEntryNumber } from '../lib/reference-markers.js';
 import {
   sanitizeDefinitionHtml, definitionPlainText, definitionClause,
-  normalizeGlossaryPost, buildDefinitionEmbedText,
+  normalizeGlossaryPost, buildDefinitionEmbedText, definitionVectorId,
 } from '../lib/definitions.js';
 
 // ─── DO27: version-comparison ordering ────────────────────────────────────────
@@ -308,6 +308,64 @@ describe('normalizeGlossaryPost', () => {
   it('rejects a post with no usable content', () => {
     expect(normalizeGlossaryPost({ slug: 'x', title: { rendered: 'x' }, content: { rendered: '' } })).toBeNull();
     expect(normalizeGlossaryPost({ title: { rendered: 'x' }, content: { rendered: '<p>y z</p>' } })).toBeNull();
+  });
+});
+
+describe('definitionVectorId', () => {
+  const bytes = (s) => new TextEncoder().encode(s).length;
+
+  // Every slug that actually broke the production ingest with
+  // VECTOR_UPSERT_ERROR 40008 ("id too long; max is 64 bytes").
+  const OVERSIZED = [
+    'cie-1988-2-degrees-modified-spectral-luminous-efficiency-function-for-photopic-vision',
+    'coefficient-of-attenuation-at-a-point-in-a-given-direction-mu',
+    'equivalent-luminous-intensity-of-an-extended-source-at-a-specified-distance',
+    'on-off-ratio-or-mark-space-ratio-for-a-repeated-single-flash',
+    'spectral-luminous-efficiency-for-photopic-vision-v-lambda',
+    'table-t-2-standard-units-symbols-and-defining-equations-for-fundamental-photometric-and-radiometric-quantities',
+    'table-t-4-definitive-values-of-the-special-luminous-efficiency-function-for-photopic-vision-v-lambda',
+    'table-t-5a-color-matching-functions-and-chromaticity-coordinates-of-cie-1931-standard-colorimetric-observer',
+    'table-t-5b-color-matching-functions-and-chromaticity-coordinates-of-cie-1964-supplementary-standard-colorimetric-observer',
+    'table-t-6-relative-spectral-power-distribution-of-cie-illuminant-c',
+    'table-t-7-scotopic-spectral-luminous-efficiency-values-vlambda-unity-at-wavelength-of-maximum-luminous-efficacy',
+    'table-t-8-tentative-bactericidal-efficiency-of-ultraviolet-radiation',
+    'table-t-9-cie-1988-modified-two-degree-spectral-luminous-efficiency-function-for-photopic-vision',
+    'u-s-customary-system-uscs-formerly-english-unit-of-luminance',
+  ];
+
+  it('keeps the plain readable id whenever it fits', () => {
+    expect(definitionVectorId('color')).toBe('LS-1-DEF-color');
+    expect(definitionVectorId('mesopic-adaptation')).toBe('LS-1-DEF-mesopic-adaptation');
+  });
+
+  it('never exceeds the 64-byte Vectorize limit', () => {
+    for (const slug of OVERSIZED) {
+      expect(bytes(definitionVectorId(slug))).toBeLessThanOrEqual(64);
+    }
+  });
+
+  it('does NOT re-key the definitions already indexed under the plain id', () => {
+    // Re-keying would strand every existing definition vector as an orphan.
+    const fits = 'a'.repeat(54); // 9-byte prefix + 54 = 63
+    expect(definitionVectorId(fits)).toBe(`LS-1-DEF-${fits}`);
+  });
+
+  it('disambiguates slugs that share a long prefix', () => {
+    const a = `${'x'.repeat(60)}-alpha`;
+    const b = `${'x'.repeat(60)}-beta`;
+    expect(definitionVectorId(a)).not.toBe(definitionVectorId(b));
+  });
+
+  it('is deterministic — the id must be stable across runs and runtimes', () => {
+    const slug = OVERSIZED[0];
+    expect(definitionVectorId(slug)).toBe(definitionVectorId(slug));
+    expect(definitionVectorId(slug)).toBe('LS-1-DEF-cie-1988-2-degrees-modified-spectral-luminous-4cb96737');
+  });
+
+  it('cuts on a whole character, never mid-sequence, for multi-byte slugs', () => {
+    const id = definitionVectorId(`${'é'.repeat(40)}-tail`);
+    expect(bytes(id)).toBeLessThanOrEqual(64);
+    expect(id).not.toContain('�');
   });
 });
 
