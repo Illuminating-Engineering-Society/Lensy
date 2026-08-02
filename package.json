@@ -20,7 +20,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "cf-typegen": "wrangler types",
-    "typecheck": "tsc --noEmit -p tsconfig.worker.json && tsc --noEmit -p tsconfig.scripts.json"
+    "typecheck": "tsc --noEmit -p tsconfig.worker.json && tsc --noEmit -p tsconfig.scripts.json",
+    "verify:ingest": "node scripts/verify-ingest.js"
   },
   "dependencies": {
     "pdfjs-dist": "^4.9.155"

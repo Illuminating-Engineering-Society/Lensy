@@ -141,11 +141,28 @@ export default {
   },
 };
 
+/**
+ * Decode one percent-encoded path segment.
+ *
+ * `url.pathname` is always encoded, so an id has to be decoded before it can be
+ * compared against D1. Malformed encoding (a stray '%') throws in
+ * decodeURIComponent — fall back to the raw segment so a bad URL 404s on lookup
+ * rather than 500s on parse.
+ */
+function decodePathSegment(segment: string | undefined): string | undefined {
+  if (segment == null) return undefined;
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return segment;
+  }
+}
+
 // ─── Applications Handlers ────────────────────────────────────────────────────
 
 async function handleApplications(request: Request, env: Env, url: URL): Promise<Response> {
   const parts = url.pathname.split('/').filter(Boolean); // ['api', 'applications', ':code']
-  const code = parts[2];
+  const code = decodePathSegment(parts[2]);
 
   if (!code) {
     // GET /api/applications — list all (with optional filters)
@@ -181,7 +198,11 @@ async function handleApplications(request: Request, env: Env, url: URL): Promise
 
 async function handleStandards(request: Request, env: Env, url: URL): Promise<Response> {
   const parts = url.pathname.split('/').filter(Boolean);
-  const id = parts[2];
+  // url.pathname is percent-ENCODED. Standard ids carry errata suffixes with a
+  // '+' ("RP-2-20+E1", "RP-8-25+E2", "LP-3-20+E1"), which encodes to %2B, so
+  // matching the raw segment against `id` missed every errata edition in the
+  // library — a large slice of it — with a 404.
+  const id = decodePathSegment(parts[2]);
 
   if (!id) {
     // GET /api/standards — list all. Includes the Lighting Library viewer URL so
