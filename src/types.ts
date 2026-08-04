@@ -176,6 +176,8 @@ export interface StandardIndexEntry {
    * standards that cite by author-date rather than by number.
    */
   referenceMarkers?: Record<string, number> | null;
+  /** Authoring technical committee resolved from the `author` column (DO34). */
+  committee?: CommitteeCredit | null;
 }
 export type StandardsIndex = Map<string, StandardIndexEntry>;
 
@@ -275,6 +277,16 @@ export type ReferenceLink = { url: string; type: 'library' | 'doi' | 'url' } | n
  * page in the Lighting Library — the closest indexed location to the cited
  * item; in-body superscript reference markers are not indexed.
  */
+/** Authoring technical committee credit on a result card (client DO34). */
+export interface CommitteeCredit {
+  /** Display-ready, always "IES <Committee Name>". */
+  name: string;
+  /** The committee's public page, or the root committee list when it has none. */
+  url: string;
+  /** false when `url` is the root list because the name matched no known committee. */
+  exact: boolean;
+}
+
 export interface ReferenceMarker {
   standard: string;
   standardFull: string | null;
@@ -336,6 +348,8 @@ export interface SearchResult {
   referenceMarkers?: ReferenceMarker[];
   /** Present only on resultType 'definition' (client DO33). */
   definition?: DefinitionPayload;
+  /** Authoring technical committee, credited under the citation (DO34). */
+  committee?: CommitteeCredit | null;
   isDeprecated?: boolean;
   supersededBy?: string | null;
   deprecationNotice?: string;

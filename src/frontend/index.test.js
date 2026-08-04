@@ -170,14 +170,57 @@ describe('result-card type labels', () => {
     expect(styles.definition.label).toBe('Definition');
   });
 
-  it('gives every type its own line style and chip palette', () => {
+  // DO38 gives the line style a MEANING rather than just making types
+  // distinguishable: solid = the whole document, dashed = a part of the whole.
+  it('uses solid for Document and dashed for every extract type', () => {
     const styles = JSON.parse(run('JSON.stringify(RESULT_TYPE_STYLES)'));
-    const lines = Object.values(styles).map(s => s.line);
-    expect(new Set(lines).size).toBe(lines.length);
+    expect(styles.excerpt.line).toBe('solid');
+    expect(styles.application.line).toBe('dashed');
+    expect(styles.reference.line).toBe('dashed');
+    expect(styles.definition.line).toBe('dashed');
+  });
+
+  it('still gives every type its own chip palette and banner colour', () => {
+    const styles = JSON.parse(run('JSON.stringify(RESULT_TYPE_STYLES)'));
+    const chips = Object.values(styles).map(s => s.chip);
+    expect(new Set(chips).size).toBe(chips.length);
     for (const s of Object.values(styles)) {
-      expect(s.chip).toBeTruthy();
       expect(s.banner).toMatch(/^#[0-9A-Fa-f]{6}$/);
     }
+  });
+
+  it('uses the Interior/Exterior fills the client specified', () => {
+    const fill = JSON.parse(run('JSON.stringify(LOCATION_FILL)'));
+    expect(fill.Indoor).toBe('#2E4A62');
+    expect(fill.Outdoor).toBe('#2E4A34');
+  });
+});
+
+// ─── DO34: authoring committee credit ─────────────────────────────────────────
+
+describe('committee credit', () => {
+  it('links an exact committee match to its own page', () => {
+    const html = run(`committeeHtml({ committee: {
+      name: 'IES Retail Lighting Committee',
+      url: 'https://ies.org/committee/retail-lighting/', exact: true } })`);
+    expect(html).toContain('IES Retail Lighting Committee');
+    expect(html).toContain('href="https://ies.org/committee/retail-lighting/"');
+    expect(html).toContain('roster');
+    expect(html).not.toContain('↗'); // the arrow marks the fallback only
+  });
+
+  it('marks a fallback to the root committee list', () => {
+    const html = run(`committeeHtml({ committee: {
+      name: 'IES Ad Hoc Working Group',
+      url: 'https://ies.org/about/committees/technical-committees/', exact: false } })`);
+    expect(html).toContain('technical-committees');
+    expect(html).toContain('↗');
+    expect(html).toContain('no current page');
+  });
+
+  it('renders nothing when the standard has no committee attribution', () => {
+    expect(run('committeeHtml({})')).toBe('');
+    expect(run('committeeHtml({ committee: null })')).toBe('');
   });
 });
 

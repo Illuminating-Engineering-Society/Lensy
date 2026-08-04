@@ -69,6 +69,7 @@ import {
 import {
   DEFINITIONS_STANDARD_FULL, DEFINITIONS_STANDARD_TITLE,
 } from '../lib/definitions.js';
+import { resolveCommittee } from '../lib/committees.js';
 import { generateResponse } from '../lib/ai-summary';
 import { formatCitation, composeStandardName } from '../lib/citations';
 import { looksLikeFormalReference, referenceCitationKey } from '../lib/references.js';
@@ -212,6 +213,60 @@ export function normalizeContentTypes(filters: SearchFilters | undefined, rawQue
     ct.add('definitions');
   }
   return ct;
+}
+
+// ── Result mix by type (client DO39) ─────────────────────────────────────────
+//
+// "Increase density of Document & Definitions & References results, even if match
+//  is lower %. Decrease density of low-quality Illuminance Table results."
+//
+// Two levers, both deliberately gentle:
+//
+//   1. A per-type FLOOR on match quality. An illuminance-table row has to clear a
+//      high bar to earn a slot, because a weak table row is actively misleading —
+//      it looks like a recommendation for the wrong application. Prose and
+//      references are useful at much lower similarity: the reader judges the
+//      passage themselves.
+//   2. A small type BONUS applied only when two results are otherwise close, so
+//      relevance still decides the ordering and the type preference only breaks
+//      near-ties. A hard type sort would bury a 90% table row under a 30%
+//      reference, which is not what "gently prioritize" means.
+const TYPE_MATCH_FLOOR: Record<string, number> = {
+  excerpt: 0.25,     // Document
+  definition: 0.40,
+  reference: 0.25,
+  application: 0.50, // Illuminance Table
+};
+
+// Priority order: Document, Definitions, Illuminance Tables, References. Spaced
+// by 0.004 so the whole span (0.012) stays inside compareResults' 0.01 score
+// epsilon — i.e. it can only ever reorder results already treated as tied.
+const TYPE_PRIORITY: Record<string, number> = {
+  excerpt: 0.012,
+  definition: 0.008,
+  application: 0.004,
+  reference: 0,
+};
+
+/** The floor a result of this type must clear to be shown at all (DO39). */
+export function typeMatchFloor(resultType: string | undefined): number {
+  return TYPE_MATCH_FLOOR[resultType || 'application'] ?? 0;
+}
+
+/**
+ * Drop results that do not clear their type's match floor (client DO39).
+ *
+ * Never returns an empty list when the search DID find something: if every
+ * result is below its floor, the best few are kept rather than telling the user
+ * there is nothing — the low-confidence banner already says confidence is poor,
+ * and "here are the closest matches" beats a blank page.
+ */
+export function applyTypeFloors(results: SearchResult[], keepAtLeast = 3): SearchResult[] {
+  const kept = results.filter(r => (r.relevanceScore || 0) >= typeMatchFloor(r.resultType));
+  if (kept.length > 0) return kept;
+  return [...results]
+    .sort((a, b) => (b.relevanceScore || 0) - (a.relevanceScore || 0))
+    .slice(0, keepAtLeast);
 }
 
 const NO_STRONG_MATCH_MESSAGE =
@@ -996,6 +1051,13 @@ async function runSingleSearch(rawQuery: string, filters: SearchFilters, limit: 
     }
   }
 
+  // 13. Per-type match floors (client DO39) — a weak illuminance-table row is
+  //     worse than no row (it reads as a recommendation for the wrong
+  //     application), while prose and reference entries stay useful much lower
+  //     down. Applied last so it trims the assembled mix rather than starving an
+  //     earlier stage of candidates.
+  results = applyTypeFloors(results);
+
   // 9. Publication-order clustering — sibling rows of the same application
   //    block print together, ordered as in the source table (client
   //    feedback: Figure Skating Class I–IV / Recreational must follow the
@@ -1404,7 +1466,7 @@ export function isBrokenDoiUrl(url: string): boolean {
  */
 async function fetchStandardsIndex(db: D1Database): Promise<StandardsIndex> {
   const result = await db.prepare(
-    'SELECT id, title, full_designation, status, superseded_by, vitrium_doc_id, vitrium_web_url, reference_markers_json FROM standards'
+    'SELECT id, title, full_designation, status, superseded_by, author, vitrium_doc_id, vitrium_web_url, reference_markers_json FROM standards'
   ).all<StandardRow>();
   return new Map<string, StandardIndexEntry>((result.results || []).map((r): [string, StandardIndexEntry] => {
     const curated = curatedStandardInfo(r.id);
@@ -1417,6 +1479,11 @@ async function fetchStandardsIndex(db: D1Database): Promise<StandardsIndex> {
         supersededBy: r.superseded_by || null,
         // marker number → first body page citing it (DO31.4); null pre-0009.
         referenceMarkers: parseReferenceMarkers(r.reference_markers_json),
+        // Authoring technical committee, credited on every result card and
+        // linked to its public page (client DO34). Vitrium's Author metadata
+        // carries the committee name; resolveCommittee() refuses to invent a
+        // link for anything that is not a committee.
+        committee: resolveCommittee(r.author),
         // Full-title citations (client requirement DO1): designation +
         // descriptive title on EVERY result. D1 title first (synced metadata),
         // then the curated schema title — PDF metadata is often missing or
@@ -2091,6 +2158,8 @@ export function buildResult(app: ApplicationRow, score: number, chunkMeta: Parti
   return {
     resultType: 'application',
     application: formatted,
+    // Authoring technical committee credit (client DO34).
+    committee: stdInfo?.committee || null,
     // Front-of-document link (DO1R2): the citation title opens the standard
     // itself — deliberately WITHOUT the #page fragment vitriumLink carries.
     standardLink: stdInfo?.webUrl || null,
@@ -2511,6 +2580,8 @@ export function buildChunkResults(chunkMatches: VMatch[], linkCtx: LinkCtx = {},
         Standard: stdId,
         Page_Number: pageNum,
       }, linkCtx),
+      // Authoring technical committee credit (client DO34).
+      committee: stdInfo?.committee || null,
       // Front-of-document link for the citation title (DO1R2) — no fragment.
       standardLink: stdInfo?.webUrl || null,
       application: {
@@ -2665,6 +2736,13 @@ function compareResults(a: SearchResult, b: SearchResult): number {
   const SCORE_EPSILON = 0.01;
   const scoreDiff = (b.relevanceScore || 0) - (a.relevanceScore || 0);
   if (Math.abs(scoreDiff) > SCORE_EPSILON) return scoreDiff;
+
+  // Near-tie: nudge by content type — Document, Definitions, Illuminance Tables,
+  // References (client DO39, "gently prioritize"). The whole priority span is
+  // narrower than SCORE_EPSILON, so this only ever reorders results relevance
+  // already considers equivalent.
+  const typeDiff = (TYPE_PRIORITY[b.resultType] ?? 0) - (TYPE_PRIORITY[a.resultType] ?? 0);
+  if (typeDiff !== 0) return typeDiff;
 
   const A = a.application, B = b.application;
   const hierarchyKeys = ['subCategory', 'category', 'sub1', 'sub2', 'sub3', 'sub4'];

@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import {
   buildInviteEmail,
+  buildCollectionShareEmail,
+  isEmailAddress,
   formatExpiry,
   describeSendError,
   resolveAppUrl,
@@ -133,5 +135,151 @@ describe('resolveAppUrl', () => {
     const env = { LENSY_BASE_URL: 'https://lensy.ies.org/' };
     expect(resolveAppUrl({ url: 'http://internal-host/api/admin/users' }, env))
       .toBe('https://lensy.ies.org');
+  });
+});
+
+// ─── Shared Saved Search Collection email (client DO37) ──────────────────────
+
+function shareCtx(overrides = {}) {
+  return {
+    to: 'colleague@firm.com',
+    senderName: 'Dana Ruiz',
+    message: null,
+    collection: {
+      name: 'Downtown Office Renovation',
+      notes: 'For the <b>lobby</b> package',
+      collection_type: 'Feasibility study',
+      client_name: 'Northline',
+      location: 'Chicago, IL',
+    },
+    items: [
+      {
+        result_type: 'tables', resource_title: 'ANSI/IES RP-1-22, p. 14', page_number: 14,
+        library_url: 'https://view.protectedpdf.com/rp1#page=14',
+        application_name: 'Offices → Open plan → Reading', reference_text: null, custom_notes: 'check ratios',
+      },
+      {
+        result_type: 'body', resource_title: 'ANSI/IES RP-8-25, p. 61', page_number: 61,
+        library_url: 'https://view.protectedpdf.com/rp8#page=61',
+        application_name: null, reference_text: null, custom_notes: null,
+      },
+      {
+        result_type: 'references', resource_title: 'ANSI/IES RP-8-25 References, p. 120', page_number: 120,
+        library_url: null, application_name: null,
+        reference_text: 'CIE 115:2010 Lighting of Roads for Motor and Pedestrian Traffic.', custom_notes: null,
+      },
+    ],
+    claimUrl: 'https://lensy.ies.org/projects.html?share=abc123',
+    appUrl: 'https://lensy.ies.org',
+    ...overrides,
+  };
+}
+
+describe('buildCollectionShareEmail', () => {
+  it('produces both parts, with the topic as the subject', () => {
+    const mail = buildCollectionShareEmail(shareCtx());
+    expect(mail.subject).toBe('IES Lighting Library search results: Downtown Office Renovation');
+    expect(mail.html).toContain('<!doctype html>');
+    expect(mail.text.length).toBeGreaterThan(200);
+    expect(mail.text).not.toContain('<');
+  });
+
+  it('carries the "Save Search to My Lensy" button and the claim URL', () => {
+    // The client's mockup names this button; the recipient copies the collection
+    // into their own account rather than being granted access to the sender's.
+    const mail = buildCollectionShareEmail(shareCtx());
+    expect(mail.html).toContain('Save Search to My Lensy');
+    expect(mail.html).toContain('https://lensy.ies.org/projects.html?share=abc123');
+    expect(mail.text).toContain('Save Search to My Lensy: https://lensy.ies.org/projects.html?share=abc123');
+  });
+
+  it('omits the claim button entirely when no token could be minted', () => {
+    const mail = buildCollectionShareEmail(shareCtx({ claimUrl: null }));
+    expect(mail.html).not.toContain('Save Search to My Lensy');
+    expect(mail.text).not.toContain('Save Search to My Lensy');
+    // The references still went out — a missing token must not lose the email.
+    expect(mail.html).toContain('ANSI/IES RP-1-22');
+  });
+
+  it('carries the subscribe and purchase prompts', () => {
+    const mail = buildCollectionShareEmail(shareCtx());
+    expect(mail.html).toContain('store.ies.org/ies/subscriptions/');
+    expect(mail.html).toContain('Buy individual standards');
+    expect(mail.text).toContain('Subscribe to the Lighting Library:');
+  });
+
+  it('prints every saved item with its type label and page', () => {
+    const mail = buildCollectionShareEmail(shareCtx());
+    for (const label of ['Illuminance Table', 'Document', 'Reference']) {
+      expect(mail.html).toContain(label);
+      expect(mail.text).toContain(`[${label}]`);
+    }
+    expect(mail.html).toContain('p. 61');
+    expect(mail.text).toContain('3 saved results');
+  });
+
+  it('reprints reference entries and application names, but never excerpt text', () => {
+    // DO37: "provide linked references … but do not reprint the excerpts". A
+    // reference entry is the client's one explicit exception.
+    const mail = buildCollectionShareEmail(shareCtx());
+    expect(mail.html).toContain('CIE 115:2010');
+    expect(mail.html).toContain('Offices → Open plan → Reading');
+    // A Document item carries no body text to print, and if a future change
+    // starts persisting one, it must not appear here.
+    const smuggled = buildCollectionShareEmail(shareCtx({
+      items: [{
+        result_type: 'body', resource_title: 'ANSI/IES RP-8-25, p. 61', page_number: 61,
+        reference_text: 'SMUGGLED EXCERPT BODY', application_name: 'SMUGGLED APP NAME',
+      }],
+    }));
+    expect(smuggled.html).not.toContain('SMUGGLED EXCERPT BODY');
+    expect(smuggled.html).not.toContain('SMUGGLED APP NAME');
+    expect(smuggled.text).not.toContain('SMUGGLED');
+  });
+
+  it('escapes sender, message and item text', () => {
+    const mail = buildCollectionShareEmail(shareCtx({
+      senderName: 'Dana <script>alert(1)</script>',
+      message: 'Look at "this" & that',
+      collection: { name: '<img onerror=alert(1)>' },
+      items: [{ result_type: 'tables', resource_title: '<b>RP-1</b>', application_name: '<i>Offices</i>' }],
+    }));
+    expect(mail.html).not.toContain('<script>');
+    expect(mail.html).not.toContain('<img onerror');
+    expect(mail.html).toContain('&lt;script&gt;');
+    expect(mail.html).toContain('&quot;this&quot;');
+  });
+
+  it('strips the rich text out of notes', () => {
+    // Notes are authored as rich text in the app; an email line is plain.
+    const mail = buildCollectionShareEmail(shareCtx());
+    expect(mail.html).toContain('Collection note: For the lobby package');
+    expect(mail.html).not.toContain('<b>lobby</b>');
+  });
+
+  it('reads impersonally when the sender is unknown', () => {
+    const mail = buildCollectionShareEmail(shareCtx({ senderName: null }));
+    expect(mail.html).toContain('Someone shared');
+    expect(mail.html).not.toContain('null');
+  });
+
+  it('says so rather than printing an empty list', () => {
+    const mail = buildCollectionShareEmail(shareCtx({ items: [] }));
+    expect(mail.html).toContain('no saved results yet');
+    expect(mail.text).toContain('no saved results yet');
+  });
+});
+
+describe('isEmailAddress', () => {
+  it('accepts real addresses', () => {
+    for (const ok of ['a@b.co', 'dana.ruiz+lensy@sub.firm.com']) {
+      expect(isEmailAddress(ok)).toBe(true);
+    }
+  });
+
+  it('rejects what the Email binding would reject anyway', () => {
+    for (const bad of ['', 'nope', 'a@b', 'a@@b.co', 'a b@c.co', null, undefined, 42]) {
+      expect(isEmailAddress(bad)).toBe(false);
+    }
   });
 });

@@ -254,7 +254,19 @@ search/UX overhaul):
    then shows every row as "not sent", so apply it.
    0009 adds `standards.reference_markers_json` and the `definitions` table.
    Without it, Reference chips keep linking to the References page instead of
-   the citing page (DO31.4) and the Definitions filter returns nothing (DO33).)
+   the citing page (DO31.4) and the Definitions filter returns nothing (DO33).
+   0010 turns Projects into Saved Search Collections (DO37) and adds the Table of
+   Contents metadata columns (DO35).
+
+   **0010 must be applied BEFORE the Worker that expects it is deployed, not
+   after.** `GET /api/standards` (the list route) selects `collection`,
+   `thumbnail_url`, `buy_url` and `elearning_json` in one statement, so on a
+   database without them D1 raises `no such column: collection` and the endpoint
+   answers **500** — not a degraded list, no list at all. That takes the whole
+   Table of Contents page down and blanks every standards picker, while search
+   keeps working, which makes it look like an unrelated fault. Observed in
+   production on 2026-08-04: Worker current, migration behind, `/api/standards`
+   returning 500. `npm run verify:feedback` reports this state explicitly.)
 2. **Set the API secret** — `wrangler secret put LUCIUS_API_SECRET`.
    This is the **machine** credential: scripts and cron authenticate to
    `/api/ingest*` and `/api/admin/*` with it, and a bearer presented in
@@ -358,6 +370,21 @@ search/UX overhaul):
      sizing as the current ones — run `npm run ingest:deprecated` with the
      deprecated PDFs in place.
 
+4a. **Sync the Vitrium/webstore metadata** — `npm run sync-metadata -- --csv <export.csv>`
+   Populates the Vitrium doc IDs and viewer URLs, and — when the export carries
+   them — the Table of Contents fields (client DO35): `Collection`, `Author`
+   (the authoring committee, which also credits every search result per DO34),
+   `Description`, `Thumbnail`, `Buy URL` and `eLearning`. Those six columns are
+   OPTIONAL: a stock "Web Viewer URLs" export syncs exactly as before and the
+   Table of Contents falls back to grouping by series, saying so on the page.
+   The script prints which of them it found. Each is written only when supplied,
+   so re-syncing a stock export never blanks out a richer one — and never wipes
+   the hand-curated eLearning list. `--dry-run` shows what would change.
+
+   The eLearning cell is staff-maintained ("Staff manually selects educational
+   recording products"), formatted as `Title|URL` entries separated by `;` or a
+   newline.
+
 4b. **Index the ANSI/IES LS-1 definitions** — `node scripts/ingest-definitions.js`
    (client DO33). Reads the ~1,300 published definitions from the IES glossary
    REST collection, sanitizes the rich text, and indexes them as
@@ -371,17 +398,61 @@ search/UX overhaul):
    application-row counts, and a live Vectorize spot-check that first/middle/
    last vectors exist. Ship only when the warnings list is empty (or every
    warning is understood).
+5a. **Verify the client feedback round is actually live** — two scripts, and they
+   answer different questions. Both are read-only and both need
+   `LUCIUS_API_URL` + `LUCIUS_API_SECRET`.
+
+   - `npm run verify:ingest` — *did the DATA get rewritten?* Five binary probes
+     for the ingest-side fixes (DO20, DO23, DO30, DO31.4, DO33). A deploy alone
+     cannot satisfy these: they change what gets WRITTEN, so an ingest run
+     against an older deployment completes with no error and leaves the old data
+     in place, and the UI then still shows the old behaviour.
+   - `npm run verify:feedback` — *does a real search show the fix?* One check per
+     260729 feedback item (DO20 → DO39), each issuing live requests and asserting
+     on the response the browser would receive. Every item resolves to **PASS**,
+     **FAIL**, or **BLOCKED** — the last meaning the check could not be answered
+     because an input it depends on is absent (a Vitrium CSV column, a probe
+     standard, an unapplied migration), which the script names. The exit code is
+     non-zero only on FAIL, so BLOCKED items do not gate a deploy.
+
+     `--write` additionally exercises Saved Search Collections end to end
+     (DO37): it creates two collections under throwaway user ids 990001/990002,
+     saves one item of each of the four result kinds, confirms the no-contents
+     rule strips smuggled excerpt text, shares, claims into the second account,
+     exports the CSV, and deletes both collections in a `finally` block. Without
+     it, DO37 is limited to a schema probe. `--only DO32,DO39` runs a subset;
+     `--json` emits machine-readable output; `--verbose` shows the evidence for
+     passes too.
+
+     Both scripts send `debug: true` on every search so the KV response cache is
+     bypassed — otherwise a check can pass on a payload cached before the fix
+     shipped, which is the exact failure they exist to catch.
+
 6. **Rate limiting** — `/api/search` is capped at 60 req/min/IP via the
    `SEARCH_RATE_LIMITER` binding in wrangler.toml (fails open if removed).
 7. **Caching** — searches, embeddings, and AI Guide summaries are KV-cached;
    every ingest bumps the corpus data-version, invalidating cached responses.
    After out-of-band D1 edits, call `POST /api/admin/flush-cache`.
-8. **Onboard the invitation sender** — `lensy.ies.org` must be added to
-   Cloudflare Email Service → Email Sending, or invites are created but never
-   emailed (`E_SENDER_NOT_VERIFIED`, shown per row in the dashboard). Subdomain
-   only: never onboard the `ies.org` apex — it is Microsoft 365 with SPF `-all`
-   and a second SPF record would break mail org-wide. See
+8. **Onboard the sender** — `lensy.ies.org` must be added to
+   Cloudflare Email Service → Email Sending, or the two messages Lensy sends are
+   never delivered (`E_SENDER_NOT_VERIFIED`): the access **invitation** (shown
+   per row in the users dashboard) and a shared **Saved Search Collection**
+   (client DO37 — `POST /api/projects/:id/email`, template in `src/lib/email.ts`).
+   Subdomain only: never onboard the `ies.org` apex — it is Microsoft 365 with
+   SPF `-all` and a second SPF record would break mail org-wide. See
    docs/SSO_INTEGRATION.md "Invitation email".
+
+   The share email carries the citations, each item's Library link, a **Save
+   Search to My Lensy** button (the recipient gets their own COPY — claiming
+   never touches the sender's collection) and the subscribe/purchase prompts.
+   It reprints **no excerpt text**, which is structural rather than a rule
+   applied in the template: a saved item physically holds none (`normalizeSavedItem`
+   strips it at save time), and a reference entry is the client's one explicit
+   exception. Sending also shares — the claim button needs a token, so one is
+   minted if the collection has none. A delivery failure returns
+   `{ sent: false, error }` with HTTP 200 and the share link, and the UI offers
+   the sender's own mail client as the fallback rather than losing the message.
+   Verify with `node scripts/verify-feedback.js --write --email you@example.com`.
 9. **Known gap — Projects auth**: the `/api/projects*` routes are anonymous
    (`user_id` is a client-supplied placeholder until Phase 3 SSO). Do not
    store confidential client information in Projects until member login

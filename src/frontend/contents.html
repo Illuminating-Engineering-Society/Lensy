@@ -53,9 +53,10 @@
     <div class="mb-6">
       <h1 class="text-2xl font-bold text-gray-900">Table of Contents</h1>
       <p class="text-sm text-gray-500 mt-1">
-        Every current IES standard indexed in Lensy. Select a designation to open it in the
-        IES Lighting Library, or search its contents in Lensy.
+        Every current IES standard in the Lighting Library. Only the current edition of each
+        standard is listed.
       </p>
+      <p id="toc-metadata-notice" class="hidden text-xs text-amber-700 mt-2"></p>
     </div>
 
     <div class="mb-5 flex flex-wrap gap-3 items-center">
@@ -82,8 +83,12 @@
   </footer>
 
   <script>
-    // Standards are grouped by series, which is how the printed library is
-    // organized: Recommended Practices, Lighting Practice, Lighting Science, etc.
+    // ── Grouping (client DO35) ───────────────────────────────────────────────
+    // The client's layout groups by webstore COLLECTION ("Part 1: Lighting
+    // Science, Metrics, and Calculations") and sorts Collection → Author →
+    // Designation. That metadata comes from the Vitrium/webstore export, so until
+    // it is present the page falls back to grouping by series — which is how the
+    // printed library is organized and never leaves the page ungrouped.
     const SERIES = [
       { prefix: 'RP', label: 'Recommended Practices (RP)' },
       { prefix: 'LP', label: 'Lighting Practice (LP)' },
@@ -134,12 +139,28 @@
       }
     }
 
+    /** Which grouping the available metadata supports. */
+    function groupLabelFor(s) {
+      return s.collection || seriesOf(s.id);
+    }
+
+    /** Collection → Author → Designation, per the client's sort spec (DO35). */
+    function compareForToc(a, b) {
+      const byCollection = String(a.collection || '').localeCompare(String(b.collection || ''));
+      if (byCollection !== 0) return byCollection;
+      const byAuthor = String(a.committee?.name || a.author || '').localeCompare(String(b.committee?.name || b.author || ''));
+      if (byAuthor !== 0) return byAuthor;
+      return compareIds(a, b);
+    }
+
     function render() {
       const q = document.getElementById('toc-filter').value.trim().toLowerCase();
       const matches = allStandards.filter(s =>
         !q || String(s.id).toLowerCase().includes(q) ||
         String(s.title || '').toLowerCase().includes(q) ||
-        String(s.full_designation || '').toLowerCase().includes(q)
+        String(s.full_designation || '').toLowerCase().includes(q) ||
+        String(s.collection || '').toLowerCase().includes(q) ||
+        String(s.committee?.name || s.author || '').toLowerCase().includes(q)
       );
 
       document.getElementById('toc-loading').classList.add('hidden');
@@ -147,47 +168,107 @@
         `${matches.length} of ${allStandards.length} standard${allStandards.length === 1 ? '' : 's'}`;
       document.getElementById('toc-empty').classList.toggle('hidden', matches.length > 0);
 
+      // Say plainly when the export has not supplied the collection metadata yet,
+      // rather than letting the page look like it is grouping by Collection when
+      // it is actually falling back to series.
+      const withCollection = allStandards.filter(s => s.collection).length;
+      const notice = document.getElementById('toc-metadata-notice');
+      if (withCollection === 0 && allStandards.length > 0) {
+        notice.textContent = 'Grouped by series: the Vitrium/webstore export has not supplied Collection metadata yet. '
+          + 'Once it does, this page groups and sorts by Collection automatically.';
+        notice.classList.remove('hidden');
+      } else {
+        notice.classList.add('hidden');
+      }
+
       const groups = new Map();
       for (const s of matches) {
-        const label = seriesOf(s.id);
+        const label = groupLabelFor(s);
         if (!groups.has(label)) groups.set(label, []);
         groups.get(label).push(s);
       }
-      const ordered = [...SERIES.map(s => s.label), 'Other'].filter(l => groups.has(l));
+      // Collections sort alphabetically ("Part 1…", "Part 2…"); the series
+      // fallback keeps the printed library's own order.
+      const ordered = withCollection > 0
+        ? [...groups.keys()].sort((a, b) => a.localeCompare(b))
+        : [...SERIES.map(s => s.label), 'Other'].filter(l => groups.has(l));
 
       const wrap = document.getElementById('toc-groups');
       wrap.innerHTML = ordered.map(label => `
         <section>
           <h2 class="text-sm font-bold uppercase tracking-wider text-gray-500 mb-2">${escapeHtml(label)}</h2>
           <div class="bg-white rounded-xl border border-gray-100 divide-y divide-gray-100 overflow-hidden">
-            ${groups.get(label).sort(compareIds).map(row).join('')}
+            ${groups.get(label).sort(compareForToc).map(row).join('')}
           </div>
         </section>
       `).join('');
       wrap.classList.remove('hidden');
     }
 
+    // One standard, laid out as the client's mockup: thumbnail | designation,
+    // title, authoring committee, description | eLearning links | Read / Buy.
+    // Every optional field is omitted rather than rendered blank.
     function row(s) {
       const designation = s.full_designation || `ANSI/IES ${s.id}`;
       const title = (s.title && s.title !== s.id) ? s.title : '';
-      const openLink = s.vitrium_web_url
+
+      const thumb = s.thumbnail_url
+        ? `<img src="${escapeHtml(s.thumbnail_url)}" alt="Cover of ${escapeHtml(s.id)}"
+               class="w-14 h-auto rounded border border-gray-200 shrink-0" loading="lazy"/>`
+        : `<div class="w-14 h-[72px] rounded border border-dashed border-gray-200 shrink-0 flex items-center justify-center">
+             <span class="text-[9px] text-gray-300 text-center leading-tight px-1">No cover</span>
+           </div>`;
+
+      // "Author" hyperlinks to the public committee page (client DO35), resolved
+      // server-side by the same function the result cards use (DO34).
+      const committee = s.committee
+        ? `<p class="text-xs mt-0.5">
+             <a href="${escapeHtml(s.committee.url)}" target="_blank" rel="noopener"
+                class="text-gray-500 hover:text-ies-blue hover:underline"
+                title="${escapeHtml(s.committee.exact ? 'View this committee’s roster on ies.org' : 'This committee has no current page — opens the list of IES technical committees')}"
+             >${escapeHtml(s.committee.name)}</a>
+           </p>`
+        : '';
+
+      const elearning = (s.elearning || []).length
+        ? `<div class="min-w-0 sm:w-56 shrink-0">
+             <p class="text-[10px] uppercase tracking-wide text-gray-400 mb-1">eLearning</p>
+             <ul class="space-y-0.5">
+               ${s.elearning.map(e => `
+                 <li class="text-[11px] leading-snug">
+                   <a href="${escapeHtml(e.url)}" target="_blank" rel="noopener"
+                      class="text-ies-blue hover:underline">${escapeHtml(e.title)}</a>
+                 </li>`).join('')}
+             </ul>
+           </div>`
+        : '';
+
+      const read = s.vitrium_web_url
         ? `<a href="${escapeHtml(s.vitrium_web_url)}" target="_blank" rel="noopener"
-             class="text-xs px-2.5 py-1 bg-brand-primary text-white rounded-lg hover:bg-brand-primary-dark transition font-medium whitespace-nowrap"
-             title="Open ${escapeHtml(s.id)} in the IES Lighting Library">Open in Library ↗</a>`
-        : `<span class="text-xs text-gray-300 whitespace-nowrap" title="No Lighting Library URL synced for this standard yet">Not linked</span>`;
+             class="text-xs px-2.5 py-1 bg-brand-primary text-white rounded-lg hover:bg-brand-primary-dark transition font-medium whitespace-nowrap text-center"
+             title="Read ${escapeHtml(s.id)} in the IES Lighting Library">Read</a>`
+        : `<span class="text-xs text-gray-300 whitespace-nowrap text-center" title="No Lighting Library URL synced for this standard yet">Not linked</span>`;
+      const buy = s.buy_url
+        ? `<a href="${escapeHtml(s.buy_url)}" target="_blank" rel="noopener"
+             class="text-xs px-2.5 py-1 border border-gray-200 rounded-lg text-gray-600 hover:bg-gray-50 transition font-medium whitespace-nowrap text-center">Buy</a>`
+        : '';
 
       return `
-        <div class="px-4 py-3 flex items-center justify-between gap-3 hover:bg-gray-50 transition">
-          <div class="min-w-0">
+        <div class="px-4 py-3 flex flex-wrap sm:flex-nowrap items-start gap-4 hover:bg-gray-50 transition">
+          ${thumb}
+          <div class="min-w-0 flex-1">
             <p class="text-sm font-semibold text-gray-900">${escapeHtml(designation)}</p>
-            ${title ? `<p class="text-xs text-gray-500 truncate">${escapeHtml(title)}</p>` : ''}
-            ${s.page_count ? `<p class="text-[11px] text-gray-300 mt-0.5">${s.page_count} pages indexed</p>` : ''}
+            ${title ? `<p class="text-xs text-gray-600">${escapeHtml(title)}</p>` : ''}
+            ${committee}
+            ${s.description ? `<p class="text-xs text-gray-500 mt-1 leading-relaxed">${escapeHtml(s.description)}</p>` : ''}
+            ${s.page_count ? `<p class="text-[11px] text-gray-300 mt-1">${s.page_count} pages indexed</p>` : ''}
           </div>
-          <div class="flex items-center gap-2 shrink-0">
+          ${elearning}
+          <div class="flex sm:flex-col items-stretch gap-1.5 shrink-0">
+            ${read}${buy}
             <a href="/?q=${encodeURIComponent(s.id)}"
-               class="text-xs px-2.5 py-1 bg-brand-secondary text-white rounded-lg hover:bg-brand-secondary-dark transition font-medium whitespace-nowrap"
-               title="Search inside ${escapeHtml(s.id)} in Lensy">Search in Lensy</a>
-            ${openLink}
+               class="text-xs px-2.5 py-1 bg-brand-secondary text-white rounded-lg hover:bg-brand-secondary-dark transition font-medium whitespace-nowrap text-center"
+               title="Search inside ${escapeHtml(s.id)} in Lensy">Search</a>
           </div>
         </div>`;
     }

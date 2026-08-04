@@ -79,21 +79,44 @@ async function main() {
 
   // Build one batched SQL file — a single wrangler invocation instead of
   // one process per standard.
-  const statements = entries.map(({ standardId, docId, webUrl }) => `
+  // Every Table of Contents column is written ONLY when this export supplied it
+  // (`col` keeps the existing value otherwise), so re-syncing a stock Vitrium
+  // export can never blank out metadata a richer export had filled in — and in
+  // particular never wipes the hand-curated eLearning list.
+  const statements = entries.map((e) => {
+    const { standardId, docId, webUrl } = e;
+    const col = (name, value) => `${name} = ${value != null ? `'${sqlEsc(value)}'` : name}`;
+    return `
 UPDATE standards
 SET vitrium_doc_id = '${sqlEsc(docId)}',
-    vitrium_web_url = ${webUrl ? `'${sqlEsc(webUrl)}'` : 'vitrium_web_url'},
+    ${col('vitrium_web_url', webUrl)},
+    ${col('collection', e.collection)},
+    ${col('author', e.author)},
+    ${col('description', e.description)},
+    ${col('thumbnail_url', e.thumbnailUrl)},
+    ${col('buy_url', e.buyUrl)},
+    ${col('elearning_json', e.elearning ? JSON.stringify(e.elearning) : null)},
     updated_at = CURRENT_TIMESTAMP
 WHERE id = '${sqlEsc(standardId)}';
 
 UPDATE applications
 SET Vitrium_Doc_ID = '${sqlEsc(docId)}'
 WHERE Standard = '${sqlEsc(standardId)}';
-`).join('\n');
+`;
+  }).join('\n');
 
   if (DRY_RUN) {
     for (const e of entries) {
-      console.log(`  [DRY RUN] ${e.standardId} → ${e.docId}${e.webUrl ? `  (${e.webUrl})` : ''}`);
+      const extras = [
+        e.collection && `collection="${e.collection}"`,
+        e.author && `author="${e.author}"`,
+        e.description && 'description',
+        e.thumbnailUrl && 'thumbnail',
+        e.buyUrl && 'buy',
+        e.elearning && `${e.elearning.length} eLearning link(s)`,
+      ].filter(Boolean);
+      console.log(`  [DRY RUN] ${e.standardId} → ${e.docId}${e.webUrl ? `  (${e.webUrl})` : ''}` +
+        (extras.length ? `\n              + ${extras.join(', ')}` : ''));
     }
     console.log(`\nDone (dry run, ${entries.length} entries, no writes).\n`);
     return;
@@ -140,6 +163,35 @@ function loadCsvExport(filePath) {
     process.exit(1);
   }
 
+  // ── Table of Contents metadata (client DO35) ────────────────────────────────
+  // The ToC page groups by Collection, shows a cover thumbnail, a description and
+  // the authoring committee, and offers Read / Buy. All of it is optional: these
+  // columns do not exist in the stock Vitrium "Web Viewer URLs" export yet, so a
+  // CSV without them syncs exactly as before and the ToC simply shows less.
+  // Several header spellings are accepted because the export is produced by hand.
+  const firstCol = (...names) => {
+    for (const n of names) {
+      const i = col(n);
+      if (i !== -1) return i;
+    }
+    return -1;
+  };
+  const iCollection  = firstCol('collection', 'collections', 'part');
+  const iAuthor      = firstCol('author', 'committee', 'authoring committee');
+  const iDescription = firstCol('description', 'abstract', 'summary');
+  const iThumbnail   = firstCol('thumbnail', 'thumbnail url', 'cover', 'cover url');
+  const iBuy         = firstCol('buy url', 'buy', 'store url', 'webstore url', 'product url');
+  const iElearning   = firstCol('elearning', 'e-learning', 'elearning products');
+
+  const tocCols = [
+    iCollection !== -1 && 'Collection', iAuthor !== -1 && 'Author',
+    iDescription !== -1 && 'Description', iThumbnail !== -1 && 'Thumbnail',
+    iBuy !== -1 && 'Buy URL', iElearning !== -1 && 'eLearning',
+  ].filter(Boolean);
+  console.log(tocCols.length > 0
+    ? `  Table of Contents columns found: ${tocCols.join(', ')}`
+    : '  No Table of Contents columns in this export (Collection, Author, Description, Thumbnail, Buy URL, eLearning) — those fields stay as they are.');
+
   // standardId → { entry, deprecated }
   const byStandard = new Map();
   let skipped = 0;
@@ -160,11 +212,25 @@ function loadCsvExport(filePath) {
     const deprecated = iFolder !== -1 && /z_deprecated/i.test(row[iFolder] || '');
     const existing = byStandard.get(standardId);
 
+    const cell = (i) => (i !== -1 && row[i] ? String(row[i]).trim() || null : null);
+    const entry = {
+      standardId, docId, webUrl,
+      collection: cell(iCollection),
+      author: cell(iAuthor),
+      description: cell(iDescription),
+      thumbnailUrl: cell(iThumbnail),
+      buyUrl: cell(iBuy),
+      // Accepts "Title|URL" pairs separated by ; or a newline, which is what a
+      // spreadsheet cell can realistically hold:
+      //   "IES Learning: TM-30 for Fine Art|https://…; Using the IES Spectral…|https://…"
+      elearning: parseElearningCell(cell(iElearning)),
+    };
+
     if (!existing) {
-      byStandard.set(standardId, { entry: { standardId, docId, webUrl }, deprecated });
+      byStandard.set(standardId, { entry, deprecated });
     } else if (existing.deprecated && !deprecated) {
       // Current edition beats the archived copy of the same designation
-      byStandard.set(standardId, { entry: { standardId, docId, webUrl }, deprecated });
+      byStandard.set(standardId, { entry, deprecated });
     } else if (existing.deprecated === deprecated) {
       console.log(`  DUP: ${standardId} appears twice (${deprecated ? 'deprecated' : 'current'}); keeping first ("${title}" ignored)`);
     }
@@ -172,6 +238,31 @@ function loadCsvExport(filePath) {
 
   if (skipped > 0) console.log(`  (${skipped} rows skipped)\n`);
   return [...byStandard.values()].map(v => v.entry);
+}
+
+/**
+ * Parse the eLearning cell into [{ title, url }] (client DO35).
+ *
+ * "Staff manually selects educational recording products to pair with standards",
+ * so this is a hand-typed cell rather than an API feed. Entries are separated by
+ * a semicolon or a newline, and each is "Title|URL" — or a bare URL, which is
+ * kept with the URL as its own label rather than dropped.
+ *
+ * @returns {Array<{title: string, url: string}>|null} null when the cell is empty,
+ *   so a sync of a CSV WITHOUT the column leaves the stored list untouched.
+ */
+function parseElearningCell(raw) {
+  if (!raw) return null;
+  const out = [];
+  for (const part of String(raw).split(/[;\n]+/)) {
+    const piece = part.trim();
+    if (!piece) continue;
+    const [a, b] = piece.split('|').map(s => (s || '').trim());
+    const url = /^https?:\/\//i.test(b || '') ? b : (/^https?:\/\//i.test(a) ? a : null);
+    if (!url) continue; // a label with no link is not actionable
+    out.push({ title: (b && url === b ? a : null) || url, url });
+  }
+  return out.length > 0 ? out : null;
 }
 
 /**

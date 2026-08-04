@@ -141,6 +141,88 @@ const LensyAPI = {
   },
 
   /**
+   * Save one or more search results into a collection (client DO37).
+   *
+   * Takes SAVE PAYLOADS rather than application codes, so Documents, References
+   * and Definitions save the same way illuminance rows do. The payloads carry a
+   * citation, a page and a Library link — never the excerpt text; the Worker
+   * re-applies that rule (src/lib/collections.js).
+   *
+   * @param {object[]} payloads from buildSavePayload()
+   * @param {string|number} projectId the collection to save into
+   */
+  async saveSearches(payloads, projectId) {
+    const items = (Array.isArray(payloads) ? payloads : [payloads]).filter(Boolean);
+    if (items.length === 0) throw new Error('Nothing selected to save');
+    if (!projectId) throw new Error('Choose a collection first');
+
+    const response = await fetch(`${BASE_URL}/projects/${projectId}/applications`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(items),
+    });
+    if (!response.ok) {
+      const detail = await response.json().catch(() => ({}));
+      throw new Error(detail.error || 'Failed to save to this collection');
+    }
+    return response.json();
+  },
+
+  /** Mint (or fetch) the share link for a collection (DO37). */
+  async shareCollection(projectId) {
+    const response = await fetch(`${BASE_URL}/projects/${projectId}/share`, { method: 'POST' });
+    if (!response.ok) throw new Error('Could not create a share link');
+    return response.json();
+  },
+
+  /**
+   * Email a collection from Lensy (DO37).
+   *
+   * Resolves even when the send failed — the response carries `{ sent, error }`
+   * plus the share link, so the caller can fall back to the link or the user's
+   * own mail client rather than losing the work. Only a bad request rejects.
+   */
+  async emailCollection(projectId, { to, senderName = null, message = null } = {}) {
+    const response = await fetch(`${BASE_URL}/projects/${projectId}/email`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ to, sender_name: senderName, message }),
+    });
+    const detail = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(detail.error || 'Could not send this collection');
+    return detail;
+  },
+
+  /** Read a shared collection by token, before claiming it (DO37). */
+  async getSharedCollection(token) {
+    const response = await fetch(`${BASE_URL}/projects/shared/${encodeURIComponent(token)}`);
+    if (!response.ok) {
+      const detail = await response.json().catch(() => ({}));
+      throw new Error(detail.error || 'This share link is not valid.');
+    }
+    return response.json();
+  },
+
+  /** Copy a shared collection into the signed-in user's account (DO37). */
+  async claimSharedCollection(token, userId = 1) {
+    const response = await fetch(`${BASE_URL}/projects/shared/${encodeURIComponent(token)}/claim`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ user_id: userId }),
+    });
+    if (!response.ok) {
+      const detail = await response.json().catch(() => ({}));
+      throw new Error(detail.error || 'Could not save this collection to your account');
+    }
+    return response.json();
+  },
+
+  /** CSV export URL for a collection — the column order the client specified. */
+  collectionCsvUrl(projectId) {
+    return `${BASE_URL}/projects/${projectId}/csv`;
+  },
+
+  /**
    * Export project data as JSON (client renders PDF/Excel from this).
    * @param {string|number} projectId
    */

@@ -26,6 +26,11 @@ import { handleAdminScanOrphans, handleAdminEnumerateIds, handleAdminDeleteOrpha
 import { handleAdminUsers } from './users';
 import { handleAuthMe, handleDevLogin, requireReadAccess } from './session';
 import { buildLoginUrl, buildLogoutUrl } from '../lib/sso';
+import {
+  normalizeSavedItem, newShareToken, CSV_COLUMNS, csvCell, csvRowFor,
+} from '../lib/collections.js';
+import { resolveCommittee } from '../lib/committees.js';
+import { sendCollectionShareEmail, isEmailAddress, resolveAppUrl } from '../lib/email';
 
 // CORS: `*` with no Allow-Credentials, so a cross-origin page can never make a
 // cookie-authenticated call — every session-gated route is effectively
@@ -158,6 +163,11 @@ function decodePathSegment(segment: string | undefined): string | undefined {
   }
 }
 
+// ─── Collection helpers (client DO37) ─────────────────────────────────────────
+
+// Imported at the bottom of the import list to keep the diff readable; see
+// src/lib/collections.js for the no-contents rule these enforce.
+
 // ─── Applications Handlers ────────────────────────────────────────────────────
 
 async function handleApplications(request: Request, env: Env, url: URL): Promise<Response> {
@@ -196,6 +206,21 @@ async function handleApplications(request: Request, env: Env, url: URL): Promise
 
 // ─── Standards Handlers ───────────────────────────────────────────────────────
 
+/** standards.elearning_json → [{ title, url }], tolerating a malformed value. */
+function parseElearning(raw: unknown): Array<{ title: string; url: string }> {
+  if (typeof raw !== 'string' || !raw.trim()) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter((e): e is { title?: string; url?: string } => !!e && typeof e === 'object')
+      .filter(e => typeof e.url === 'string' && /^https?:\/\//i.test(e.url))
+      .map(e => ({ title: String(e.title || e.url), url: String(e.url) }));
+  } catch {
+    return [];
+  }
+}
+
 async function handleStandards(request: Request, env: Env, url: URL): Promise<Response> {
   const parts = url.pathname.split('/').filter(Boolean);
   // url.pathname is percent-ENCODED. Standard ids carry errata suffixes with a
@@ -212,11 +237,24 @@ async function handleStandards(request: Request, env: Env, url: URL): Promise<Re
     // library — but reachable with ?status=all for the comparison tooling.
     const status = url.searchParams.get('status');
     const where = status === 'all' ? '' : " WHERE status = 'Active'";
+    // The extra columns feed the Table of Contents (client DO35): collection
+    // grouping, cover thumbnail, description, authoring committee, Read/Buy and
+    // the staff-curated eLearning links. All optional — they arrive from the
+    // Vitrium/webstore export and are simply null until it carries them.
     const result = await env.DB.prepare(
-      'SELECT id, title, full_designation, year, status, vitrium_web_url, page_count' +
+      'SELECT id, title, full_designation, year, status, vitrium_web_url, page_count,' +
+      ' description, author, collection, thumbnail_url, buy_url, elearning_json' +
       ` FROM standards${where} ORDER BY id`
-    ).all();
-    return json({ standards: result.results });
+    ).all<Record<string, any>>();
+
+    // Resolve the committee here rather than in the browser, so the ToC and the
+    // result cards credit and link it identically (DO34).
+    const standards = (result.results || []).map(s => ({
+      ...s,
+      committee: resolveCommittee(s.author),
+      elearning: parseElearning(s.elearning_json),
+    }));
+    return json({ standards });
   }
 
   // GET /api/standards/:id
@@ -243,6 +281,23 @@ async function handleProjects(request: Request, env: Env, url: URL): Promise<Res
   }
   if (projectId && subResource === 'export') {
     return handleProjectExport(request, env, projectId, url);
+  }
+  // Saved Search Collections (client DO37)
+  if (projectId && subResource === 'csv' && request.method === 'GET') {
+    return exportCollectionCsv(env, projectId);
+  }
+  if (projectId && subResource === 'share' && request.method === 'POST') {
+    return shareCollection(env, projectId);
+  }
+  if (projectId && subResource === 'email' && request.method === 'POST') {
+    return emailCollection(request, env, projectId);
+  }
+  // /api/projects/shared/:token  and  /api/projects/shared/:token/claim
+  if (projectId === 'shared' && subResource) {
+    const token = subResource;
+    if (appId === 'claim' && request.method === 'POST') return claimSharedCollection(request, env, token);
+    if (!appId && request.method === 'GET') return getSharedCollection(env, token);
+    return json({ error: 'Not found' }, 404);
   }
 
   // Project CRUD
@@ -349,7 +404,7 @@ async function createProject(request: Request, env: Env): Promise<Response> {
   const body: any = await request.json();
   const {
     user_id = 1, name, location, client_name, client_company,
-    project_type, designer_name, designer_company, target_codes, notes
+    project_type, collection_type, designer_name, designer_company, target_codes, notes
   } = body;
 
   if (!name) return json({ error: 'Project name is required' }, 400);
@@ -357,11 +412,15 @@ async function createProject(request: Request, env: Env): Promise<Response> {
   const result = await env.DB.prepare(`
     INSERT INTO projects
       (user_id, name, location, client_name, client_company, project_type,
-       designer_name, designer_company, target_codes, notes)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       collection_type, designer_name, designer_company, target_codes, notes)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).bind(
     user_id, name, location || null, client_name || null, client_company || null,
-    project_type || null, designer_name || null, designer_company || null,
+    // project_type is CHECK-constrained to four construction categories;
+    // collection_type is the free-text field that supports the user-definable
+    // "Other" (client DO37) and is what the UI reads back.
+    project_type || null, collection_type || project_type || null,
+    designer_name || null, designer_company || null,
     target_codes || null, notes || null
   ).run();
 
@@ -403,6 +462,218 @@ async function deleteProject(env: Env, projectId: string): Promise<Response> {
   return json({ deleted: true });
 }
 
+// ─── Saved Search Collections: share, claim, CSV (client DO37) ───────────────
+
+/** The saved items of one collection, in display order. */
+async function collectionItems(env: Env, projectId: string) {
+  const rows = await env.DB.prepare(`
+    SELECT id, application_code, result_type, standard_id, resource_title, page_number,
+           library_url, application_name, reference_text, custom_notes, added_at
+    FROM project_applications
+    WHERE project_id = ?
+    ORDER BY sort_order, added_at
+  `).bind(projectId).all<Record<string, any>>();
+  return rows.results || [];
+}
+
+/**
+ * Mint (or reuse) the share token for a collection.
+ *
+ * The link COPIES the collection into the recipient's account rather than giving
+ * access to this one — so the token is a claim ticket, not a capability on the
+ * owner's data, and re-sharing the same collection reuses the token so previously
+ * sent links keep working.
+ */
+async function shareCollection(env: Env, projectId: string): Promise<Response> {
+  const project = await env.DB.prepare('SELECT id, share_token FROM projects WHERE id = ?')
+    .bind(projectId).first<{ id: number; share_token: string | null }>();
+  if (!project) return json({ error: 'Collection not found' }, 404);
+
+  let token = project.share_token;
+  if (!token) {
+    token = newShareToken();
+    await env.DB.prepare('UPDATE projects SET share_token = ? WHERE id = ?').bind(token, projectId).run();
+  }
+  return json({ share_token: token, path: `/collection.html?share=${token}` });
+}
+
+/**
+ * Email a Saved Search Collection from Lensy itself (client DO37).
+ *
+ * The mail carries the citations, the per-item Library links, a "Save Search to
+ * My Lensy" button and the subscribe/purchase prompts — the template is in
+ * src/lib/email.ts and reprints no excerpt text, which is structural rather than
+ * enforced here: a saved item holds none (see normalizeSavedItem).
+ *
+ * Sharing is implied by emailing: the claim button needs a token, so one is
+ * minted if the collection has none — exactly what POST .../share does, reused
+ * rather than requiring the caller to make two round-trips in the right order.
+ *
+ * Fails soft in the same shape as the invitation path: a send failure returns
+ * `{ sent: false, error }` with HTTP 200 and the share link, so the UI can offer
+ * the link (or the user's own mail client) instead of showing a dead end. The
+ * `E_*` code is passed through — it is the difference between "onboard the
+ * domain", "this address bounced before" and "retry later".
+ */
+async function emailCollection(request: Request, env: Env, projectId: string): Promise<Response> {
+  const body: any = await request.json().catch(() => ({}));
+  const to = typeof body?.to === 'string' ? body.to.trim() : '';
+  if (!isEmailAddress(to)) {
+    return json({ error: 'A valid recipient email address is required.' }, 400);
+  }
+
+  const collection = await env.DB.prepare('SELECT * FROM projects WHERE id = ?')
+    .bind(projectId).first<Record<string, any>>();
+  if (!collection) return json({ error: 'Collection not found' }, 404);
+
+  let token = collection.share_token as string | null;
+  if (!token) {
+    token = newShareToken();
+    await env.DB.prepare('UPDATE projects SET share_token = ? WHERE id = ?').bind(token, projectId).run();
+  }
+
+  const appUrl = resolveAppUrl(request, env);
+  const outcome = await sendCollectionShareEmail(env, {
+    to,
+    senderName: typeof body?.sender_name === 'string' ? body.sender_name.trim() || null : null,
+    message: typeof body?.message === 'string' ? body.message.trim() || null : null,
+    collection,
+    items: await collectionItems(env, projectId),
+    claimUrl: `${appUrl}/projects.html?share=${token}`,
+    appUrl,
+  });
+
+  return json({ ...outcome, to, share_token: token, path: `/projects.html?share=${token}` });
+}
+
+/** Read a shared collection by token — the recipient's preview before claiming. */
+async function getSharedCollection(env: Env, token: string): Promise<Response> {
+  const project = await env.DB.prepare('SELECT * FROM projects WHERE share_token = ?')
+    .bind(token).first<Record<string, any>>();
+  if (!project) return json({ error: 'This share link is not valid.' }, 404);
+  if (project.share_expires_at && new Date(project.share_expires_at) < new Date()) {
+    return json({ error: 'This share link has expired.' }, 410);
+  }
+  return json({ collection: project, applications: await collectionItems(env, String(project.id)), shared: true });
+}
+
+/**
+ * Copy a shared collection into the caller's own account (client DO37: "load
+ * their saved search collection into their account").
+ *
+ * A copy, not a grant: the recipient owns the result outright and neither side
+ * can edit the other's. The source is left untouched, and the copy gets no share
+ * token of its own until the new owner shares it.
+ */
+async function claimSharedCollection(request: Request, env: Env, token: string): Promise<Response> {
+  const body: any = await request.json().catch(() => ({}));
+  const userId = body?.user_id ?? 1;
+
+  const source = await env.DB.prepare('SELECT * FROM projects WHERE share_token = ?')
+    .bind(token).first<Record<string, any>>();
+  if (!source) return json({ error: 'This share link is not valid.' }, 404);
+
+  const created = await env.DB.prepare(`
+    INSERT INTO projects (user_id, name, location, client_name, client_company,
+                          collection_type, designer_name, designer_company, notes)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).bind(
+    userId, source.name, source.location, source.client_name, source.client_company,
+    source.collection_type || source.project_type, source.designer_name,
+    source.designer_company, source.notes,
+  ).run();
+  const newId = created.meta.last_row_id;
+
+  const items = await collectionItems(env, String(source.id));
+  for (const it of items) {
+    await env.DB.prepare(`
+      INSERT INTO project_applications
+        (project_id, application_code, custom_notes, result_type, standard_id,
+         resource_title, page_number, library_url, application_name, reference_text)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).bind(
+      newId, it.application_code, it.custom_notes, it.result_type, it.standard_id,
+      it.resource_title, it.page_number, it.library_url, it.application_name, it.reference_text,
+    ).run();
+  }
+
+  return json({ collection_id: newId, items: items.length }, 201);
+}
+
+/** CSV export in the column order the client specified (DO37). */
+async function exportCollectionCsv(env: Env, projectId: string): Promise<Response> {
+  const collection = await env.DB.prepare('SELECT * FROM projects WHERE id = ?')
+    .bind(projectId).first<Record<string, any>>();
+  if (!collection) return json({ error: 'Collection not found' }, 404);
+
+  const items = await collectionItems(env, projectId);
+  const header = CSV_COLUMNS.map(([, label]) => csvCell(label)).join(',');
+  const rows = items.map(it => csvRowFor(it, collection).join(','));
+  const csv = [header, ...rows].join('\r\n');
+
+  // A filename derived from the topic, reduced to characters safe in a
+  // Content-Disposition header on every OS.
+  const slug = String(collection.name || 'collection').replace(/[^A-Za-z0-9._-]+/g, '-').slice(0, 60);
+  return new Response(csv, {
+    headers: {
+      'Content-Type': 'text/csv; charset=utf-8',
+      'Content-Disposition': `attachment; filename="${slug}-saved-searches.csv"`,
+    },
+  });
+}
+
+// ─── Saved Search items (client DO37) ────────────────────────────────────────
+
+/**
+ * Save one search result of ANY kind into a collection.
+ *
+ * The reference data is normalized (and the no-contents rule enforced) in
+ * src/lib/collections.js: a saved item carries the citation, the page and the
+ * Library link, plus the application name for illuminance rows and the entry text
+ * for references — nothing else from the card.
+ */
+async function saveSearchItem(env: Env, projectId: string, raw: any): Promise<{
+  inserted?: number; skipped?: { reason: string; code: string; id?: unknown }; rejected?: { reason: string; code: string | null };
+}> {
+  const parsed = normalizeSavedItem(raw);
+  if (!parsed.ok) {
+    return { rejected: { reason: parsed.reason, code: raw?.application_code || null } };
+  }
+  const item = parsed.item;
+
+  // One row per (collection, item) — saving the same passage twice is a no-op.
+  const existing = await env.DB.prepare(
+    'SELECT id FROM project_applications WHERE project_id = ? AND application_code = ?'
+  ).bind(projectId, item.application_code).first<{ id: number }>();
+  if (existing) {
+    return { skipped: { reason: 'Already saved to this collection', code: item.application_code, id: existing.id } };
+  }
+
+  // Illuminance-table items keep their 68-column snapshot: it is what makes a
+  // saved row survive a re-ingest that renumbers application codes (see
+  // getProject). The other kinds have no application row to snapshot.
+  let snapshot: string | null = null;
+  if (item.result_type === 'tables' && !item.application_code.startsWith('excerpt:')) {
+    const app = await env.DB.prepare('SELECT * FROM applications WHERE code = ?')
+      .bind(item.application_code).first();
+    if (app) snapshot = JSON.stringify(app);
+  }
+
+  const result = await env.DB.prepare(`
+    INSERT INTO project_applications
+      (project_id, application_code, snapshot_data, custom_notes,
+       result_type, standard_id, resource_title, page_number, library_url,
+       application_name, reference_text)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).bind(
+    projectId, item.application_code, snapshot, item.custom_notes,
+    item.result_type, item.standard_id, item.resource_title, item.page_number,
+    item.library_url, item.application_name, item.reference_text,
+  ).run();
+
+  return { inserted: result.meta.last_row_id as number };
+}
+
 // ─── Project Applications Sub-resource ───────────────────────────────────────
 
 async function handleProjectApplications(request: Request, env: Env, url: URL, projectId: string, appId?: string): Promise<Response> {
@@ -440,6 +711,18 @@ async function addApplicationToProject(request: Request, env: Env, projectId: st
   const skipped = [];
   const rejected = [];
   for (const item of items) {
+    // A collection now holds all four result kinds (client DO37), not just
+    // illuminance-table rows. An item carrying result_type takes the saved-search
+    // path; a bare { application_code } keeps the original behaviour so anything
+    // already calling this endpoint is unaffected.
+    if (item?.result_type) {
+      const outcome = await saveSearchItem(env, projectId, item);
+      if (outcome.inserted != null) inserted.push(outcome.inserted);
+      else if (outcome.skipped) skipped.push(outcome.skipped);
+      else rejected.push(outcome.rejected);
+      continue;
+    }
+
     const { application_code, quantity = 1, room_names, custom_notes } = item;
     if (!application_code) {
       rejected.push({ application_code: null, reason: 'Missing application_code' });

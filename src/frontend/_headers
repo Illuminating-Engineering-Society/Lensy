@@ -11,10 +11,17 @@
 # DO33). The figures are hosted on ies.org's own media library, so the two hosts
 # below are the entire surface — the definition HTML is sanitized to an
 # allowlist server-side (src/lib/definitions.js) before it is ever rendered.
+#
+# store.ies.org and the Vitrium hosts are for the Table of Contents cover
+# thumbnails (client DO35). NOTE: the exact host the Vitrium Thumbnail API serves
+# images from is not confirmed yet — if covers render as broken images, check the
+# browser console for a CSP violation and add that host here. Nothing else on the
+# page depends on them, so a wrong guess degrades to "No cover" rather than
+# breaking the page.
 
 /*
   X-Content-Type-Options: nosniff
   X-Frame-Options: DENY
   Referrer-Policy: strict-origin-when-cross-origin
   Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=()
-  Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://ies.org https://www.ies.org; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'
+  Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://ies.org https://www.ies.org https://store.ies.org https://api.vitrium.com https://view.protectedpdf.com; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'

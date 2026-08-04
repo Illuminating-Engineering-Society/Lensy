@@ -49,6 +49,7 @@
  */
 
 import { bumpDataVersion } from '../lib/cache';
+import { looksLikeCommittee } from '../lib/committees.js';
 import { requireAdminAccess } from './session';
 import {
   DEFINITIONS_STANDARD_ID, buildDefinitionEmbedText, definitionVectorId,
@@ -553,8 +554,17 @@ async function ingestParsedPDF(request: Request, env: Env): Promise<Response> {
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
     ON CONFLICT(id) DO UPDATE SET
       title        = excluded.title,
-      description  = excluded.description,
-      author       = excluded.author,
+      -- description and author are CURATED fields: they come from the
+      -- Vitrium/webstore export via scripts/sync-metadata.js and feed the Table of
+      -- Contents (client DO35) and the authoring-committee credit on every result
+      -- card (DO34). They used to be assigned straight from the inserted row, i.e.
+      -- from the PDF's own /Subject and /Author, so every re-ingest silently replaced
+      -- the curated values with PDF file metadata — a committee name became
+      -- whoever exported the file ("Pre-Press M5", "dan.ozminkowski") and the
+      -- credit disappeared from the UI until someone re-ran the sync.
+      -- Existing value wins; the PDF only ever SEEDS an empty column.
+      description  = COALESCE(standards.description, excluded.description),
+      author       = COALESCE(standards.author, excluded.author),
       year         = excluded.year,
       full_designation = excluded.full_designation,
       r2_key       = COALESCE(excluded.r2_key, standards.r2_key),
@@ -573,7 +583,12 @@ async function ingestParsedPDF(request: Request, env: Env): Promise<Response> {
     standardId,
     metadata.title || standardId,
     metadata.subject || null,
-    metadata.author || null,
+    // A PDF's /Author is whoever produced the file — a person, or a pre-press
+    // tool. `standards.author` means the authoring TECHNICAL COMMITTEE (DO34), so
+    // only a committee-shaped value may seed it; anything else would sit in the
+    // column looking authoritative and be silently dropped by resolveCommittee at
+    // render time, which is how "Obi Wan" and "Pre-Press M5" got in there.
+    looksLikeCommittee(metadata.author) ? metadata.author : null,
     metadata.year ? parseInt(metadata.year, 10) : null,
     metadata.fullDesignation || null,
     r2Key || `standards/${standardId}.pdf`,

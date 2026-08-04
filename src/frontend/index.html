@@ -136,10 +136,43 @@
     .definition-body th, .definition-body td { border: 1px solid #e5e7eb; padding: 0.25rem 0.5rem; }
     .definition-body img { max-width: 100%; height: auto; margin: 0.5rem 0; }
     .definition-body .wp-katex-eq { font-family: ui-monospace, SFMono-Regular, monospace; background: #f3f4f6; padding: 0 0.25rem; border-radius: 3px; }
+    /* ── Reproduction deterrent (client DO36) ─────────────────────────────────
+       "Add copy/print/screenshot deterrent to all Lensy results … Protect
+        copyrighted information and DISCOURAGE reproduction … Incorporate
+        MODERATE deterrents (please use best-practice judgement)."
+
+       Deterrent, not protection: anything rendered in a browser can be captured,
+       and pretending otherwise would be dishonest. What this does is remove the
+       casual paths — drag-select, right-click → copy, Ctrl-C, print — so
+       reproducing IES text takes deliberate effort rather than a reflex.
+
+       Deliberately NOT applied to: the search box, the user's own notes, and
+       citations/designations. A reader must always be able to copy the NAME of a
+       standard — that is how they buy it, cite it, or ask a colleague about it,
+       and blocking that would work against IES. */
+    .copy-guard {
+      -webkit-user-select: none; -moz-user-select: none; -ms-user-select: none; user-select: none;
+      -webkit-touch-callout: none;
+    }
+    /* Escape hatches inside a guarded card. */
+    .copy-guard .allow-copy,
+    .copy-guard input, .copy-guard textarea {
+      -webkit-user-select: text; -moz-user-select: text; -ms-user-select: text; user-select: text;
+    }
+    .copy-guard img { -webkit-user-drag: none; user-drag: none; pointer-events: none; }
+
     @media print {
       .no-print { display: none !important; }
       .result-card { break-inside: avoid; box-shadow: none; transform: none; }
+      /* Printing must not become an export route for standards text (DO36).
+         The excerpt bodies, the AI answer and the definition text are withheld;
+         the citation, designation, page and committee still print, so a printed
+         page remains a usable REFERENCE list — which is what DO37 asks the
+         saved-search feature to produce anyway. */
+      .print-withhold { display: none !important; }
+      .print-notice { display: block !important; }
     }
+    .print-notice { display: none; }
   </style>
 </head>
 <body class="bg-surface min-h-screen text-ink">
@@ -324,7 +357,13 @@
             <!-- Version-comparison advisory (client DO25): both editions
                  hyperlinked, with the deprecation stated plainly. -->
             <div id="ai-comparison-notice" class="hidden text-xs text-gray-700 bg-white/70 border border-amber-200 rounded-lg px-3 py-2 mb-3 leading-relaxed"></div>
-            <div id="ai-summary-text" class="text-sm text-gray-700 leading-relaxed"></div>
+            <!-- copy-guard + print-withhold: the AI answer paraphrases
+                 copyrighted material, so it is the last thing that should leave
+                 via a reflex copy or a print (client DO36). -->
+            <div id="ai-summary-text" class="copy-guard print-withhold text-sm text-gray-700 leading-relaxed"></div>
+            <p class="print-notice text-xs text-gray-500 italic">
+              The AI Guide response is omitted from printed pages. Refer to the cited standards in the IES Lighting Library.
+            </p>
             <p id="ai-watermark" class="text-xs text-gray-400 mt-3 italic"></p>
           </div>
         </div>
@@ -351,7 +390,7 @@
               <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
                 <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/>
               </svg>
-              <span id="add-selected-label">Add to Project (0)</span>
+              <span id="add-selected-label">Save Search (0)</span>
             </button>
           </div>
           <button onclick="window.print()" class="p-1.5 text-gray-400 hover:text-gray-600 rounded-md hover:bg-gray-100 transition" title="Print">
@@ -414,7 +453,7 @@
     <div class="absolute inset-0 bg-black/40 modal-backdrop" onclick="closeProjectModal()"></div>
     <div class="relative bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 fade-in">
       <div class="flex items-center justify-between mb-5">
-        <h3 class="text-lg font-bold text-gray-900">Add to Project</h3>
+        <h3 class="text-lg font-bold text-gray-900">Save Search</h3>
         <button onclick="closeProjectModal()" class="text-gray-400 hover:text-gray-600 p-1 rounded-md hover:bg-gray-100 transition">
           <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
             <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
@@ -430,7 +469,7 @@
 
       <!-- Project selection -->
       <div id="modal-project-select-section">
-        <label class="block text-sm font-medium text-gray-700 mb-2">Select or create project</label>
+        <label class="block text-sm font-medium text-gray-700 mb-2">Select or create a collection</label>
         <div id="modal-projects-list" class="space-y-2 max-h-44 overflow-y-auto mb-3">
           <div class="skeleton h-10 rounded-lg"></div>
           <div class="skeleton h-10 rounded-lg"></div>
@@ -439,7 +478,7 @@
           <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
             <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/>
           </svg>
-          New project
+          New collection
         </button>
       </div>
 
@@ -449,11 +488,11 @@
           <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
             <path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7"/>
           </svg>
-          Back to projects
+          Back to collections
         </button>
         <div class="space-y-3">
           <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">Project name <span class="text-red-400">*</span></label>
+            <label class="block text-sm font-medium text-gray-700 mb-1">Collection Topic <span class="text-red-400">*</span></label>
             <input type="text" id="new-project-name" placeholder="e.g. Downtown Office Renovation"
               class="w-full px-3 py-2.5 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-ies-blue focus:border-transparent"/>
           </div>
@@ -469,9 +508,15 @@
                 class="w-full px-3 py-2.5 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-ies-blue focus:border-transparent"/>
             </div>
           </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">Note</label>
+            <textarea id="new-project-note" rows="3"
+              placeholder="What is this collection for? (optional)"
+              class="w-full px-3 py-2.5 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-ies-blue focus:border-transparent"></textarea>
+          </div>
           <button onclick="createProjectAndAdd()"
             class="w-full py-2.5 bg-ies-blue text-white rounded-lg text-sm font-semibold hover:bg-ies-blue-dark transition">
-            Create Project &amp; Add
+            Create Collection &amp; Save
           </button>
         </div>
       </div>
@@ -1212,15 +1257,24 @@
       return escapeHtml(text);
     }
 
-    // Result-card identity per content type (client DO32). Labels match the
-    // filter pills exactly — "Documents" filters for "Document" cards — and each
-    // type owns one border line style and one chip palette across the platform.
+    // Result-card identity per content type (client DO32, line styles per DO38).
+    // Labels match the filter pills exactly — "Documents" filters for "Document"
+    // cards — and each type owns one border line style and one chip palette
+    // across the platform.
+    //
+    // The line style now carries meaning rather than just distinguishing types
+    // (DO38): SOLID = the whole document, DASHED = a part of the whole. So a
+    // Document card is solid, while an illuminance-table row, a reference entry
+    // and a definition — each an extract from within a document — are dashed.
     const RESULT_TYPE_STYLES = {
-      application: { label: 'Illuminance Table', line: 'solid',  chip: 'bg-gray-50 text-gray-600 border-gray-200',      banner: '#374151' },
-      excerpt:     { label: 'Document',          line: 'dashed', chip: 'bg-sky-50 text-sky-700 border-sky-200',         banner: '#1E4F73' },
-      reference:   { label: 'Reference',         line: 'dotted', chip: 'bg-purple-50 text-purple-700 border-purple-200', banner: '#5B3E8E' },
-      definition:  { label: 'Definition',        line: 'double', chip: 'bg-teal-50 text-teal-700 border-teal-200',       banner: '#1F6F6B' },
+      excerpt:     { label: 'Document',          line: 'solid',  chip: 'bg-sky-50 text-sky-700 border-sky-200',          banner: '#1E4F73' },
+      application: { label: 'Illuminance Table', line: 'dashed', chip: 'bg-gray-50 text-gray-600 border-gray-200',       banner: '#374151' },
+      reference:   { label: 'Reference',         line: 'dashed', chip: 'bg-purple-50 text-purple-700 border-purple-200', banner: '#5B3E8E' },
+      definition:  { label: 'Definition',        line: 'dashed', chip: 'bg-teal-50 text-teal-700 border-teal-200',       banner: '#1F6F6B' },
     };
+    // Interior / Exterior fills, per the hex values the client specified (DO38) —
+    // the same pair the printed IES reference doc uses for its banners.
+    const LOCATION_FILL = { Indoor: '#2E4A62', Outdoor: '#2E4A34' };
 
     function renderResultCard(group, index) {
       const members = group.members;
@@ -1241,11 +1295,11 @@
       // (Interior = dark blue #2E4A62, Exterior = dark green #2E4A34). The
       // banner runs full-width at the top of the card; a left border stripe
       // reinforces the indoor/outdoor distinction at a glance.
-      // Deprecated wins (amber), then the printed Interior/Exterior data-viz
-      // colours, then the result type's own colour — so a Document or Reference
+      // Deprecated wins (amber), then the printed Interior/Exterior fills
+      // (DO38), then the result type's own colour — so a Document or Reference
       // card is never the same neutral grey as an untagged table row (DO32).
       const bannerHex = isDeprecated ? '#B45309'
-        : isExterior ? '#2E4A34' : isInterior ? '#2E4A62'
+        : isExterior ? LOCATION_FILL.Outdoor : isInterior ? LOCATION_FILL.Indoor
         : (RESULT_TYPE_STYLES[primary.resultType] || RESULT_TYPE_STYLES.application).banner;
       // Application-name badge — brown for exterior, blue for interior — so
       // the application title reads as the most prominent element (request #1).
@@ -1322,14 +1376,20 @@
       // One table below is the single source of truth for all three, so a new
       // content type cannot end up styled one way and labelled another.
       const typeStyle = RESULT_TYPE_STYLES[primary.resultType] || RESULT_TYPE_STYLES.excerpt;
-      const borderLineStyle = isApp ? 'solid' : typeStyle.line;
+      // The type's own line style, with no special case for application rows —
+      // an illuminance-table row is part of a document, so it is dashed like the
+      // other extracts (DO38). It used to be forced solid here.
+      const borderLineStyle = typeStyle.line;
       const typeChip = !isApp ? `
         <span class="text-xs px-2 py-0.5 rounded-full font-medium border ${typeStyle.chip}">
           ${typeStyle.label}
         </span>` : '';
 
+      // copy-guard: excerpt text inside is not drag-selectable or copyable
+      // (client DO36). The citation carries .allow-copy so a reader can always
+      // copy the standard's NAME — that is how they buy or cite it.
       const cardShell = (inner) => `
-        <article class="result-card bg-white rounded-xl border border-gray-100 shadow-sm p-3 relative overflow-hidden"
+        <article class="result-card copy-guard bg-white rounded-xl border border-gray-100 shadow-sm p-3 relative overflow-hidden"
                  style="animation-delay: ${index * 40}ms; border-left: 3px ${borderLineStyle} ${bannerHex};">
           ${deprecatedBanner}
           ${inner}
@@ -1351,6 +1411,7 @@
             ${appBadge}
             ${breadcrumb ? `<span class="text-sm text-gray-600 font-medium">${breadcrumb}</span>` : ''}
           </div>
+          ${committeeHtml(primary).replace('pl-[26px]', '')}
           ${members.map((m, i) =>
             renderMemberSection(m, crumbsOf(m.application || {}).slice(prefixLen), i, appName, crumbSep, seenExcerpts)
           ).join('')}
@@ -1389,6 +1450,7 @@
           ${actionsCluster(primary, appName)}
         </div>
         <p class="text-xs text-gray-400 mb-1 pl-[26px]">${citationHtml(primary)}</p>
+        ${committeeHtml(primary)}
 
         <div class="pl-[26px]">
           ${renderDataBlocks(primary, seenExcerpts)}
@@ -1426,7 +1488,7 @@
       const bodyHtml = def.html || `<p>${escapeHtml(result.excerpt?.text || '')}</p>`;
 
       return `
-        <article class="result-card bg-white rounded-xl border border-gray-100 shadow-sm p-3 relative overflow-hidden"
+        <article class="result-card copy-guard bg-white rounded-xl border border-gray-100 shadow-sm p-3 relative overflow-hidden"
                  style="animation-delay: ${index * 40}ms; border-left: 3px ${style.line} ${style.banner};">
           <div class="flex items-start justify-between gap-2 mb-1.5">
             <span class="inline-block text-[11px] font-bold tracking-wider uppercase px-2.5 py-1 rounded"
@@ -1445,12 +1507,16 @@
             </div>
           </div>
           <p class="text-xs text-gray-400 mb-1">${citationHtml(result)}</p>
+          ${committeeHtml(result).replace('pl-[26px]', '')}
 
           <div class="mt-2 pt-2 border-t border-gray-100">
             <span class="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">From the Standard</span>
             <div class="mt-1.5 pl-3 border-l-2 border-gray-200 text-xs text-gray-700 leading-relaxed definition-body">
-              <p class="mb-1"><strong>${escapeHtml(def.term || '')}</strong></p>
-              ${bodyHtml}
+              <p class="mb-1"><strong class="allow-copy">${escapeHtml(def.term || '')}</strong></p>
+              <div class="print-withhold">${bodyHtml}</div>
+              <p class="print-notice text-[11px] text-gray-500 italic">
+                Definition text is omitted from printed pages — see ${escapeHtml(def.sourceUrl || 'ies.org/standards/definitions')}.
+              </p>
             </div>
           </div>
         </article>
@@ -1508,11 +1574,14 @@
       const name = result.citationName || result.citation || '';
       if (!name) return '';
 
+      // allow-copy + copy-citation: the designation and title stay selectable
+      // even inside a copy-guarded card, and the copy handler falls back to this
+      // text when a reader tries to copy an excerpt (client DO36).
       const nameHtml = result.standardLink
         ? `<a href="${escapeHtml(result.standardLink)}" target="_blank" rel="noopener"
-             class="hover:text-ies-blue hover:underline underline-offset-2 decoration-gray-300 transition"
+             class="allow-copy copy-citation hover:text-ies-blue hover:underline underline-offset-2 decoration-gray-300 transition"
              title="Open this standard from its front cover in the IES Lighting Library">${escapeHtml(name)}</a>`
-        : escapeHtml(name);
+        : `<span class="allow-copy copy-citation">${escapeHtml(name)}</span>`;
 
       const page = result.citationPage;
       if (page == null) return nameHtml;
@@ -1525,6 +1594,28 @@
         : pageLabel;
 
       return `${nameHtml}, ${pageHtml}`;
+    }
+
+    // ── Authoring committee credit (client DO34) ─────────────────────────────
+    // "Display the authoring technical committee name in small font below
+    //  document title in each search result, linked to its public technical
+    //  committee page." Resolved server-side, which also decides the URL: the
+    //  committee's own page when the name matches one IES publishes, otherwise
+    //  the root committee list — committees get dissolved, and a 404 is worse
+    //  than a general page. Never rendered when the standard's author metadata
+    //  does not name a committee at all.
+    function committeeHtml(result) {
+      const c = result.committee;
+      if (!c || !c.name) return '';
+      const title = c.exact
+        ? `View the roster of ${c.name} on ies.org`
+        : `${c.name} has no current page on ies.org — opens the list of IES technical committees`;
+      return `
+        <p class="text-[11px] text-gray-400 mb-1 pl-[26px]">
+          <a href="${escapeHtml(c.url)}" target="_blank" rel="noopener"
+             class="hover:text-ies-blue hover:underline underline-offset-2 transition"
+             title="${escapeHtml(title)}">${escapeHtml(c.name)}${c.exact ? '' : ' ↗'}</a>
+        </p>`;
     }
 
     // Per-row badges: Area/Task, TM-24, Veiling Risk (L/M/H), Class of Play
@@ -1614,26 +1705,69 @@
         primaryLink = filledLink(result.vitriumLink, 'Open in Library', 'Open in the IES Lighting Library');
       }
 
-      const addToProjectBtn = isApp ? `
+      // "+ Save Search" replaces "Add to Project" and is enabled for ALL four
+      // card kinds — Documents & Annexes, Illuminance Tables, References,
+      // Definitions (client DO37). Deliberately NOT offered on deprecated
+      // comparison cards or the AI Guide: the client asked that document
+      // comparisons and AI notes stay unsavable.
+      const saveType = SAVEABLE_RESULT_TYPES[result.resultType];
+      const saveSearchBtn = (saveType && !result.isDeprecated) ? `
           <button
-            class="add-to-project-btn text-xs px-2.5 py-1 bg-brand-secondary text-white rounded-lg hover:bg-brand-secondary-dark transition font-medium flex items-center gap-1"
-            data-code="${escapeHtml(app.code || '')}"
+            class="save-search-btn text-xs px-2.5 py-1 bg-brand-secondary text-white rounded-lg hover:bg-brand-secondary-dark transition font-medium flex items-center gap-1"
+            data-payload="${escapeHtml(JSON.stringify(buildSavePayload(result, name)))}"
             data-name="${escapeHtml(name)}"
             data-citation="${escapeHtml(result.citation || '')}"
+            title="Save a reference to this result in one of your Saved Search Collections"
           >
             <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
               <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/>
             </svg>
-            Add to Project
+            Save Search
           </button>` : '';
 
       return `
         <div class="flex items-center gap-2.5 shrink-0 no-print">
           ${score > 0 ? `<span class="text-xs text-gray-300 tabular-nums">Match: ${Math.round(score * 100)}%</span>` : ''}
           ${primaryLink}
-          ${addToProjectBtn}
+          ${saveSearchBtn}
         </div>
       `;
+    }
+
+    // ── Saved Search payloads (client DO37) ──────────────────────────────────
+    // Search resultType → the collection's result_type. A kind absent here is
+    // not saveable, which is how document comparisons stay out.
+    const SAVEABLE_RESULT_TYPES = {
+      excerpt: 'body',
+      application: 'tables',
+      reference: 'references',
+      definition: 'definitions',
+    };
+
+    /**
+     * What gets saved for a result: the citation, the page and the Library link —
+     * never the passage the card displayed.
+     *
+     * Two carve-outs the client specified: illuminance rows also save the full
+     * application name (without it the citation names a row the reader cannot
+     * identify), and references also save the entry text in full (the
+     * bibliography line IS the reference). The server re-applies the same rule,
+     * so a hand-crafted request cannot smuggle excerpt text in.
+     */
+    function buildSavePayload(result, name) {
+      const app = result.application || {};
+      const type = SAVEABLE_RESULT_TYPES[result.resultType];
+      return {
+        result_type: type,
+        standard_id: app.standard || null,
+        resource_title: result.citationName || result.citation || name,
+        page_number: result.citationPage ?? result.excerpt?.pageNumber ?? null,
+        library_url: result.vitriumLink || result.standardLink || null,
+        application_code: result.resultType === 'application' ? (app.code || null) : null,
+        application_name: type === 'tables' ? (app.fullName || name) : null,
+        reference_text: type === 'references' ? (result.excerpt?.text || null) : null,
+        definition_slug: result.definition?.slug || null,
+      };
     }
 
     // ── Application Task/Area Notes helpers (feedback DO3) ──────────────────
@@ -1787,9 +1921,12 @@
           <a href="${escapeHtml(e.vitriumLink)}" target="_blank" rel="noopener"
              class="text-[11px] text-ies-blue hover:underline font-medium shrink-0"
              title="Open this passage in the IES Lighting Library">Open in Library ↗</a>` : '';
+        // print-withhold on the quoted text only: the locator (§ / page) and the
+        // Library link still print, so a printed page is a reference list rather
+        // than a copy of the standard (client DO36).
         return `
           <div class="text-xs text-gray-600 leading-relaxed pl-3 border-l-2 border-gray-200">
-            <p>"${linkifyText(clipped)}"</p>
+            <p class="print-withhold">"${linkifyText(clipped)}"</p>
             ${(locator || link) ? `
               <div class="mt-0.5 flex items-center gap-2 flex-wrap">
                 ${locator ? `<span class="text-[11px] text-gray-400">${locator}</span>` : ''}
@@ -2012,10 +2149,13 @@
       `;
     }
 
-    // ── Project Modal ────────────────────────────────────────────────────────
-    async function openProjectModal(applicationCode, appName, citation) {
-      modalPendingCodes = Array.isArray(applicationCode) ? applicationCode : [applicationCode];
-      document.getElementById('modal-app-name').textContent = appName || applicationCode;
+    // ── Save Search modal (client DO37) ──────────────────────────────────────
+    // The pending queue holds SAVE PAYLOADS (see buildSavePayload), not bare
+    // application codes, so a Document, Reference or Definition can be saved the
+    // same way an illuminance row can.
+    async function openSaveSearchModal(payloads, name, citation) {
+      modalPendingCodes = Array.isArray(payloads) ? payloads : [payloads];
+      document.getElementById('modal-app-name').textContent = name || 'Search result';
       document.getElementById('modal-app-citation').textContent = citation || '';
       document.getElementById('modal-error').classList.add('hidden');
       hideCreateProjectForm();
@@ -2030,18 +2170,19 @@
       modalPendingCodes = [];
     }
 
+    // Bulk save from the checkbox selection. Only illuminance-table rows carry
+    // checkboxes today, so the payloads are rebuilt from the visible results.
     async function addSelectedToProject() {
       if (selectedApplicationCodes.size === 0) return;
-      const codes = [...selectedApplicationCodes];
-      // Use first selected code's name as the modal title
-      document.getElementById('modal-app-name').textContent = `${codes.length} application${codes.length > 1 ? 's' : ''} selected`;
-      document.getElementById('modal-app-citation').textContent = '';
-      modalPendingCodes = codes;
-      document.getElementById('modal-error').classList.add('hidden');
-      hideCreateProjectForm();
-      document.getElementById('project-modal').classList.remove('hidden');
-      document.body.style.overflow = 'hidden';
-      await loadProjectsIntoModal();
+      const payloads = visibleResults()
+        .filter(r => r.application?.code && selectedApplicationCodes.has(r.application.code))
+        .map(r => buildSavePayload(r, r.application.fullName || r.application.code));
+      if (payloads.length === 0) return;
+      await openSaveSearchModal(
+        payloads,
+        `${payloads.length} search result${payloads.length > 1 ? 's' : ''} selected`,
+        '',
+      );
     }
 
     async function loadProjectsIntoModal() {
@@ -2076,13 +2217,16 @@
 
     async function addToExistingProject(projectId) {
       try {
-        if (modalPendingCodes.length === 1) {
-          await LensyAPI.addToProject(modalPendingCodes[0], projectId);
-        } else {
-          await LensyAPI.addManyToProject(modalPendingCodes, projectId);
-        }
+        const saved = await LensyAPI.saveSearches(modalPendingCodes, projectId);
         closeProjectModal();
-        showToast(`Added to project`, 'success');
+        const n = (saved.inserted_ids || []).length;
+        const dupes = (saved.skipped || []).length;
+        showToast(
+          n > 0
+            ? `Saved ${n} search${n > 1 ? 'es' : ''} to the collection`
+            : dupes > 0 ? 'Already in this collection' : 'Nothing was saved',
+          n > 0 || dupes > 0 ? 'success' : 'error',
+        );
       } catch (err) {
         document.getElementById('modal-error').textContent = err.message;
         document.getElementById('modal-error').classList.remove('hidden');
@@ -2108,18 +2252,17 @@
       }
       const client = document.getElementById('new-project-client').value.trim();
       const location = document.getElementById('new-project-location').value.trim();
+      const note = document.getElementById('new-project-note').value.trim();
 
       try {
-        const created = await LensyAPI.createProject({ name, client_name: client || null, location: location || null, user_id: 1 });
+        const created = await LensyAPI.createProject({
+          name, client_name: client || null, location: location || null,
+          notes: note || null, user_id: 1,
+        });
         const projectId = created.project.id;
-
-        if (modalPendingCodes.length === 1) {
-          await LensyAPI.addToProject(modalPendingCodes[0], projectId);
-        } else {
-          await LensyAPI.addManyToProject(modalPendingCodes, projectId);
-        }
+        await LensyAPI.saveSearches(modalPendingCodes, projectId);
         closeProjectModal();
-        showToast(`Project "${name}" created`, 'success');
+        showToast(`Collection "${name}" created`, 'success');
       } catch (err) {
         document.getElementById('modal-error').textContent = err.message;
         document.getElementById('modal-error').classList.remove('hidden');
@@ -2234,9 +2377,13 @@
         return;
       }
 
-      const btn = e.target.closest('.add-to-project-btn');
+      const btn = e.target.closest('.save-search-btn');
       if (btn) {
-        openProjectModal(btn.dataset.code, btn.dataset.name, btn.dataset.citation);
+        try {
+          openSaveSearchModal(JSON.parse(btn.dataset.payload), btn.dataset.name, btn.dataset.citation);
+        } catch {
+          showToast('Could not read this result — please retry the search', 'error');
+        }
       }
     });
 
@@ -2253,6 +2400,65 @@
 
     // Close modal on Escape
     document.addEventListener('keydown', e => { if (e.key === 'Escape') closeProjectModal(); });
+
+    // ── Reproduction deterrent (client DO36) ─────────────────────────────────
+    // Moderate by design: the goal is to discourage casual reproduction of
+    // copyrighted IES text, not to claim the content cannot be captured — any
+    // browser can screenshot, and saying otherwise would be false comfort.
+    //
+    // Three deterrents, each with an explicit carve-out so the app stays usable:
+    //   1. Right-click is suppressed over guarded result content (not over the
+    //      search box, the user's own notes, or links — a reader must still be
+    //      able to open a standard in a new tab).
+    //   2. Copy/cut of a selection inside guarded content is cancelled and
+    //      replaced with the citation, so the reflex "copy the passage" yields
+    //      the REFERENCE instead. That is the outcome DO37 wants anyway.
+    //   3. Ctrl/Cmd+P is intercepted to explain that excerpts do not print,
+    //      rather than letting the user discover a half-blank page.
+    const COPY_GUARD_SELECTOR = '.copy-guard';
+
+    function inGuardedContent(target) {
+      if (!(target instanceof Element)) return false;
+      if (target.closest('input, textarea, [contenteditable="true"], .allow-copy')) return false;
+      return !!target.closest(COPY_GUARD_SELECTOR);
+    }
+
+    document.addEventListener('contextmenu', e => {
+      // Links keep their menu: "open in new tab" on a standard is legitimate.
+      if (e.target instanceof Element && e.target.closest('a')) return;
+      if (inGuardedContent(e.target)) e.preventDefault();
+    });
+
+    for (const type of ['copy', 'cut']) {
+      document.addEventListener(type, e => {
+        const sel = window.getSelection();
+        if (!sel || sel.isCollapsed) return;
+        if (!inGuardedContent(sel.anchorNode?.parentElement || sel.anchorNode)) return;
+        e.preventDefault();
+        // Hand back the citation of the card the selection started in, so the
+        // user gets something useful rather than a silent failure.
+        const card = (sel.anchorNode?.parentElement || sel.anchorNode)?.closest?.('article');
+        const cite = card?.querySelector('.copy-citation')?.textContent?.trim();
+        const replacement = cite
+          ? `${cite}\n\n[Excerpt text is not available for copying. Refer to the standard in the IES Lighting Library.]`
+          : 'Excerpt text from IES standards is not available for copying. Refer to the standard in the IES Lighting Library.';
+        e.clipboardData?.setData('text/plain', replacement);
+        showToast('Excerpts cannot be copied — the citation was copied instead', 'success');
+      });
+    }
+
+    document.addEventListener('keydown', e => {
+      const key = String(e.key || '').toLowerCase();
+      if ((e.ctrlKey || e.metaKey) && key === 'p') {
+        e.preventDefault();
+        showToast('Printing omits excerpt text — citations and links still print', 'success');
+        window.print();
+      }
+    });
+
+    document.addEventListener('dragstart', e => {
+      if (inGuardedContent(e.target)) e.preventDefault();
+    });
 
     // ── Feature-flag init ────────────────────────────────────────────────────
     // Document Comparison ships dark until the deprecated corpus is confirmed
