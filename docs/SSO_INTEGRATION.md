@@ -208,23 +208,39 @@ Until both secrets are set, every visitor sees "Sign-in unavailable" (503
 
 ## Staging
 
-AuthIES has a staging IdP at `auth-staging.ies.org` with **its own secret pair**,
-and both environments scope `ies_auth` to `.ies.org`. A given Lensy deployment
-holds one pair, so it can verify exactly one IdP. To point a deployment at
-staging:
+`lensy-staging.ies.org` is a **second custom domain on the same Worker** as
+`lensy.ies.org` — same code, same D1/R2/KV/Vectorize, same invite list. The one
+per-host difference is detected from the request hostname in `src/lib/sso.ts`
+(`isStagingRequest` / `resolveIdpBaseUrl`): requests arriving via the staging
+hostname do login/logout against `auth-staging.ies.org`, everything else against
+`auth.ies.org`. That switch is required because each IdP's `lensy` SP allowlist
+admits only its own Lensy origin (AuthIES `scripts/seed-sps.ts` /
+`npm run db:seed:staging` registers `https://lensy-staging.ies.org`) — a staging
+visitor bounced to `auth.ies.org` would have its `redirect_uri` rejected.
 
-1. Set `AUTH_IDP_BASE_URL = "https://auth-staging.ies.org"` and load the staging
-   secret pair.
-2. Deploy it to `https://lensy-staging.ies.org` and run
-   `npm run db:seed:staging` in AuthIES to register that origin.
+AuthIES's staging IdP has **its own secret pair**, and both IdPs scope
+`ies_auth` to `.ies.org`. If staging's pair differs from production's, set the
+optional staging pair on this Worker:
+
+```bash
+wrangler secret put SESSION_ENCRYPTION_KEY_STAGING
+wrangler secret put COOKIE_SIGNING_SECRET_STAGING
+```
+
+Staging-host requests then verify the cookie with that pair; production-host
+requests keep using the primary pair. Unset, staging-host requests fall back to
+the primary pair — correct only when both IdPs were seeded with the same values.
+(A cookie minted by the *other* environment's IdP still reads as
+`sso_misconfigured` on that host, same as any secret disagreement.)
 
 `http://localhost:8787` is registered but only validates against a
 **development** IdP — AuthIES's `redirect.ts` rejects `http:` unless
 `ENVIRONMENT=development`, and staging is `ENVIRONMENT=staging`.
 
-A `[env.staging]` block in `wrangler.toml` would need its own D1/R2/KV/Vectorize
-resources (wrangler does not inherit bindings into named environments); create
-them before adding it.
+A `[env.staging]` block in `wrangler.toml` is deliberately NOT used: it would
+need its own D1/R2/KV/Vectorize resources (wrangler does not inherit bindings
+into named environments), and the whole point here is that both hostnames share
+one deployment.
 
 ## Local development
 

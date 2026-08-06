@@ -34,16 +34,21 @@
 # outright — it does NOT loop through login (staff bearer still works). Same
 # answer if either secret is rotated on only one side: rotate both together.
 #
-# AuthIES secrets are PER-ENVIRONMENT. auth-staging.ies.org and auth.ies.org
-# mint cookies with different keys, and both scope the cookie to `.ies.org`, so
-# a Lensy deployment can only ever verify ONE of them — the pair it holds.
-# To point a Lensy deployment at the staging IdP, override the var below:
-#   AUTH_IDP_BASE_URL = "https://auth-staging.ies.org"
-# and load that environment's secret pair. Staging Lensy must also be listed in
-# the `lensy` SP's allowed_redirect_uris (AuthIES scripts/seed-sps.ts) or the
-# IdP rejects the redirect. A separate [env.staging] block here would need its
-# own D1/R2/KV/Vectorize resources (wrangler does not inherit bindings into
-# named environments) — create them first, then add the block.
+# STAGING: lensy-staging.ies.org is a SECOND custom domain on this SAME Worker
+# (no [env.staging] block — it would need its own D1/R2/KV/Vectorize; wrangler
+# does not inherit bindings into named environments). The code detects the
+# hostname (src/lib/sso.ts): requests arriving via lensy-staging.ies.org do
+# login/logout against auth-staging.ies.org instead of auth.ies.org — each
+# IdP's `lensy` SP allowlist admits only its own Lensy origin (AuthIES
+# scripts/seed-sps.ts), so this is what keeps the redirect from being rejected.
+# Everything else (corpus, invite list, behavior) is deliberately identical.
+#
+# AuthIES secrets are PER-ENVIRONMENT. If auth-staging's pair differs from
+# production's, also set:
+#   wrangler secret put SESSION_ENCRYPTION_KEY_STAGING
+#   wrangler secret put COOKIE_SIGNING_SECRET_STAGING
+# Unset, staging-host requests verify ies_auth with the shared pair above —
+# correct only if both IdPs were seeded with the same values.
 
 name = "lensy"
 main = "src/workers/api.ts"
@@ -136,8 +141,10 @@ ALLOW_MEMBERS_WITHOUT_INVITE = "true"
 # Secrets set via `wrangler secret put`:
 # VITRIUM_API_KEY
 # SHAREPOINT_TOKEN
-# SESSION_ENCRYPTION_KEY   (same value as AuthIES)
-# COOKIE_SIGNING_SECRET    (same value as AuthIES)
+# SESSION_ENCRYPTION_KEY           (same value as AuthIES production)
+# COOKIE_SIGNING_SECRET            (same value as AuthIES production)
+# SESSION_ENCRYPTION_KEY_STAGING   (optional — same value as AuthIES staging;
+# COOKIE_SIGNING_SECRET_STAGING     only needed if staging's pair differs)
 
 # ─── Routes / Custom Domain ───────────────────────────────────────────────────
 # Serves the Worker at lensy.ies.org instead of the default *.workers.dev URL.

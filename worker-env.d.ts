@@ -17,5 +17,10 @@ declare global {
     // SSO cookie verification — SAME values as the AuthIES Worker (lib/sso.ts).
     SESSION_ENCRYPTION_KEY?: string;
     COOKIE_SIGNING_SECRET?: string;
+    // Optional pair for the staging IdP (auth-staging.ies.org), used only for
+    // requests arriving via lensy-staging.ies.org. Unset → the shared pair
+    // above is used for both hostnames (lib/sso.ts resolveSsoSecrets).
+    SESSION_ENCRYPTION_KEY_STAGING?: string;
+    COOKIE_SIGNING_SECRET_STAGING?: string;
   }
 }

@@ -6,6 +6,8 @@ import {
   isSecretMismatch,
   resolveReturnTo,
   buildLoginUrl,
+  buildLogoutUrl,
+  getSsoState,
   decideAccess,
   hasIdpAdminRole,
 } from './sso';
@@ -186,6 +188,73 @@ describe('resolveReturnTo / buildLoginUrl', () => {
       'https://auth.ies.org/login?sp=lensy&redirect_uri=' +
         encodeURIComponent('https://lensy.ies.org/projects.html'),
     );
+  });
+});
+
+// lensy-staging.ies.org is a second custom domain on the SAME Worker. The one
+// thing that may differ by hostname is the IdP (and, when configured, the
+// secret pair that verifies its cookies) — each IdP's SP allowlist only admits
+// its own Lensy origin, so a staging visitor sent to auth.ies.org is rejected.
+describe('staging host detection (lensy-staging.ies.org)', () => {
+  const STG = 'https://lensy-staging.ies.org';
+  const env = {
+    AUTH_IDP_BASE_URL: 'https://auth.ies.org',
+    SESSION_ENCRYPTION_KEY: ENC_KEY,
+    COOKIE_SIGNING_SECRET: SIG_KEY,
+  };
+
+  it('sends staging-host visitors to the staging IdP for login', () => {
+    expect(buildLoginUrl(env, `${STG}/api/auth/me?returnTo=%2Fprojects.html`)).toBe(
+      'https://auth-staging.ies.org/login?sp=lensy&redirect_uri=' +
+        encodeURIComponent(`${STG}/projects.html`),
+    );
+  });
+
+  it('sends staging-host visitors to the staging IdP for logout', () => {
+    expect(buildLogoutUrl(env, `${STG}/anything`)).toBe(
+      'https://auth-staging.ies.org/logout?redirect_uri=' + encodeURIComponent(`${STG}/`),
+    );
+  });
+
+  it('the production host keeps using AUTH_IDP_BASE_URL', () => {
+    expect(buildLogoutUrl(env, 'https://lensy.ies.org/anything')).toBe(
+      'https://auth.ies.org/logout?redirect_uri=' +
+        encodeURIComponent('https://lensy.ies.org/'),
+    );
+  });
+
+  // getSsoState verifies against Date.now(), so mint cookies that are live NOW.
+  function liveCookiePayload() {
+    const nowSec = Math.floor(Date.now() / 1000);
+    return payload({ iat: nowSec, exp: nowSec + 3600 });
+  }
+  function requestWithCookie(url, cookie) {
+    return new Request(url, { headers: { Cookie: `ies_auth=${cookie}` } });
+  }
+
+  it('verifies a staging-minted cookie with the _STAGING pair on the staging host only', async () => {
+    const stgEnv = {
+      ...env,
+      SESSION_ENCRYPTION_KEY_STAGING: 'staging-enc-key',
+      COOKIE_SIGNING_SECRET_STAGING: 'staging-sig-secret',
+    };
+    const cookie = await buildAuthCookieValue(
+      liveCookiePayload(), 'staging-enc-key', 'staging-sig-secret',
+    );
+
+    const staging = await getSsoState(requestWithCookie(`${STG}/`, cookie), stgEnv);
+    expect(staging.state).toBe('ok');
+
+    // The same cookie on the production host is a secret disagreement with
+    // auth.ies.org, exactly as before this feature existed.
+    const prod = await getSsoState(requestWithCookie('https://lensy.ies.org/', cookie), stgEnv);
+    expect(prod.state).toBe('misconfigured');
+  });
+
+  it('falls back to the shared pair on the staging host when no _STAGING pair is set', async () => {
+    const cookie = await buildAuthCookieValue(liveCookiePayload(), ENC_KEY, SIG_KEY);
+    const state = await getSsoState(requestWithCookie(`${STG}/`, cookie), env);
+    expect(state.state).toBe('ok');
   });
 });
 

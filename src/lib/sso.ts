@@ -225,6 +225,47 @@ function toSsoUser(v: unknown): SsoUser | null {
   };
 }
 
+// ── staging host detection ───────────────────────────────────────────────────
+//
+// lensy.ies.org and lensy-staging.ies.org are BOTH custom domains on this ONE
+// Worker (a separate [env.staging] would need its own D1/R2/KV/Vectorize).
+// The two hostnames behave identically except for which IdP the visitor is
+// sent to: each IdP's `lensy` SP allowlist admits only its own Lensy origin
+// (AuthIES scripts/seed-sps.ts), so a lensy-staging visitor bounced to
+// auth.ies.org would have its redirect_uri rejected outright.
+
+export const STAGING_HOST = 'lensy-staging.ies.org';
+const STAGING_IDP_BASE_URL = 'https://auth-staging.ies.org';
+
+/** Did this request arrive via the staging hostname? */
+export function isStagingRequest(requestUrl: string): boolean {
+  return new URL(requestUrl).hostname === STAGING_HOST;
+}
+
+/** The IdP this request's visitor belongs to (staging host → staging IdP). */
+export function resolveIdpBaseUrl(env: Env, requestUrl: string): string {
+  return isStagingRequest(requestUrl) ? STAGING_IDP_BASE_URL : env.AUTH_IDP_BASE_URL;
+}
+
+/**
+ * The secret pair to verify ies_auth with. auth-staging.ies.org mints with its
+ * own pair, so staging-host requests prefer the optional *_STAGING secrets.
+ * Unset, they fall back to the shared pair — correct only when both IdPs were
+ * seeded with the same values.
+ */
+function resolveSsoSecrets(
+  env: Env,
+  requestUrl: string,
+): { encKey?: string; sigKey?: string } {
+  if (isStagingRequest(requestUrl)) {
+    return {
+      encKey: env.SESSION_ENCRYPTION_KEY_STAGING || env.SESSION_ENCRYPTION_KEY,
+      sigKey: env.COOKIE_SIGNING_SECRET_STAGING || env.COOKIE_SIGNING_SECRET,
+    };
+  }
+  return { encKey: env.SESSION_ENCRYPTION_KEY, sigKey: env.COOKIE_SIGNING_SECRET };
+}
+
 // ── request helpers ──────────────────────────────────────────────────────────
 
 export function parseCookies(request: Request): Record<string, string> {
@@ -252,8 +293,7 @@ export type SsoState =
   | { state: 'misconfigured'; detail: 'secrets_missing' | CookieFailure };
 
 export async function getSsoState(request: Request, env: Env): Promise<SsoState> {
-  const encKey = env.SESSION_ENCRYPTION_KEY;
-  const sigKey = env.COOKIE_SIGNING_SECRET;
+  const { encKey, sigKey } = resolveSsoSecrets(env, request.url);
   // Deploy-order mistake, not a visitor problem: say so instead of looping the
   // whole site through a login that can never be verified.
   if (!encKey || !sigKey) return { state: 'misconfigured', detail: 'secrets_missing' };
@@ -301,13 +341,13 @@ function isSafePath(value: string): boolean {
 /** URL to start the SSO flow at the IdP and land back on this deployment. */
 export function buildLoginUrl(env: Env, requestUrl: string): string {
   const back = encodeURIComponent(resolveReturnTo(requestUrl));
-  return `${env.AUTH_IDP_BASE_URL}/login?sp=lensy&redirect_uri=${back}`;
+  return `${resolveIdpBaseUrl(env, requestUrl)}/login?sp=lensy&redirect_uri=${back}`;
 }
 
 /** IdP single-logout URL that returns to this deployment. */
 export function buildLogoutUrl(env: Env, requestUrl: string): string {
   const home = new URL(requestUrl).origin + '/';
-  return `${env.AUTH_IDP_BASE_URL}/logout?redirect_uri=${encodeURIComponent(home)}`;
+  return `${resolveIdpBaseUrl(env, requestUrl)}/logout?redirect_uri=${encodeURIComponent(home)}`;
 }
 
 // ── access decision (pure — see invites.ts for the allowlist semantics) ─────
