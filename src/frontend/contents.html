@@ -83,12 +83,47 @@
   </footer>
 
   <script>
-    // ── Grouping (client DO35) ───────────────────────────────────────────────
-    // The client's layout groups by webstore COLLECTION ("Part 1: Lighting
-    // Science, Metrics, and Calculations") and sorts Collection → Author →
-    // Designation. That metadata comes from the Vitrium/webstore export, so until
-    // it is present the page falls back to grouping by series — which is how the
-    // printed library is organized and never leaves the page ungrouped.
+    // ── Grouping (client DO35, refined by DO46) ──────────────────────────────
+    //
+    // Two levels of grouping, then one sort:
+    //
+    //   1. Webstore CATEGORY, in the client's stated order — Lighting Science,
+    //      Lighting Practice, Lighting Applications, Lighting Measurements and
+    //      Testing, Roadway Lighting. Anything else follows, alphabetically.
+    //   2. AUTHOR inside each category — the authoring committee from Vitrium's
+    //      Author metadata, printed as "IES [author]", sorted alphabetically and
+    //      hyperlinked to its public committee page.
+    //   3. Standards inside each author group, alphabetically by designation,
+    //      with the full title and the Vitrium content description.
+    //
+    // The metadata comes from the Vitrium/webstore export, so until it is present
+    // the page falls back to grouping by series — which is how the printed
+    // library is organized and never leaves the page ungrouped.
+
+    // Webstore product categories, in the order the client specified. Matched
+    // case- and punctuation-insensitively so "Part 2: Lighting Practice" and
+    // "Lighting Practice" land in the same group.
+    const CATEGORY_ORDER = [
+      'Lighting Science',
+      'Lighting Practice',
+      'Lighting Applications',
+      'Lighting Measurements and Testing',
+      'Roadway Lighting',
+    ];
+
+    const foldCategory = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+
+    /** A collection value → its canonical category label, or the value itself. */
+    function categoryLabel(raw) {
+      const folded = foldCategory(raw);
+      if (!folded) return null;
+      const known = CATEGORY_ORDER.find(c => {
+        const k = foldCategory(c);
+        return folded === k || folded.endsWith(k) || folded.includes(k);
+      });
+      return known || String(raw).trim();
+    }
+
     const SERIES = [
       { prefix: 'RP', label: 'Recommended Practices (RP)' },
       { prefix: 'LP', label: 'Lighting Practice (LP)' },
@@ -141,15 +176,19 @@
 
     /** Which grouping the available metadata supports. */
     function groupLabelFor(s) {
-      return s.collection || seriesOf(s.id);
+      return categoryLabel(s.collection) || seriesOf(s.id);
     }
 
-    /** Collection → Author → Designation, per the client's sort spec (DO35). */
+    /** The committee credit line for one standard: "IES [author]" (DO46). */
+    function authorLabelFor(s) {
+      if (s.committee?.name) return s.committee.name;
+      const author = String(s.author || '').trim();
+      if (!author) return null;
+      return /^ies\b/i.test(author) ? author : `IES ${author}`;
+    }
+
+    /** Standards inside an author group sort alphabetically by designation. */
     function compareForToc(a, b) {
-      const byCollection = String(a.collection || '').localeCompare(String(b.collection || ''));
-      if (byCollection !== 0) return byCollection;
-      const byAuthor = String(a.committee?.name || a.author || '').localeCompare(String(b.committee?.name || b.author || ''));
-      if (byAuthor !== 0) return byAuthor;
       return compareIds(a, b);
     }
 
@@ -173,9 +212,14 @@
       // it is actually falling back to series.
       const withCollection = allStandards.filter(s => s.collection).length;
       const notice = document.getElementById('toc-metadata-notice');
+      const withAuthor = allStandards.filter(s => authorLabelFor(s)).length;
       if (withCollection === 0 && allStandards.length > 0) {
-        notice.textContent = 'Grouped by series: the Vitrium/webstore export has not supplied Collection metadata yet. '
-          + 'Once it does, this page groups and sorts by Collection automatically.';
+        notice.textContent = 'Grouped by series: the Vitrium/webstore export has not supplied the Category (Collection) '
+          + 'metadata yet. Once it does, this page groups by webstore Category, then by authoring committee, automatically.';
+        notice.classList.remove('hidden');
+      } else if (withAuthor === 0 && allStandards.length > 0) {
+        notice.textContent = 'Grouped by Category. The export has not supplied the Author (authoring committee) metadata '
+          + 'yet, so the second grouping level is empty.';
         notice.classList.remove('hidden');
       } else {
         notice.classList.add('hidden');
@@ -187,27 +231,75 @@
         if (!groups.has(label)) groups.set(label, []);
         groups.get(label).push(s);
       }
-      // Collections sort alphabetically ("Part 1…", "Part 2…"); the series
+      // Categories print in the client's stated order (DO46); anything the
+      // export adds beyond those five follows alphabetically. The series
       // fallback keeps the printed library's own order.
       const ordered = withCollection > 0
-        ? [...groups.keys()].sort((a, b) => a.localeCompare(b))
+        ? [
+            ...CATEGORY_ORDER.filter(c => groups.has(c)),
+            ...[...groups.keys()].filter(k => !CATEGORY_ORDER.includes(k)).sort((a, b) => a.localeCompare(b)),
+          ]
         : [...SERIES.map(s => s.label), 'Other'].filter(l => groups.has(l));
 
       const wrap = document.getElementById('toc-groups');
       wrap.innerHTML = ordered.map(label => `
         <section>
           <h2 class="text-sm font-bold uppercase tracking-wider text-gray-500 mb-2">${escapeHtml(label)}</h2>
-          <div class="bg-white rounded-xl border border-gray-100 divide-y divide-gray-100 overflow-hidden">
-            ${groups.get(label).sort(compareForToc).map(row).join('')}
-          </div>
+          ${renderAuthorGroups(groups.get(label))}
         </section>
       `).join('');
       wrap.classList.remove('hidden');
     }
 
+    /**
+     * Second-level grouping: by author (the authoring committee), alphabetically,
+     * with the committee name hyperlinked to its public page (client DO46).
+     *
+     * Standards whose Author metadata has not been supplied yet are collected
+     * under one honest heading rather than under an invented committee.
+     */
+    function renderAuthorGroups(standards) {
+      const byAuthor = new Map();
+      for (const s of standards) {
+        const label = authorLabelFor(s) || '';
+        if (!byAuthor.has(label)) byAuthor.set(label, []);
+        byAuthor.get(label).push(s);
+      }
+
+      const named = [...byAuthor.keys()].filter(Boolean).sort((a, b) => a.localeCompare(b));
+      const order = byAuthor.has('') ? [...named, ''] : named;
+
+      return order.map(label => {
+        const rows = byAuthor.get(label).sort(compareForToc);
+        // The link is resolved server-side (same function the result cards use),
+        // so a committee IES no longer publishes falls back to the root list
+        // rather than to a 404.
+        const committee = rows.find(s => s.committee)?.committee;
+        const heading = label
+          ? (committee
+              ? `<a href="${escapeHtml(committee.url)}" target="_blank" rel="noopener"
+                     class="hover:text-ies-blue hover:underline"
+                     title="${escapeHtml(committee.exact
+                       ? 'View this committee’s roster on ies.org'
+                       : 'This committee has no current page — opens the list of IES technical committees')}"
+                  >${escapeHtml(label)}${committee.exact ? '' : ' ↗'}</a>`
+              : escapeHtml(label))
+          : '<span class="text-gray-400 font-normal">Authoring committee not yet supplied</span>';
+
+        return `
+          <div class="mb-4">
+            <h3 class="text-xs font-semibold text-gray-600 mb-1.5">${heading}</h3>
+            <div class="bg-white rounded-xl border border-gray-100 divide-y divide-gray-100 overflow-hidden">
+              ${rows.map(row).join('')}
+            </div>
+          </div>`;
+      }).join('');
+    }
+
     // One standard, laid out as the client's mockup: thumbnail | designation,
-    // title, authoring committee, description | eLearning links | Read / Buy.
-    // Every optional field is omitted rather than rendered blank.
+    // full title, Vitrium content description | eLearning links | Read / Buy.
+    // The authoring committee is the group heading above (DO46). Every optional
+    // field is omitted rather than rendered blank.
     function row(s) {
       const designation = s.full_designation || `ANSI/IES ${s.id}`;
       const title = (s.title && s.title !== s.id) ? s.title : '';
@@ -219,17 +311,8 @@
              <span class="text-[9px] text-gray-300 text-center leading-tight px-1">No cover</span>
            </div>`;
 
-      // "Author" hyperlinks to the public committee page (client DO35), resolved
-      // server-side by the same function the result cards use (DO34).
-      const committee = s.committee
-        ? `<p class="text-xs mt-0.5">
-             <a href="${escapeHtml(s.committee.url)}" target="_blank" rel="noopener"
-                class="text-gray-500 hover:text-ies-blue hover:underline"
-                title="${escapeHtml(s.committee.exact ? 'View this committee’s roster on ies.org' : 'This committee has no current page — opens the list of IES technical committees')}"
-             >${escapeHtml(s.committee.name)}</a>
-           </p>`
-        : '';
-
+      // The authoring committee is the GROUP HEADING now (client DO46), so it is
+      // no longer repeated on every row inside its own group.
       const elearning = (s.elearning || []).length
         ? `<div class="min-w-0 sm:w-56 shrink-0">
              <p class="text-[10px] uppercase tracking-wide text-gray-400 mb-1">eLearning</p>
@@ -259,7 +342,6 @@
           <div class="min-w-0 flex-1">
             <p class="text-sm font-semibold text-gray-900">${escapeHtml(designation)}</p>
             ${title ? `<p class="text-xs text-gray-600">${escapeHtml(title)}</p>` : ''}
-            ${committee}
             ${s.description ? `<p class="text-xs text-gray-500 mt-1 leading-relaxed">${escapeHtml(s.description)}</p>` : ''}
             ${s.page_count ? `<p class="text-[11px] text-gray-300 mt-1">${s.page_count} pages indexed</p>` : ''}
           </div>

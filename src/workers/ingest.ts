@@ -16,6 +16,9 @@
  *                     type: 'text' | 'table' | 'general_notes' | 'reference'
  *                     ('reference' = References/Bibliography entries; powers
  *                      the references-only search mode)
+ *     - sections:     {"3.3.4": "Circulation Areas", ...}       → D1 standards.sections_json
+ *                     (section number → printed title, so a body excerpt can be
+ *                      headed "3.3.4 Design Guide › … › Circulation Areas" — DO40)
  *     - tables:       [{pageNumber, title, rows, ...}]          → D1 standards.tables_json
  *     - applications: [{code, App, Hor_Lux, ...}]  (optional)  → D1 applications (upsert)
  *
@@ -389,6 +392,7 @@ async function ingestParsedPDF(request: Request, env: Env): Promise<Response> {
     tables = [],
     applications = [],  // extracted application records from PDF tables
     referenceMarkers = null, // { "<marker#>": firstBodyPage } — client DO31.4
+    sections = null,         // { "3.3.4": "Circulation Areas" } — client DO40
     r2Key = null,
   } = body;
 
@@ -546,12 +550,20 @@ async function ingestParsedPDF(request: Request, env: Env): Promise<Response> {
     ? JSON.stringify(referenceMarkers)
     : null;
 
+  // Section number → section title (client DO40), same replace-on-document-ingest
+  // rule as the markers above: a new edition renumbers its chapters, so keeping
+  // the previous edition's map would label excerpts with the wrong titles.
+  const sectionsJson = (sections && typeof sections === 'object'
+    && !Array.isArray(sections) && Object.keys(sections).length > 0)
+    ? JSON.stringify(sections)
+    : null;
+
   if (chunks.length > 0 || tables.length > 0 || metadata.title) await env.DB.prepare(`
     INSERT INTO standards
       (id, title, description, author, year, full_designation, r2_key,
        tables_json, status, superseded_by, chunk_count, page_count,
-       coverage_json, reference_markers_json, indexed_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+       coverage_json, reference_markers_json, sections_json, indexed_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
     ON CONFLICT(id) DO UPDATE SET
       title        = excluded.title,
       -- description and author are CURATED fields: they come from the
@@ -577,6 +589,9 @@ async function ingestParsedPDF(request: Request, env: Env): Promise<Response> {
       reference_markers_json = CASE
         WHEN excluded.chunk_count IS NOT NULL THEN excluded.reference_markers_json
         ELSE standards.reference_markers_json END,
+      sections_json = CASE
+        WHEN excluded.chunk_count IS NOT NULL THEN excluded.sections_json
+        ELSE standards.sections_json END,
       indexed_at   = CURRENT_TIMESTAMP,
       updated_at   = CURRENT_TIMESTAMP
   `).bind(
@@ -599,6 +614,7 @@ async function ingestParsedPDF(request: Request, env: Env): Promise<Response> {
     pageCount,
     chunks.length > 0 ? JSON.stringify(coverage) : null,
     markersJson,
+    sectionsJson,
   ).run();
 
   // ── 5. Upsert extracted application records into D1 ──────────────────────
@@ -626,6 +642,7 @@ async function ingestParsedPDF(request: Request, env: Env): Promise<Response> {
     tablesFound: (tables || []).length,
     vectorsUpserted: vectors.length,
     staleVectorsDeleted: staleDeleted,
+    sectionTitles: sectionsJson ? Object.keys(sections).length : 0,
     applicationsUpserted,
     r2ObjectRemoved: r2Removed,
     coverage: chunks.length > 0 ? { ...coverage, pageCount } : null,

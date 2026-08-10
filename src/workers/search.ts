@@ -63,7 +63,7 @@
  */
 
 import {
-  prepareQueryForEmbedding, splitMultiQuery, cleanQuery,
+  prepareQueryForEmbedding, splitMultiQuery, cleanQuery, stripQueryLabel,
   isVersionComparisonQuery, isReferenceQuery, isDefinitionQuery, normalizeTypography,
 } from '../lib/query-expander';
 import {
@@ -312,7 +312,11 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
   }
 
   const cleanLimit = Math.min(Math.max(1, Math.floor(limit)), MAX_LIMIT);
-  const rawQuery = query.trim().substring(0, 500);
+  // "Sample Search: what's new in RP-8?" — the label pasted along with an example
+  // from the feedback document is not part of the question, and it degrades the
+  // answer (client DO41). Stripped before ANYTHING reads the query: the cache
+  // key, intent detection and the embedding all see the same clean text.
+  const rawQuery = stripQueryLabel(query).trim().substring(0, 500);
 
   // ── Response cache ───────────────────────────────────────────────────────────
   // Identical searches skip the entire pipeline (Workers AI embedding,
@@ -377,9 +381,31 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
   // Diagnostics for the deprecated-comparison path, which is fail-open by
   // design (errors and empty stages silently yield no deprecated excerpts).
   // Populated only when the caller passes body.debug.
-  let depDbg = null;
+  let depDbg: DepDbg | null = null;
+  // The edition the comparison is against, resolved from D1 rather than from
+  // whatever the vector search happened to return (client DO43: "verify that the
+  // tool understands what the 'current' version of any standard is").
+  let currentEdition: FamilyEdition | null = null;
   if (isVersionComparison) {
     depDbg = body.debug ? {} : null;
+    const family = comparisonFamily(mergedFilters, rawQuery);
+    const editions = family ? await loadFamilyEditions(env, family) : [];
+    currentEdition = editions.find(e => e.status !== 'Deprecated') || null;
+    if (depDbg) {
+      depDbg.family = family;
+      depDbg.editions = editions.map(e => `${e.id}${e.status === 'Deprecated' ? ' (dep)' : ''}`);
+    }
+
+    // The current edition has to be ON SCREEN, with real content — the client's
+    // RP-8 comparison returned three deprecated cards and no current one at all
+    // (DO42), which also left the analysis with nothing to compare against
+    // (DO43). "What's new in …" is meta-phrasing: it retrieves tables of
+    // contents, so when the main search produced no current-edition passages we
+    // fetch them directly, anchored on the standard's own subject matter.
+    if (currentEdition) {
+      const currentExcerpts = await ensureCurrentEditionExcerpts(env, allResults.results, currentEdition, depDbg);
+      if (currentExcerpts.length > 0) allResults.results = [...currentExcerpts, ...allResults.results];
+    }
     // Topical anchor: the current edition's best excerpt. Embedding the raw
     // "what's new in X?" phrasing retrieves TOC lines from the deprecated
     // index ("9.12 New Light Sources . . ."), not substantive provisions.
@@ -392,8 +418,24 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
     const topicHints = collectTopicHints(allResults.results);
     const deprecatedResults = await searchDeprecatedForComparison(rawQuery, mergedFilters, env, topicHints, depDbg);
     allResults.results.push(...deprecatedResults);
+    // Every edition of the family gets a card, whether or not retrieval reached
+    // its pages: "return cards for the current standard (first) followed by all
+    // subsequent deprecated standards" (client DO42). A card with no passage is
+    // still the fastest route to opening that edition for a manual comparison.
+    allResults.results = addMissingEditionCards(allResults.results, editions);
     // Current edition first, then prior editions newest → oldest (client DO27).
     allResults.results = orderComparisonResults(allResults.results);
+  }
+
+  // ── Section number + title on every body excerpt (client DO40) ───────────────
+  // Resolved from standards.sections_json for the standards actually in this
+  // result set. Runs BEFORE the AI Guide so the model can name a chapter by its
+  // printed title without inventing one. Fail-open: without the map (a standard
+  // ingested before it existed) the card prints the section number alone.
+  try {
+    await attachSectionTitles(env, allResults.results);
+  } catch (err) {
+    console.error('section title lookup failed (non-fatal):', errMsg(err));
   }
 
   // ── Related applications + optional AI summary (run concurrently) ────────────
@@ -421,9 +463,18 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
   const definitionsOnly = contentTypes.has('definitions')
     && !contentTypes.has('tables') && !contentTypes.has('body') && !contentTypes.has('references');
   const aiMode: AIMode = isVersionComparison ? 'comparison' : (referencesOnly ? 'references' : 'guide');
-  const currentIdForComparison = allResults.results.find(r => !r.isDeprecated)?.application?.standard || null;
+  // The current edition comes from D1 (newest Active edition of the family) and
+  // only falls back to "first non-deprecated result" when the family could not be
+  // resolved — the result list is ranked by relevance, so its first entry is not
+  // reliably the current edition (client DO43).
+  const currentIdForComparison = currentEdition?.id
+    || allResults.results.find(r => !r.isDeprecated)?.application?.standard || null;
   const comparisonContext = aiMode === 'comparison'
-    ? buildComparisonContext(allResults.results, requestedDeprecatedEdition(rawQuery, currentIdForComparison))
+    ? buildComparisonContext(
+        allResults.results,
+        requestedDeprecatedEdition(rawQuery, currentIdForComparison),
+        currentEdition,
+      )
     : undefined;
 
   const aiPromise = (includeAISummary && allResults.results.length > 0)
@@ -467,6 +518,28 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
     allResults.results[0].relatedApplications = related;
   }
 
+  // ── Whole-document cards (client DO47) ───────────────────────────────────────
+  // "A search for the name or designation of a standard should return a direct
+  //  link to that standard." Added after the related/AI work above so neither
+  //  changes behaviour, and BEFORE the confidence flag below: finding the exact
+  //  document the user named is a strong match by definition.
+  // Gated on the Documents pill: a whole standard IS a Document, so a user who
+  // narrowed the search to Definitions or References has said they do not want
+  // one. The default selection includes Documents, so a bare "RP-3-20" — and the
+  // Table of Contents deep link — answers with the document out of the box.
+  const documentCards = (!isVersionComparison && !isMultiQuery && contentTypes.has('body'))
+    ? await findStandardLookupResults(env, rawQuery)
+    : [];
+  if (documentCards.length > 0) {
+    const cardIds = new Set(documentCards.map(c => c.application.standard));
+    allResults.results = [
+      ...documentCards,
+      // A bare document card and a table row from the same standard are
+      // different answers, so only an identical document card is dropped.
+      ...allResults.results.filter(r => !(r.resultType === 'standard' && cardIds.has(r.application?.standard ?? ''))),
+    ];
+  }
+
   // ── Confidence flag ──────────────────────────────────────────────────────────
   // The UI uses noStrongMatch to render a yellow advisory banner above the
   // results. We never filter the list itself — the user still sees the closest
@@ -488,8 +561,12 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
   // editions — without it the user just sees raw excerpts. Tell them to turn
   // it on (client request DO11); this notice REPLACES the no-strong-match
   // advisory for comparison searches.
+  // Wording fixed by the client (DO42): it names the pill the user actually has
+  // to press ("Enable Guide") and offers the manual route, because the cards
+  // above already link both editions.
   const aiGuideRequiredNotice = (isVersionComparison && !includeAISummary)
-    ? 'AI Guide is required for document comparisons. Please toggle the AI Guide filter on and repeat your search.'
+    ? 'The AI Guide is required for document comparisons. Please toggle the "Enable Guide" filter on and ' +
+      'repeat your search, or perform a manual comparison to verify revisions.'
     : null;
 
   const payload = {
@@ -642,7 +719,11 @@ export function orderComparisonResults(results: SearchResult[]): SearchResult[] 
  * produced the DO28 answer that named RP-8-14 as the edition RP-8-25+E2
  * replaced.
  */
-export function buildComparisonContext(results: SearchResult[], requestedEdition?: string | null): ComparisonContext {
+export function buildComparisonContext(
+  results: SearchResult[],
+  requestedEdition?: string | null,
+  currentOverride?: FamilyEdition | null,
+): ComparisonContext {
   const editions: NonNullable<ComparisonContext['deprecated']> = [];
   const seen = new Set<string>();
   for (const r of results) {
@@ -675,17 +756,24 @@ export function buildComparisonContext(results: SearchResult[], requestedEdition
     currents[0] ||
     null;
 
-  return {
-    current: pick
-      ? {
-          id: pick.application.standard || '',
-          name: pick.application.standardFull || pick.application.standard || '',
-          url: pick.standardLink || null,
-        }
-      : null,
-    deprecated: target,
-    alsoDeprecated,
-  };
+  // The D1-resolved edition wins over anything inferred from the result list:
+  // it is the newest ACTIVE edition of the family, which is what "current" means
+  // (client DO43). `pick` remains for searches where no family was resolved.
+  const current = currentOverride
+    ? {
+        id: currentOverride.id,
+        name: composeStandardName(currentOverride.fullDesignation || currentOverride.id, currentOverride.title),
+        url: currentOverride.webUrl,
+      }
+    : (pick
+        ? {
+            id: pick.application.standard || '',
+            name: pick.application.standardFull || pick.application.standard || '',
+            url: pick.standardLink || null,
+          }
+        : null);
+
+  return { current, deprecated: target, alsoDeprecated };
 }
 
 /**
@@ -703,6 +791,220 @@ export function requestedDeprecatedEdition(rawQuery: string, currentId?: string 
   // prior edition. Errata suffixes are ignored when comparing against current.
   const base = (id: string) => id.replace(/\+E\d+$/, '');
   return named.find(id => base(id) !== base(current)) || null;
+}
+
+// ─── Editions of one standard family (client DO42 / DO43) ────────────────────
+
+/** One indexed edition of a standard family, straight from D1. */
+export type FamilyEdition = {
+  id: string;
+  title: string | null;
+  fullDesignation: string | null;
+  description: string | null;
+  author: string | null;
+  collection: string | null;
+  thumbnailUrl: string | null;
+  buyUrl: string | null;
+  webUrl: string | null;
+  status: string;
+  supersededBy: string | null;
+  /** Publication year decoded from the id, for newest-first ordering. */
+  year: number;
+};
+
+/** Columns a document card needs. Split out because the last five arrive with migration 0010. */
+const STANDARD_CARD_COLUMNS =
+  'id, title, full_designation, description, author, status, superseded_by, vitrium_web_url, ' +
+  'collection, thumbnail_url, buy_url';
+const STANDARD_CARD_COLUMNS_LEGACY =
+  'id, title, full_designation, description, author, status, superseded_by, vitrium_web_url';
+
+/**
+ * Read standards rows for the document cards, tolerating a database that has not
+ * had migration 0010 applied yet.
+ *
+ * Search must keep working when the Worker is ahead of the schema — that exact
+ * split is what takes /api/standards down while search is fine, and a 500 here
+ * would turn a missing migration into a total search outage.
+ */
+async function selectStandardRows(env: Env, where: string, bindings: unknown[]): Promise<FamilyEdition[]> {
+  const read = async (columns: string) => {
+    const res = await env.DB.prepare(`SELECT ${columns} FROM standards ${where}`)
+      .bind(...bindings as any[]).all<Record<string, any>>();
+    return res.results || [];
+  };
+  let rows: Record<string, any>[];
+  try {
+    rows = await read(STANDARD_CARD_COLUMNS);
+  } catch (err) {
+    console.error('standards metadata query fell back to pre-0010 columns:', errMsg(err));
+    rows = await read(STANDARD_CARD_COLUMNS_LEGACY);
+  }
+  return rows.map(r => {
+    const curated = curatedStandardInfo(r.id);
+    return {
+      id: r.id,
+      title: (r.title && r.title !== r.id) ? r.title : (curated?.title || null),
+      fullDesignation: r.full_designation || curated?.fullDesignation || null,
+      description: r.description || null,
+      author: r.author || null,
+      collection: r.collection || null,
+      thumbnailUrl: r.thumbnail_url || null,
+      buyUrl: r.buy_url || null,
+      webUrl: r.vitrium_web_url || null,
+      status: r.status || 'Active',
+      supersededBy: r.superseded_by || null,
+      year: editionYear(r.id),
+    };
+  });
+}
+
+/**
+ * Which standard family a comparison is about: the filter if one was inferred,
+ * otherwise the designation named in the query ("what's new in RP-8?" → RP-8).
+ */
+export function comparisonFamily(filters: SearchFilters, rawQuery: string): string | null {
+  if (filters.standard_prefix) return String(filters.standard_prefix).toUpperCase();
+  if (filters.standard) return standardFamily(filters.standard);
+  const m = /\b((?:RP|TM|HB|LM|LP|LS|DG|LEM|G)-\d+(?:\.\d+)?)\b/i.exec(normalizeTypography(rawQuery));
+  return m ? m[1].toUpperCase() : null;
+}
+
+/**
+ * Every indexed edition of a family, newest first.
+ *
+ * Fail-open: a comparison that cannot read the family still returns whatever the
+ * vector search found. This is on the critical path of every comparison search,
+ * so a D1 hiccup must not 500 the whole request.
+ */
+async function loadFamilyEditions(env: Env, family: string): Promise<FamilyEdition[]> {
+  try {
+    const editions = await selectStandardRows(
+      env, 'WHERE UPPER(id) = ? OR UPPER(id) LIKE ?', [family.toUpperCase(), `${family.toUpperCase()}-%`],
+    );
+    return editions.sort((a, b) => b.year - a.year || b.id.localeCompare(a.id));
+  } catch (err) {
+    console.error(`could not load the ${family} editions (non-fatal):`, errMsg(err));
+    return [];
+  }
+}
+
+// How many current-edition passages a comparison needs before it can say
+// anything about what changed, and how many the direct probe fetches.
+const COMPARISON_CURRENT_EXCERPTS = 6;
+const COMPARISON_CURRENT_TOP_K = 20;
+
+/**
+ * Guarantee the CURRENT edition contributes real passages to a comparison.
+ *
+ * "What's new in the latest version of RP-8?" is meta-phrasing: embedded as-is
+ * it matches tables of contents, so the ordinary search can come back with no
+ * current-edition prose at all — which is how the client got three deprecated
+ * cards and no current one (DO42), and an analysis with nothing to compare
+ * (DO43). This probes the current edition directly, anchored on the standard's
+ * own designation and title so the passages are about its subject matter, and
+ * spreads the result across sections so it is not one chapter's worth.
+ *
+ * Fail-open: on any error the comparison proceeds with whatever it already had.
+ */
+async function ensureCurrentEditionExcerpts(
+  env: Env, results: SearchResult[], edition: FamilyEdition, D: DepDbg | null = null,
+): Promise<SearchResult[]> {
+  const existing = results.filter(r =>
+    !r.isDeprecated && r.application?.standard === edition.id && (r.excerpt?.text || '').trim().length >= 60
+  );
+  if (D) D.currentExisting = existing.length;
+  if (existing.length >= 3) return [];
+
+  try {
+    const anchor = [
+      edition.fullDesignation || edition.id,
+      edition.title || '',
+      'scope recommendations criteria requirements design guidance',
+    ].filter(Boolean).join(' ');
+    const vector = await embedQueryText(env, anchor);
+
+    const res = await env.VECTORIZE.query(vector, {
+      topK: COMPARISON_CURRENT_TOP_K,
+      returnMetadata: 'all',
+      filter: { standard_code: edition.id },
+    });
+
+    const seen = new Set(
+      results.flatMap(r => [r.excerpt, ...(r.excerpts || [])])
+        .filter(Boolean)
+        .map(e => `${e!.pageNumber ?? '?'}|${(e!.text || '').slice(0, 60)}`)
+    );
+    const usable = ((res.matches || []) as unknown as VMatch[]).filter(m => {
+      const meta = m.metadata || {};
+      const text = String(meta.excerpt_text || '');
+      if (meta.chunk_type === 'application' || meta.chunk_type === 'reference' || meta.chunk_type === 'table') return false;
+      if (text.trim().length < 60 || isTableLike(text) || looksLikeFrontMatter(text)) return false;
+      const key = `${meta.page_number ?? '?'}|${text.slice(0, 60)}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+    if (D) { D.currentProbed = (res.matches || []).length; D.currentUsable = usable.length; }
+    if (usable.length === 0) return [];
+
+    const standardsIndex = await fetchStandardsIndex(env.DB);
+    const built = buildChunkResults(usable, { standardsIndex }, { perStandard: Infinity })
+      .sort((a, b) => (b.relevanceScore || 0) - (a.relevanceScore || 0));
+    return spreadAcrossSections(built, Math.max(1, COMPARISON_CURRENT_EXCERPTS - existing.length));
+  } catch (err) {
+    if (D) D.currentProbeError = errMsg(err);
+    console.error('current-edition comparison probe failed (non-fatal):', errMsg(err));
+    return [];
+  }
+}
+
+/**
+ * One card per edition of the family, even for editions retrieval never reached
+ * (client DO42: "return cards for the current standard (first) followed by all
+ * subsequent deprecated standards (from newest to oldest)").
+ *
+ * The added cards are whole-document cards: designation, title, description and
+ * an "Open in Library" link — everything needed to open that edition and compare
+ * it by hand, which is exactly what the client asked the list to enable.
+ */
+export function addMissingEditionCards(results: SearchResult[], editions: FamilyEdition[]): SearchResult[] {
+  if (editions.length === 0) return results;
+  const present = new Set(
+    results.map(r => String(r.application?.standard || '').toUpperCase()).filter(Boolean)
+  );
+  const missing = editions.filter(e => !present.has(e.id.toUpperCase()));
+  if (missing.length === 0) return results;
+
+  const cards = missing.map(e => {
+    // Score 0 on purpose: this edition was NOT matched semantically, it is here
+    // because the family has it. The UI hides the "Match: N%" badge at 0 rather
+    // than printing a relevance figure that means nothing.
+    const card = buildDocumentResult(e, 0, 'designation');
+    if (e.status !== 'Deprecated') return card;
+    const name = card.citationName || e.id;
+    return {
+      ...card,
+      isDeprecated: true,
+      supersededBy: e.supersededBy,
+      deprecationNotice: e.supersededBy
+        ? `${name} is deprecated and has been replaced by ${e.supersededBy}.`
+        : `${name} is deprecated.`,
+      citation: `${card.citation} (deprecated)`,
+      citationName: `${name} (deprecated)`,
+    };
+  });
+  return [...results, ...cards];
+}
+
+/** Embed one text, reusing the KV embedding cache. */
+async function embedQueryText(env: Env, text: string): Promise<number[]> {
+  const cached = await getCachedEmbedding(env.SESSIONS, EMBED_MODEL, text);
+  if (cached) return cached;
+  const res = await env.AI.run(EMBED_MODEL, { text: [text] }) as unknown as { data: number[][] };
+  const vector = res.data[0];
+  await putCachedEmbedding(env.SESSIONS, EMBED_MODEL, text, vector);
+  return vector;
 }
 
 /**
@@ -2294,6 +2596,15 @@ const FRONT_MATTER_PATTERNS: RegExp[] = [
   /\bprinted in the united states\b/i,
   /\btable of contents\b/i,
   /\bsenior manager of technical content\b/i,
+  // Rosters and prefatory pages (client DO43): the RP-8 comparison was answered
+  // from p. 6 of the prior edition, which "only lists the contributors and does
+  // not provide information on the standard's content".
+  /\backnowledg(?:e)?ments?\b/i,
+  /^\s*(?:contributors?|preface|foreword|committee\s+members?)\b/im,
+  /\b(?:sub)?committee\s+members?\s*[:\n]/i,
+  /\bthe\s+following\s+(?:individuals|members|persons|people)\b/i,
+  /\bboard\s+of\s+directors\b/i,
+  /\bpast\s+president\b/i,
   // Dot leaders — a table-of-contents line. PDF extraction often spaces them
   // out ("New Light Sources . . . . . 143"), so allow whitespace between dots.
   /(?:\.\s*){5,}/,
@@ -2314,6 +2625,13 @@ export function looksLikeFrontMatter(text: string | null | undefined): boolean {
   if (!text) return true;
   const t = String(text);
   if (FRONT_MATTER_PATTERNS.some(re => re.test(t))) return true;
+
+  // Roster density: a page of "J. Smith" / "Smith, J." names is a contributor or
+  // committee list however it is headed (client DO43). Provisions do not carry
+  // five personal names in 200 words.
+  const names = (t.match(/\b[A-Z]\.\s?[A-Z][a-z]{2,}\b/g) || []).length
+    + (t.match(/\b[A-Z][a-z]{2,},\s+[A-Z]\.(?:\s?[A-Z]\.)?(?![a-z])/g) || []).length;
+  if (names >= 5) return true;
 
   const years = (t.match(/\b(?:19|20)\d{2}\b/g) || []).length;
   const bodies = (t.match(/\b(?:ANSI|IES|CIE|ISO|IEC|IEEE|NFPA|ASTM|NEMA)\b/g) || []).length;
@@ -2620,6 +2938,307 @@ export function buildChunkResults(chunkMatches: VMatch[], linkCtx: LinkCtx = {},
       relatedApplications: [],
     };
   });
+}
+
+// ─── Whole-document result cards (client DO47) ───────────────────────────────
+//
+// "A 'search' for the name or designation of a standard should return a direct
+//  link to that standard (new result card format) … Return these card formats
+//  only if the search term is a close or exact match for a document title or
+//  designation. Accept variations on designation (RP-3, RP-03, RP-3-20,
+//  RP-03-20, RP-3-20+E1, RP-03-20 E1…). Present this card at top of search
+//  results. Include thumbnail, description, and hyperlinked author."
+//
+// Before this, "RP-3-20" returned nothing at all: the embedding of a bare
+// designation matches no prose, and the designation is not an application name.
+
+const DESIGNATION_PREFIXES = new Set(['RP', 'TM', 'HB', 'LM', 'LP', 'LS', 'DG', 'LEM', 'G']);
+const MAX_DOCUMENT_CARDS = 3;
+
+/**
+ * Read a query that IS a standard designation, in any of the forms the client
+ * listed. Returns the canonical id when an edition is named, and always the
+ * family; null when the query is not a designation.
+ *
+ *   "RP-3"          → { id: null,           family: 'RP-3' }
+ *   "rp-03-20"      → { id: 'RP-3-20',      family: 'RP-3' }
+ *   "RP-03-20 E1"   → { id: 'RP-3-20+E1',   family: 'RP-3' }
+ *   "ANSI/IES LS-2-20(R2023)" → { id: 'LS-2-20', family: 'LS-2' }
+ */
+export function parseDesignationQuery(raw: string): { id: string | null; family: string } | null {
+  const q = normalizeTypography(raw)
+    .toUpperCase()
+    .replace(/^\s*ANSI\s*\/\s*/, '')
+    .replace(/^\s*(?:ANSI|IES|BSR)[\s/]+/, '')
+    .replace(/\(\s*R\s*\d{2,4}\s*\)/g, ' ')   // reaffirmation marker: LS-2-20(R2023)
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  const m = /^([A-Z]{1,4})[\s-]*0*(\d+(?:\.\d+)?)(?:[\s-]+0*(\d{2}|\d{4}))?(?:[\s+]*E\s*(\d+))?\.?$/.exec(q);
+  if (!m) return null;
+  const [, prefix, number, edition, errata] = m;
+  if (!DESIGNATION_PREFIXES.has(prefix)) return null;
+
+  const family = `${prefix}-${number}`;
+  if (!edition) return { id: null, family };
+  const yy = edition.length === 4 ? edition.slice(2) : edition;
+  return { id: `${family}-${yy}${errata ? `+E${errata}` : ''}`, family };
+}
+
+/** A standard id with its errata suffix removed: "RP-3-20+E1" → "RP-3-20". */
+const baseEditionId = (id: string) => String(id || '').toUpperCase().replace(/\+E\d+$/, '');
+
+/** Fold a title for comparison: lowercase, no punctuation, no series preamble. */
+export function normalizeTitleForMatch(title: string | null | undefined): string {
+  return String(title || '')
+    .toLowerCase()
+    .replace(/^(?:ansi\/ies\s+)?[a-z]{1,4}-\d+(?:\.\d+)?(?:-\d{2})?(?:\+e\d+)?\s*/i, '')
+    .replace(/^(?:recommended practice|design guide|technical memorandum|approved method|lighting practice|lighting science|guideline)\s*[:—–-]\s*/i, '')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
+/**
+ * Is this query a plausible TITLE lookup ("Lighting Educational Facilities")?
+ * Deliberately narrow — the D1 title scan below only runs when it says yes.
+ */
+function looksLikeTitleLookup(query: string): boolean {
+  const q = String(query || '').trim();
+  if (q.length < 8 || q.length > 90) return false;
+  if (/[?]/.test(q)) return false;
+  const words = q.split(/\s+/);
+  if (words.length < 2 || words.length > 9) return false;
+  // A question or an instruction is not a title lookup.
+  return !/^(?:what|how|when|where|why|which|who|show|list|find|give|provide|is|are|can|do|does)\b/i.test(q);
+}
+
+/**
+ * Document cards for a query that names a standard, best match first.
+ * Returns [] for every other query — this must never add noise to a topical
+ * search, which is why the whole query has to be the designation or the title.
+ */
+export async function findStandardLookupResults(env: Env, rawQuery: string, limit = MAX_DOCUMENT_CARDS): Promise<SearchResult[]> {
+  const query = String(rawQuery || '').trim();
+  if (!query) return [];
+
+  try {
+    const parsed = parseDesignationQuery(query);
+    if (parsed) {
+      const editions = (await loadFamilyEditions(env, parsed.family))
+        .filter(e => e.status !== 'Deprecated');
+      if (editions.length === 0) return [];
+
+      if (parsed.id) {
+        const wanted = baseEditionId(parsed.id);
+        const exact = editions.filter(e => baseEditionId(e.id) === wanted);
+        // An exact edition match is the answer; a named edition we do not hold
+        // (an older one, or a typo'd year) still resolves to the current edition
+        // of that family — "close match", which is what the client asked for.
+        const picked = exact.length > 0 ? exact : editions.slice(0, 1);
+        return picked.slice(0, limit).map(e =>
+          buildDocumentResult(e, exact.length > 0 ? 1 : 0.85, 'designation'));
+      }
+      // Family only ("RP-3") → the current edition.
+      return editions.slice(0, 1).map(e => buildDocumentResult(e, 0.95, 'designation'));
+    }
+
+    if (!looksLikeTitleLookup(query)) return [];
+
+    const q = normalizeTitleForMatch(query);
+    if (q.length < 8) return [];
+    const rows = await env.DB.prepare(
+      "SELECT id, title FROM standards WHERE status = 'Active' AND title IS NOT NULL"
+    ).all<{ id: string; title: string | null }>();
+
+    const scored: Array<{ id: string; score: number }> = [];
+    for (const row of rows.results || []) {
+      const t = normalizeTitleForMatch(row.title);
+      if (!t) continue;
+      if (t === q) scored.push({ id: row.id, score: 1 });
+      else if (t.startsWith(q) && q.length >= 12) scored.push({ id: row.id, score: 0.95 });
+      else if (q.length >= 16 && t.includes(q)) scored.push({ id: row.id, score: 0.9 });
+    }
+    if (scored.length === 0) return [];
+
+    scored.sort((a, b) => b.score - a.score || a.id.localeCompare(b.id));
+    const ids = scored.slice(0, limit).map(s => s.id);
+    const editions = await selectStandardRows(
+      env, `WHERE id IN (${ids.map(() => '?').join(',')})`, ids,
+    );
+    const byId = new Map(editions.map(e => [e.id, e]));
+    return ids
+      .map(id => {
+        const e = byId.get(id);
+        return e ? buildDocumentResult(e, scored.find(s => s.id === id)!.score, 'title') : null;
+      })
+      .filter((r): r is SearchResult => r !== null);
+  } catch (err) {
+    console.error('standard lookup failed (non-fatal):', errMsg(err));
+    return [];
+  }
+}
+
+/** One standards row → a whole-document result card. */
+export function buildDocumentResult(
+  e: FamilyEdition, score: number, matchedOn: 'designation' | 'title',
+): SearchResult {
+  const designation = e.fullDesignation || e.id;
+  // Full designation AND title on every card (client DO45).
+  const fullName = composeStandardName(designation, e.title);
+
+  return {
+    resultType: 'standard',
+    document: {
+      id: e.id,
+      designation,
+      title: e.title,
+      description: e.description,
+      thumbnailUrl: e.thumbnailUrl,
+      buyUrl: e.buyUrl,
+      collection: e.collection,
+      matchedOn,
+    },
+    // Authoring technical committee, credited and linked exactly as on every
+    // other card (client DO29/DO34).
+    committee: resolveCommittee(e.author),
+    standardLink: e.webUrl,
+    vitriumLink: e.webUrl,
+    application: {
+      code: `standard:${e.id}`,
+      category: e.id,
+      sub1: null, sub2: null, sub3: null,
+      fullName: e.title || e.id,
+      standard: e.id,
+      standardFull: designation,
+      standardTitle: e.title,
+      tableRef: null,
+      rowRef: null,
+      areaOrTask: null,
+      indoorOutdoor: null,
+      horizontal: null, vertical: null, task: null,
+      tm24Eligible: false, tm24Notes: null,
+      outdoor: null,
+      footnotes: null, footnoteMarks: null, generalNotes: null, appNotes: null,
+    },
+    relevanceScore: Math.round(score * 1000) / 1000,
+    excerpt: null,
+    excerpts: [],
+    citation: fullName,
+    citationName: fullName,
+    citationPage: null,
+    relatedApplications: [],
+  };
+}
+
+// ─── Section titles on body excerpts (client DO40) ───────────────────────────
+
+const SECTION_TITLE_MAX_STANDARDS = 30;
+
+/** standards.sections_json → { "3.3.4": "Circulation Areas" }, or null. */
+function parseSectionIndex(raw: string | null | undefined): Record<string, string> | null {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    return (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+/** "3.3.4" → ["3", "3.3", "3.3.4"]; "Annex A" → ["Annex A"]. */
+export function sectionAncestors(section: string): string[] {
+  const s = String(section || '').trim();
+  if (!s) return [];
+  if (/^(?:annex|appendix)\b/i.test(s)) return [s];
+  const parts = s.split('.');
+  const out: string[] = [];
+  for (let i = 0; i < parts.length; i++) out.push(parts.slice(0, i + 1).join('.'));
+  return out;
+}
+
+/** The printed title of one section number, tolerating annex/`.0` spellings. */
+function lookupSectionTitle(index: Record<string, string>, number: string): string | null {
+  const direct = index[number];
+  if (direct) return direct;
+  if (/^[A-Z]$/i.test(number)) {
+    const annex = index[`Annex ${number.toUpperCase()}`] || index[`Appendix ${number.toUpperCase()}`];
+    if (annex) return annex;
+  }
+  const trimmed = number.replace(/\.0$/, '');
+  if (trimmed !== number && index[trimmed]) return index[trimmed];
+  if (index[`${number}.0`]) return index[`${number}.0`];
+  return null;
+}
+
+/**
+ * Resolve a section number to its title plus every parent title above it, so a
+ * card can print "3.3.4 Design Guide › Transition Spaces… › Circulation Areas"
+ * (client DO40).
+ *
+ * Returns null unless the LEAF section resolves: printing an ancestor's title
+ * next to a different section's number would read as that section's name.
+ */
+export function resolveSectionPath(
+  index: Record<string, string>, section: string | null | undefined,
+): { number: string; title: string; path: Array<{ number: string; title: string }> } | null {
+  const raw = String(section || '').trim();
+  if (!raw) return null;
+  const numbers = sectionAncestors(raw);
+  if (numbers.length === 0) return null;
+
+  const leafTitle = lookupSectionTitle(index, numbers[numbers.length - 1]);
+  if (!leafTitle) return null;
+
+  const path: Array<{ number: string; title: string }> = [];
+  for (const number of numbers) {
+    const title = lookupSectionTitle(index, number);
+    // A parent with no recorded title is skipped rather than printed blank; the
+    // chain is context, and a gap in it is better than an empty crumb.
+    if (title && !path.some(p => p.title === title)) path.push({ number, title });
+  }
+  return { number: raw, title: leafTitle, path };
+}
+
+/**
+ * Attach section titles to every excerpt in a result set.
+ *
+ * One D1 read for the standards actually present (never the whole corpus — the
+ * maps are far too large to load per search). Mutates the excerpts in place,
+ * which is safe because `excerpt` and `excerpts[0]` are the same object.
+ */
+export async function attachSectionTitles(env: Env, results: SearchResult[]): Promise<void> {
+  const ids = new Set<string>();
+  for (const r of results) {
+    const std = r.application?.standard;
+    if (!std) continue;
+    const sectioned = (r.excerpt?.section) || (r.excerpts || []).some(e => e?.section);
+    if (sectioned) ids.add(std);
+  }
+  if (ids.size === 0) return;
+
+  const list = [...ids].slice(0, SECTION_TITLE_MAX_STANDARDS);
+  const rows = await env.DB.prepare(
+    `SELECT id, sections_json FROM standards WHERE id IN (${list.map(() => '?').join(',')})`
+  ).bind(...list).all<{ id: string; sections_json: string | null }>();
+
+  const byStandard = new Map<string, Record<string, string>>();
+  for (const row of rows.results || []) {
+    const index = parseSectionIndex(row.sections_json);
+    if (index) byStandard.set(row.id, index);
+  }
+  if (byStandard.size === 0) return;
+
+  for (const r of results) {
+    const index = byStandard.get(r.application?.standard || '');
+    if (!index) continue;
+    for (const excerpt of [r.excerpt, ...(r.excerpts || [])]) {
+      if (!excerpt || !excerpt.section || excerpt.sectionTitle) continue;
+      const resolved = resolveSectionPath(index, excerpt.section);
+      if (!resolved) continue;
+      excerpt.sectionTitle = resolved.title;
+      excerpt.sectionPath = resolved.path;
+    }
+  }
 }
 
 // ─── Utility Helpers ──────────────────────────────────────────────────────────

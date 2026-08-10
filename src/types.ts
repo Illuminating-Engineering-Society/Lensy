@@ -111,6 +111,13 @@ export interface StandardRow {
   coverage_json: string | null;
   /** { "<markerNumber>": firstBodyPage } — migration 0009, client DO31.4. */
   reference_markers_json: string | null;
+  /** { "<sectionNumber>": "<printed title>" } — migration 0011, client DO40. */
+  sections_json: string | null;
+  /** Table of Contents metadata from the Vitrium/webstore export (migration 0010). */
+  collection: string | null;
+  thumbnail_url: string | null;
+  buy_url: string | null;
+  elearning_json: string | null;
   indexed_at: string | null;
   created_at: string;
   updated_at: string;
@@ -247,10 +254,24 @@ export interface FormattedApplication {
   appNotes: string | null;
 }
 
+/** One step of a section's parent chain: "3.3" → "Transition Spaces…" (DO40). */
+export interface SectionCrumb {
+  number: string;
+  title: string | null;
+}
+
 export interface Excerpt {
   text: string;
   pageNumber: number | null;
   section: string | null;
+  /** The printed title of `section`, resolved from standards.sections_json (DO40). */
+  sectionTitle?: string | null;
+  /**
+   * `section` and every parent above it, root first — so a card can print
+   * "3.3.4 Design Guide › Transition Spaces… › Circulation Areas" (client DO40).
+   * Absent when the standard was ingested before section titles were captured.
+   */
+  sectionPath?: SectionCrumb[];
   chunkType: string;
   /**
    * Page-targeted Lighting Library URL for THIS excerpt (client DO22: the
@@ -303,7 +324,27 @@ export interface ReferenceMarker {
   url: string | null;
 }
 
-export type ResultType = 'application' | 'excerpt' | 'reference' | 'definition';
+export type ResultType = 'application' | 'excerpt' | 'reference' | 'definition' | 'standard';
+
+/**
+ * A WHOLE standard as a result card (client DO47): what a search for a
+ * designation or a document title returns, at the top of the results.
+ *
+ * Carries the same metadata the Table of Contents shows — cover thumbnail,
+ * content description from Vitrium, authoring committee — so the card is a
+ * direct route into the document rather than a passage from inside it.
+ */
+export interface DocumentCard {
+  id: string;
+  designation: string;
+  title: string | null;
+  description: string | null;
+  thumbnailUrl: string | null;
+  buyUrl: string | null;
+  collection: string | null;
+  /** How the query matched: the designation (exact or a close variant), or the title. */
+  matchedOn: 'designation' | 'title';
+}
 
 /** One ANSI/IES LS-1 definition on a Definition result card (client DO33). */
 export interface DefinitionPayload {
@@ -348,6 +389,8 @@ export interface SearchResult {
   referenceMarkers?: ReferenceMarker[];
   /** Present only on resultType 'definition' (client DO33). */
   definition?: DefinitionPayload;
+  /** Present only on resultType 'standard' — the whole-document card (DO47). */
+  document?: DocumentCard;
   /** Authoring technical committee, credited under the citation (DO34). */
   committee?: CommitteeCredit | null;
   isDeprecated?: boolean;
@@ -488,6 +531,8 @@ export interface IngestRequestBody {
     year: string | number; fullDesignation: string; pageCount: number;
   }>;
   chunks?: IngestChunk[];
+  /** section number → printed section title, from extractSectionTitles (DO40). */
+  sections?: Record<string, string>;
   tables?: TableData[];
   applications?: Partial<ApplicationRow>[];
   r2Key?: string | null;

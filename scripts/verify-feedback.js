@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Lensy — Acceptance check for the 260729 client feedback items.
+ * Lensy — Acceptance check for the 260729 and 260805 client feedback items.
  *
  * `verify-ingest.js` answers "did the DATA get rewritten?". This script answers
  * the question the client actually asks: "run a search and show me the fix is
@@ -83,6 +83,9 @@ const PROBES = {
   body: { query: 'how should uniformity be evaluated across a lit area' },
   neutral: { query: 'office lighting levels' },
   definitionPhrase: { query: 'define mesopic vision' },
+  // The client's own sample search for DO40 — a broad conceptual query whose
+  // answers are body excerpts, which is where the section heading has to appear.
+  section: { query: 'transition and circulation space' },
 };
 
 // The per-type match floors declared in src/workers/search.ts (DO39). Duplicated
@@ -181,6 +184,7 @@ const ctx = {
   standardsError: null, // why the list is unavailable, if it is
   totals: null,         // /api/admin/index-status
   indexHtml: null,      // the served search page, for the frontend-only items
+  tocHtml: null,        // the served Table of Contents page (DO46)
   migration0010: null,  // boolean | null
   existsCache: new Map(),
 };
@@ -253,6 +257,26 @@ async function loadIndexHtml() {
     text: readFileSync(resolve(ROOT, 'src/frontend/index.html'), 'utf8'),
   };
   return ctx.indexHtml;
+}
+
+/** The served Table of Contents page (DO46), with the same local fallback. */
+async function loadTocHtml() {
+  if (ctx.tocHtml) return ctx.tocHtml;
+  for (const path of ['/contents', '/contents.html']) {
+    try {
+      const res = await fetch(`${CONFIG.apiUrl}${path}`, { headers: authHeaders() });
+      const text = await res.text();
+      if (res.ok && /toc-groups/.test(text)) {
+        ctx.tocHtml = { source: `served (${path})`, text };
+        return ctx.tocHtml;
+      }
+    } catch { /* try the next path, then the local copy */ }
+  }
+  ctx.tocHtml = {
+    source: 'local file (the deployment did not serve the page)',
+    text: readFileSync(resolve(ROOT, 'src/frontend/contents.html'), 'utf8'),
+  };
+  return ctx.tocHtml;
 }
 
 /**
@@ -996,6 +1020,312 @@ const CHECKS = [
       }
       notes.push('ordering stays within the 0.01 near-tie epsilon');
       return pass(notes.join(' · '));
+    },
+  },
+
+  // ─── 260805 round (DO40–DO47) ───────────────────────────────────────────────
+
+  {
+    id: 'DO40',
+    title: 'Body excerpts carry their section number AND title',
+    async run() {
+      const data = await search(PROBES.section.query, { contentTypes: ['body'], limit: 20 });
+      const excerpts = (data.results || [])
+        .filter(r => r.resultType === 'excerpt')
+        .flatMap(r => (r.excerpts && r.excerpts.length ? r.excerpts : (r.excerpt ? [r.excerpt] : [])));
+      if (excerpts.length === 0) return blocked('the query returned no body excerpts', 'ingest the corpus');
+
+      const sectioned = excerpts.filter(e => e && e.section);
+      if (sectioned.length === 0) {
+        return blocked(
+          `${excerpts.length} excerpt(s), none carrying a section number at all`,
+          'the section number comes from the chunker — run npm run ingest',
+        );
+      }
+      const titled = sectioned.filter(e => e.sectionTitle);
+      if (titled.length === 0) {
+        return blocked(
+          `${sectioned.length} excerpt(s) carry a section number but no title`,
+          'apply migration 0011 (npm run db:migrate:remote), then re-ingest (npm run ingest) — ' +
+          'the titles live in standards.sections_json and only an ingest writes them',
+        );
+      }
+      const withParents = titled.filter(e => (e.sectionPath || []).length > 1);
+      const html = await loadIndexHtml();
+      if (!/function sectionPathHtml/.test(html.text)) {
+        return fail(`the API returns section titles but the page does not render them [${html.source}]`);
+      }
+      const e = withParents[0] || titled[0];
+      return pass(
+        `${titled.length}/${sectioned.length} sectioned excerpts carry a title ` +
+        `(e.g. ${e.section} ${(e.sectionPath || []).map(p => p.title).join(' › ') || e.sectionTitle})` +
+        `, ${withParents.length} with a parent chain [${html.source}]`,
+      );
+    },
+  },
+
+  {
+    id: 'DO41',
+    title: 'A pasted "Sample Search:" label never reaches the search',
+    async run() {
+      const labelled = await search(`Sample Search: ${PROBES.comparison.query}`, { limit: 5 });
+      if (/^\s*sample\s+search/i.test(labelled.query)) {
+        return fail(`the Worker echoed the query with its label intact: "${labelled.query}"`);
+      }
+      if (!labelled.isVersionComparison) {
+        return fail(
+          `the label was stripped ("${labelled.query}") but the comparison intent was still lost`,
+          'stripQueryLabel must run before isVersionComparisonQuery in handleSearch',
+        );
+      }
+      const html = await loadIndexHtml();
+      if (!/function stripQueryLabel/.test(html.text)) {
+        return fail(`the Worker strips the label but the search box does not [${html.source}]`);
+      }
+      return pass(`"Sample Search: …" → "${labelled.query}", still recognised as a version comparison`);
+    },
+  },
+
+  {
+    id: 'DO42',
+    title: 'A comparison lists the current edition first, then every prior edition',
+    async run() {
+      const totals = await loadTotals();
+      if (totals && totals.deprecated === 0) {
+        return blocked(
+          'no deprecated editions are indexed, so there is nothing to list',
+          'put the prior-edition PDFs in pdfs/Deprecated Standards/ and run npm run ingest:deprecated',
+        );
+      }
+      await loadStandards();
+      const family = PROBES.comparison.family;
+      const inFamily = (ctx.standards || []).filter(s =>
+        s.id === family || s.id.toUpperCase().startsWith(`${family}-`));
+      if (inFamily.length === 0) {
+        return blocked(`no ${family} edition is indexed`, `ingest the ${family} PDFs`);
+      }
+
+      const data = await comparisonSearch();
+      const cards = data.results || [];
+      const shown = [...new Set(cards.map(r => r.application?.standard).filter(Boolean))]
+        .filter(id => id === family || id.toUpperCase().startsWith(`${family}-`));
+
+      const current = inFamily.filter(s => s.status === 'Active').map(s => s.id);
+      const missingCurrent = current.filter(id => !shown.includes(id));
+      if (current.length > 0 && missingCurrent.length === current.length) {
+        return fail(
+          `the current edition (${current.join(', ')}) has no card — only ${shown.join(', ')} were returned`,
+          'addMissingEditionCards should add one card per indexed edition of the family',
+        );
+      }
+      const deprecated = inFamily.filter(s => s.status === 'Deprecated').map(s => s.id);
+      const missingDeprecated = deprecated.filter(id => !shown.includes(id));
+
+      // Order: the current edition's cards, then prior editions newest → oldest.
+      const firstDeprecated = cards.findIndex(r => r.isDeprecated);
+      const lastCurrent = cards.reduce((last, r, i) => (r.isDeprecated ? last : i), -1);
+      if (firstDeprecated !== -1 && lastCurrent > firstDeprecated) {
+        return fail(`a current-edition card appears at #${lastCurrent + 1}, after a deprecated one at #${firstDeprecated + 1}`);
+      }
+
+      const notice = data.aiGuideRequiredNotice;
+      if (notice && !/Enable Guide/.test(notice)) {
+        return fail(`the advisory does not name the "Enable Guide" filter: "${notice}"`);
+      }
+
+      const detail = `${shown.length} of ${inFamily.length} indexed ${family} edition(s) have a card ` +
+        `(${shown.join(' → ')}), current first`;
+      return missingDeprecated.length === 0
+        ? pass(detail)
+        : fail(`${detail}; missing: ${missingDeprecated.join(', ')}`);
+    },
+  },
+
+  {
+    id: 'DO43',
+    title: 'The comparison analyses provisions, not the contributor page',
+    async run() {
+      const totals = await loadTotals();
+      if (totals && totals.deprecated === 0) {
+        return blocked('no deprecated editions are indexed', 'npm run ingest:deprecated');
+      }
+      const data = await comparisonSearch();
+      const cmp = data.aiSummary?.comparison;
+      if (!cmp) return blocked('the AI summary carried no comparison context', 'AI Guide must be on and reachable');
+      if (data.aiSummary?.degraded) return blocked('every AI model attempt failed', 'retry when Workers AI recovers');
+
+      // (a) the CURRENT edition must be the newest Active edition of the family
+      await loadStandards();
+      const family = PROBES.comparison.family;
+      const active = (ctx.active || [])
+        .filter(s => s.id === family || s.id.toUpperCase().startsWith(`${family}-`))
+        .map(s => s.id)
+        .sort();
+      if (active.length > 0 && cmp.current && !active.includes(cmp.current.id)) {
+        return fail(
+          `the comparison calls ${cmp.current.id} current; the indexed Active ${family} edition(s) are ${active.join(', ')}`,
+          'the current edition is resolved from D1 in handleSearch — check comparisonFamily/loadFamilyEditions',
+        );
+      }
+
+      // (b) the prior edition must contribute a real provision, not a roster page
+      const deprecatedExcerpts = (data.results || [])
+        .filter(r => r.isDeprecated)
+        .flatMap(r => (r.excerpts && r.excerpts.length ? r.excerpts : (r.excerpt ? [r.excerpt] : [])))
+        .map(e => String(e?.text || ''))
+        .filter(t => t.trim().length >= 60);
+      if (deprecatedExcerpts.length === 0) {
+        return blocked(
+          'no prior-edition passage was retrieved (only edition cards)',
+          'confirm the prior edition is in the deprecated index (npm run ingest:deprecated)',
+        );
+      }
+      const rosterish = deprecatedExcerpts.filter(t =>
+        /\backnowledg|contributors?\b|\bcommittee members\b/i.test(t) ||
+        (t.match(/\b[A-Z]\.\s?[A-Z][a-z]{2,}\b/g) || []).length >= 5
+      );
+      if (rosterish.length === deprecatedExcerpts.length) {
+        return fail(
+          `all ${deprecatedExcerpts.length} prior-edition passage(s) are front matter (rosters/acknowledgements)`,
+          'looksLikeFrontMatter should exclude these from comparison retrieval — re-check the deprecated index coverage',
+        );
+      }
+
+      // (c) the answer must not present that packaging as a change
+      const text = String(data.aiSummary.text || '');
+      if (/\b(?:contributors?|acknowledgements?)\b[^.]{0,80}\b(?:new|added|revised|updated)\b/i.test(text)) {
+        return fail('the analysis describes a contributor list as new or revised content');
+      }
+      return pass(
+        `current edition resolved to ${cmp.current?.id || '(none)'}; ` +
+        `${deprecatedExcerpts.length - rosterish.length}/${deprecatedExcerpts.length} prior-edition passages are provisions`,
+      );
+    },
+  },
+
+  {
+    id: 'DO44',
+    title: 'Reference chips say the marker is FIRST printed',
+    async run() {
+      const html = await loadIndexHtml();
+      if (!/marker is first printed/.test(html.text)) {
+        return fail(`the page still reads "the marker is printed" [${html.source}]`);
+      }
+      return pass(`the caption reads "the link opens the page where the marker is first printed" [${html.source}]`);
+    },
+  },
+
+  {
+    id: 'DO45',
+    title: 'Every result card prints the full designation AND title',
+    async run() {
+      const seen = new Map(); // resultType → { total, titled, sample }
+      for (const [content, type] of Object.entries(TYPE_FOR_CONTENT)) {
+        const data = await search(
+          content === 'definitions' ? PROBES.definition.term
+            : content === 'references' ? PROBES.references.query
+              : PROBES.neutral.query,
+          { contentTypes: [content], limit: 10 },
+        );
+        for (const r of (data.results || []).filter(r => r.resultType === type)) {
+          const name = String(r.citationName || r.citation || '');
+          const stat = seen.get(type) || { total: 0, titled: 0, sample: name };
+          stat.total++;
+          // A full name is designation + descriptive title, so it carries words
+          // beyond the designation token itself.
+          if (/[A-Za-z]{4,}/.test(name.replace(/^\S+\s*\S*/, ''))) stat.titled++;
+          else stat.sample = name;
+          seen.set(type, stat);
+        }
+      }
+      if (seen.size === 0) return blocked('no cards of any kind came back', 'ingest the corpus');
+
+      const short = [...seen.entries()].filter(([, s]) => s.titled < s.total);
+      const detail = [...seen.entries()]
+        .map(([type, s]) => `${type}: ${s.titled}/${s.total}`).join(', ');
+      if (short.length > 0) {
+        return blocked(
+          `${detail} — e.g. "${short[0][1].sample}" is a designation with no title`,
+          'the title comes from standards.title: add a Title/Description column to the Vitrium CSV export ' +
+          'and run npm run sync-metadata',
+        );
+      }
+      return pass(`every card carries designation + title (${detail})`);
+    },
+  },
+
+  {
+    id: 'DO46',
+    title: 'Table of Contents groups by Category, then by authoring committee',
+    async run() {
+      const page = await loadTocHtml();
+      const required = [
+        ['category order', /const CATEGORY_ORDER\s*=\s*\[/],
+        ['Lighting Science first', /'Lighting Science',\s*\n\s*'Lighting Practice'/],
+        ['author grouping', /function renderAuthorGroups/],
+        ['committee hyperlink', /ies\.org\/committee|committee\.url/],
+      ];
+      const missing = required.filter(([, re]) => !re.test(page.text)).map(([name]) => name);
+      if (missing.length > 0) return fail(`the Table of Contents page is missing: ${missing.join(', ')} [${page.source}]`);
+
+      await loadStandards();
+      if (ctx.standardsError) {
+        return blocked(`the page reads the standards list, and ${ctx.standardsError}`, 'apply the migrations');
+      }
+      const active = ctx.active || [];
+      const withCollection = active.filter(s => s.collection).length;
+      const withAuthor = active.filter(s => s.committee?.name || s.author).length;
+      if (withCollection === 0 || withAuthor === 0) {
+        return blocked(
+          `the grouping is implemented, but the data is not there yet: ${withCollection}/${active.length} standards ` +
+          `carry a Category and ${withAuthor}/${active.length} carry an Author`,
+          'add the Collection and Author columns to the Vitrium CSV export, then run npm run sync-metadata',
+        );
+      }
+      return pass(
+        `grouping implemented [${page.source}]; ${withCollection}/${active.length} standards carry a Category ` +
+        `and ${withAuthor}/${active.length} an authoring committee`,
+      );
+    },
+  },
+
+  {
+    id: 'DO47',
+    title: 'Searching a designation returns that document',
+    async run() {
+      await loadStandards();
+      if (ctx.standardsError) {
+        return blocked(`the probe needs the standards list, and ${ctx.standardsError}`, 'apply the migrations');
+      }
+      const target = (ctx.active || []).find(s => /^[A-Z]{1,4}-\d+(?:\.\d+)?-\d{2}/.test(s.id));
+      if (!target) return blocked('no active standard is indexed', 'ingest the corpus');
+
+      // The bare edition, without any errata suffix — one of the variations the
+      // client listed, and the form the Table of Contents links to.
+      const bare = target.id.replace(/\+E\d+$/, '');
+      const data = await search(bare, { limit: 10 });
+      const first = (data.results || [])[0];
+      if (!first) return fail(`a search for "${bare}" returned nothing at all`);
+      if (first.resultType !== 'standard') {
+        return fail(
+          `a search for "${bare}" led with a ${first.resultType} card, not the document itself`,
+          'findStandardLookupResults must prepend the document card',
+        );
+      }
+      const doc = first.document || {};
+      const gaps = [
+        !doc.title && 'title',
+        !doc.description && 'description',
+        !doc.thumbnailUrl && 'thumbnail',
+        !first.committee && 'authoring committee',
+      ].filter(Boolean);
+      const detail = `"${bare}" → ${doc.designation || doc.id} at the top of the results`;
+      return gaps.length === 0
+        ? pass(`${detail}, with title, description, thumbnail and committee`)
+        : blocked(
+            `${detail}, but the card has no ${gaps.join(', ')}`,
+            'those fields come from the Vitrium export — run npm run sync-metadata',
+          );
     },
   },
 ];

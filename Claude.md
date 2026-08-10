@@ -1374,6 +1374,10 @@ This architecture prioritizes:
 - **Comparison scope (client DO27):** result cards print the CURRENT edition first, then the deprecated editions newest → oldest. The AI comparison is against exactly ONE prior edition — the most recent deprecated one, unless the query names another explicitly ("what changed between RP-8-25 and RP-8-18?"). Older editions stay in the cards (and in `comparison.alsoDeprecated`) but never reach the prompt; feeding four prior editions at once is what produced an answer claiming RP-8-25+E2 replaced RP-8-14.
 - **Comparison grounding (client DO28):** the prompt forbids naming any section, annex, chapter, table, figure or page that does not appear verbatim in the retrieved excerpts, and forbids describing the standard's subject matter from prior knowledge. Both rules exist because the prompt's own illustrative locators ("Annex H", "Section 11.3.1") were being echoed back as findings, and an RP-9 (hospitality) comparison was answered with RP-29 (healthcare) content.
 - **Comparison depth (client DO28):** the deprecated index is probed from several topical anchors — the top current excerpts, one per page — and the result window is spread across sections (`spreadAcrossSections`) so a long standard like RP-8 is sampled across chapters rather than within one.
+- **Every edition gets a card (client DO42):** a comparison lists the current edition first, then EVERY indexed deprecated edition of the family newest → oldest, whether or not retrieval reached its pages (`loadFamilyEditions` + `addMissingEditionCards`). A card with no passage is still the fastest route to opening that edition for a manual comparison — the client's RP-8 search returned three deprecated cards and no current one at all.
+- **"Current" comes from D1, not from the ranking (client DO43):** the current edition is the newest **Active** edition of the family (`comparisonFamily` → `loadFamilyEditions`), and it is what `buildComparisonContext` names and what the prompt is told to compare against. The result list is ranked by relevance, so its first entry is not reliably the current edition.
+- **The current edition is probed directly (client DO43):** "what's new in …" is meta-phrasing that retrieves tables of contents, so when the ordinary search yields no current-edition prose, `ensureCurrentEditionExcerpts` fetches it with a `standard_code` filter anchored on the standard's own designation + title, spread across sections. Without it the analysis has one side of the comparison only.
+- **Rosters are front matter (client DO43):** `looksLikeFrontMatter` also rejects contributor/acknowledgement/committee-roster pages, by heading and by name density. The reported failure was an RP-8 comparison answered from p. 6 of the prior edition — a contributors list.
 
 ### Content Types (search filter)
 
@@ -1390,6 +1394,27 @@ This architecture prioritizes:
 Defaults are `tables` + `body`. A reference-seeking or definition-seeking query replaces that default automatically (`isReferenceQuery` / `isDefinitionQuery` in `query-expander.ts`); a caller who customized the filters keeps their choices and gets the detected kind added.
 
 The UI label for each kind matches the filter label exactly — "Documents" filters for "Document" cards (client DO32; the label used to read "Document Body") — and each kind owns one border line style and one chip palette (`RESULT_TYPE_STYLES` in `index.html`).
+
+A fifth `resultType`, **`standard`**, is not a filter value: it is the whole-document card a designation or title search returns (see below). It is a Document, so it borrows the `excerpt` label, line style and palette rather than owning a fifth one.
+
+### Whole-document cards (client DO47)
+
+A search whose WHOLE query is a standard's designation or title returns that standard itself, at the top of the results — before this, "RP-3-20" returned nothing at all, because a bare designation matches no prose and is not an application name.
+
+- `parseDesignationQuery` accepts every variation the client listed: `RP-3`, `RP-03`, `RP-3-20`, `RP-03-20`, `RP-3-20+E1`, `RP-03-20 E1`, with or without an `ANSI/IES` prefix or an `(R2023)` reaffirmation marker. A family without an edition resolves to the current edition; an edition IES no longer publishes resolves to the current one as a *close* match (score < 1).
+- A title lookup requires the query to be a close match to the title with its series preamble removed ("Lighting Educational Facilities" → *Recommended Practice: Lighting Educational Facilities*), and is skipped for anything shaped like a question.
+- The card carries the same metadata as the Table of Contents — thumbnail, Vitrium content description, hyperlinked authoring committee, Read/Buy — and prints the full designation + title (client DO45).
+- Deprecated editions never answer a lookup. The same builder (`buildDocumentResult`) produces the per-edition cards a version comparison adds, and those ARE flagged deprecated.
+- Gated on the Documents pill: a whole standard is a Document, so a search narrowed to Definitions or References does not get one.
+
+### Section titles on body excerpts (client DO40)
+
+Every body excerpt is headed by its section number and title, with the parent chain above it — "3.3.4 Design Guide › Transition Spaces Between Exterior and Interior Spaces › Circulation Areas" — and excerpts from the same section of the same document render as ONE card.
+
+- A chunk's Vectorize metadata carries only its own section NUMBER, so the titles are a per-document map: `extractSectionTitles` (in `chunker.js`) builds `{ "3.3.4": "Circulation Areas" }` at ingest, the ingest stores it in `standards.sections_json` (migration 0011), and `attachSectionTitles` resolves it at query time for the standards actually in a result set — never for the whole corpus, which would be far too much to load per search.
+- It runs BEFORE the AI Guide, so the model can name a chapter by its printed title without breaching the DO28 grounding rule.
+- Table-of-contents pages are skipped during extraction (their entries have the same shape as headings but carry a page number), and a heading's title must open with a capital — that is what separates "3.3.4 Circulation Areas" from "300 lux at 0.76 m".
+- Degrades cleanly: a standard ingested before migration 0011 prints the section number alone, exactly as before.
 
 ### LS-1 Definitions (client DO33)
 

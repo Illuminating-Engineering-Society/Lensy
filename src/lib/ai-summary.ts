@@ -373,6 +373,16 @@ function describeResult(r: SearchResult, idx: number): string {
   Entry: "${(excerptText || '').substring(0, 300)}"`;
   }
 
+  // A whole-document card (client DO47): there is no passage, so describe the
+  // document itself from the publisher's own metadata.
+  if (r.resultType === 'standard' && r.document) {
+    const d = r.document;
+    return `[Result ${idx + 1}] STANDARD (whole document): ${d.designation}${d.title ? ` — ${d.title}` : ''}
+  ${d.description
+    ? `Publisher's description: "${d.description.substring(0, 400)}"`
+    : '(no published description on file — do not describe its contents)'}`;
+  }
+
   // LS-1 terminology (client DO33): the definition IS the authority, so it is
   // given verbatim and the model is told not to restate it as its own wording.
   if (r.resultType === 'definition' && r.definition) {
@@ -397,8 +407,15 @@ function describeResult(r: SearchResult, idx: number): string {
   const excerpts = (r.excerpts && r.excerpts.length > 0)
     ? r.excerpts.slice(0, 3)
     : (excerptText ? [{ text: excerptText, pageNumber: r.excerpt?.pageNumber ?? null, section: r.excerpt?.section ?? null }] : []);
+  // The section TITLE travels with the number (client DO40) so the model can
+  // name a chapter the way the standard prints it — the grounding rule only
+  // allows locators that appear verbatim here, and a bare "§3.3.4" gave it
+  // nothing nameable to cite.
+  const locatorOf = (e: { section?: string | null; sectionTitle?: string | null; pageNumber?: number | null }) =>
+    `${e.section ? ` §${e.section}${e.sectionTitle ? ` ${e.sectionTitle}` : ''}` : ''}` +
+    `${e.pageNumber != null ? ` (p. ${e.pageNumber})` : ''}`;
   const excerptLines = excerpts.length > 0
-    ? excerpts.map(e => `  Excerpt${e.section ? ` §${e.section}` : ''}${e.pageNumber != null ? ` (p. ${e.pageNumber})` : ''}: "${(e.text || '').substring(0, 320)}"`).join('\n')
+    ? excerpts.map(e => `  Excerpt${locatorOf(e)}: "${(e.text || '').substring(0, 320)}"`).join('\n')
     : '  (No excerpt available)';
 
   return `[Result ${idx + 1}] ${app.fullName || app.category}
@@ -450,8 +467,16 @@ What appears to be new
 Likely technical updates
 Possible deletions
 
+COMPARE THE CONTENT OF THE TWO EDITIONS. Read the passages from each edition
+above, then say what the current edition covers that the prior one does not,
+what both cover differently, and what the prior edition covered that no longer
+appears. Work from the substance of the passages — a difference in wording,
+scope, criteria or procedure — not from the fact that one edition happened to be
+retrieved more often.
+
 GROUNDING — the single most important rule:
 - Every section number, annex letter, chapter title, table number, figure number and page number you write MUST appear verbatim in the excerpts above. If an excerpt does not give you a locator, describe the change without one. NEVER invent, guess, or pattern-fill a locator, and never write "(or similar)" after one.
+- If the passages retrieved from one edition are only packaging — a contributor or committee roster, an errata notice, a copyright page, a table of contents — say plainly that the retrieval did not reach that edition's provisions and recommend opening both documents. NEVER describe a contributor list, an acknowledgement or a table of contents as new, updated or deleted content.
 - Use ONLY the excerpts above to determine what these documents are about. Do not draw on any prior knowledge of what this standard covers — designations are easily confused with one another, and describing the wrong subject matter is worse than saying less. If the excerpts do not tell you the topic of a change, do not name a topic.
 - If the excerpts do not support a section, write one sentence saying the retrieved passages do not show changes of that kind, and move on. That is a correct answer; a plausible-sounding invented one is not.
 

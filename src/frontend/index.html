@@ -738,14 +738,30 @@
     }
 
     // ── Search ───────────────────────────────────────────────────────────────
+
+    // Client DO41: the feedback documents print each example as
+    // "Sample Search: What's new in …", and testers paste the whole line. The
+    // label is not part of the question and it degrades the answer, so it is
+    // dropped here as well as in the Worker (stripQueryLabel in
+    // src/lib/query-expander.ts) — the box then shows what was actually run.
+    const PASTED_LABEL_RE =
+      /^\s*(?:sample|example|demo|suggested)?\s*(?:search(?:es)?|quer(?:y|ies)|question|prompt|goal)\s*:\s*/i;
+
+    function stripQueryLabel(raw) {
+      const q = String(raw == null ? '' : raw);
+      const stripped = q.replace(PASTED_LABEL_RE, '').trim();
+      return stripped || q.trim();
+    }
+
     function setQuery(text) {
       document.getElementById('search-input').value = text;
       performSearch();
     }
 
     function performSearchFromCompact() {
-      const q = document.getElementById('compact-search-input').value.trim();
+      const q = stripQueryLabel(document.getElementById('compact-search-input').value);
       if (!q) return;
+      document.getElementById('compact-search-input').value = q;
       document.getElementById('search-input').value = q;
       performSearch();
     }
@@ -772,8 +788,9 @@
     }
 
     async function performSearch() {
-      const query = document.getElementById('search-input').value.trim();
+      const query = stripQueryLabel(document.getElementById('search-input').value);
       if (!query) return;
+      document.getElementById('search-input').value = query;
 
       lastQuery = query;
       rememberSearch(query);
@@ -961,15 +978,38 @@
     // Cluster consecutive results that belong to the same application block
     // of the same standard. Only true application rows group (chunk-only
     // results carry no rowRef and always render as standalone cards).
+    //
+    // Document excerpts group too, but by SECTION (client DO40: "if multiple
+    // search results are from the same section, group them together with the
+    // solid left border line"). Those are passages of one chapter, so they are
+    // one card — and unlike table rows they group wherever they land in the
+    // ranking, not only when adjacent.
     function groupSiblingResults(results) {
       const keyOf = (r) => {
         const a = r.application || {};
         return `${a.standard || ''}|${a.subCategory || ''}|${a.category || ''}`;
       };
       const isAppRow = (r) => r.application && r.application.rowRef != null;
+      const sectionKeyOf = (r) => {
+        if (r.resultType !== 'excerpt') return null;
+        const std = r.application && r.application.standard;
+        const section = r.excerpt && r.excerpt.section;
+        return (std && section) ? `section|${std}|${section}` : null;
+      };
 
       const groups = [];
+      const bySection = new Map();
       for (const r of results) {
+        const sectionKey = sectionKeyOf(r);
+        if (sectionKey) {
+          const existing = bySection.get(sectionKey);
+          if (existing) { existing.members.push(r); continue; }
+          const group = { key: sectionKey, members: [r] };
+          bySection.set(sectionKey, group);
+          groups.push(group);
+          continue;
+        }
+
         const key = keyOf(r);
         const last = groups[groups.length - 1];
         if (last && last.key === key && isAppRow(r) && isAppRow(last.members[0])) {
@@ -979,6 +1019,51 @@
         }
       }
       return groups;
+    }
+
+    // Several passages from one section become ONE Document card whose "From the
+    // Standard" list holds them all, in page order (client DO40). Nothing is
+    // lost: each passage keeps its own page and its own Library link.
+    function mergeDocumentGroup(members) {
+      const seen = new Set();
+      const excerpts = [];
+      for (const m of members) {
+        const list = (Array.isArray(m.excerpts) && m.excerpts.length > 0)
+          ? m.excerpts
+          : (m.excerpt ? [m.excerpt] : []);
+        for (const e of list) {
+          if (!e || !e.text) continue;
+          const key = `${e.pageNumber == null ? '?' : e.pageNumber}|${e.text.slice(0, 80)}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          excerpts.push(e);
+        }
+      }
+      excerpts.sort((a, b) => (a.pageNumber ?? 1e9) - (b.pageNumber ?? 1e9));
+      return { ...members[0], excerpts, excerpt: excerpts[0] || members[0].excerpt };
+    }
+
+    // "3.3.4 Design Guide › Transition Spaces Between Exterior and Interior
+    //  Spaces › Circulation Areas" — the section number with every parent title
+    // above it, bolded (client DO40). Falls back to the bare number for
+    // standards indexed before section titles were captured.
+    function sectionPathHtml(excerpt) {
+      if (!excerpt || !excerpt.section) return '';
+      const path = Array.isArray(excerpt.sectionPath)
+        ? excerpt.sectionPath.filter(p => p && p.title)
+        : [];
+      const titles = path
+        .map(p => escapeHtml(p.title))
+        .join(' <span class="text-gray-400 font-normal">›</span> ');
+      const number = escapeHtml(String(excerpt.section));
+      return `<p class="text-xs font-bold text-gray-800 mb-1">${number}${titles ? ` ${titles}` : ''}</p>`;
+    }
+
+    // The same locator, condensed for the card's banner slot.
+    function sectionBannerLabel(excerpt) {
+      const path = Array.isArray(excerpt.sectionPath) ? excerpt.sectionPath.filter(p => p && p.title) : [];
+      const leaf = path.length ? path[path.length - 1].title : (excerpt.sectionTitle || '');
+      return `${excerpt.section}${leaf ? ` · ${leaf}` : ''}`;
     }
 
     function renderPaginationControls(totalPages, fromN, toN, total) {
@@ -1035,10 +1120,14 @@
 
     function renderAISummary(summary) {
       document.getElementById('ai-disclaimer').textContent = summary.disclaimer || '';
+      // One name for the feature everywhere (client DO42, "harmonize language for
+      // 'Enable Guide'"): the pill enables the AI Guide, the advisory asks for the
+      // AI Guide, and this card is the AI Guide's answer. Only the two special
+      // modes qualify the name.
       document.getElementById('ai-summary-title').textContent =
         summary.mode === 'comparison' ? 'AI Document Comparison'
-        : summary.mode === 'references' ? 'AI Reference Overview'
-        : 'AI Explanation';
+        : summary.mode === 'references' ? 'AI Guide — References'
+        : 'AI Guide';
 
       // Comparison advisory above the analysis (client DO25): only the CURRENT
       // standard is recommended for further reading, but both editions are
@@ -1278,11 +1367,18 @@
 
     function renderResultCard(group, index) {
       const members = group.members;
-      const isGrouped = members.length > 1;
-      const primary = members[0];
+      // Same-section Document results collapse into one card (client DO40); the
+      // adjacent-table-row grouping below is unchanged.
+      const mergedDocument = (members.length > 1 && members[0].resultType === 'excerpt')
+        ? mergeDocumentGroup(members)
+        : null;
+      const isGrouped = !mergedDocument && members.length > 1;
+      const primary = mergedDocument || members[0];
       // ANSI/IES LS-1 definitions have their own card shape: the term, then the
       // definition reproduced in full (client DO33).
       if (primary.resultType === 'definition') return renderDefinitionCard(primary, index);
+      // A whole standard, matched by designation or title (client DO47).
+      if (primary.resultType === 'standard') return renderStandardCard(primary, index);
       const app = primary.application || {};
       const isExterior = app.indoorOutdoor === 'Outdoor';
       const isInterior = app.indoorOutdoor === 'Indoor';
@@ -1312,6 +1408,16 @@
               style="background-color: ${bannerHex}; color: #fff;">
           ${crumbHtml(app, { text: app.subCategory, col: 'Sub_Category' }, true)}
         </span>` : '';
+
+      // A Document card is headed by the SECTION it came from, in the same
+      // banner slot an Illuminance Table card gives its Sub_Category — the
+      // client asked these cards to mirror that formatting (DO40).
+      const sectionBanner = (primary.resultType === 'excerpt' && primary.excerpt && primary.excerpt.section) ? `
+        <span class="inline-block text-[11px] font-bold tracking-wider uppercase px-2.5 py-1 rounded"
+              style="background-color: ${bannerHex}; color: #fff;">
+          ${escapeHtml(sectionBannerLabel(primary.excerpt))}
+        </span>` : '';
+      const headerBanner = subCategoryBanner || sectionBanner;
 
       // Prominent application-name badge = the top-level App name. Printed
       // ONCE per card even when the card holds several adjacent table rows
@@ -1434,7 +1540,7 @@
               data-code="${escapeHtml(app.code || '')}"
               ${app.code && selectedApplicationCodes.has(app.code) ? 'checked' : ''}
             />`}
-            <div class="min-w-0">${subCategoryBanner}</div>
+            <div class="min-w-0">${headerBanner}</div>
           </div>
           <div class="flex items-center gap-1.5 shrink-0 flex-wrap justify-end">
             ${typeChip}${locationBadge}${rowBadges(app)}
@@ -1517,6 +1623,71 @@
               <p class="print-notice text-[11px] text-gray-500 italic">
                 Definition text is omitted from printed pages — see ${escapeHtml(def.sourceUrl || 'ies.org/standards/definitions')}.
               </p>
+            </div>
+          </div>
+        </article>
+      `;
+    }
+
+    // ── Whole-document result card (client DO47) ─────────────────────────────
+    // "A 'search' for the name or designation of a standard should return a
+    //  direct link to that standard (new result card format) … Present this card
+    //  at top of search results. Include thumbnail, description, and hyperlinked
+    //  author (same data as from Table of Contents tool)."
+    //
+    // Deliberately styled as a Document card rather than given a palette of its
+    // own: this IS the document the "Documents" filter is about, and DO32 asks
+    // one label and one line style per kind. The card is also where DO45's "print
+    // the full title & designation" is most visible.
+    function renderStandardCard(result, index) {
+      const doc = result.document || {};
+      const style = RESULT_TYPE_STYLES.excerpt;
+      const isDeprecated = !!result.isDeprecated;
+      const bannerHex = isDeprecated ? '#B45309' : style.banner;
+
+      const deprecatedBanner = isDeprecated ? `
+        <div class="flex items-start gap-2 -mx-3 -mt-3 mb-2.5 px-3 py-1.5 bg-amber-50 border-b border-amber-200">
+          <span class="text-[11px] font-bold tracking-wider uppercase text-amber-700 shrink-0 mt-px">Deprecated</span>
+          <span class="text-xs text-amber-800">${escapeHtml(result.deprecationNotice
+            || 'This edition has been superseded. Shown for version comparison only — refer to the current standard for guidance.')}</span>
+        </div>` : '';
+
+      const thumb = doc.thumbnailUrl ? `
+        <img src="${escapeHtml(doc.thumbnailUrl)}" alt="Cover of ${escapeHtml(doc.id || '')}"
+             class="w-16 h-auto rounded border border-gray-200 shrink-0" loading="lazy"/>` : '';
+
+      const description = doc.description ? `
+        <p class="text-xs text-gray-600 leading-relaxed">${escapeHtml(doc.description)}</p>` : '';
+
+      const buy = doc.buyUrl ? `
+        <a href="${escapeHtml(doc.buyUrl)}" target="_blank" rel="noopener"
+           class="text-xs px-2.5 py-1 border border-gray-200 rounded-lg text-gray-600 hover:bg-gray-50 transition font-medium">Buy</a>` : '';
+
+      return `
+        <article class="result-card copy-guard bg-white rounded-xl border border-gray-100 shadow-sm p-3 relative overflow-hidden"
+                 style="animation-delay: ${index * 40}ms; border-left: 3px ${style.line} ${bannerHex};">
+          ${deprecatedBanner}
+          <div class="flex items-start justify-between gap-2 mb-1.5">
+            <span class="inline-block text-sm font-bold text-white px-2.5 py-1 rounded align-middle"
+                  style="background-color: ${bannerHex};">${escapeHtml(doc.id || '')}</span>
+            <div class="flex items-center gap-1.5 shrink-0 flex-wrap justify-end">
+              <span class="text-xs px-2 py-0.5 rounded-full font-medium border ${style.chip}">${style.label}</span>
+            </div>
+          </div>
+
+          <div class="flex items-start justify-between gap-2 flex-wrap mb-1">
+            <p class="text-sm font-semibold text-gray-900 min-w-0">${citationHtml(result)}</p>
+            <div class="flex items-center gap-2 shrink-0 no-print">
+              ${actionsCluster(result, doc.title || doc.id || '')}
+              ${buy}
+            </div>
+          </div>
+
+          <div class="flex items-start gap-3 mt-1.5">
+            ${thumb}
+            <div class="min-w-0 flex-1">
+              ${description}
+              ${committeeHtml(result).replace('pl-[26px]', '')}
             </div>
           </div>
         </article>
@@ -1742,6 +1913,9 @@
       application: 'tables',
       reference: 'references',
       definition: 'definitions',
+      // A whole-document card (DO47) saves as a Document: the citation and the
+      // Library link, with no page and no contents.
+      standard: 'body',
     };
 
     /**
@@ -1913,8 +2087,13 @@
         const raw = e.text || '';
         const cap = isReference ? Infinity : 400;
         const clipped = raw.length > cap ? `${raw.substring(0, cap)}…` : raw;
+        // Client DO40: the section number and title head each passage, in bold.
+        // A reference entry has no section to contextualize.
+        const heading = isReference ? '' : sectionPathHtml(e);
         const locator = [
-          e.section ? `§${escapeHtml(e.section)}` : '',
+          // The § repeats the bold heading above, so it only prints when there
+          // is no heading (a standard indexed before section titles existed).
+          (e.section && !heading) ? `§${escapeHtml(e.section)}` : '',
           e.pageNumber != null ? `p. ${escapeHtml(String(e.pageNumber))}` : '',
         ].filter(Boolean).join(' · ');
         const link = e.vitriumLink ? `
@@ -1926,6 +2105,7 @@
         // than a copy of the standard (client DO36).
         return `
           <div class="text-xs text-gray-600 leading-relaxed pl-3 border-l-2 border-gray-200">
+            ${heading}
             <p class="print-withhold">"${linkifyText(clipped)}"</p>
             ${(locator || link) ? `
               <div class="mt-0.5 flex items-center gap-2 flex-wrap">
@@ -1975,8 +2155,10 @@
         const badge = m.referenceNumber != null ? m.referenceNumber : m.count;
         const inner = `${escapeHtml(m.standard)} <span class="text-purple-400 tabular-nums">${escapeHtml(String(badge))}</span>`;
         const where = m.pageNumber != null ? ` p. ${escapeHtml(String(m.pageNumber))}` : '';
+        // "first printed" (client DO44): the chip opens the FIRST page that
+        // carries the marker, not every page that cites the work.
         const title = m.target === 'citation'
-          ? `${escapeHtml(m.standardFull || m.standard)} cites this reference${m.referenceNumber != null ? ` as ${escapeHtml(String(m.referenceNumber))}` : ''} —${where || ' opens the standard'}`
+          ? `${escapeHtml(m.standardFull || m.standard)} first cites this reference${m.referenceNumber != null ? ` as ${escapeHtml(String(m.referenceNumber))}` : ''} —${where || ' opens the standard'}`
           : `${escapeHtml(m.standardFull || m.standard)} lists this reference in its References section${where}`;
         return m.url
           ? `<a href="${escapeHtml(m.url)}" target="_blank" rel="noopener"
@@ -1990,7 +2172,7 @@
           <p class="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-1">Reference markers</p>
           <div class="flex flex-wrap gap-1.5">${markers.map(chip).join('')}</div>
           <p class="text-[10px] text-gray-400 mt-1">${anyCitation
-            ? 'IES Standards that cite this reference — the link opens the page where the marker is printed.'
+            ? 'IES Standards that cite this reference — the link opens the page where the marker is first printed.'
             : 'IES Standards that list this reference — the link opens their References page in the Library.'}</p>
         </div>`;
     }

@@ -257,6 +257,12 @@ search/UX overhaul):
    the citing page (DO31.4) and the Definitions filter returns nothing (DO33).
    0010 turns Projects into Saved Search Collections (DO37) and adds the Table of
    Contents metadata columns (DO35).
+   0011 adds `standards.sections_json`, the section-number → section-title map a
+   body excerpt needs to print "3.3.4 Design Guide › … › Circulation Areas"
+   (DO40). Unlike 0010 this one is safe to apply late: the column is read only
+   for the standards in a result set, and an excerpt without it prints its
+   section number alone, exactly as before. It is written by the ingest, so
+   applying the migration is necessary but not sufficient — re-ingest too.
 
    **0010 must be applied BEFORE the Worker that expects it is deployed, not
    after.** `GET /api/standards` (the list route) selects `collection`,
@@ -308,6 +314,15 @@ search/UX overhaul):
      notes.
    - **DO31.4** in-body reference markers: superscripted reference numerals are
      captured per standard and stored on the standards row.
+
+   **The 260805 round adds one more ingest-side fix:**
+   - **DO40** section titles: `extractSectionTitles()` records every heading's
+     number and printed title, and the ingest stores the map in
+     `standards.sections_json` (migration 0011). Until a standard is re-ingested
+     its body excerpts print the section NUMBER with no title and no parent
+     chain. The ingest prints a `Section titles: N` line per document and warns
+     when a document yields none. `npm run verify:ingest` reports the same thing
+     across the corpus (DO40).
 
    Then re-index the definitions (see step 4b) and re-embed the application rows
    (`npm run ingest:apps`) so the new hierarchy reaches Vectorize.
@@ -402,13 +417,13 @@ search/UX overhaul):
    answer different questions. Both are read-only and both need
    `LUCIUS_API_URL` + `LUCIUS_API_SECRET`.
 
-   - `npm run verify:ingest` — *did the DATA get rewritten?* Five binary probes
-     for the ingest-side fixes (DO20, DO23, DO30, DO31.4, DO33). A deploy alone
-     cannot satisfy these: they change what gets WRITTEN, so an ingest run
+   - `npm run verify:ingest` — *did the DATA get rewritten?* Six binary probes
+     for the ingest-side fixes (DO20, DO23, DO30, DO31.4, DO33, DO40). A deploy
+     alone cannot satisfy these: they change what gets WRITTEN, so an ingest run
      against an older deployment completes with no error and leaves the old data
      in place, and the UI then still shows the old behaviour.
    - `npm run verify:feedback` — *does a real search show the fix?* One check per
-     260729 feedback item (DO20 → DO39), each issuing live requests and asserting
+     feedback item (DO20 → DO47), each issuing live requests and asserting
      on the response the browser would receive. Every item resolves to **PASS**,
      **FAIL**, or **BLOCKED** — the last meaning the check could not be answered
      because an input it depends on is absent (a Vitrium CSV column, a probe

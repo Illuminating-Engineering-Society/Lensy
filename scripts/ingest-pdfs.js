@@ -71,7 +71,7 @@ import { resolve, basename, extname, join, relative } from 'path';
 import { execSync } from 'child_process';
 import { parsePDFNode } from '../src/lib/pdf-parser.js';
 import { extractIESTables, extractGeneralNotes } from '../src/lib/table-extractor.js';
-import { chunkIESDocument } from '../src/lib/chunker.js';
+import { chunkIESDocument, extractSectionTitles } from '../src/lib/chunker.js';
 import { extractReferenceMarkers } from '../src/lib/reference-markers.js';
 import {
   extractApplicationsFromPages,
@@ -454,6 +454,17 @@ async function ingestFile(filePath, standardId, status = 'current') {
     console.warn('  ⚠ Reference entries were indexed but no in-body superscript markers were found — Reference chips will link to the References page instead of the citing page.');
   }
 
+  // Step 5c: Section number → printed section title (client DO40). Chunks carry
+  // only their own section NUMBER, so the titles and the parent chain above them
+  // ("3 Design Guide" › "3.3 Transition Spaces…" › "3.3.4 Circulation Areas")
+  // come from this per-document map, stored on the standards row.
+  const sections = extractSectionTitles(pages);
+  const sectionCount = Object.keys(sections).length;
+  console.log(`  Section titles: ${sectionCount}`);
+  if (sectionCount === 0 && pages.length > 5) {
+    console.warn('  ⚠ No section headings were recognised — body excerpts from this standard will show a section number without its title.');
+  }
+
   if (CONFIG.verbose) {
     for (const [i, chunk] of chunks.entries()) {
       const preview = chunk.text.substring(0, 70).replace(/\n/g, ' ');
@@ -462,7 +473,8 @@ async function ingestFile(filePath, standardId, status = 'current') {
   }
 
   if (CONFIG.dryRun) {
-    console.log(`  [DRY RUN] Would send: ${chunks.length} chunks, ${tables.length} tables, ${applications.length} applications`);
+    console.log(`  [DRY RUN] Would send: ${chunks.length} chunks, ${tables.length} tables, ` +
+      `${applications.length} applications, ${sectionCount} section titles`);
     return { structure };
   }
 
@@ -484,6 +496,7 @@ async function ingestFile(filePath, standardId, status = 'current') {
     tables,
     applications: [],  // sent separately below to avoid request size limits
     referenceMarkers,
+    sections,
     r2Key,
   });
 

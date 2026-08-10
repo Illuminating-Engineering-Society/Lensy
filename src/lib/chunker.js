@@ -26,6 +26,9 @@ import { looksLikeFormalReference } from './references.js';
 
 const SECTION_RE = /^(?:(?:\d+(?:\.\d+)*)|(?:[A-Z](?:\.\d+)*))\s+[A-Z].{3,}/;
 const ANNEX_RE = /^(?:Annex|Appendix)\s+[A-Z]/i;
+// Same shape as ANNEX_RE, with the letter captured: [1] = "Annex"|"Appendix",
+// [2] = the letter, [3] = whatever title follows it.
+const ANNEX_MATCH_RE = /^(Annex|Appendix)\s+([A-Z])\b[\s.:—–-]*(.*)$/i;
 const TABLE_PAGE_RE = /^Table\s+[A-Z0-9]-?\d*/im;
 
 // A heading that starts (or ends) a References section. IES standards title
@@ -155,8 +158,16 @@ export function chunkIESDocument(pages, options = {}) {
         }
 
         flushBuffer(isTablePage ? 'table' : 'text');
-        const secMatch = lineText.match(/^(\d+(?:\.\d+)*|[A-Z](?:\.\d+)*)/);
-        currentSection = secMatch ? secMatch[1] : (ANNEX_RE.test(lineText) ? 'Annex' : null);
+        // Annex first: the numeric matcher below is not anchored to a word
+        // boundary, so "Annex A Supplemental Guidance" used to yield section "A"
+        // — the leading letter of the word "Annex". Section numbers have to
+        // match sections_json (see extractSectionTitles) for the printed
+        // "§ number + title" line to resolve (client DO40).
+        const annexMatch = ANNEX_MATCH_RE.exec(lineText);
+        const secMatch = annexMatch ? null : lineText.match(/^(\d+(?:\.\d+)*|[A-Z](?:\.\d+)*)/);
+        currentSection = annexMatch
+          ? `Annex ${annexMatch[2].toUpperCase()}`
+          : (secMatch ? secMatch[1] : null);
         if (isReferencesHeading) {
           inReferences = true;
           currentSection = currentSection || 'References';
@@ -212,6 +223,93 @@ export function chunkIESDocument(pages, options = {}) {
   }
 
   return finalChunks;
+}
+
+// ─── Section titles (client DO40) ─────────────────────────────────────────────
+//
+// "Present and emphasize Section ('chapter') # and title with each search result
+//  from the body of a document … Include all 'parent' section titles for
+//  context."
+//
+// A chunk only ever knows its OWN section number ("3.3.4"), so the titles — and
+// the parent chain above them — have to come from somewhere else. This builds
+// one map per document, { "3": "Design Guide", "3.3": "Transition Spaces…",
+// "3.3.4": "Circulation Areas" }, which the ingest stores on the standards row
+// and search reads back at query time. Nothing is re-embedded for it, and a
+// standard without the map simply renders the number alone, as before.
+
+// A table-of-contents line: dot leaders, or a title trailed by a page number
+// after column whitespace. TOC entries have the same shape as headings and come
+// FIRST in the document, so without this every title would be the TOC's copy —
+// complete with its page number glued on.
+const TOC_LINE_RE = /(?:\.\s*){4,}|\s{2,}\d{1,4}\s*$|\t\d{1,4}\s*$/;
+const TOC_PAGE_MIN_LEADER_LINES = 4;
+
+// A numbered heading: "3.3.4 Circulation Areas", "A.2 Calculation Method".
+// The title must open with a CAPITAL, matching SECTION_RE above — that is what
+// separates a heading from a data row ("300 lux at 0.76 m") or a sentence that
+// happens to start with a numeral.
+const NUMBERED_HEADING_RE = /^(\d+(?:\.\d+)*|[A-Z](?:\.\d+)+)[\s.:—–-]+([A-Z][^\n]{2,})$/;
+
+/**
+ * Build the section-number → section-title map for one parsed document.
+ *
+ * @param {Array<{number, text, lines?}>} pages - from parsePDFNode()
+ * @returns {Record<string, string>} e.g. { "3.3.4": "Circulation Areas" }
+ */
+export function extractSectionTitles(pages) {
+  const titles = {};
+  for (const page of pages) {
+    const rawLines = page.lines
+      ? page.lines.map(l => l.text)
+      : String(page.text || '').split('\n');
+    const lines = rawLines.map(t => String(t || '').trim()).filter(Boolean);
+
+    // Skip the table of contents wholesale: its entries are headings verbatim,
+    // but a page-number tail survives on lines whose leaders the parser dropped.
+    const leaderLines = lines.filter(l => /(?:\.\s*){4,}/.test(l)).length;
+    if (leaderLines >= TOC_PAGE_MIN_LEADER_LINES) continue;
+
+    for (const line of lines) {
+      if (line.length < 4 || line.length > 160) continue;
+      if (TOC_LINE_RE.test(line)) continue;
+      const heading = parseHeadingLine(line);
+      if (!heading || !heading.title) continue;
+      // First occurrence wins: the body heading is the authoritative print, and
+      // a later cross-reference ("see 3.3.4 Circulation Areas, above") should
+      // never overwrite it.
+      if (!titles[heading.number]) titles[heading.number] = heading.title;
+    }
+  }
+  return titles;
+}
+
+/** One line → { number, title }, or null when it is not a heading. */
+export function parseHeadingLine(line) {
+  const text = String(line || '').trim();
+
+  const annex = ANNEX_MATCH_RE.exec(text);
+  if (annex) {
+    return { number: `Annex ${annex[2].toUpperCase()}`, title: cleanHeadingTitle(annex[3]) };
+  }
+
+  const numbered = NUMBERED_HEADING_RE.exec(text);
+  if (!numbered) return null;
+  const title = cleanHeadingTitle(numbered[2]);
+  // Reject sentence fragments that merely begin with a numeral ("2.1 times the
+  // maintained value…"): a heading is a NAME, so it stays short and carries no
+  // sentence punctuation.
+  if (!title || title.length > 120 || /[.;]\s/.test(title)) return null;
+  return { number: numbered[1], title };
+}
+
+function cleanHeadingTitle(raw) {
+  return String(raw || '')
+    .replace(/(?:\.\s*){3,}.*$/, '')     // dot leaders + page number
+    .replace(/\s{2,}\d{1,4}$/, '')       // column-aligned page number
+    .replace(/[\s.:;,–—-]+$/, '')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 /**

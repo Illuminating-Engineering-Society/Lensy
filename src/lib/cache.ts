@@ -40,7 +40,14 @@ const DATA_VERSION_KEY = 'cache:data-version';
 //     prompt forbids invented locators, document-body recall was widened, DOI
 //     links are validated, and Definitions became a content type. Every stored
 //     result set and generated summary predates all of it.
-const SEARCH_CACHE_SCHEMA = 'v8';
+// v9: client feedback DO40–DO47 — excerpts now carry section titles and their
+//     parent chain, a comparison returns a card for every edition of the family
+//     and probes the current edition directly, a designation or title search
+//     returns the document itself, the pasted "Sample Search:" label is stripped
+//     before the query is read, and the comparison prompt gained the
+//     compare-the-content and packaging rules. Stored result sets have neither
+//     the new fields nor the new cards, and stored summaries predate the prompt.
+const SEARCH_CACHE_SCHEMA = 'v9';
 
 function errMsg(err: unknown): string {
   return err instanceof Error ? err.message : String(err);

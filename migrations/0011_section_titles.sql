@@ -1,0 +1,24 @@
+-- Migration: 0011_section_titles
+--
+-- ── DO40: print the section number AND its title with every body excerpt ─────
+--
+-- "Present and emphasize Section ('chapter') # and title with each search result
+--  from the body of a document … Include all 'parent' section titles for
+--  context."
+--
+-- A chunk's Vectorize metadata carries only its own section NUMBER ("3.3.4").
+-- The titles, and the parent chain above them ("3 Design Guide" ›
+-- "3.3 Transition Spaces Between Exterior and Interior Spaces" ›
+-- "3.3.4 Circulation Areas"), are a property of the DOCUMENT, not of the chunk —
+-- so they live here, as one map per standard:
+--
+--   { "3": "Design Guide", "3.3": "Transition Spaces…", "3.3.4": "Circulation Areas" }
+--
+-- Written by the ingest from src/lib/chunker.js extractSectionTitles(), and read
+-- back at query time for the standards actually present in a result set (never
+-- for the whole corpus — it is far too large to load per search).
+--
+-- Optional by design: a standard ingested before this column existed renders the
+-- section number alone, exactly as it did before.
+
+ALTER TABLE standards ADD COLUMN sections_json TEXT;

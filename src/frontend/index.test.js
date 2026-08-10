@@ -354,6 +354,182 @@ describe('search suggestions', () => {
   });
 });
 
+// ─── DO40: section number + title on body excerpts ────────────────────────────
+
+describe('section heading on a Document excerpt', () => {
+  const excerpt = `{
+    text: 'In providing higher light levels for persons with low vision, every room or space should have ambient illumination.',
+    chunkType: 'text', pageNumber: 39, section: '3.3.4',
+    sectionTitle: 'Circulation Areas',
+    sectionPath: [
+      { number: '3', title: 'Design Guide' },
+      { number: '3.3', title: 'Transition Spaces Between Exterior and Interior Spaces' },
+      { number: '3.3.4', title: 'Circulation Areas' }
+    ]
+  }`;
+
+  it('prints the number with every parent title, bolded', () => {
+    const html = run(`sectionPathHtml(${excerpt})`);
+    expect(html).toContain('font-bold');
+    expect(html).toContain('3.3.4');
+    expect(html).toContain('Design Guide');
+    expect(html).toContain('Transition Spaces Between Exterior and Interior Spaces');
+    expect(html).toContain('Circulation Areas');
+  });
+
+  it('falls back to the bare number when no titles were indexed', () => {
+    const html = run(`sectionPathHtml({ section: '5.2' })`);
+    expect(html).toContain('5.2');
+    expect(html).not.toContain('›');
+  });
+
+  it('renders inside "From the Standard", replacing the duplicated § locator', () => {
+    const out = run(`renderDataBlocks({ application: {}, excerpts: [${excerpt}] }, new Set())`);
+    expect(out).toContain('Circulation Areas');
+    expect(out).toContain('p. 39');
+    expect(out).not.toContain('§3.3.4');
+  });
+
+  it('still heads an untitled section with its number, printed once', () => {
+    const out = run(`renderDataBlocks({ application: {}, excerpts: [
+      { text: 'A passage of prose long enough to render as a body excerpt on a card.',
+        chunkType: 'text', pageNumber: 12, section: '5.2' }
+    ] }, new Set())`);
+    expect(out).toContain('font-bold text-gray-800 mb-1">5.2<');
+    expect(out).not.toContain('§5.2');   // never both
+  });
+});
+
+describe('same-section Document results are one card (DO40)', () => {
+  const doc = (section, page) => `{
+    resultType: 'excerpt', relevanceScore: 0.5,
+    application: { standard: 'RP-28-25', code: 'RP-28-25-p${page}' },
+    excerpt: { text: 'Passage ${page} of the section, long enough to survive the prose filter on a card.',
+               chunkType: 'text', pageNumber: ${page}, section: '${section}' }
+  }`;
+
+  it('groups passages of one section, and keeps other sections apart', () => {
+    const groups = JSON.parse(run(`JSON.stringify(groupSiblingResults([
+      ${doc('3.3.4', 39)}, ${doc('4.1', 55)}, ${doc('3.3.4', 40)}
+    ]).map(g => g.members.length))`));
+    expect(groups).toEqual([2, 1]);
+  });
+
+  it('merges their passages into one list, in page order', () => {
+    const merged = JSON.parse(run(`JSON.stringify(mergeDocumentGroup([${doc('3.3.4', 41)}, ${doc('3.3.4', 39)}]))`));
+    expect(merged.excerpts.map(e => e.pageNumber)).toEqual([39, 41]);
+  });
+
+  it('heads the card with the section it came from', () => {
+    const card = run(`renderResultCard({ key: 'k', members: [${doc('3.3.4', 39)}, ${doc('3.3.4', 40)}] }, 0)`);
+    expect(card).toContain('3.3.4');
+    expect(card).toContain('border-left: 3px solid');   // solid = the whole document
+  });
+});
+
+// ─── DO41: a pasted "Sample Search:" label never reaches the query ────────────
+
+describe('pasted label', () => {
+  it('is stripped from the search box', () => {
+    expect(run(`stripQueryLabel("Sample Search: What's new in the latest version of rp-8?")`))
+      .toBe("What's new in the latest version of rp-8?");
+  });
+
+  it('leaves an ordinary query alone', () => {
+    expect(run(`stripQueryLabel('search and rescue lighting')`)).toBe('search and rescue lighting');
+  });
+});
+
+// ─── DO44: reference markers open the FIRST printed marker ────────────────────
+
+describe('reference marker footnote', () => {
+  it('says the link opens where the marker is FIRST printed', () => {
+    const html = run(`referenceMarkersBlock({ referenceMarkers: [
+      { standard: 'G-1-22', standardFull: 'ANSI/IES G-1-22', count: 6, pageNumber: 12,
+        referenceNumber: 6, target: 'citation', url: 'https://view.protectedpdf.com/g1#page=12' }
+    ] })`);
+    expect(html).toContain('first printed');
+    expect(html).toContain('first cites this reference');
+  });
+});
+
+// ─── DO47: a whole-document result card ───────────────────────────────────────
+
+describe('Document card for a designation search', () => {
+  const result = `{
+    resultType: 'standard', relevanceScore: 1,
+    citationName: 'ANSI/IES RP-3-20+E1 Recommended Practice: Lighting Educational Facilities',
+    citationPage: null,
+    standardLink: 'https://view.protectedpdf.com/rp3',
+    vitriumLink: 'https://view.protectedpdf.com/rp3',
+    committee: { name: 'IES Education, Library and Office Lighting Committee',
+                 url: 'https://ies.org/committee/education-library-office-lighting/', exact: true },
+    application: { standard: 'RP-3-20+E1', code: 'standard:RP-3-20+E1' },
+    document: { id: 'RP-3-20+E1', designation: 'ANSI/IES RP-3-20+E1',
+                title: 'Recommended Practice: Lighting Educational Facilities',
+                description: 'Best practices to light classrooms and corridors.',
+                thumbnailUrl: 'https://ies.org/cover.jpg', buyUrl: 'https://store.ies.org/rp-3',
+                collection: 'Lighting Applications', matchedOn: 'designation' }
+  }`;
+
+  it('prints the designation, the full title, the description and the thumbnail', () => {
+    const card = run(`renderStandardCard(${result}, 0)`);
+    expect(card).toContain('RP-3-20+E1');
+    expect(card).toContain('Recommended Practice: Lighting Educational Facilities');
+    expect(card).toContain('Best practices to light classrooms');
+    expect(card).toContain('https://ies.org/cover.jpg');
+  });
+
+  it('hyperlinks the authoring committee and offers the document itself', () => {
+    const card = run(`renderStandardCard(${result}, 0)`);
+    expect(card).toContain('IES Education, Library and Office Lighting Committee');
+    expect(card).toContain('Open in Library');
+    expect(card).toContain('Save Search');
+    expect(card).toContain('https://store.ies.org/rp-3');
+  });
+
+  it('reads as a Document — same label and line style as a body excerpt (DO32/DO38)', () => {
+    const card = run(`renderStandardCard(${result}, 0)`);
+    expect(card).toContain('>Document<');
+    expect(card).toContain('border-left: 3px solid');
+  });
+
+  it('is what renderResultCard picks for a standard result', () => {
+    const card = run(`renderResultCard({ key: 'k', members: [${result}] }, 0)`);
+    expect(card).toContain('Best practices to light classrooms');
+  });
+
+  it('marks a deprecated edition and withholds Save Search', () => {
+    const card = run(`renderStandardCard({ ...${result}, isDeprecated: true,
+      deprecationNotice: 'ANSI/IES RP-8-22 is deprecated and has been replaced by RP-8-25+E2.' }, 0)`);
+    expect(card).toContain('Deprecated');
+    expect(card).toContain('replaced by RP-8-25+E2');
+    expect(card).not.toContain('Save Search');
+  });
+
+  it('emits no script or event-handler markup', () => {
+    const card = run(`renderStandardCard(${result}, 0)`);
+    expect(card).not.toMatch(/<script/i);
+    expect(card).not.toMatch(/\son[a-z]+=/i);
+  });
+});
+
+// ─── DO42: one name for the AI Guide ──────────────────────────────────────────
+
+describe('AI Guide naming', () => {
+  it('calls the guide answer "AI Guide", matching the Enable Guide pill', () => {
+    run(`renderAISummary({ text: 'Guidance.', disclaimer: '', watermark: '' })`);
+    expect(elements.get('ai-summary-title').textContent).toBe('AI Guide');
+  });
+
+  it('keeps the comparison and references modes named for what they are', () => {
+    run(`renderAISummary({ text: 'x', mode: 'comparison', disclaimer: '', watermark: '' })`);
+    expect(elements.get('ai-summary-title').textContent).toBe('AI Document Comparison');
+    run(`renderAISummary({ text: 'x', mode: 'references', disclaimer: '', watermark: '' })`);
+    expect(elements.get('ai-summary-title').textContent).toBe('AI Guide — References');
+  });
+});
+
 // ─── DO27: comparison advisory names one prior edition ────────────────────────
 
 describe('comparison notice', () => {

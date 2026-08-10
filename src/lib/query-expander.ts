@@ -226,8 +226,32 @@ export function normalizeTypography(query: string): string {
     .replace(/ /g, ' ');                            // non-breaking space
 }
 
+/**
+ * Drop a pasted prompt LABEL from the front of a query (client DO41).
+ *
+ * The feedback documents print each example as "Sample Search: What's new in the
+ * latest version of rp-8?", and testers paste the whole line. The label is not
+ * part of the question: it drags the embedding toward documentation about
+ * searching, and — worse — the words in front of "what's new" weaken the
+ * version-comparison patterns. Stripping it here means the label can never
+ * change the answer, whichever surface the query arrives from.
+ *
+ * Deliberately requires the colon. A bare leading "search" is a legitimate topic
+ * word ("search and rescue lighting"); "Search:" is never anything but a label.
+ */
+const PASTED_LABEL_RE =
+  /^\s*(?:sample|example|demo|suggested)?\s*(?:search(?:es)?|quer(?:y|ies)|question|prompt|goal)\s*:\s*/i;
+
+export function stripQueryLabel(query: string): string {
+  const q = normalizeTypography(query);
+  const stripped = q.replace(PASTED_LABEL_RE, '');
+  // Never strip the query down to nothing — a search for the literal word
+  // "Search:" is odd but must not become an empty request.
+  return stripped.trim() ? stripped : q;
+}
+
 export function cleanQuery(query: string): string {
-  const original = normalizeTypography(query).trim();
+  const original = stripQueryLabel(query).trim();
   let q = original;
 
   for (const pattern of QUESTION_PATTERNS) {

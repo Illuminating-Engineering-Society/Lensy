@@ -16,6 +16,7 @@
  *   DO30  Footnotes         RP-11-26's "Desk" row carries note 18's TEXT
  *   DO31  Reference markers standards.reference_markers_json is populated
  *   DO33  Definitions       the definitions table is populated
+ *   DO40  Section titles    standards.sections_json is populated
  *
  * Usage:
  *   LUCIUS_API_URL=https://lensy.ies.org LUCIUS_API_SECRET=… node scripts/verify-ingest.js
@@ -153,6 +154,36 @@ async function main() {
     }
   } catch (err) {
     record('DO30', 'footnote text', null, `could not read applications: ${err.message}`);
+  }
+
+  // ── DO40: section titles ───────────────────────────────────────────────────
+  // Another pure "was this ingested by the current pipeline?" signal: the column
+  // is only written by an ingest that ran extractSectionTitles(). Without it a
+  // body excerpt can only print its section NUMBER.
+  if (sample.length === 0) {
+    record('DO40', 'section titles', null, 'no standards indexed — cannot check');
+  } else {
+    let withSections = 0;
+    let example = null;
+    for (const s of sample) {
+      try {
+        const row = (await get(`/api/standards/${encodeURIComponent(s.id)}`)).standard || {};
+        if (!row.sections_json) continue;
+        withSections++;
+        if (!example) {
+          const parsed = JSON.parse(row.sections_json);
+          const [number, title] = Object.entries(parsed)[0] || [];
+          if (number) example = `${s.id} §${number} "${title}"`;
+        }
+      } catch { /* one unreadable row is not the answer */ }
+    }
+    record('DO40', 'section titles',
+      withSections > 0,
+      `${withSections}/${sample.length} sampled standards carry sections_json` +
+        (example ? ` (e.g. ${example})` : '') +
+        (withSections === 0
+          ? '  → this corpus predates section-title capture; apply migration 0011 and re-run npm run ingest'
+          : ''));
   }
 
   // ── DO33: definitions ──────────────────────────────────────────────────────
