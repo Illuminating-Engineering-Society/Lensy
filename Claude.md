@@ -1407,6 +1407,32 @@ A search whose WHOLE query is a standard's designation or title returns that sta
 - Deprecated editions never answer a lookup. The same builder (`buildDocumentResult`) produces the per-edition cards a version comparison adds, and those ARE flagged deprecated.
 - Gated on the Documents pill: a whole standard is a Document, so a search narrowed to Definitions or References does not get one.
 
+### Document titles come off the cover (client DO48)
+
+A search for "office" returned RP-1-24 titled *Lighting Design for Commercial Interiors*; its cover reads **Recommended Practice: Lighting Office Spaces**. The chain behind that: the PDF `/Title` metadata is empty for the entire corpus → the ingest wrote `standards.title = <id>` → `fetchStandardsIndex` fell through to the curated list in `src/config/standards-schema.json`, whose entry was a guess.
+
+- `src/lib/cover-title.js` reads page 1: the designation line, then the all-caps title block above the "AN AMERICAN NATIONAL STANDARD" boilerplate, title-cased (minor words, acronyms, and bracketed acronyms preserved). It also reads "Prepared by the … Committee" for the authoring credit (DO29), which the Vitrium export has not supplied yet.
+- The covers are set in a subsetted font whose punctuation lands on C0 control code points — `LP<1F>2<1F>20` is `LP-2-20`, and a U+001F…U+001E pair is a bracket. `sanitizeGlyphs` repairs both, in that order; without it a third of the corpus produced no designation at all.
+- Measured on the current corpus: **62 of 66** standards yield a title, **64** a committee, 48 of which match a committee page on ies.org exactly (the rest link to the root list, per the DO29 policy).
+- The ingest upsert refreshes `title` only when it has a real one (`excluded.title <> standards.id`), so a standard whose cover cannot be read keeps whatever was synced rather than being reset to its id.
+- The curated fallback list is now transcribed from those covers and is documented as a last resort — never a guess. It matters only for a standard that has not been re-ingested.
+
+### Access tiers: Lensy and LensyLite (client DO53)
+
+| Who | Tier | Gets |
+|---|---|---|
+| Lighting Library subscriber | `full` | everything |
+| IES member, no subscription | `lite` | the Lighting Science collection; Illuminance Tables, AI Guide and Document Comparison are shown locked |
+| any other IES account | `none` | a collection someone shared with them, nothing else |
+
+- **Off by default.** `LENSY_LITE=on` opts in (`wrangler.toml`). The `ies_auth` cookie carries no subscription signal yet, so switching tiering on today would demote the client's own reviewers — all IES members — mid-beta. `LENSY_SUBSCRIBER_ROLES` names the IdP role slug(s) that mean "subscribes", so adopting the real entitlement is a var change.
+- The rule is a pure function (`resolveTier` in `src/lib/tiers.ts`); `resolveRequestTier` in `workers/session.ts` applies it to a request, and the bearer secret is always `full` so ingest and the verification harness see the whole corpus.
+- Enforced server-side in `handleSearch`: content types are stripped (`liteContentTypes`), `includeAISummary` is forced off, version comparison is disabled, and results are restricted to the Lighting Science collection (`standards.collection`, falling back to the `LS-` series until that metadata is synced). The locked pills are signposting; this is the boundary. The tier is part of the response-cache key.
+
+### A shared collection opens without an account (client DO52)
+
+`GET /api/projects/shared/:token` is the one route outside the session gate, and `projects.html` carries `data-public-when-share` so the page renders for a signed-out visitor arriving on a share link. Everything else under `/api/projects` — including claiming the collection into an account — still requires a session. What a link discloses is citations, pages, Library URLs and the sender's notes; a saved item holds no excerpt text or illuminance values by construction (`src/lib/collections.js`). The shared view is read-only: the owner's share/email/export/delete actions and the editable notes are hidden (DO49).
+
 ### Section titles on body excerpts (client DO40)
 
 Every body excerpt is headed by its section number and title, with the parent chain above it — "3.3.4 Design Guide › Transition Spaces Between Exterior and Interior Spaces › Circulation Areas" — and excerpts from the same section of the same document render as ONE card.

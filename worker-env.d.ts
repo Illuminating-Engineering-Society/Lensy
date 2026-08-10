@@ -22,5 +22,15 @@ declare global {
     // above is used for both hostnames (lib/sso.ts resolveSsoSecrets).
     SESSION_ENCRYPTION_KEY_STAGING?: string;
     COOKIE_SIGNING_SECRET_STAGING?: string;
+    // ── LensyLite (client DO53) ──────────────────────────────────────────────
+    // "on" turns the tiering on: IES members without a Lighting Library
+    // subscription get LensyLite. Anything else (including unset) → every
+    // authorized visitor keeps full access, which is today's behaviour.
+    LENSY_LITE?: string;
+    // Comma-separated IdP role slugs that mean "subscribes to the Lighting
+    // Library". Unset → the defaults in src/lib/tiers.ts. This exists because
+    // the entitlement is not in the cookie yet; when it is, set it here rather
+    // than editing code.
+    LENSY_SUBSCRIBER_ROLES?: string;
   }
 }

@@ -187,7 +187,9 @@
           </svg>
         </div>
         <div>
-          <span class="font-display text-xl font-bold tracking-tight">Lensy</span>
+          <!-- The wordmark says which Lensy this is (client DO53): LensyLite is
+               a different product to the reader, not a degraded one. -->
+          <span id="wordmark" class="font-display text-xl font-bold tracking-tight">Lensy</span>
           <span class="hidden sm:inline text-blue-200 text-sm ml-2">IES Assistant</span>
         </div>
       </a>
@@ -437,6 +439,19 @@
     </section>
   </main>
 
+  <!-- ── LensyLite upgrade banner (client DO53) ───────────────────────────────
+       Shown only to the limited tier, in the client's own words, immediately
+       above the footer as in their mockup. -->
+  <div id="lite-banner" class="hidden max-w-5xl mx-auto px-4 no-print">
+    <div class="rounded-xl border border-green-200 bg-green-50 px-5 py-4 text-center">
+      <p class="text-sm text-green-900" id="lite-banner-text"></p>
+      <a href="https://store.ies.org/" target="_blank" rel="noopener"
+         class="inline-block mt-2 text-sm font-semibold text-green-900 underline underline-offset-4 hover:text-green-700">
+        Subscribe to unlock full Lensy and Lighting Library access ↗
+      </a>
+    </div>
+  </div>
+
   <!-- ── Footer ───────────────────────────────────────────────────────────── -->
   <footer class="text-center text-xs text-gray-400 py-8 mt-8 border-t border-gray-100 no-print">
     <p class="font-medium text-gray-500">Lensy — IES Standards Search Assistant</p>
@@ -465,6 +480,17 @@
       <div id="modal-app-info" class="bg-gray-50 rounded-lg px-4 py-3 mb-5 text-sm">
         <p class="font-medium text-gray-800" id="modal-app-name"></p>
         <p class="text-gray-500 text-xs mt-0.5" id="modal-app-citation"></p>
+      </div>
+
+      <!-- User note (client DO50): "provide option to add 'user note' on the
+           pop-up Save Search window". Written with the item, so the reason for
+           saving is captured while it is still in mind rather than added later
+           on the collection page. -->
+      <div class="mb-5">
+        <label for="save-note" class="block text-sm font-medium text-gray-700 mb-1">Your note</label>
+        <textarea id="save-note" rows="2"
+          placeholder="Why is this result useful? (optional)"
+          class="w-full px-3 py-2.5 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-ies-blue focus:border-transparent"></textarea>
       </div>
 
       <!-- Project selection -->
@@ -597,6 +623,35 @@
     // content kind has no meaning (DO32 conditional logic).
     const CONTENT_PILLS = ['body', 'definitions', 'references', 'tables'];
 
+    // ── LensyLite (client DO53) ──────────────────────────────────────────────
+    // "Show all tools, but 'block' access to Illuminance Tables, Enable Guide,
+    //  Document Comparison." The pills stay visible and carry a lock, so the
+    //  member can see what a subscription adds. The Worker enforces the same
+    //  three exclusions — this is signposting, not the boundary.
+    const LITE_LOCKED_FILTERS = ['tables', 'guide', 'compare'];
+    let accessTier = 'full';
+
+    function isLite() { return accessTier === 'lite'; }
+
+    function applyTier(tier) {
+      accessTier = tier === 'lite' ? 'lite' : 'full';
+      document.getElementById('wordmark').textContent = isLite() ? 'LensyLite' : 'Lensy';
+      document.title = isLite() ? 'LensyLite — IES Standards Search' : 'Lensy — IES Standards Search';
+      if (isLite()) {
+        for (const name of LITE_LOCKED_FILTERS) filterState[name] = false;
+        const banner = document.getElementById('lite-banner');
+        document.getElementById('lite-banner-text').textContent =
+          'IES Members receive limited access to Lighting Science Collection and LensyLite.';
+        banner.classList.remove('hidden');
+      }
+      renderFilterPills();
+    }
+
+    // The signed-in member's tier arrives with the session (auth-gate.js).
+    document.addEventListener('lensy:auth', (e) => {
+      if (e.detail && e.detail.tier) applyTier(e.detail.tier);
+    });
+
     function pillFor(name) {
       return document.querySelector(`.filter-pill[data-filter="${name}"]`);
     }
@@ -617,18 +672,36 @@
 
       // Document Comparison locks the Content row.
       const comparing = !!filterState.compare;
-      for (const name of CONTENT_PILLS) {
+      for (const name of [...CONTENT_PILLS, 'interior', 'exterior']) {
         const pill = pillFor(name);
-        if (pill) pill.disabled = comparing;
+        if (pill) pill.disabled = comparing || lockedForTier(name);
       }
-      for (const name of ['interior', 'exterior']) {
-        const pill = pillFor(name);
-        if (pill) pill.disabled = comparing;
+
+      // LensyLite: the three tools a subscription unlocks stay visible, locked
+      // (client DO53). Applied LAST so nothing above can re-enable them, and the
+      // padlock is appended to whatever label the rules above settled on.
+      if (isLite()) {
+        for (const name of LITE_LOCKED_FILTERS) {
+          const pill = pillFor(name);
+          if (!pill) continue;
+          pill.disabled = true;
+          pill.setAttribute('aria-pressed', 'false');
+          pill.textContent = `${String(pill.textContent || '').replace(/\s*🔒$/, '')} 🔒`;
+          pill.title = 'Included with a Lighting Library subscription';
+        }
       }
+    }
+
+    /** Is this filter locked by the visitor's access tier (client DO53)? */
+    function lockedForTier(name) {
+      return isLite() && LITE_LOCKED_FILTERS.includes(name);
     }
 
     function toggleFilter(name) {
       if (!(name in filterState)) return;
+      // Belt and braces with the disabled attribute: a locked tool cannot be
+      // switched on from anywhere (client DO53).
+      if (lockedForTier(name)) return;
       filterState[name] = !filterState[name];
       // Turning Document Comparison on takes over the Content row; turning it
       // off restores the default content selection rather than leaving none.
@@ -639,13 +712,26 @@
       renderFilterPills();
     }
 
+    /**
+     * Strip anything the visitor's tier does not include (client DO53).
+     * Applied wherever the filter state is REPLACED — a demo search or a reset
+     * must not hand a LensyLite member a tool they cannot use.
+     */
+    function normalizeForTier(state) {
+      if (!isLite()) return state;
+      const out = { ...state };
+      for (const name of LITE_LOCKED_FILTERS) out[name] = false;
+      if (!out.body && !out.definitions && !out.references) out.body = true;
+      return out;
+    }
+
     function resetFilters() {
-      filterState = { ...DEFAULT_FILTER_STATE };
+      filterState = normalizeForTier({ ...DEFAULT_FILTER_STATE });
       renderFilterPills();
     }
 
     function applyFilterState(partial) {
-      filterState = { ...DEFAULT_FILTER_STATE, ...partial };
+      filterState = normalizeForTier({ ...DEFAULT_FILTER_STATE, ...partial });
       renderFilterPills();
     }
 
@@ -833,6 +919,11 @@
       updateBulkActionsUI();
 
       document.getElementById('results-meta').textContent = `for "${data.query}"`;
+
+      // The response says which Lensy answered (client DO53) — the authority on
+      // the tier, and the path that also covers a session established before
+      // this page's auth event fired.
+      if (data.tier) applyTier(data.tier);
 
       // Sync the pills to the content types the backend ACTUALLY used —
       // reference- and definition-intent queries auto-scope themselves, a
@@ -1610,6 +1701,8 @@
             <div class="flex items-center gap-2.5 shrink-0 no-print">
               ${score > 0 ? `<span class="text-xs text-gray-300 tabular-nums">Match: ${Math.round(score * 100)}%</span>` : ''}
               ${openBtn}
+              ${/* client DO54: definitions are saveable like every other card */ ''}
+              ${saveSearchButton(result, def.term || '')}
             </div>
           </div>
           <p class="text-xs text-gray-400 mb-1">${citationHtml(result)}</p>
@@ -1876,13 +1969,27 @@
         primaryLink = filledLink(result.vitriumLink, 'Open in Library', 'Open in the IES Lighting Library');
       }
 
-      // "+ Save Search" replaces "Add to Project" and is enabled for ALL four
-      // card kinds — Documents & Annexes, Illuminance Tables, References,
-      // Definitions (client DO37). Deliberately NOT offered on deprecated
-      // comparison cards or the AI Guide: the client asked that document
-      // comparisons and AI notes stay unsavable.
+      return `
+        <div class="flex items-center gap-2.5 shrink-0 no-print">
+          ${score > 0 ? `<span class="text-xs text-gray-300 tabular-nums">Match: ${Math.round(score * 100)}%</span>` : ''}
+          ${primaryLink}
+          ${saveSearchButton(result, name)}
+        </div>
+      `;
+    }
+
+    // "+ Save Search" replaces "Add to Project" and is enabled for ALL result
+    // kinds — Documents, Illuminance Tables, References and Definitions (client
+    // DO37, extended to Definition cards by DO54). Deliberately NOT offered on
+    // deprecated comparison cards or the AI Guide: the client asked that document
+    // comparisons and AI notes stay unsavable.
+    //
+    // Split out of actionsCluster so the Definition card, which builds its own
+    // action row around "Open Definition", offers exactly the same button.
+    function saveSearchButton(result, name) {
       const saveType = SAVEABLE_RESULT_TYPES[result.resultType];
-      const saveSearchBtn = (saveType && !result.isDeprecated) ? `
+      if (!saveType || result.isDeprecated) return '';
+      return `
           <button
             class="save-search-btn text-xs px-2.5 py-1 bg-brand-secondary text-white rounded-lg hover:bg-brand-secondary-dark transition font-medium flex items-center gap-1"
             data-payload="${escapeHtml(JSON.stringify(buildSavePayload(result, name)))}"
@@ -1894,15 +2001,7 @@
               <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/>
             </svg>
             Save Search
-          </button>` : '';
-
-      return `
-        <div class="flex items-center gap-2.5 shrink-0 no-print">
-          ${score > 0 ? `<span class="text-xs text-gray-300 tabular-nums">Match: ${Math.round(score * 100)}%</span>` : ''}
-          ${primaryLink}
-          ${saveSearchBtn}
-        </div>
-      `;
+          </button>`;
     }
 
     // ── Saved Search payloads (client DO37) ──────────────────────────────────
@@ -2339,6 +2438,7 @@
       modalPendingCodes = Array.isArray(payloads) ? payloads : [payloads];
       document.getElementById('modal-app-name').textContent = name || 'Search result';
       document.getElementById('modal-app-citation').textContent = citation || '';
+      document.getElementById('save-note').value = '';   // client DO50
       document.getElementById('modal-error').classList.add('hidden');
       hideCreateProjectForm();
       document.getElementById('project-modal').classList.remove('hidden');
@@ -2397,9 +2497,19 @@
       }
     }
 
+    /**
+     * The pending payloads with the modal's note attached (client DO50).
+     * One note applies to everything being saved in this action — a bulk save is
+     * one decision, so it carries one reason.
+     */
+    function pendingWithNote() {
+      const note = document.getElementById('save-note').value.trim();
+      return modalPendingCodes.map(p => (note ? { ...p, note } : p));
+    }
+
     async function addToExistingProject(projectId) {
       try {
-        const saved = await LensyAPI.saveSearches(modalPendingCodes, projectId);
+        const saved = await LensyAPI.saveSearches(pendingWithNote(), projectId);
         closeProjectModal();
         const n = (saved.inserted_ids || []).length;
         const dupes = (saved.skipped || []).length;
@@ -2442,7 +2552,7 @@
           notes: note || null, user_id: 1,
         });
         const projectId = created.project.id;
-        await LensyAPI.saveSearches(modalPendingCodes, projectId);
+        await LensyAPI.saveSearches(pendingWithNote(), projectId);
         closeProjectModal();
         showToast(`Collection "${name}" created`, 'success');
       } catch (err) {

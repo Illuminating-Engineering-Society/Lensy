@@ -137,6 +137,16 @@ AUTH_IDP_BASE_URL = "https://auth.ies.org"
 # IES members (isMember in the cookie) get in without an invite; the
 # invited_users allowlist adds guests and can still revoke anyone.
 ALLOW_MEMBERS_WITHOUT_INVITE = "true"
+# LensyLite (client DO53). "on" → IES members WITHOUT a Lighting Library
+# subscription get the limited tier: the Lighting Science collection only, with
+# Illuminance Tables, the AI Guide and Document Comparison locked. Left off here
+# on purpose — the subscription entitlement is not in the ies_auth cookie yet, so
+# switching it on today would demote every member, reviewers included. Turn it on
+# together with LENSY_SUBSCRIBER_ROLES once the IdP publishes the role slug.
+LENSY_LITE = "off"
+# Comma-separated IdP role slugs that mean "has a Lighting Library subscription".
+# Unset → the defaults in src/lib/tiers.ts.
+# LENSY_SUBSCRIBER_ROLES = "lighting-library"
 
 # Secrets set via `wrangler secret put`:
 # VITRIUM_API_KEY

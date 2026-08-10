@@ -130,7 +130,8 @@ describe('saved item rows', () => {
       result_type: 'body', application_name: 'LEAKED APPLICATION NAME',
     })}, 1)`);
     expect(html).not.toContain('LEAKED APPLICATION NAME');
-    expect(html).toContain('Documents &amp; Annexes');
+    // DO56: the label matches the search filter exactly.
+    expect(html).toContain('>Documents<');
   });
 
   it('does NOT print reference text on a non-reference item', () => {
@@ -144,7 +145,7 @@ describe('saved item rows', () => {
   it('labels every result type the way the client spells it', () => {
     const labels = JSON.parse(run('JSON.stringify(ITEM_TYPE_LABELS)'));
     expect(labels).toEqual({
-      body: 'Documents & Annexes',
+      body: 'Documents',
       tables: 'Illuminance Table',
       references: 'References',
       definitions: 'Definitions',
@@ -187,6 +188,90 @@ describe('saved item rows', () => {
     const html = run(`renderApplicationRow(${item({ resource_title: '<script>bad()</script>' })}, 1)`);
     expect(html).not.toContain('<script>bad()');
     expect(html).toContain('&lt;script&gt;');
+  });
+});
+
+// ─── DO49: a shared collection is a read-only preview ─────────────────────────
+
+describe('shared (read-only) collection', () => {
+  const shared = JSON.stringify({
+    collection: { id: 42, name: "Dan's test collection", notes: 'Beta testing note', created_at: '2026-08-07' },
+    applications: [],
+    shared: true,
+  });
+
+  it('renders a payload that carries `collection` instead of `project`', () => {
+    // The crash the client hit: renderProjectDetail read only data.project, so
+    // every share link threw "Cannot read properties of undefined (reading 'name')".
+    expect(() => run(`renderProjectDetail(${shared}, { readOnly: true })`)).not.toThrow();
+    expect(elements.get('detail-project-name').textContent).toBe("Dan's test collection");
+  });
+
+  it('hides the owner-only actions', () => {
+    run(`renderProjectDetail(${shared}, { readOnly: true })`);
+    expect(elements.get('detail-owner-actions').style.display).toBe('none');
+    run(`renderProjectDetail({ project: { id: 1, name: 'Mine' }, applications: [] })`);
+    expect(elements.get('detail-owner-actions').style.display).toBe('');
+  });
+
+  it('prints the collection note without offering to edit it', () => {
+    run(`renderProjectDetail(${shared}, { readOnly: true })`);
+    const html = elements.get('detail-collection-note').innerHTML;
+    expect(html).toContain('Beta testing note');
+    expect(html).not.toContain('collection-note-box');
+  });
+
+  it('drops the remove button and the editable note from each item', () => {
+    run(`renderProjectDetail(${shared}, { readOnly: true })`);
+    const html = run(`renderApplicationRow({ id: 1, application_code: 'x', result_type: 'body',
+      resource_title: 'ANSI/IES RP-47-23', page_number: 51, custom_notes: 'their note' }, 42)`);
+    expect(html).not.toContain('removeApplication');
+    expect(html).not.toContain('item-note');
+    expect(html).toContain('their note');
+  });
+});
+
+// ─── DO55: sorting and filtering a long collection ────────────────────────────
+
+describe('collection sorting and filtering', () => {
+  const items = [
+    { id: 1, application_code: 'a', result_type: 'tables', standard_id: 'RP-11-26', resource_title: 'A', added_at: '2026-06-01' },
+    { id: 2, application_code: 'b', result_type: 'body', standard_id: 'G-1-22', resource_title: 'B', added_at: '2026-06-10' },
+    { id: 3, application_code: 'c', result_type: 'references', standard_id: 'G-1-22', resource_title: 'C', added_at: '2026-06-05' },
+  ];
+
+  beforeAll(() => {
+    run(`renderProjectDetail({ project: { id: 9, name: 'Sorting' }, applications: ${JSON.stringify(items)} })`);
+  });
+
+  it('defaults to newest first and can flip to oldest', () => {
+    run(`itemSort = 'newest'`);
+    expect(JSON.parse(run('JSON.stringify(visibleItems().map(i => i.id))'))).toEqual([2, 3, 1]);
+    run(`itemSort = 'oldest'`);
+    expect(JSON.parse(run('JSON.stringify(visibleItems().map(i => i.id))'))).toEqual([1, 3, 2]);
+  });
+
+  it('sorts by card type', () => {
+    run(`itemSort = 'type'`);
+    expect(JSON.parse(run('JSON.stringify(visibleItems().map(i => i.result_type))')))
+      .toEqual(['body', 'tables', 'references']);
+  });
+
+  it('filters by card type and by document', () => {
+    run(`itemSort = 'newest'; itemTypeFilter = 'body'; itemStandardFilter = null`);
+    expect(JSON.parse(run('JSON.stringify(visibleItems().map(i => i.id))'))).toEqual([2]);
+    run(`itemTypeFilter = null; itemStandardFilter = 'G-1-22'`);
+    expect(JSON.parse(run('JSON.stringify(visibleItems().map(i => i.id))'))).toEqual([2, 3]);
+    run(`itemStandardFilter = null`);
+  });
+
+  it('offers the document chips the search page uses', () => {
+    run(`itemTypeFilter = null; itemStandardFilter = null; renderItemsToolbar()`);
+    const html = elements.get('detail-items-toolbar').innerHTML;
+    expect(html).toContain('Narrow to:');
+    expect(html).toContain('All Documents');
+    expect(html).toContain('G-1-22');
+    expect(html).toContain('Sort by');
   });
 });
 

@@ -113,11 +113,26 @@ export default {
         return withCors(await handleAdminUsers(request, env, url));
       }
 
+      // ── Reading ONE shared collection needs no session (client DO52) ──────
+      // "If a 'saved search' link is shared and opened by a non-subscriber, can
+      //  we allow anyone to … view the saved search?"
+      //
+      // Deliberately narrow: this exact route, GET only. The token is 16 random
+      // bytes, and a collection holds citations, links and the reader's own
+      // notes — never excerpt text or illuminance values (src/lib/collections.js
+      // enforces that at save time), so the link discloses references, which is
+      // the point of sharing it. Claiming it into an account still needs a
+      // session, and so does everything else under /api/projects.
+      const isPublicSharedRead =
+        request.method === 'GET' && /^\/api\/projects\/shared\/[^/]+$/.test(path);
+
       // ── Applications / Standards / Projects (same session gate as search) ─
       if (
-        path.startsWith('/api/applications') ||
-        path.startsWith('/api/standards') ||
-        path.startsWith('/api/projects')
+        !isPublicSharedRead && (
+          path.startsWith('/api/applications') ||
+          path.startsWith('/api/standards') ||
+          path.startsWith('/api/projects')
+        )
       ) {
         const denied = await requireReadAccess(request, env);
         if (denied) return withCors(denied);

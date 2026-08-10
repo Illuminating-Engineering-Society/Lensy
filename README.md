@@ -315,7 +315,16 @@ search/UX overhaul):
    - **DO31.4** in-body reference markers: superscripted reference numerals are
      captured per standard and stored on the standards row.
 
-   **The 260805 round adds one more ingest-side fix:**
+   **The 260805 round adds two more ingest-side fixes:**
+   - **DO48** document titles: the title and the full designation are now read
+     off each standard's COVER PAGE (`src/lib/cover-title.js`), because the PDF
+     `/Title` metadata is empty across the corpus — which is why RP-1-24 was
+     showing a wrong title from the curated fallback list. The same pass reads
+     "Prepared by the … Committee" and seeds the authoring credit (DO29), which
+     until now waited on a Vitrium column. 62 of 66 standards yield a title and
+     64 a committee; the ingest prints both per document and warns when a cover
+     cannot be read (a scanned image). Until a standard is re-ingested it keeps
+     its old title.
    - **DO40** section titles: `extractSectionTitles()` records every heading's
      number and printed title, and the ingest stores the map in
      `standards.sections_json` (migration 0011). Until a standard is re-ingested
@@ -423,7 +432,7 @@ search/UX overhaul):
      against an older deployment completes with no error and leaves the old data
      in place, and the UI then still shows the old behaviour.
    - `npm run verify:feedback` — *does a real search show the fix?* One check per
-     feedback item (DO20 → DO47), each issuing live requests and asserting
+     feedback item (DO20 → DO56), each issuing live requests and asserting
      on the response the browser would receive. Every item resolves to **PASS**,
      **FAIL**, or **BLOCKED** — the last meaning the check could not be answered
      because an input it depends on is absent (a Vitrium CSV column, a probe
@@ -472,6 +481,31 @@ search/UX overhaul):
    (`user_id` is a client-supplied placeholder until Phase 3 SSO). Do not
    store confidential client information in Projects until member login
    ships; anyone who can reach the API can read/modify project records.
+10. **LensyLite** (client DO53) — ships **off** (`LENSY_LITE = "off"` in
+    wrangler.toml). Turning it on gives IES members WITHOUT a Lighting Library
+    subscription the limited tier: the Lighting Science collection only, with
+    Illuminance Tables, the AI Guide and Document Comparison locked.
+
+    **Do not switch it on until the IdP publishes the subscription entitlement.**
+    The `ies_auth` cookie carries `isMember`, `memberTier` and role slugs — none
+    of which says "subscribes to the Lighting Library" today, so every member,
+    the client's reviewers included, would resolve to `lite`. When the slug
+    exists, set both:
+    ```
+    LENSY_LITE = "on"
+    LENSY_SUBSCRIBER_ROLES = "<the-slug>"
+    ```
+    The rule lives in `src/lib/tiers.ts`; the Worker enforces it in
+    `handleSearch` (content types, AI Guide, comparison, corpus scope) and the
+    tier is part of the search-cache key, so a Lite answer can never be served
+    to a subscriber. `npm run verify:feedback --only DO53` reports which tier a
+    given credential resolves to.
+11. **A shared collection is readable without an account** (client DO52) —
+    `GET /api/projects/shared/:token` is deliberately outside the session gate so
+    a non-subscriber can open a link that was sent to them; claiming it into an
+    account is not. The token is 16 random bytes and a saved item holds citations
+    and links, never excerpt text or illuminance values. If IES ever decides
+    otherwise, the single guard is `isPublicSharedRead` in `src/workers/api.ts`.
 
 ---
 

@@ -70,6 +70,10 @@ import {
   DEFINITIONS_STANDARD_FULL, DEFINITIONS_STANDARD_TITLE,
 } from '../lib/definitions.js';
 import { resolveCommittee } from '../lib/committees.js';
+import {
+  liteContentTypes, liteEnabled, LITE_COLLECTION, LITE_FALLBACK_PREFIX, LITE_NOTICE,
+} from '../lib/tiers';
+import { resolveRequestTier } from './session';
 import { generateResponse } from '../lib/ai-summary';
 import { formatCitation, composeStandardName } from '../lib/citations';
 import { looksLikeFormalReference, referenceCitationKey } from '../lib/references.js';
@@ -301,11 +305,21 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
 
   const {
     query,
-    includeAISummary = false,
     filters = {},
     limit = 10,
     units = 'both',
   } = body;
+  let includeAISummary = body.includeAISummary === true;
+
+  // ── Access tier (client DO53) ────────────────────────────────────────────────
+  // LensyLite is an IES member benefit for people who do not subscribe to the
+  // Lighting Library: it searches the Lighting Science collection only, and the
+  // AI Guide, Document Comparison and Illuminance Tables are not part of it.
+  // Enforced HERE as well as in the UI — the pills are a courtesy, this is the
+  // rule. Off entirely unless LENSY_LITE=on (see src/lib/tiers.ts).
+  const tier = await resolveRequestTier(request, env);
+  const isLite = tier === 'lite';
+  if (isLite) includeAISummary = false;
 
   if (!query || typeof query !== 'string' || !query.trim()) {
     return jsonResponse({ error: 'query is required' }, 400);
@@ -331,6 +345,10 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
     limit: cleanLimit,
     units,
     includeAISummary,
+    // The tier changes what a search RETURNS, so it has to change the key —
+    // otherwise a LensyLite answer could be served to a subscriber, or the
+    // reverse (client DO53).
+    tier,
   });
   // debug requests bypass the cache entirely: they must observe the live
   // pipeline, and their _depDbg payload must never be served to real users.
@@ -350,12 +368,15 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
   // ── Content types (filter overhaul) ──────────────────────────────────────────
   // Which result kinds this search returns: illuminance-table rows ('tables'),
   // document-body excerpts ('body'), References-section entries ('references').
-  const contentTypes = normalizeContentTypes(filters, rawQuery);
+  const contentTypes = isLite
+    ? liteContentTypes(normalizeContentTypes(filters, rawQuery))
+    : normalizeContentTypes(filters, rawQuery);
 
   // ── Version-comparison intent ("what's new", "what changed") ─────────────────
   // Signals to the UI that ADDED/REVISED should be auto-shown and REMOVED gated.
   // The "Compare Versions" filter checkbox forces the same handling.
-  const isVersionComparison = isVersionComparisonQuery(rawQuery) || contentTypes.has('compare');
+  const isVersionComparison = !isLite
+    && (isVersionComparisonQuery(rawQuery) || contentTypes.has('compare'));
 
   // ── Structural filter inference from query ───────────────────────────────────
   // A bare "LZ1 walkways" in the query string should narrow results to that
@@ -370,6 +391,17 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
     allResults = await runMultiSearch(subQueries, mergedFilters, cleanLimit, env, contentTypes);
   } else {
     allResults = await runSingleSearch(rawQuery, mergedFilters, cleanLimit, env, contentTypes);
+  }
+
+  // ── LensyLite corpus scope (client DO53) ─────────────────────────────────────
+  // "LensyLite can ONLY search the current Lighting Science Collection." Applied
+  // to the assembled results rather than to the vector query, because Vectorize
+  // cannot express "id IN (…)" — recall is narrower for a Lite user, which is
+  // what a teaser tier is, and nothing outside the collection can reach them.
+  let liteAllowed: Set<string> | null = null;
+  if (isLite) {
+    liteAllowed = await liteAllowedStandards(env);
+    allResults.results = restrictToStandards(allResults.results, liteAllowed);
   }
 
   // ── Deprecated content (version-comparison queries ONLY) ─────────────────────
@@ -527,9 +559,12 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
   // narrowed the search to Definitions or References has said they do not want
   // one. The default selection includes Documents, so a bare "RP-3-20" — and the
   // Table of Contents deep link — answers with the document out of the box.
-  const documentCards = (!isVersionComparison && !isMultiQuery && contentTypes.has('body'))
+  let documentCards = (!isVersionComparison && !isMultiQuery && contentTypes.has('body'))
     ? await findStandardLookupResults(env, rawQuery)
     : [];
+  // A Lite user cannot be handed a document outside their collection, not even
+  // by naming it exactly (client DO53).
+  if (liteAllowed) documentCards = restrictToStandards(documentCards, liteAllowed);
   if (documentCards.length > 0) {
     const cardIds = new Set(documentCards.map(c => c.application.standard));
     allResults.results = [
@@ -576,6 +611,10 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
     subQueries: isMultiQuery ? subQueries : undefined,
     isVersionComparison,
     contentTypes: [...contentTypes],
+    // Which Lensy answered this search, and — for LensyLite — the line the
+    // client wrote for the banner (DO53).
+    tier,
+    liteNotice: isLite ? LITE_NOTICE : null,
     noStrongMatch,
     noStrongMatchMessage: noStrongMatch ? NO_STRONG_MATCH_MESSAGE : null,
     aiGuideRequiredNotice,
@@ -791,6 +830,51 @@ export function requestedDeprecatedEdition(rawQuery: string, currentId?: string 
   // prior edition. Errata suffixes are ignored when comparing against current.
   const base = (id: string) => id.replace(/\+E\d+$/, '');
   return named.find(id => base(id) !== base(current)) || null;
+}
+
+// ─── LensyLite corpus scope (client DO53) ────────────────────────────────────
+
+/**
+ * The standards a LensyLite user may search: the current Lighting Science
+ * collection.
+ *
+ * Two sources, in order:
+ *   1. `standards.collection` — the webstore Category the Vitrium export
+ *      supplies ("Lighting Science"). Authoritative once synced.
+ *   2. The `LS-` series, when that metadata has not arrived yet. A subset rather
+ *      than a guess: every LS standard IS Lighting Science, so the tier can
+ *      never leak a document it should not, it just sees fewer of them until the
+ *      sync runs.
+ *
+ * An empty set would mean "search nothing", which is why the fallback exists —
+ * a Lite user must still get answers, not a blank page.
+ */
+async function liteAllowedStandards(env: Env): Promise<Set<string>> {
+  const ids = new Set<string>();
+  try {
+    const byCollection = await env.DB.prepare(
+      "SELECT id FROM standards WHERE status = 'Active' AND collection LIKE ?"
+    ).bind(`%${LITE_COLLECTION}%`).all<{ id: string }>();
+    for (const r of byCollection.results || []) ids.add(r.id);
+  } catch (err) {
+    // Pre-0010 database: the column does not exist yet.
+    console.error('lite collection lookup fell back to the series prefix:', errMsg(err));
+  }
+  if (ids.size > 0) return ids;
+
+  const bySeries = await env.DB.prepare(
+    "SELECT id FROM standards WHERE status = 'Active' AND id LIKE ?"
+  ).bind(`${LITE_FALLBACK_PREFIX}%`).all<{ id: string }>();
+  for (const r of bySeries.results || []) ids.add(r.id);
+  return ids;
+}
+
+/** Drop every result whose standard is outside the allowed set. */
+export function restrictToStandards(results: SearchResult[], allowed: Set<string>): SearchResult[] {
+  return results.filter(r => {
+    const id = r.application?.standard;
+    return !!id && allowed.has(id);
+  });
 }
 
 // ─── Editions of one standard family (client DO42 / DO43) ────────────────────

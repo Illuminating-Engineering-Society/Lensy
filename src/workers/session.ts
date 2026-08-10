@@ -23,6 +23,7 @@
  */
 
 import { checkAuth } from '../lib/auth';
+import { resolveTier, liteEnabled, type LensyTier } from '../lib/tiers';
 import {
   getSsoState,
   decideAccess,
@@ -123,6 +124,10 @@ export async function handleAuthMe(request: Request, env: Env): Promise<Response
       isMember: user.isMember,
       memberTier: user.memberTier ?? null,
       role: decision.role,
+      // Which Lensy this account gets (client DO53). The UI locks the tools
+      // LensyLite excludes; the search Worker enforces the same rule again.
+      tier: tierFor(user, decision, env),
+      liteEnabled: liteEnabled(env),
       // What the /admin pages gate on. The API enforces it again server-side
       // (requireAdminAccess) — this only decides what the UI offers.
       isAdmin: decision.admin,
@@ -131,6 +136,38 @@ export async function handleAuthMe(request: Request, env: Env): Promise<Response
     },
     logoutUrl: buildLogoutUrl(env, request.url),
   });
+}
+
+// ─── Access tier (client DO53) ────────────────────────────────────────────────
+
+/** The tier for one authorized session. */
+function tierFor(user: SsoUser, decision: AccessDecision, env: Env): LensyTier {
+  return resolveTier({
+    roles: user.roles,
+    isMember: user.isMember,
+    memberTier: user.memberTier ?? null,
+    inviteRole: decision.role ?? null,
+    admin: decision.admin,
+  }, env);
+}
+
+/**
+ * The tier a REQUEST is entitled to, for the endpoints that enforce it.
+ *
+ * Scripts and cron authenticate with the bearer secret and are always 'full' —
+ * ingest and the verification harness must see the whole corpus. A cookie
+ * session resolves through decideAccess, and a request with neither (which the
+ * route gate has already rejected) is 'none'.
+ */
+export async function resolveRequestTier(request: Request, env: Env): Promise<LensyTier> {
+  if (!liteEnabled(env)) return 'full';
+  if (request.headers.get('authorization')) {
+    const viaSecret = await checkAuth(request, env);
+    if (viaSecret.ok) return 'full';
+  }
+  const gate = await evaluateSession(request, env);
+  if (!gate.ok) return 'none';
+  return tierFor(gate.user, gate.decision, env);
 }
 
 // ─── Shared gate plumbing ─────────────────────────────────────────────────────

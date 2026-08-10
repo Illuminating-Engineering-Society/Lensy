@@ -565,7 +565,14 @@ async function ingestParsedPDF(request: Request, env: Env): Promise<Response> {
        coverage_json, reference_markers_json, sections_json, indexed_at, updated_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
     ON CONFLICT(id) DO UPDATE SET
-      title        = excluded.title,
+      -- A real title only. The ingest sends the id as its last-resort fallback,
+      -- and letting that overwrite the stored title is how "RP-1-24" ended up as
+      -- the title of RP-1-24 — which sent every citation to the curated list,
+      -- where the title was wrong (client DO48). The title now comes off the
+      -- document's own cover, so a refresh is right whenever there IS one.
+      title        = CASE
+        WHEN excluded.title IS NOT NULL AND excluded.title <> standards.id
+        THEN excluded.title ELSE standards.title END,
       -- description and author are CURATED fields: they come from the
       -- Vitrium/webstore export via scripts/sync-metadata.js and feed the Table of
       -- Contents (client DO35) and the authoring-committee credit on every result
@@ -578,7 +585,9 @@ async function ingestParsedPDF(request: Request, env: Env): Promise<Response> {
       description  = COALESCE(standards.description, excluded.description),
       author       = COALESCE(standards.author, excluded.author),
       year         = excluded.year,
-      full_designation = excluded.full_designation,
+      -- Same rule: the cover-derived designation refreshes it, a missing one
+      -- never blanks what is already stored.
+      full_designation = COALESCE(excluded.full_designation, standards.full_designation),
       r2_key       = COALESCE(excluded.r2_key, standards.r2_key),
       tables_json  = excluded.tables_json,
       status       = excluded.status,
@@ -598,11 +607,13 @@ async function ingestParsedPDF(request: Request, env: Env): Promise<Response> {
     standardId,
     metadata.title || standardId,
     metadata.subject || null,
-    // A PDF's /Author is whoever produced the file — a person, or a pre-press
-    // tool. `standards.author` means the authoring TECHNICAL COMMITTEE (DO34), so
+    // `standards.author` means the authoring TECHNICAL COMMITTEE (DO29/DO34), so
     // only a committee-shaped value may seed it; anything else would sit in the
     // column looking authoritative and be silently dropped by resolveCommittee at
-    // render time, which is how "Obi Wan" and "Pre-Press M5" got in there.
+    // render time, which is how "Obi Wan" and "Pre-Press M5" got in there — a
+    // PDF's /Author is whoever produced the file, a person or a pre-press tool.
+    // The ingest script now prefers the committee the document PRINTS ("Prepared
+    // by the IES Retail Lighting Committee"), which passes this guard.
     looksLikeCommittee(metadata.author) ? metadata.author : null,
     metadata.year ? parseInt(metadata.year, 10) : null,
     metadata.fullDesignation || null,

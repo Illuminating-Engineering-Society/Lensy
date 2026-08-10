@@ -72,6 +72,7 @@ import { execSync } from 'child_process';
 import { parsePDFNode } from '../src/lib/pdf-parser.js';
 import { extractIESTables, extractGeneralNotes } from '../src/lib/table-extractor.js';
 import { chunkIESDocument, extractSectionTitles } from '../src/lib/chunker.js';
+import { extractCoverMetadata, extractCoverCommittee } from '../src/lib/cover-title.js';
 import { extractReferenceMarkers } from '../src/lib/reference-markers.js';
 import {
   extractApplicationsFromPages,
@@ -342,7 +343,22 @@ async function ingestFile(filePath, standardId, status = 'current') {
   // Step 2: Parse PDF in Node.js using pdfjs-dist
   console.log('  Parsing PDF...');
   const { metadata, pages } = await parsePDFNode(pdfBytes);
-  console.log(`  Pages: ${pages.length}, Title: "${metadata.title || '(none)'}"`);
+
+  // Step 2a: the standard's own cover is the authority for its title and its
+  // full designation (client DO48 — the file metadata is empty for this whole
+  // corpus, so `title` was being written as the bare id and citations fell back
+  // to a hand-written list that had RP-1-24 wrong). The committee printed a page
+  // later seeds the authoring credit (DO29) until Vitrium supplies it.
+  const cover = extractCoverMetadata(pages);
+  const coverCommittee = extractCoverCommittee(pages);
+  const title = cover.title || metadata.title || '';
+  console.log(`  Pages: ${pages.length}, Title: "${title || '(none)'}"` +
+    `${cover.title ? ' (from the cover)' : ''}`);
+  if (!cover.title) {
+    console.warn('  ⚠ The cover page yielded no title — this standard will cite as a bare designation ' +
+      'unless the Vitrium export supplies one (npm run sync-metadata).');
+  }
+  if (coverCommittee) console.log(`  Authoring committee: ${coverCommittee}`);
 
   // Step 2b: Classify the document structure. NEW_TABLE PDFs carry the
   // landscape "Recommended Illuminance Criteria" grid the application extractor
@@ -378,9 +394,12 @@ async function ingestFile(filePath, standardId, status = 'current') {
   // low-quality rows that would pollute D1, so we skip it for STANDARD docs.
   // Those PDFs are still fully indexed for semantic text search below.
   const standardMeta = {
-    fullDesignation: inferFullDesignation(standardId, metadata.title),
+    // The printed designation carries what an id cannot: the reaffirmation
+    // marker ("ANSI/IES LS-2-20(R2023)") and co-publishers ("ANSI/IES/NALMCO")
+    // — the exact string the client asked result cards to print (DO45/DO48).
+    fullDesignation: cover.designation || inferFullDesignation(standardId, title),
     year: metadata.year,
-    author: metadata.author,
+    author: metadata.author || coverCommittee,
   };
   let applications = [];
   if (isNewTable) {
@@ -485,8 +504,8 @@ async function ingestFile(filePath, standardId, status = 'current') {
     structure,
     status,
     metadata: {
-      title: metadata.title,
-      author: metadata.author,
+      title,
+      author: standardMeta.author,
       subject: metadata.subject,
       year: metadata.year,
       fullDesignation: standardMeta.fullDesignation,

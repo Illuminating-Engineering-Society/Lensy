@@ -258,12 +258,29 @@ export async function generateResponse(
   return {
     text: sanitized,
     watermark: 'IES Lensy AI-Generated Summary — Not for reproduction',
-    disclaimer: mode === 'comparison'
-      ? 'AI-generated comparison — unverified. Perform a manual review of both documents before relying on it.'
-      : 'This AI-generated response is for informational purposes only and may contain errors. Always refer to the full IES Standards for authoritative guidance.',
+    disclaimer: disclaimerFor(mode),
     mode,
     ...(opts.comparison ? { comparison: opts.comparison } : {}),
   };
+}
+
+/**
+ * The disclaimer printed above every AI answer.
+ *
+ * The closing sentence is the client's (DO51): a reader who can save every other
+ * card reasonably assumes they can save this one too, and they cannot — an AI
+ * answer is not a citation, so a Saved Search Collection deliberately holds
+ * none (src/lib/collections.js). Saying so on the card is cheaper than letting
+ * them look for the button.
+ */
+export const AI_NOT_SAVEABLE = 'This response cannot be saved to your search collections.';
+
+export function disclaimerFor(mode: AIMode): string {
+  const lead = mode === 'comparison'
+    ? 'AI-generated comparison — unverified. Perform a manual review of both documents before relying on it.'
+    : 'This AI-generated response is for informational purposes only and may contain errors. ' +
+      'Always refer to the full IES Standards for authoritative guidance.';
+  return `${lead} ${AI_NOT_SAVEABLE}`;
 }
 
 // ─── Response reading ─────────────────────────────────────────────────────────
@@ -537,13 +554,13 @@ function buildSafeFallback(
         + 'Please perform a manual review of both documents; the excerpts below show the passages retrieved from each edition.\n\n'
         + `Editions referenced:\n${standardsList}`,
       watermark: null,
-      disclaimer: 'Comparison unavailable — this response lists the editions involved without AI interpretation.',
+      disclaimer: `Comparison unavailable — this response lists the editions involved without AI interpretation. ${AI_NOT_SAVEABLE}`,
     };
   }
 
   return {
     text: `For "${query}", I found relevant IES standards in the results below. Please review the application cards for specific illuminance values and standard references.\n\nRelevant standards:\n${standardsList}`,
     watermark: null,
-    disclaimer: 'This response lists relevant standards without AI interpretation. Always refer to the full IES Standards.',
+    disclaimer: `This response lists relevant standards without AI interpretation. Always refer to the full IES Standards. ${AI_NOT_SAVEABLE}`,
   };
 }

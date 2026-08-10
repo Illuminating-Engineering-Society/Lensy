@@ -530,6 +530,105 @@ describe('AI Guide naming', () => {
   });
 });
 
+// ─── DO54: Definition cards are saveable ──────────────────────────────────────
+
+describe('Save Search on a Definition card', () => {
+  const definition = `{
+    resultType: 'definition', relevanceScore: 1,
+    citation: 'ANSI/IES LS-1-25, §4.1.5',
+    citationName: 'ANSI/IES LS-1-25 Lighting Science: Nomenclature and Definitions',
+    citationPage: null,
+    vitriumLink: 'https://ies.org/definitions/goniophotometer/',
+    definition: { slug: 'goniophotometer', term: 'goniophotometer', clause: '4.1.5',
+      html: '<p>A photometer for measuring the directional light distribution.</p>',
+      sourceUrl: 'https://ies.org/definitions/goniophotometer/' },
+    excerpt: { text: 'A photometer for measuring the directional light distribution.' }
+  }`;
+
+  it('offers the same "+ Save Search" button the other cards offer', () => {
+    const card = run(`renderDefinitionCard(${definition}, 0)`);
+    expect(card).toContain('Save Search');
+    expect(card).toContain('save-search-btn');
+    expect(card).toContain('Open Definition');
+  });
+
+  it('saves it as a Definition, with the slug and no body text', () => {
+    const payload = JSON.parse(run(`JSON.stringify(buildSavePayload(${definition}, 'goniophotometer'))`));
+    expect(payload.result_type).toBe('definitions');
+    expect(payload.definition_slug).toBe('goniophotometer');
+    expect(payload.reference_text).toBeNull();
+    expect(payload.application_name).toBeNull();
+  });
+});
+
+// ─── DO50: a user note on the Save Search window ──────────────────────────────
+
+describe('save-search note', () => {
+  it('travels with every payload being saved', () => {
+    run(`modalPendingCodes = [{ result_type: 'body', resource_title: 'A' }, { result_type: 'body', resource_title: 'B' }];
+         document.getElementById('save-note').value = '  Needed for the atrium  '`);
+    const out = JSON.parse(run('JSON.stringify(pendingWithNote())'));
+    expect(out.every(p => p.note === 'Needed for the atrium')).toBe(true);
+  });
+
+  it('is omitted entirely when left blank', () => {
+    run(`modalPendingCodes = [{ result_type: 'body', resource_title: 'A' }];
+         document.getElementById('save-note').value = '   '`);
+    expect(JSON.parse(run('JSON.stringify(pendingWithNote())'))[0].note).toBeUndefined();
+  });
+});
+
+// ─── DO53: LensyLite ──────────────────────────────────────────────────────────
+
+describe('LensyLite', () => {
+  it('is off by default — every tool is available', () => {
+    run(`applyTier('full'); resetFilters()`);
+    expect(elements.get('wordmark').textContent).toBe('Lensy');
+    expect(pills.get('tables').disabled).toBe(false);
+    expect(JSON.parse(run('JSON.stringify(filterState)')).tables).toBe(true);
+  });
+
+  it('renames the product and locks the three tools a subscription unlocks', () => {
+    run(`applyTier('lite')`);
+    expect(elements.get('wordmark').textContent).toBe('LensyLite');
+    for (const name of ['tables', 'guide', 'compare']) {
+      expect(pills.get(name).disabled).toBe(true);
+      expect(pills.get(name).textContent).toMatch(/🔒$/);
+    }
+    // …and leaves the rest of the tools alone.
+    expect(pills.get('body').disabled).toBe(false);
+    expect(pills.get('definitions').disabled).toBe(false);
+    expect(pills.get('references').disabled).toBe(false);
+  });
+
+  it('shows the upgrade banner in the client\'s words', () => {
+    run(`applyTier('lite')`);
+    expect(elements.get('lite-banner').classList.contains('hidden')).toBe(false);
+    expect(elements.get('lite-banner-text').textContent)
+      .toContain('IES Members receive limited access to Lighting Science Collection');
+  });
+
+  it('never lets a locked tool be switched on', () => {
+    run(`applyTier('lite'); resetFilters(); toggleFilter('tables'); toggleFilter('guide')`);
+    const state = JSON.parse(run('JSON.stringify(filterState)'));
+    expect(state.tables).toBe(false);
+    expect(state.guide).toBe(false);
+    // A demo search that asks for them is normalized too.
+    run(`applyFilterState({ tables: true, guide: true, compare: true })`);
+    const demo = JSON.parse(run('JSON.stringify(filterState)'));
+    expect(demo.tables || demo.guide || demo.compare).toBe(false);
+    expect(demo.body).toBe(true);   // never left with nothing selected
+  });
+
+  it('sends no blocked content type to the API', () => {
+    run(`applyTier('lite'); resetFilters()`);
+    const filters = JSON.parse(run('JSON.stringify(collectFilters())'));
+    expect(filters.content_types || []).not.toContain('tables');
+    expect(filters.content_types || []).not.toContain('compare');
+    run(`applyTier('full'); resetFilters()`);
+  });
+});
+
 // ─── DO27: comparison advisory names one prior edition ────────────────────────
 
 describe('comparison notice', () => {

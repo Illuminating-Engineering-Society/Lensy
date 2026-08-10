@@ -185,6 +185,7 @@ const ctx = {
   totals: null,         // /api/admin/index-status
   indexHtml: null,      // the served search page, for the frontend-only items
   tocHtml: null,        // the served Table of Contents page (DO46)
+  projectsHtml: null,   // the served collections page (DO49/DO50/DO55/DO56)
   migration0010: null,  // boolean | null
   existsCache: new Map(),
 };
@@ -257,6 +258,24 @@ async function loadIndexHtml() {
     text: readFileSync(resolve(ROOT, 'src/frontend/index.html'), 'utf8'),
   };
   return ctx.indexHtml;
+}
+
+/** The served Saved Search Collections page (DO49/DO50/DO55/DO56). */
+async function loadProjectsHtml() {
+  if (ctx.projectsHtml) return ctx.projectsHtml;
+  try {
+    const res = await fetch(`${CONFIG.apiUrl}/projects.html`, { headers: authHeaders() });
+    const text = await res.text();
+    if (res.ok && /renderApplicationRow/.test(text)) {
+      ctx.projectsHtml = { source: 'served', text };
+      return ctx.projectsHtml;
+    }
+  } catch { /* fall through to the local copy */ }
+  ctx.projectsHtml = {
+    source: 'local file (the deployment did not serve the page)',
+    text: readFileSync(resolve(ROOT, 'src/frontend/projects.html'), 'utf8'),
+  };
+  return ctx.projectsHtml;
 }
 
 /** The served Table of Contents page (DO46), with the same local fallback. */
@@ -1326,6 +1345,240 @@ const CHECKS = [
             `${detail}, but the card has no ${gaps.join(', ')}`,
             'those fields come from the Vitrium export — run npm run sync-metadata',
           );
+    },
+  },
+
+  // ─── 260805 round, second half (DO48–DO56) ─────────────────────────────────
+
+  {
+    id: 'DO48',
+    title: 'Document titles match what the standard prints',
+    async run() {
+      await loadStandards();
+      if (ctx.standardsError) {
+        return blocked(`the titles live on the standards list, and ${ctx.standardsError}`, 'apply the migrations');
+      }
+      const active = ctx.active || [];
+      if (active.length === 0) return blocked('no active standards are indexed', 'ingest the corpus');
+
+      // A title equal to the id is the "no title" state that sent citations to
+      // the curated fallback, where RP-1-24 was wrong.
+      const untitled = active.filter(s => !s.title || s.title === s.id);
+      const probe = active.find(s => s.id.toUpperCase().startsWith('RP-1-24'));
+      if (untitled.length === active.length) {
+        return fail(
+          `not one of the ${active.length} standards carries a title — every citation is a bare designation`,
+          'the title is read off the cover page at ingest — run npm run ingest',
+        );
+      }
+      if (probe && /commercial interiors/i.test(String(probe.title))) {
+        return fail(
+          `${probe.id} is still titled "${probe.title}"; its cover reads "Recommended Practice: Lighting Office Spaces"`,
+          're-ingest RP-1-24 (npm run ingest) so the cover-derived title replaces the curated one',
+        );
+      }
+      const detail = `${active.length - untitled.length}/${active.length} standards carry a printed title` +
+        (probe ? ` (e.g. ${probe.id}: "${probe.title}")` : '');
+      return untitled.length === 0
+        ? pass(detail)
+        : blocked(
+            `${detail}; still untitled: ${untitled.slice(0, 5).map(s => s.id).join(', ')}` +
+            (untitled.length > 5 ? `, +${untitled.length - 5} more` : ''),
+            'those covers could not be read (usually a scanned image) — supply a Title column in the Vitrium ' +
+            'CSV export and run npm run sync-metadata',
+          );
+    },
+  },
+
+  {
+    id: 'DO49',
+    title: 'A shared collection link opens instead of erroring',
+    async run() {
+      const html = await loadProjectsHtml();
+      // The crash was renderProjectDetail reading only `data.project` while the
+      // share endpoint answers with `collection`.
+      if (!/data\.project \|\| data\.collection/.test(html.text)) {
+        return fail(`the page still reads only data.project [${html.source}]`);
+      }
+      if (!/detail-owner-actions/.test(html.text)) {
+        return fail(`a shared collection still shows the owner's actions [${html.source}]`);
+      }
+      if (!CONFIG.write) {
+        return blocked(
+          'the page-side fix is present; proving the round trip needs a collection to share',
+          're-run with --write (DO37 creates and deletes a throwaway collection)',
+        );
+      }
+      // The write path (DO37) already exercises share → read → claim; this only
+      // checks the SHAPE the page depends on.
+      const created = await post('/api/projects', { user_id: CONFIG.ownerA, name: 'verify-feedback share probe' });
+      const id = created.json?.project?.id;
+      try {
+        const shared = await post(`/api/projects/${id}/share`);
+        const token = shared.json?.share_token;
+        const viewed = await get(`/api/projects/shared/${token}`);
+        if (!viewed.ok) return fail(`opening the share link → HTTP ${viewed.status}`);
+        if (!viewed.json?.collection?.name) {
+          return fail(`the share payload carries no collection.name: ${JSON.stringify(viewed.json).slice(0, 160)}`);
+        }
+        return pass(`the share payload carries collection.name ("${viewed.json.collection.name}") and the page reads it [${html.source}]`);
+      } finally {
+        if (id) await del(`/api/projects/${id}`).catch(() => {});
+      }
+    },
+  },
+
+  {
+    id: 'DO50',
+    title: 'The Save Search window takes a user note',
+    async run() {
+      const html = await loadIndexHtml();
+      const required = [
+        ['note field', /id="save-note"/],
+        ['note travels with the payload', /function pendingWithNote/],
+      ];
+      const missing = required.filter(([, re]) => !re.test(html.text)).map(([n]) => n);
+      return missing.length === 0
+        ? pass(`the Save Search modal carries a note field, applied to every item saved [${html.source}]`)
+        : fail(`missing ${missing.join(', ')} [${html.source}]`);
+    },
+  },
+
+  {
+    id: 'DO51',
+    title: 'The AI disclaimer says the response cannot be saved',
+    async run() {
+      const data = await search(PROBES.neutral.query, { ai: true, limit: 5 });
+      if (!data.aiSummary) return blocked('no AI summary came back', 'Workers AI must be reachable');
+      const disclaimer = String(data.aiSummary.disclaimer || '');
+      return /cannot be saved to your search collections/i.test(disclaimer)
+        ? pass(`"${disclaimer.slice(-60)}"`)
+        : fail(`the disclaimer does not mention saving: "${disclaimer}"`);
+    },
+  },
+
+  {
+    id: 'DO52',
+    title: 'A shared link is readable without an account',
+    async run() {
+      const html = await loadProjectsHtml();
+      if (!/data-public-when-share/.test(html.text)) {
+        return fail(`the collections page still hides itself from a signed-out visitor [${html.source}]`);
+      }
+      if (!CONFIG.write) {
+        return blocked(
+          'the page-side fix is present; proving the endpoint is open needs a collection to share',
+          're-run with --write',
+        );
+      }
+      const created = await post('/api/projects', { user_id: CONFIG.ownerA, name: 'verify-feedback public probe' });
+      const id = created.json?.project?.id;
+      try {
+        const shared = await post(`/api/projects/${id}/share`);
+        const token = shared.json?.share_token;
+        // No Authorization header and no cookie — exactly a non-subscriber
+        // opening the link.
+        const anonymous = await fetch(`${CONFIG.apiUrl}/api/projects/shared/${token}`);
+        if (anonymous.status === 401 || anonymous.status === 403) {
+          return fail(`an anonymous read of the share link answered HTTP ${anonymous.status}`);
+        }
+        if (!anonymous.ok) return fail(`an anonymous read answered HTTP ${anonymous.status}`);
+        // …and nothing else under /api/projects may be.
+        const listed = await fetch(`${CONFIG.apiUrl}/api/projects?user_id=1`);
+        if (listed.ok) {
+          return fail('anonymous access is not limited to the shared route — /api/projects also answered');
+        }
+        return pass(`the shared route answers anonymously (HTTP ${anonymous.status}); /api/projects still requires a session (HTTP ${listed.status})`);
+      } finally {
+        if (id) await del(`/api/projects/${id}`).catch(() => {});
+      }
+    },
+  },
+
+  {
+    id: 'DO53',
+    title: 'LensyLite is wired end to end (and off until IES says otherwise)',
+    async run() {
+      const html = await loadIndexHtml();
+      const required = [
+        ['tier handling', /function applyTier/],
+        ['locked tools', /LITE_LOCKED_FILTERS\s*=\s*\['tables', 'guide', 'compare'\]/],
+        ['LensyLite wordmark', /'LensyLite'/],
+        ['upgrade banner', /lite-banner/],
+      ];
+      const missing = required.filter(([, re]) => !re.test(html.text)).map(([n]) => n);
+      if (missing.length > 0) return fail(`the page is missing: ${missing.join(', ')} [${html.source}]`);
+
+      // The Worker's answer says which tier served the search.
+      const data = await search(PROBES.neutral.query, { limit: 5 });
+      if (!data.tier) {
+        return fail('the search response carries no `tier` — the Worker is not resolving access tiers');
+      }
+      if (data.tier === 'lite') {
+        const tables = (data.results || []).filter(r => r.resultType === 'application');
+        if (tables.length > 0) {
+          return fail(`a LensyLite search returned ${tables.length} Illuminance Table row(s) — the tier must exclude them`);
+        }
+        return pass('LensyLite is ON for this credential and its exclusions hold');
+      }
+      return pass(
+        `implemented and currently OFF (this search ran as "${data.tier}") — ` +
+        'set LENSY_LITE=on with LENSY_SUBSCRIBER_ROLES once the IdP publishes the subscription role',
+      );
+    },
+  },
+
+  {
+    id: 'DO54',
+    title: 'Definition cards can be saved',
+    async run() {
+      const html = await loadIndexHtml();
+      if (!/function saveSearchButton/.test(html.text)) {
+        return fail(`the save button is still built inline in actionsCluster only [${html.source}]`);
+      }
+      // The definition card must call it — that is the whole item.
+      if (!/saveSearchButton\(result, def\.term/.test(html.text)) {
+        return fail(`renderDefinitionCard does not offer "+ Save Search" [${html.source}]`);
+      }
+      if (!/standard: 'body'/.test(html.text) || !/definition: 'definitions'/.test(html.text)) {
+        return fail(`the saveable-type map no longer covers every card kind [${html.source}]`);
+      }
+      return pass(`Definition cards offer the same "+ Save Search" button as every other card [${html.source}]`);
+    },
+  },
+
+  {
+    id: 'DO55',
+    title: 'A collection can be sorted and filtered',
+    async run() {
+      const html = await loadProjectsHtml();
+      const required = [
+        ['sort control', /id="item-sort"/],
+        ['sort by date and type', /itemSort === 'oldest'/],
+        ['card-type filter', /itemTypeFilter/],
+        ['document chips', /Narrow to:/],
+      ];
+      const missing = required.filter(([, re]) => !re.test(html.text)).map(([n]) => n);
+      return missing.length === 0
+        ? pass(`the collection view sorts by date and card type and filters by both kind and document [${html.source}]`)
+        : fail(`missing ${missing.join(', ')} [${html.source}]`);
+    },
+  },
+
+  {
+    id: 'DO56',
+    title: 'Collection labels match the search filters',
+    async run() {
+      const html = await loadProjectsHtml();
+      // The LABEL, not a mention of it: the comment that records the change
+      // names the old wording on purpose.
+      if (/(?:body:|>)\s*'?Documents (?:&|&amp;) Annexes/.test(html.text)) {
+        return fail(`the collection view still labels body items "Documents & Annexes" [${html.source}]`);
+      }
+      if (!/body: 'Documents'/.test(html.text)) {
+        return fail(`the body label is not "Documents" [${html.source}]`);
+      }
+      return pass(`body items are labelled "Documents", exactly as the search filter spells it [${html.source}]`);
     },
   },
 ];

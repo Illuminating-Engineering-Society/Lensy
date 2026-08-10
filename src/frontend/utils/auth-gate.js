@@ -22,6 +22,12 @@
   // is executing.
   var REQUIRE_ADMIN =
     !!(document.currentScript && document.currentScript.hasAttribute('data-require-admin'));
+  // Pages carrying `data-public-when-share` stay open to anyone arriving on a
+  // share link (client DO52): a shared collection is references and links, and
+  // the whole point of sending one is that the recipient can read it. Saving it
+  // into an account still requires signing in — the page asks for that itself.
+  var PUBLIC_WHEN_SHARE =
+    !!(document.currentScript && document.currentScript.hasAttribute('data-public-when-share'));
 
   // Hide everything before first paint. The gate overlay is exempt.
   document.documentElement.classList.add('auth-pending');
@@ -191,6 +197,42 @@
     document.dispatchEvent(new CustomEvent('lensy:auth', { detail: data.user }));
   }
 
+  /**
+   * Reveal the page to a visitor with no Lensy access, for a share link only
+   * (client DO52). `window.lensyAnonymous` tells the page to offer sign-in
+   * instead of the actions that need an account.
+   */
+  function revealAnonymous(data) {
+    window.lensyAnonymous = true;
+    window.lensyLoginUrl = (data && data.loginUrl) || '/login';
+    document.documentElement.classList.remove('auth-pending');
+    var el = document.getElementById(GATE_ID);
+    if (el) el.remove();
+    addSignInChip(window.lensyLoginUrl);
+    document.dispatchEvent(new CustomEvent('lensy:auth', { detail: null }));
+  }
+
+  function addSignInChip(loginUrl) {
+    var nav = document.querySelector('header nav');
+    if (!nav || document.getElementById('lensy-user-chip')) return;
+    var chip = document.createElement('span');
+    chip.id = 'lensy-user-chip';
+    chip.className = 'flex items-center gap-2 pl-3 ml-1 border-l border-white/20 text-blue-200';
+    chip.innerHTML =
+      '<a href="' + esc(loginUrl) + '" ' +
+      'class="px-3 py-1.5 rounded-md text-blue-200 hover:text-white hover:bg-white/10 transition">Sign in</a>';
+    nav.appendChild(chip);
+  }
+
+  function onShareLink() {
+    if (!PUBLIC_WHEN_SHARE) return false;
+    try {
+      return new URLSearchParams(location.search).has('share');
+    } catch (err) {
+      return false;
+    }
+  }
+
   // /api/auth/me mints the login URL, but only this page knows which page is
   // being gated — pass it so the IdP round-trip returns here, not to the root.
   function meUrl() {
@@ -211,8 +253,11 @@
           }
           return reveal(r.data);
         }
-        if (r.status === 401) return showLogin(r.data.loginUrl);
-        if (r.status === 403) return showDenied(r.data);
+        // A share link is readable without an account (DO52) — for BOTH the
+        // signed-out visitor and the signed-in one whose account has no Lensy
+        // access, which is exactly the non-subscriber the client described.
+        if (r.status === 401) return onShareLink() ? revealAnonymous(r.data) : showLogin(r.data.loginUrl);
+        if (r.status === 403) return onShareLink() ? revealAnonymous(r.data) : showDenied(r.data);
         if (r.status === 503 && r.data.reason === 'sso_misconfigured') {
           return showMisconfigured(r.data);
         }

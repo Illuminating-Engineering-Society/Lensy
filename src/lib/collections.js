@@ -25,9 +25,15 @@
 /** The four kinds a collection can hold, matching the search content types. */
 export const SAVEABLE_TYPES = ['body', 'tables', 'references', 'definitions'];
 
-/** Human labels, exactly as the client's collection view and CSV spell them. */
+/**
+ * Human labels, exactly as the client's collection view and CSV spell them.
+ *
+ * `body` reads "Documents" — the same word the search filter uses. It said
+ * "Documents & Annexes", which named a kind no filter offers (client DO56:
+ * "edit result card labels to match search filters").
+ */
 export const RESULT_TYPE_LABELS = {
-  body: 'Documents & Annexes',
+  body: 'Documents',
   tables: 'Illuminance Table',
   references: 'References',
   definitions: 'Definitions',

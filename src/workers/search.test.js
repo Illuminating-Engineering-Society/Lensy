@@ -107,7 +107,10 @@ describe('buildReferenceLink', () => {
 describe('curatedStandardInfo', () => {
   it('resolves a schema-listed id to its curated title and designation', () => {
     const info = curatedStandardInfo('RP-43-25');
-    expect(info?.title).toMatch(/Outdoor Pedestrian/i);
+    // The curated titles are transcribed from each standard's cover page, not
+    // guessed (client DO48) — RP-43-25's cover reads "Lighting Exterior
+    // Applications", so that is what a fallback citation must say.
+    expect(info?.title).toBe('Recommended Practice: Lighting Exterior Applications');
     expect(info?.fullDesignation).toBe('ANSI/IES RP-43-25');
   });
 
