@@ -168,6 +168,32 @@ const LensyAPI = {
     return response.json();
   },
 
+  /**
+   * Which of these results are already in one of the user's collections
+   * (client DO61 — the "+ Save Again" button state).
+   *
+   * Takes the same save payloads as saveSearches, so the Worker can derive each
+   * item's identity with the very code that de-duplicates a save
+   * (src/lib/collections.js) — a second definition of "the same passage" on this
+   * side would drift from the one that actually governs.
+   *
+   * @param {object[]} payloads from buildSavePayload()
+   * @returns {Promise<boolean[]>} one flag per payload, in the same order
+   */
+  async savedStatus(payloads, userId = 1) {
+    const items = (Array.isArray(payloads) ? payloads : [payloads]).filter(Boolean);
+    if (items.length === 0) return [];
+
+    const response = await fetch(`${BASE_URL}/projects/saved-status`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ items, user_id: userId }),
+    });
+    if (!response.ok) throw new Error('Could not check saved results');
+    const data = await response.json();
+    return Array.isArray(data.saved) ? data.saved : [];
+  },
+
   /** Mint (or fetch) the share link for a collection (DO37). */
   async shareCollection(projectId) {
     const response = await fetch(`${BASE_URL}/projects/${projectId}/share`, { method: 'POST' });

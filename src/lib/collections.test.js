@@ -10,7 +10,7 @@
 
 import { describe, it, expect } from 'vitest';
 import {
-  normalizeSavedItem, syntheticItemCode, collectionTypeFor, csvRowFor, csvCell,
+  normalizeSavedItem, syntheticItemCode, savedItemCodes, collectionTypeFor, csvRowFor, csvCell,
   stripHtml, newShareToken, CSV_COLUMNS, RESULT_TYPE_LABELS, SAVEABLE_TYPES,
 } from './collections.js';
 
@@ -107,6 +107,37 @@ describe('syntheticItemCode', () => {
   it('prefers a real application code when the caller has one', () => {
     const { item } = normalizeSavedItem({ ...base, result_type: 'tables', application_code: 'RP220E1_0162' });
     expect(item.application_code).toBe('RP220E1_0162');
+  });
+});
+
+// ── DO61: "is this result already in one of my collections?" ─────────────────
+describe('savedItemCodes', () => {
+  it('answers in the same order as it was asked, one code per item', () => {
+    const codes = savedItemCodes([
+      { ...base, result_type: 'body' },
+      { ...base, result_type: 'definitions', definition_slug: 'color' },
+    ]);
+    expect(codes).toHaveLength(2);
+    expect(codes[1]).toBe('definition:color');
+  });
+
+  it('holds an unsaveable item in place as null, so the alignment survives it', () => {
+    const codes = savedItemCodes([
+      { ...base, result_type: 'comparison' },        // not a saveable kind
+      { ...base, result_type: 'tables', application_code: 'RP220E1_0162' },
+      { result_type: 'body' },                        // no resource_title
+    ]);
+    expect(codes).toEqual([null, 'RP220E1_0162', null]);
+  });
+
+  it('gives the same code a real save would use, so the label cannot disagree', () => {
+    const raw = { ...base, result_type: 'body' };
+    expect(savedItemCodes([raw])[0]).toBe(normalizeSavedItem(raw).item.application_code);
+  });
+
+  it('is empty for anything that is not a list', () => {
+    expect(savedItemCodes(undefined)).toEqual([]);
+    expect(savedItemCodes({ result_type: 'body' })).toEqual([]);
   });
 });
 

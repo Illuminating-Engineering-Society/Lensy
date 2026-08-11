@@ -131,6 +131,24 @@ export function normalizeSavedItem(raw) {
   return { ok: true, item };
 }
 
+/**
+ * The dedupe code for each of a batch of save payloads, in the same order, or
+ * null for an item that could never be saved at all.
+ *
+ * Backs "is this already in one of my collections?" (client DO61). It runs the
+ * SAME normalization a real save runs, so the "+ Save Again" label on a button
+ * can never disagree with what saving that result would actually do.
+ *
+ * @param {unknown} rawItems
+ * @returns {(string|null)[]}
+ */
+export function savedItemCodes(rawItems) {
+  return (Array.isArray(rawItems) ? rawItems : []).map(raw => {
+    const parsed = normalizeSavedItem(raw);
+    return parsed.ok ? parsed.item.application_code : null;
+  });
+}
+
 function clean(v) {
   if (v == null) return null;
   const s = String(v).trim();

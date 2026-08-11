@@ -16,6 +16,7 @@
  *   POST   /api/projects/:id/applications
  *   PATCH  /api/projects/:id/applications/:appId
  *   DELETE /api/projects/:id/applications/:appId
+ *   POST   /api/projects/saved-status
  *
  *   GET    /api/projects/:id/export
  */
@@ -27,7 +28,7 @@ import { handleAdminUsers } from './users';
 import { handleAuthMe, handleDevLogin, requireReadAccess } from './session';
 import { buildLoginUrl, buildLogoutUrl } from '../lib/sso';
 import {
-  normalizeSavedItem, newShareToken, CSV_COLUMNS, csvCell, csvRowFor,
+  normalizeSavedItem, savedItemCodes, newShareToken, CSV_COLUMNS, csvCell, csvRowFor,
 } from '../lib/collections.js';
 import { resolveCommittee } from '../lib/committees.js';
 import { sendCollectionShareEmail, isEmailAddress, resolveAppUrl } from '../lib/email';
@@ -296,6 +297,12 @@ async function handleProjects(request: Request, env: Env, url: URL): Promise<Res
   }
   if (projectId && subResource === 'export') {
     return handleProjectExport(request, env, projectId, url);
+  }
+  // Which results are already saved (client DO61). Matched before the CRUD
+  // switch below, which would otherwise read "saved-status" as a collection id.
+  if (projectId === 'saved-status') {
+    if (request.method === 'POST') return savedStatus(request, env);
+    return json({ error: 'Method not allowed' }, 405);
   }
   // Saved Search Collections (client DO37)
   if (projectId && subResource === 'csv' && request.method === 'GET') {
@@ -687,6 +694,62 @@ async function saveSearchItem(env: Env, projectId: string, raw: any): Promise<{
   ).run();
 
   return { inserted: result.meta.last_row_id as number };
+}
+
+/**
+ * POST /api/projects/saved-status — which of these results is already in one of
+ * the user's collections (client DO61).
+ *
+ * "If that exact passage has already been saved to a search collection, change
+ *  button text to '+ Save Again' … Goal: help users remember whether they have
+ *  already 'saved' a particular search."
+ *
+ * "That exact passage" is decided by the SAME function that de-duplicates a save
+ * (normalizeSavedItem → syntheticItemCode), so the button can never disagree with
+ * what the save endpoint would do. Answers across every collection the user owns,
+ * archived ones included: the question is whether they have filed this before,
+ * not where.
+ *
+ * Read-only, and it returns one boolean per item and nothing else — no titles, no
+ * collection names, no ids.
+ */
+async function savedStatus(request: Request, env: Env): Promise<Response> {
+  let body: any;
+  try {
+    body = await request.json();
+  } catch {
+    return json({ error: 'Invalid JSON body' }, 400);
+  }
+
+  const rawItems = Array.isArray(body?.items) ? body.items : [];
+  // One search page is 50 results (POOL_SIZE); the cap keeps this inside D1's
+  // bound-parameter budget with room to spare rather than trusting the caller.
+  const MAX_ITEMS = 90;
+  if (rawItems.length === 0) return json({ saved: [] });
+  if (rawItems.length > MAX_ITEMS) {
+    return json({ error: `At most ${MAX_ITEMS} items per request` }, 400);
+  }
+
+  // Phase 1 user identity, as everywhere else under /api/projects.
+  const userId = body?.user_id != null ? String(body.user_id) : '1';
+
+  // null for an item that is not saveable at all — it can never be saved, so it
+  // can never be already-saved.
+  const codes: (string | null)[] = savedItemCodes(rawItems);
+
+  const lookup = [...new Set(codes.filter((c): c is string => !!c))];
+  if (lookup.length === 0) return json({ saved: codes.map(() => false) });
+
+  const placeholders = lookup.map(() => '?').join(',');
+  const rows = await env.DB.prepare(`
+    SELECT DISTINCT pa.application_code
+    FROM project_applications pa
+    JOIN projects p ON p.id = pa.project_id
+    WHERE p.user_id = ? AND pa.application_code IN (${placeholders})
+  `).bind(userId, ...lookup).all<{ application_code: string }>();
+
+  const saved = new Set((rows.results || []).map(r => r.application_code));
+  return json({ saved: codes.map(code => !!code && saved.has(code)) });
 }
 
 // ─── Project Applications Sub-resource ───────────────────────────────────────

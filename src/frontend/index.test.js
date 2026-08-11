@@ -67,13 +67,28 @@ beforeAll(() => {
   const sandbox = {
     document: {
       getElementById: byId,
+      // Every control that reflects a filter is found by its data-filter
+      // attribute alone (DO57): the pills, the AI Guide toggle inside the search
+      // box, and the Compare Documents button in the banner.
       querySelector(sel) {
-        const m = /\.filter-pill\[data-filter="([^"]+)"\]/.exec(sel);
+        const m = /\[data-filter="([^"]+)"\]/.exec(sel);
         if (!m) return null;
         if (!pills.has(m[1])) pills.set(m[1], stubElement(`pill:${m[1]}`));
         return pills.get(m[1]);
       },
-      querySelectorAll() { return []; },
+      // The Interior / Exterior checkboxes inside the Illuminance Tables panel.
+      querySelectorAll(sel) {
+        if (!/\[data-loc\]/.test(String(sel))) return [];
+        return ['interior', 'exterior'].map(name => {
+          const id = `loc:${name}`;
+          if (!elements.has(id)) {
+            const el = stubElement(id);
+            el.dataset.loc = name;
+            elements.set(id, el);
+          }
+          return elements.get(id);
+        });
+      },
       addEventListener() {},
       body: { style: {} },
     },
@@ -95,56 +110,85 @@ beforeAll(() => {
   run = (expr) => vm.runInContext(expr, ctx);
 });
 
-// ─── DO32: Content / View filter rows ─────────────────────────────────────────
+// ─── DO32/DO57: the Content filter row ────────────────────────────────────────
 
 describe('filter pills', () => {
-  it('defaults to Documents + Illuminance Tables, everything else off', () => {
+  it('begins with every content kind selected (DO57 note 1)', () => {
     run('resetFilters()');
     expect(JSON.parse(run('JSON.stringify(filterState)'))).toEqual({
-      body: true, tables: true,
-      definitions: false, references: false, guide: false, compare: false,
+      body: true, tables: true, definitions: true, references: true,
       interior: true, exterior: true,
+      guide: false, compare: false,
     });
   });
 
-  it('relabels Enable Guide to Disable Guide once selected', () => {
-    run('resetFilters(); toggleFilter("guide")');
-    expect(pills.get('guide').textContent).toBe('Disable Guide');
-    run('toggleFilter("guide")');
-    expect(pills.get('guide').textContent).toBe('Enable Guide');
-  });
-
-  it('locks the Content row while Document Comparison is selected', () => {
+  it('allows any combination of content kinds — nothing locks anything else', () => {
     run('resetFilters(); toggleFilter("compare")');
     for (const name of ['body', 'definitions', 'references', 'tables']) {
-      expect(pills.get(name).disabled).toBe(true);
+      expect(pills.get(name).disabled).toBe(false);
     }
-    run('toggleFilter("compare")');
-    expect(pills.get('body').disabled).toBe(false);
-  });
-
-  it('never leaves a comparison with no content selected', () => {
-    run('resetFilters(); toggleFilter("body"); toggleFilter("tables"); toggleFilter("compare")');
+    run('toggleFilter("definitions"); toggleFilter("references"); toggleFilter("body")');
     const st = JSON.parse(run('JSON.stringify(filterState)'));
-    expect(st.body || st.tables).toBe(true);
+    expect([st.body, st.definitions, st.references]).toEqual([false, false, false]);
+    run('resetFilters()');
   });
 
-  it('shows Interior/Exterior only while Illuminance Tables is selected', () => {
+  it('presses the AI Guide toggle in the search box rather than a filter pill', () => {
+    run('resetFilters(); toggleFilter("guide")');
+    expect(pills.get('guide').getAttribute('aria-pressed')).toBe('true');
+    run('toggleFilter("guide")');
+    expect(pills.get('guide').getAttribute('aria-pressed')).toBe('false');
+  });
+
+  it('shows the hero hint only while Compare Documents is armed from the banner', () => {
     run('resetFilters()');
-    expect(elements.get('location-pills').style.display).toBe('flex');
+    expect(elements.get('compare-hint').classList.contains('hidden')).toBe(true);
+    run('toggleFilter("compare")');
+    expect(pills.get('compare').getAttribute('aria-pressed')).toBe('true');
+    expect(elements.get('compare-hint').classList.contains('hidden')).toBe(false);
+    run('toggleFilter("compare")');
+  });
+
+  // DO57 note 2: Illuminance Tables is a drop-down multi-select, so the pill
+  // opens the panel and the two checkboxes are what select the kind.
+  it('opens the Illuminance Tables panel instead of toggling the kind', () => {
+    run('resetFilters(); toggleFilter("tables")');
+    expect(elements.get('location-menu').classList.contains('hidden')).toBe(false);
+    expect(JSON.parse(run('JSON.stringify(filterState)')).tables).toBe(true);
     run('toggleFilter("tables")');
-    expect(elements.get('location-pills').style.display).toBe('none');
+    expect(elements.get('location-menu').classList.contains('hidden')).toBe(true);
+  });
+
+  it('excludes Illuminance Table results once both applications are cleared', () => {
+    run('resetFilters(); setLocation("interior", false); setLocation("exterior", false)');
+    const st = JSON.parse(run('JSON.stringify(filterState)'));
+    expect(st.tables).toBe(false);
+    expect(JSON.parse(run('JSON.stringify(collectFilters())')).content_types)
+      .not.toContain('tables');
+    // …and re-ticking one brings the kind back.
+    run('setLocation("exterior", true)');
+    expect(JSON.parse(run('JSON.stringify(filterState)')).tables).toBe(true);
+    run('resetFilters()');
+  });
+
+  it('mirrors the panel checkboxes from the filter state', () => {
+    run('resetFilters(); setLocation("interior", false)');
+    const boxes = elements;
+    expect(boxes.get('loc:interior').checked).toBe(false);
+    expect(boxes.get('loc:exterior').checked).toBe(true);
+    run('resetFilters()');
   });
 
   it('reset restores the defaults', () => {
-    run('toggleFilter("definitions"); toggleFilter("tables"); resetFilters()');
+    run('toggleFilter("definitions"); setLocation("interior", false); resetFilters()');
     const st = JSON.parse(run('JSON.stringify(filterState)'));
     expect(st.tables).toBe(true);
-    expect(st.definitions).toBe(false);
+    expect(st.definitions).toBe(true);
+    expect(st.interior).toBe(true);
   });
 
   it('sends the pill state as content_types', () => {
-    run('applyFilterState({ definitions: true, body: false, tables: false })');
+    run('applyFilterState({ definitions: true, body: false, tables: false, references: false })');
     expect(JSON.parse(run('JSON.stringify(collectFilters())')))
       .toEqual({ content_types: ['definitions'] });
     run('resetFilters()');
@@ -153,9 +197,30 @@ describe('filter pills', () => {
   it('narrows by location only when exactly one of Interior/Exterior is on', () => {
     run('resetFilters()');
     expect(JSON.parse(run('JSON.stringify(collectFilters())')).indoor_outdoor).toBeUndefined();
-    run('toggleFilter("interior")');
+    run('setLocation("interior", false)');
     expect(JSON.parse(run('JSON.stringify(collectFilters())')).indoor_outdoor).toBe('Outdoor');
     run('resetFilters()');
+  });
+
+  // A demo search that means to exclude a kind has to say so: the defaults now
+  // have all four on, so a partial state would leave the others selected.
+  it('lets a demo search narrow to exactly the kinds it names', () => {
+    run(`applyFilterState(DEMO_SEARCHES[1].state)`);
+    expect(JSON.parse(run('JSON.stringify(collectFilters())')).content_types)
+      .toEqual(['references']);
+    run('resetFilters()');
+  });
+
+  // An empty selection reaches the API as "no preference", which the Worker
+  // answers with its own defaults — so the page refuses the search instead.
+  it('refuses to search with no content kind selected', () => {
+    run(`resetFilters();
+         toggleFilter('body'); toggleFilter('definitions'); toggleFilter('references');
+         setLocation('interior', false); setLocation('exterior', false)`);
+    expect(run('anyContentSelected()')).toBe(false);
+    expect(JSON.parse(run('JSON.stringify(collectFilters())')).content_types).toBeUndefined();
+    run('resetFilters()');
+    expect(run('anyContentSelected()')).toBe(true);
   });
 });
 
@@ -593,7 +658,7 @@ describe('LensyLite', () => {
     expect(elements.get('wordmark').textContent).toBe('LensyLite');
     for (const name of ['tables', 'guide', 'compare']) {
       expect(pills.get(name).disabled).toBe(true);
-      expect(pills.get(name).textContent).toMatch(/🔒$/);
+      expect(pills.get(name).title).toContain('Lighting Library subscription');
     }
     // …and leaves the rest of the tools alone.
     expect(pills.get('body').disabled).toBe(false);
@@ -626,6 +691,121 @@ describe('LensyLite', () => {
     expect(filters.content_types || []).not.toContain('tables');
     expect(filters.content_types || []).not.toContain('compare');
     run(`applyTier('full'); resetFilters()`);
+  });
+});
+
+// ─── DO59: sequential Document cards from one standard are joined ─────────────
+
+describe('joined Document cards', () => {
+  const doc = (std, section, page) => `{
+    resultType: 'excerpt', relevanceScore: 0.5,
+    citationName: 'ANSI/IES ${std} Recommended Practice: Landscape Lighting',
+    citationPage: ${page},
+    application: { standard: '${std}' },
+    excerpt: { text: 'Passage on page ${page}, long enough in prose to survive the table-dump filter.',
+               chunkType: 'text', pageNumber: ${page}, section: '${section}' }
+  }`;
+
+  const groupsOf = (results) =>
+    JSON.parse(run(`JSON.stringify(joinDocumentGroups(groupSiblingResults([${results.join(',')}]))
+      .map(g => g.joined ? { standard: g.standard, sections: g.sections.length } : { single: true }))`));
+
+  it('collects adjacent sections of one standard into a single card', () => {
+    expect(groupsOf([doc('RP-47-23', '7.5', 30), doc('RP-47-23', '2.1', 13)]))
+      .toEqual([{ standard: 'RP-47-23', sections: 2 }]);
+  });
+
+  it('does not join across a different document', () => {
+    expect(groupsOf([doc('RP-47-23', '7.5', 30), doc('RP-2-20', '4.1', 8), doc('RP-47-23', '2.1', 13)]))
+      .toEqual([
+        { standard: 'RP-47-23', sections: 1 },
+        { standard: 'RP-2-20', sections: 1 },
+        { standard: 'RP-47-23', sections: 1 },
+      ].map(g => ({ single: true })));
+  });
+
+  it('renders one shell with one panel per section, each keeping its own citation', () => {
+    const html = run(`renderJoinedDocumentCard({ joined: true, standard: 'RP-47-23', sections: [
+      { key: 'a', members: [${doc('RP-47-23', '7.5', 30)}] },
+      { key: 'b', members: [${doc('RP-47-23', '2.1', 13)}] }
+    ] }, 0)`);
+    expect((html.match(/<article/g) || []).length).toBe(3);       // shell + 2 sections
+    expect((html.match(/border-left: 3px solid/g) || []).length).toBe(1); // stripe on the shell only
+    expect(html).toContain('7.5');
+    expect(html).toContain('2.1');
+    expect((html.match(/p\.&nbsp;30/g) || []).length).toBe(1);
+    expect((html.match(/p\.&nbsp;13/g) || []).length).toBe(1);
+  });
+
+  it('leaves a deprecated edition as its own card, so editions never share a box', () => {
+    const groups = groupsOf([
+      doc('RP-8-25', '5.1', 40),
+      `{ ...${doc('RP-8-22', '5.1', 38)}, isDeprecated: true }`,
+    ]);
+    expect(groups).toEqual([{ single: true }, { single: true }]);
+  });
+});
+
+// ─── DO60: "FROM THE STANDARD" reads as a control ─────────────────────────────
+
+describe('"From the Standard" prominence', () => {
+  const passages = (n) => JSON.stringify(Array.from({ length: n }, (_, i) => ({
+    text: `Lighting guidance passage number ${i} describing an application in prose for the reader.`,
+    chunkType: 'text', pageNumber: 10 + i,
+  })));
+
+  it('prints the heading and the passage count in bold black', () => {
+    const out = run(`renderDataBlocks({ application: {}, excerpts: ${passages(2)} }, new Set())`);
+    expect(out).toContain('font-bold text-gray-900 uppercase tracking-wider">From the Standard');
+    expect(out).toContain('font-bold text-gray-900">— 2 passages');
+    expect(out).not.toContain('font-semibold text-gray-400 uppercase');
+  });
+});
+
+// ─── DO61: "+ Save Again" for a result already in a collection ─────────────────
+
+describe('Save Search / Save Again', () => {
+  const result = `{
+    resultType: 'application', relevanceScore: 0.9,
+    citation: 'ANSI/IES RP-6-24, Table A-2, Row 205, p. 83',
+    citationName: 'ANSI/IES RP-6-24 Recommended Practice: Lighting Sports and Recreational Areas',
+    citationPage: 83,
+    vitriumLink: 'https://view.protectedpdf.com/rp6#page=83',
+    application: { standard: 'RP-6-24', code: 'RP-6-24_205', fullName: 'Soccer — Class I' }
+  }`;
+
+  it('offers "Save Search" for a result that is not saved yet', () => {
+    run('savedResultKeys = new Set()');
+    const html = run(`saveSearchButton(${result}, 'Soccer')`);
+    expect(html).toContain('Save Search');
+    expect(html).not.toContain('Save Again');
+    expect(html).toContain('background-color: var(--brand-secondary)');
+  });
+
+  it('reads "Save Again" in a less saturated fill once it is saved', () => {
+    run(`savedResultKeys = new Set([savedResultKey(${result})])`);
+    const html = run(`saveSearchButton(${result}, 'Soccer')`);
+    expect(html).toContain('Save Again');
+    expect(html).toContain('background-color: #8FA3B4');
+    expect(html).toContain('Already saved to one of your Saved Search Collections');
+    run('savedResultKeys = new Set()');
+  });
+
+  it('keys a result by its own identity, not by the display name passed to the button', () => {
+    const a = run(`savedResultKey(${result})`);
+    const b = run(`savedResultKey({ ...${result}, application: { ...(${result}).application, code: 'RP-6-24_206' } })`);
+    expect(a).not.toBe(b);
+    // The same result reached from a different card context keys identically.
+    expect(run(`savedResultKey(${result})`)).toBe(a);
+  });
+
+  it('carries the key on the button so a completed save can flip it', () => {
+    const html = run(`saveSearchButton(${result}, 'Soccer')`);
+    expect(html).toContain(`data-save-key="${run(`savedResultKey(${result})`).replace(/&/g, '&amp;')}"`);
+  });
+
+  it('is never offered on a deprecated comparison card', () => {
+    expect(run(`saveSearchButton({ ...${result}, isDeprecated: true }, 'Soccer')`)).toBe('');
   });
 });
 

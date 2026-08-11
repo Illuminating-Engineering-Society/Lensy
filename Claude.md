@@ -1391,11 +1391,36 @@ This architecture prioritizes:
 | `definitions` | **Definition** | ANSI/IES LS-1 glossary (`chunk_type=definition` + `definitions` table) |
 | `compare` | — | modifier: forces version-comparison handling |
 
-Defaults are `tables` + `body`. A reference-seeking or definition-seeking query replaces that default automatically (`isReferenceQuery` / `isDefinitionQuery` in `query-expander.ts`); a caller who customized the filters keeps their choices and gets the detected kind added.
+The API default (no `content_types` sent) is `tables` + `body`, and a reference-seeking or definition-seeking query replaces that default automatically (`isReferenceQuery` / `isDefinitionQuery` in `query-expander.ts`); a caller who customized the filters keeps their choices and gets the detected kind added. **The UI is now a caller who always customizes:** since DO57 the search page begins with all four kinds selected and sends all four, so the auto-scoping no longer fires for it — an explicit selection is honoured as made. The demo searches under the search box each name every kind for that reason.
 
 The UI label for each kind matches the filter label exactly — "Documents" filters for "Document" cards (client DO32; the label used to read "Document Body") — and each kind owns one border line style and one chip palette (`RESULT_TYPE_STYLES` in `index.html`).
 
 A fifth `resultType`, **`standard`**, is not a filter value: it is the whole-document card a designation or title search returns (see below). It is a Document, so it borrows the `excerpt` label, line style and palette rather than owning a fifth one.
+
+### The search UI is one row of content filters (client DO57)
+
+"Refine search UI / Simplify UI." The filter section holds content KINDS and nothing else; the two tools that are not kinds moved to where they are used.
+
+- **AI Guide** is a toggle inside the search box, modelled on the Google search UI the client named. **Compare Documents** is a button in the top banner, beside Saved Searches and the Table of Contents; while it is armed the hero prints a hint, because the header is not where a reader looks for state. Both still travel in `filterState` and reach the API exactly as before — only their controls moved. (DO58 is expected to redefine what Compare Documents *does*; this change moved it, it did not redesign it.)
+- **All four content kinds start selected and any combination is allowed** — nothing in the row locks anything else any more. Document Comparison used to disable the whole row; it no longer does.
+- **Illuminance Tables is a multi-select.** Its pill opens a panel holding Interior Applications and Exterior Applications, and the `tables` kind is DERIVED from them: clearing both excludes Illuminance Table results altogether. `alignTablesSelection` holds that invariant in both directions whenever the state is set from outside the panel (a demo search, a reset, or the content types the backend reports).
+- The Search button stayed, though the client's wireframe omits it: Enter alone is not a discoverable way to submit a search.
+
+### Result cards from one document are joined (client DO59)
+
+Adjacent Document cards of the same standard render inside ONE shell, each section keeping its own banner, designation, citation, committee credit and "From the Standard" list — the join is the container, not a merge, so nothing a single card said is lost. Only *adjacent* groups join, so the relevance order of the list is untouched, and deprecated editions never join: on a version comparison each edition is its own card with its own amber notice.
+
+`renderResultCard(group, index, { nested: true })` renders the panel form (no outer article shadow, no left stripe — the container carries it); the panel is still an `<article>` because the footnote-marker and copy-guard handlers walk up to the nearest one to find "this card's" notes and citation.
+
+### "FROM THE STANDARD" is bold black (client DO60)
+
+The disclosure that reveals the standard's own words is the most important control on a card, so its heading and passage count are set in bold black rather than the small grey the rest of the card metadata uses. Same treatment on the Definition card.
+
+### "+ Save Again" for a result already filed (client DO61)
+
+A Save Search button whose result is already in one of the user's collections reads **Save Again** in a desaturated fill. Saving again is still allowed — the same passage legitimately belongs to more than one collection, and the server's duplicate guard is per collection.
+
+`POST /api/projects/saved-status` answers it: the page sends the same save payloads `saveSearches` takes, and the Worker derives each item's identity with the very function that de-duplicates a save (`normalizeSavedItem` → `syntheticItemCode`), so the button can never disagree with what the save endpoint would do. It returns one boolean per item and nothing else — no titles, no collection names, no ids — across every collection the user owns. The call is fired after the results render and its failure is silent: a missed answer just leaves the button reading "Save Search". The client-side identity (`savedResultKey`) is derived from the RESULT, not the payload, so the key built while rendering a card and the key built while asking the server always match.
 
 ### Whole-document cards (client DO47)
 

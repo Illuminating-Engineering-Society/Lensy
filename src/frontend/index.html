@@ -106,12 +106,9 @@
     .fade-in { animation: fadeIn 0.25s ease-out; }
     @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
     .modal-backdrop { backdrop-filter: blur(4px); }
-    /* ── Filter pills (DO32) ──────────────────────────────────────────────────
-       One control shape for both filter rows, so Content and View read as the
-       same system. Unselected = outlined on the hero gradient; selected = the
-       brand primary fill. Interior/Exterior keep the data-viz banner colours
-       from the printed IES reference doc when active, since those two map to the
-       card banners the user is about to see. */
+    /* ── Content filter pills (DO32, one row since DO57) ──────────────────────
+       One control shape for every content kind. Unselected = outlined on the
+       hero gradient; selected = the brand primary fill. */
     .filter-pill {
       font-size: 0.8125rem; line-height: 1.25rem; font-weight: 600;
       padding: 0.375rem 0.875rem; border-radius: 9999px;
@@ -123,9 +120,52 @@
     .filter-pill[aria-pressed="true"] {
       background: var(--brand-primary); border-color: var(--brand-primary); color: #fff;
     }
-    .filter-pill[aria-pressed="true"].filter-pill-exterior { background: #2E4A34; border-color: #2E4A34; }
-    .filter-pill[aria-pressed="true"].filter-pill-interior { background: #2E4A62; border-color: #2E4A62; }
     .filter-pill[disabled] { opacity: 0.35; cursor: not-allowed; }
+    /* ── Illuminance Tables multi-select (DO57 note 2) ────────────────────────
+       The pill opens this panel; the two checkboxes inside are the control.
+       Clearing both is how "no Illuminance Table results" is expressed, so the
+       pill's own pressed state is derived from them rather than clicked. */
+    .loc-menu {
+      position: absolute; top: calc(100% + 6px); left: 0; z-index: 45;
+      display: flex; flex-direction: column; gap: 0.125rem;
+      background: #fff; color: var(--ink); border: 1px solid #E5E7EB;
+      border-radius: 10px; box-shadow: 0 12px 32px rgba(44,44,44,0.18);
+      padding: 0.375rem; min-width: 12.5rem; white-space: nowrap;
+    }
+    .loc-menu.hidden { display: none; }
+    .loc-option {
+      display: flex; align-items: center; gap: 0.5rem; cursor: pointer;
+      font-size: 0.8125rem; font-weight: 500; padding: 0.375rem 0.5rem; border-radius: 6px;
+    }
+    .loc-option:hover { background: #F3F4F6; }
+    /* ── AI Guide toggle, inside the search box (DO57 note 3) ─────────────────
+       Modelled on the Google search UI the client named: a quiet pill that sits
+       in the box and lights up when the Guide is on, rather than a filter that
+       has to be found in a row of unrelated controls. */
+    .guide-toggle {
+      display: inline-flex; align-items: center; gap: 0.375rem;
+      font-size: 0.8125rem; font-weight: 600; white-space: nowrap;
+      padding: 0.4375rem 0.5rem 0.4375rem 0.875rem; border-radius: 9999px;
+      border: 1px solid #D9DDE2; background: #fff; color: var(--brand-secondary);
+      transition: background .15s, border-color .15s, color .15s;
+    }
+    .guide-toggle:hover:not([disabled]) { background: #F3F5F7; }
+    .guide-toggle-icon {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 1.25rem; height: 1.25rem; border-radius: 9999px;
+      border: 1px solid currentColor;
+    }
+    .guide-toggle[aria-pressed="true"] {
+      background: #FDF4E2; border-color: var(--brand-accent); color: #8A5A0B;
+    }
+    .guide-toggle[disabled] { opacity: 0.5; cursor: not-allowed; }
+    /* Banner tools that toggle (Compare Documents) read as nav links until they
+       are armed, then as a pressed control — the header is where the reader looks
+       for tools, not for state, so the state has to be unmistakable. */
+    .nav-toggle { color: #BFDBFE; }
+    .nav-toggle:hover:not([disabled]) { color: #fff; background: rgba(255,255,255,0.10); }
+    .nav-toggle[aria-pressed="true"] { background: var(--brand-primary); color: #fff; }
+    .nav-toggle[disabled] { opacity: 0.5; cursor: not-allowed; }
     /* Rich text inside a Definition card: the definition is reproduced as
        published, so its own emphasis and inline math have to survive. */
     .definition-body p { margin-bottom: 0.5rem; }
@@ -193,7 +233,21 @@
           <span class="hidden sm:inline text-blue-200 text-sm ml-2">IES Assistant</span>
         </div>
       </a>
+      <!-- The tools that are not search FILTERS live here (client DO57): the
+           filter row below the search box is for content kinds only, so
+           Document Comparison moved up into the banner beside Saved Searches and
+           the Table of Contents. auth-gate.js appends the user chip + Sign out
+           to this same nav. -->
       <nav class="flex items-center gap-1 text-sm">
+        <button id="nav-compare" data-filter="compare" aria-pressed="false"
+                class="nav-toggle flex items-center gap-1.5 px-3 py-1.5 rounded-md transition"
+                style="display: none"
+                title="Compare a standard with its previous edition — AI summary of published changes">
+          <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M8 7V3m0 4H4m4 0h4M6 21V11m10 10v-4m0 4h4m-4 0h-4m2-14v10"/>
+          </svg>
+          Compare Documents<span class="lock-label"></span>
+        </button>
         <a href="/projects.html" id="nav-projects"
            class="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-blue-200 hover:text-white hover:bg-white/10 transition">
           <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
@@ -201,41 +255,57 @@
           </svg>
           Saved Searches
         </a>
-        <a href="https://www.ies.org" target="_blank" rel="noopener"
-           class="px-3 py-1.5 rounded-md text-blue-200 hover:text-white hover:bg-white/10 transition">
-          IES.org ↗
+        <a href="/contents" target="_blank" rel="noopener" id="nav-contents"
+           class="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-blue-200 hover:text-white hover:bg-white/10 transition"
+           title="Displays the IES Lighting Library's Table of Contents in a new browser tab">
+          <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h10"/>
+          </svg>
+          Table of Contents
         </a>
       </nav>
     </div>
   </header>
 
   <!-- ── Hero / Search Section ─────────────────────────────────────────────── -->
-  <!-- Layout per the client's DO32 wireframe: one tagline (the "Find IES Lighting
-       Standards" headline was dropped), a plain-language search box with the
-       Table of Contents beside it, then two labelled filter rows — Content (what
-       KINDS of results) and View (how they are presented) — with a reset control.
-       Final styling still pending from marketing. -->
+  <!-- Layout per the client's DO57 wireframe ("Refine search UI — Simplify UI"):
+       the search box carries the AI Guide toggle inside it, Google-fashion, and
+       ONE filter row remains — Content, i.e. which KINDS of result appear. The
+       two tools that are not content kinds (AI Guide, Compare Documents) left the
+       filter section: the Guide is in the box, Document Comparison is in the top
+       banner. Final styling still pending from marketing. -->
   <div id="hero-section" class="hero-gradient text-white no-print">
     <div class="max-w-3xl mx-auto px-4 py-10 sm:py-12 text-center">
-      <p class="text-blue-200 text-lg mb-6">
-        Ask in plain language — get cited answers from IES.
-      </p>
 
-      <!-- Search box + Table of Contents -->
-      <div class="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+      <!-- Search box (input + AI Guide) with the filter reset beside it -->
+      <div class="flex items-stretch sm:items-center gap-3">
         <div class="relative flex-1">
-          <div class="bg-white rounded-xl shadow-lg p-2 flex gap-2 search-glow transition">
+          <div class="bg-white rounded-xl shadow-lg p-2 flex items-center gap-2 search-glow transition">
             <input
               type="text"
               id="search-input"
               placeholder="Type a question or find a document"
               autocomplete="off"
-              class="flex-1 px-4 py-3 text-gray-900 text-base placeholder-gray-400 bg-transparent outline-none"
+              class="flex-1 min-w-0 px-4 py-3 text-gray-900 text-base placeholder-gray-400 bg-transparent outline-none"
               onkeydown="handleSearchKeydown(event)"
               oninput="renderSuggestions()"
               onfocus="openSuggestions()"
               autofocus
             />
+            <!-- AI Guide: a toggle inside the box, modelled on the Google search
+                 UI the client named (DO57 note 3). It is not a content filter —
+                 it adds a contextual summary ABOVE whatever the search returns. -->
+            <button id="guide-toggle" data-filter="guide" aria-pressed="false"
+                    class="guide-toggle shrink-0"
+                    title="Enables AI contextual summary">
+              AI Guide<span class="lock-label"></span>
+              <span class="guide-toggle-icon">
+                <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                  <circle cx="12" cy="12" r="9"/>
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M15.5 8.5l-2 5-5 2 2-5 5-2z"/>
+                </svg>
+              </span>
+            </button>
             <button
               id="search-btn"
               onclick="performSearch()"
@@ -244,7 +314,7 @@
               <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
                 <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
               </svg>
-              Search
+              <span class="hidden sm:inline">Search</span>
             </button>
           </div>
 
@@ -255,55 +325,58 @@
           </div>
         </div>
 
-        <a href="/contents" target="_blank" rel="noopener"
-           class="text-sm text-blue-100 underline underline-offset-4 decoration-blue-300 hover:text-white whitespace-nowrap self-center"
-           title="Displays the IES Lighting Library's Table of Contents in a new browser tab">
-          Table of Contents ↗
-        </a>
-      </div>
-
-      <!-- Content row — WHICH kinds of result appear. Documents + Illuminance
-           Tables selected by default; Definitions and References off. Interior /
-           Exterior narrow illuminance-table results only, so they are shown only
-           while Illuminance Tables is selected (DO32 conditional logic). -->
-      <div class="mt-5 flex flex-wrap items-center justify-center gap-x-3 gap-y-2 text-left">
-        <span class="text-xs uppercase tracking-wider text-blue-300 w-16 text-right shrink-0">Content</span>
-        <button class="filter-pill" data-filter="body"
-                title="Search document body (omits Illuminance Tables, References, and ANSI/IES LS-1 Definitions)">Documents</button>
-        <button class="filter-pill" data-filter="definitions"
-                title="Search within ANSI/IES LS-1 Definitions only">Definitions</button>
-        <button class="filter-pill" data-filter="references"
-                title="Search within References only">References</button>
-        <button class="filter-pill" data-filter="tables"
-                title="Search within Recommended Illuminance Tables">Illuminance Tables</button>
-        <span id="location-pills" class="flex flex-wrap gap-2">
-          <button class="filter-pill filter-pill-exterior" data-filter="exterior"
-                  title="Limits Illuminance Table results to Exterior applications">Exterior</button>
-          <button class="filter-pill filter-pill-interior" data-filter="interior"
-                  title="Limits Illuminance Table results to Interior applications">Interior</button>
-        </span>
-      </div>
-
-      <!-- View row — HOW the results are presented. -->
-      <div class="mt-2 flex flex-wrap items-center justify-center gap-x-3 gap-y-2 text-left">
-        <span class="text-xs uppercase tracking-wider text-blue-300 w-16 text-right shrink-0">View</span>
-        <div class="flex flex-col items-center">
-          <button class="filter-pill" data-filter="guide" id="pill-guide"
-                  title="Provides an additional AI contextual summary">Enable Guide</button>
-          <span class="text-[10px] text-blue-300 mt-0.5">Provides AI contextual summary</span>
-        </div>
-        <div id="pill-compare-wrap" class="flex flex-col items-center" style="display: none">
-          <button class="filter-pill" data-filter="compare" id="pill-compare"
-                  title="AI Summary of published changes between a current standard and its most recent deprecated copy">Document Comparison</button>
-          <span class="text-[10px] text-blue-300 mt-0.5">Summary of published changes</span>
-        </div>
         <button onclick="resetFilters()" id="filters-reset"
-                class="w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center transition shrink-0"
+                class="w-9 h-9 self-center rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center transition shrink-0"
                 title="Reset — restore the default filter selections">
           <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
             <path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h5M20 20v-5h-5M20 9A8 8 0 006.3 5.3L4 8m0 7a8 8 0 0013.7 3.7L20 16"/>
           </svg>
         </button>
+      </div>
+
+      <!-- Document Comparison is armed from the top banner, so say so here —
+           otherwise the only sign that the next search behaves differently is a
+           button in the header the reader is no longer looking at. -->
+      <p id="compare-hint" class="hidden mt-3 text-xs text-blue-100 text-left">
+        <span class="font-semibold">Compare Documents is on.</span>
+        Name a standard ("what changed in RP-8?") and the next search summarizes the
+        published changes against its previous edition.
+        <button onclick="toggleFilter('compare')" class="underline underline-offset-2 hover:text-white">Turn off</button>
+      </p>
+
+      <!-- Content row — WHICH kinds of result appear. ALL kinds are selected to
+           begin with and any combination is possible (client DO57 note 1).
+           Illuminance Tables is a multi-select: Interior and Exterior narrow the
+           table rows, and clearing both excludes Illuminance Table results
+           altogether (note 2). -->
+      <div class="mt-5 flex flex-wrap items-center justify-center gap-x-3 gap-y-2 text-left">
+        <span class="text-xs uppercase tracking-wider text-blue-300 shrink-0">Content</span>
+        <button class="filter-pill" data-filter="body"
+                title="Search document body — the prose of the standards">Documents</button>
+        <button class="filter-pill" data-filter="definitions"
+                title="Search within ANSI/IES LS-1 Definitions">Definitions</button>
+        <button class="filter-pill" data-filter="references"
+                title="Search within the References sections of the standards">References</button>
+        <span class="relative inline-flex">
+          <button class="filter-pill flex items-center gap-1.5" data-filter="tables"
+                  id="pill-tables" aria-haspopup="true" aria-expanded="false"
+                  title="Search within Recommended Illuminance Tables — choose Interior, Exterior, or both">
+            Illuminance Tables<span class="lock-label"></span>
+            <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/>
+            </svg>
+          </button>
+          <span id="location-menu" class="loc-menu hidden">
+            <label class="loc-option">
+              <input type="checkbox" data-loc="interior" checked class="accent-ies-blue rounded"/>
+              Interior Applications
+            </label>
+            <label class="loc-option">
+              <input type="checkbox" data-loc="exterior" checked class="accent-ies-blue rounded"/>
+              Exterior Applications
+            </label>
+          </span>
+        </span>
       </div>
     </div>
   </div>
@@ -573,7 +646,12 @@
     let lastQuery = '';
     let selectedApplicationCodes = new Set();
     let modalPendingCodes = []; // application codes waiting to be added
+    let modalPendingKeys = [];  // savedResultKey()s of what the modal is saving
     let projectsCache = null;
+    // Results already present in one of the user's collections (client DO61).
+    // Rebuilt per search from /api/projects/saved-status, and added to locally as
+    // soon as a save succeeds so the button flips without another round-trip.
+    let savedResultKeys = new Set();
     let activeDocFilter = null; // standard id chip currently narrowing results
     // standard designation → Lighting Library front-cover URL, for hyperlinking
     // the standards the AI Guide names in its prose (client DO24). The regex is
@@ -595,15 +673,20 @@
     let allResults = [];
     let currentPage = 1;
 
-    // ── Filter state (DO32) ──────────────────────────────────────────────────
-    // One object drives both pill rows, so the visible state and the request
-    // payload can never disagree. Defaults per the client's wireframe:
-    // Documents + Illuminance Tables on, Definitions and References off,
-    // Interior and Exterior both on, Guide and Document Comparison off.
+    // ── Filter state (DO32, revised by DO57) ─────────────────────────────────
+    // One object drives every control, so the visible state and the request
+    // payload can never disagree.
+    //
+    // DO57 changed the defaults and the shape of the row: "Begin with all
+    // 'contents' filters selected … any combination of the 'contents' filters is
+    // possible (AI Guide and Compare Documents are removed from the filter
+    // section)". So all four content kinds start on, and `guide` / `compare`
+    // remain in this object — they still travel with the request — but their
+    // controls now live in the search box and the top banner respectively.
     const DEFAULT_FILTER_STATE = Object.freeze({
       body: true,
-      definitions: false,
-      references: false,
+      definitions: true,
+      references: true,
       tables: true,
       interior: true,
       exterior: true,
@@ -612,16 +695,19 @@
     });
     let filterState = { ...DEFAULT_FILTER_STATE };
 
-    // Dynamic pill labels: "Enable Guide" flips to "Disable Guide" once on, so
-    // the button always names the action it performs (DO32).
-    const PILL_LABELS = {
-      guide: { on: 'Disable Guide', off: 'Enable Guide' },
-    };
-
-    // Content pills are disabled while Document Comparison is selected: a
-    // comparison retrieves both editions of one standard, so narrowing it by
-    // content kind has no meaning (DO32 conditional logic).
+    // The four content kinds, in row order. `tables` is here as a kind, but it is
+    // never toggled directly — see syncTablesFromLocation.
     const CONTENT_PILLS = ['body', 'definitions', 'references', 'tables'];
+
+    /**
+     * Illuminance Tables is a multi-select, so its own state is DERIVED (DO57
+     * note 2): "Disabling both 'Interior' and 'Exterior' excludes all Illuminance
+     * Table results." Keeping the invariant in one place is what stops the pill
+     * from reading "on" over two cleared checkboxes.
+     */
+    function syncTablesFromLocation() {
+      filterState.tables = !!(filterState.interior || filterState.exterior);
+    }
 
     // ── LensyLite (client DO53) ──────────────────────────────────────────────
     // "Show all tools, but 'block' access to Illuminance Tables, Enable Guide,
@@ -638,7 +724,7 @@
       document.getElementById('wordmark').textContent = isLite() ? 'LensyLite' : 'Lensy';
       document.title = isLite() ? 'LensyLite — IES Standards Search' : 'Lensy — IES Standards Search';
       if (isLite()) {
-        for (const name of LITE_LOCKED_FILTERS) filterState[name] = false;
+        filterState = normalizeForTier(filterState);
         const banner = document.getElementById('lite-banner');
         document.getElementById('lite-banner-text').textContent =
           'IES Members receive limited access to Lighting Science Collection and LensyLite.';
@@ -652,30 +738,45 @@
       if (e.detail && e.detail.tier) applyTier(e.detail.tier);
     });
 
+    // Every control that reflects a filter carries data-filter, whichever chrome
+    // it lives in: a Content pill, the AI Guide toggle in the search box, or the
+    // Compare Documents button in the banner (DO57).
     function pillFor(name) {
-      return document.querySelector(`.filter-pill[data-filter="${name}"]`);
+      return document.querySelector(`[data-filter="${name}"]`);
     }
 
     function renderFilterPills() {
+      syncTablesFromLocation();
+
       for (const [name, on] of Object.entries(filterState)) {
         const pill = pillFor(name);
         if (!pill) continue;
         pill.setAttribute('aria-pressed', on ? 'true' : 'false');
-        const label = PILL_LABELS[name];
-        if (label) pill.textContent = on ? label.on : label.off;
       }
 
-      // Interior / Exterior only apply to illuminance-table rows, so they are
-      // hidden entirely when Illuminance Tables is off.
-      const locationPills = document.getElementById('location-pills');
-      locationPills.style.display = filterState.tables ? 'flex' : 'none';
+      // The Interior / Exterior checkboxes ARE the Illuminance Tables filter, so
+      // they mirror filterState rather than holding state of their own.
+      for (const box of document.querySelectorAll('[data-loc]')) {
+        const name = box.dataset.loc;
+        box.checked = !!filterState[name];
+        box.disabled = lockedForTier('tables');
+      }
 
-      // Document Comparison locks the Content row.
-      const comparing = !!filterState.compare;
-      for (const name of [...CONTENT_PILLS, 'interior', 'exterior']) {
+      // Any combination of content kinds is allowed (DO57 note 1) — nothing in
+      // the row locks anything else. Only the access tier disables a control.
+      for (const name of [...CONTENT_PILLS, 'guide', 'compare']) {
         const pill = pillFor(name);
-        if (pill) pill.disabled = comparing || lockedForTier(name);
+        if (pill) pill.disabled = lockedForTier(name);
       }
+
+      // Comparison is armed from the banner, so the hero says so — see the
+      // #compare-hint markup.
+      const hint = document.getElementById('compare-hint');
+      if (hint) hint.classList.toggle('hidden', !filterState.compare);
+
+      // A cleared Illuminance Tables multi-select closes its own panel: leaving
+      // it open over an unpressed pill reads as a control that ignored the click.
+      if (!filterState.tables) setLocationMenu(false);
 
       // LensyLite: the three tools a subscription unlocks stay visible, locked
       // (client DO53). Applied LAST so nothing above can re-enable them, and the
@@ -686,10 +787,43 @@
           if (!pill) continue;
           pill.disabled = true;
           pill.setAttribute('aria-pressed', 'false');
-          pill.textContent = `${String(pill.textContent || '').replace(/\s*🔒$/, '')} 🔒`;
           pill.title = 'Included with a Lighting Library subscription';
+          const label = pill.querySelector ? pill.querySelector('.lock-label') : null;
+          if (label) label.textContent = ' 🔒';
         }
       }
+    }
+
+    // ── Illuminance Tables panel (DO57 note 2) ───────────────────────────────
+    function setLocationMenu(open) {
+      const menu = document.getElementById('location-menu');
+      const pill = document.getElementById('pill-tables');
+      if (!menu || !pill) return;
+      const show = !!open && !lockedForTier('tables');
+      menu.classList.toggle('hidden', !show);
+      pill.setAttribute('aria-expanded', show ? 'true' : 'false');
+    }
+
+    function locationMenuOpen() {
+      const menu = document.getElementById('location-menu');
+      return !!menu && !menu.classList.contains('hidden');
+    }
+
+    function toggleLocationMenu() {
+      if (lockedForTier('tables')) return;
+      setLocationMenu(!locationMenuOpen());
+    }
+
+    /** One of Interior / Exterior Applications changed inside the panel. */
+    function setLocation(name, on) {
+      if (name !== 'interior' && name !== 'exterior') return;
+      if (lockedForTier('tables')) return;
+      filterState[name] = !!on;
+      renderFilterPills();
+    }
+
+    function toggleLocation(name) {
+      setLocation(name, !filterState[name]);
     }
 
     /** Is this filter locked by the visitor's access tier (client DO53)? */
@@ -702,13 +836,10 @@
       // Belt and braces with the disabled attribute: a locked tool cannot be
       // switched on from anywhere (client DO53).
       if (lockedForTier(name)) return;
+      // Illuminance Tables is the multi-select — a click on the pill opens it
+      // rather than flipping a boolean the two checkboxes own (DO57 note 2).
+      if (name === 'tables') { toggleLocationMenu(); return; }
       filterState[name] = !filterState[name];
-      // Turning Document Comparison on takes over the Content row; turning it
-      // off restores the default content selection rather than leaving none.
-      if (name === 'compare' && filterState.compare) {
-        const anyContent = CONTENT_PILLS.some(n => filterState[n]);
-        if (!anyContent) { filterState.body = true; filterState.tables = true; }
-      }
       renderFilterPills();
     }
 
@@ -721,23 +852,64 @@
       if (!isLite()) return state;
       const out = { ...state };
       for (const name of LITE_LOCKED_FILTERS) out[name] = false;
+      // Locking Illuminance Tables clears its multi-select too, so the panel
+      // never shows two ticks behind a padlocked pill.
+      out.interior = false;
+      out.exterior = false;
       if (!out.body && !out.definitions && !out.references) out.body = true;
       return out;
     }
 
     function resetFilters() {
       filterState = normalizeForTier({ ...DEFAULT_FILTER_STATE });
+      setLocationMenu(false);
       renderFilterPills();
     }
 
+    /**
+     * Reconcile the Illuminance Tables kind with its multi-select whenever the
+     * state is set from OUTSIDE the panel — a demo search, or the content types
+     * the backend actually used. `tables` and (interior || exterior) have to
+     * agree, in both directions: turning the kind off clears the panel, turning
+     * it on with an empty panel restores both applications.
+     */
+    function alignTablesSelection(state, tablesOn) {
+      const out = { ...state };
+      if (tablesOn === false) {
+        out.tables = false; out.interior = false; out.exterior = false;
+      } else if (tablesOn === true) {
+        out.tables = true;
+        if (!out.interior && !out.exterior) { out.interior = true; out.exterior = true; }
+      }
+      return out;
+    }
+
     function applyFilterState(partial) {
-      filterState = normalizeForTier({ ...DEFAULT_FILTER_STATE, ...partial });
+      const merged = { ...DEFAULT_FILTER_STATE, ...partial };
+      filterState = normalizeForTier(alignTablesSelection(merged, merged.tables));
       renderFilterPills();
     }
 
     document.addEventListener('click', e => {
-      const pill = e.target.closest('.filter-pill');
-      if (pill && !pill.disabled) toggleFilter(pill.dataset.filter);
+      const pill = e.target.closest ? e.target.closest('[data-filter]') : null;
+      if (pill && !pill.disabled) { toggleFilter(pill.dataset.filter); return; }
+
+      // A click anywhere else dismisses the Illuminance Tables panel.
+      if (locationMenuOpen() && !(e.target.closest && e.target.closest('#location-menu'))) {
+        setLocationMenu(false);
+      }
+    });
+
+    // The panel's checkboxes are read from their own `change` event, not from a
+    // click: a click on the <label> is delivered twice (once for the label, once
+    // forwarded to the input), and a toggle-on-click would cancel itself out.
+    document.addEventListener('change', e => {
+      const box = e.target.closest ? e.target.closest('[data-loc]') : null;
+      if (box) setLocation(box.dataset.loc, box.checked);
+    });
+
+    document.addEventListener('keydown', e => {
+      if (e.key === 'Escape') setLocationMenu(false);
     });
 
     // ── Suggestions: recent searches + the client's demo searches (DO32) ──────
@@ -746,15 +918,18 @@
 
     // "Try searching for" — the four demo queries from the client's wireframe,
     // each carrying the filter state that makes it a good demonstration.
+    // Each state names EVERY content kind rather than the ones it wants on: the
+    // defaults now have all four selected (DO57), so a partial state would leave
+    // Definitions and References switched on in a demo that means to exclude them.
     const DEMO_SEARCHES = [
       { query: 'What are considerations for lighting parking garages?',
-        state: { body: true, tables: true, guide: true } },
+        state: { body: true, tables: true, definitions: false, references: false, guide: true } },
       { query: 'Provide a list of references in IES standards related to human vision.',
-        state: { body: false, tables: false, references: true, guide: true } },
+        state: { body: false, tables: false, definitions: false, references: true, guide: true } },
       { query: 'What is new in the current version of ANSI/IES RP-43?',
-        state: { body: true, tables: true, compare: true, guide: true } },
+        state: { body: true, tables: true, definitions: false, references: false, compare: true, guide: true } },
       { query: 'Show me recommended illuminance levels for lighting walkways',
-        state: { tables: true, body: false, guide: false } },
+        state: { tables: true, body: false, definitions: false, references: false, guide: false } },
     ];
 
     function recentSearches() {
@@ -873,10 +1048,24 @@
       return filters;
     }
 
+    /** At least one content kind has to be selected for a search to mean anything. */
+    function anyContentSelected() {
+      return CONTENT_PILLS.some(name => filterState[name]);
+    }
+
     async function performSearch() {
       const query = stripQueryLabel(document.getElementById('search-input').value);
       if (!query) return;
       document.getElementById('search-input').value = query;
+
+      // Every content kind can be turned off since DO57, and an empty selection
+      // reaches the API as "no preference" — which the Worker answers with its own
+      // defaults. Say so instead of running a search whose results contradict the
+      // filter row.
+      if (!anyContentSelected()) {
+        showToast('Choose at least one content type to search', 'error');
+        return;
+      }
 
       lastQuery = query;
       rememberSearch(query);
@@ -931,10 +1120,11 @@
       // falls back to Documents + Illuminance Tables. The visible filter state
       // must match the results on screen.
       if (Array.isArray(data.contentTypes)) {
-        filterState.tables = data.contentTypes.includes('tables');
         filterState.body = data.contentTypes.includes('body');
         filterState.references = data.contentTypes.includes('references');
         filterState.definitions = data.contentTypes.includes('definitions');
+        // Illuminance Tables carries its multi-select with it (DO57 note 2).
+        filterState = alignTablesSelection(filterState, data.contentTypes.includes('tables'));
         if (FEATURES.compareVersions) {
           // A version-comparison query turns Document Comparison on by itself
           // (DO32: it "MUST be selected if Version Comparison is selected").
@@ -983,6 +1173,9 @@
 
       renderDocChips();
       renderResultsPage();
+      // Which of these are already filed away (client DO61). Not awaited: it only
+      // relabels buttons, and the results are already on screen.
+      refreshSavedState();
     }
 
     // ── Document filter chips ────────────────────────────────────────────────
@@ -1059,11 +1252,60 @@
       // Group consecutive sibling rows (same standard + banner + application)
       // into one card so the application title prints once — client feedback:
       // don't reprint titles when results come from adjacent table rows.
-      const groups = groupSiblingResults(pageResults);
+      // Then join sequential Document cards of one standard (client DO59).
+      const groups = joinDocumentGroups(groupSiblingResults(pageResults));
 
       const list = document.getElementById('results-list');
-      list.innerHTML = groups.map((g, i) => renderResultCard(g, i)).join('')
+      list.innerHTML = groups.map((g, i) => g.joined ? renderJoinedDocumentCard(g, i) : renderResultCard(g, i)).join('')
         + renderPaginationControls(totalPages, start + 1, end, total);
+    }
+
+    // ── DO59: sequential Document cards from one standard become ONE card ─────
+    // "'Join' sequential document search result cards from the same document
+    //  (similar to 'Illuminance Table' result cards). Goal: easier browsing."
+    //
+    // The join is the CONTAINER, not a merge: each section keeps its own banner,
+    // designation, citation, committee credit and "From the Standard" list, so
+    // nothing a single card said is lost — the reader just gets one box per
+    // document instead of one per section. Only adjacent groups join, so the
+    // relevance ordering of the list is untouched.
+    function joinDocumentGroups(groups) {
+      const out = [];
+      for (const group of groups) {
+        const std = joinableStandard(group);
+        const last = out[out.length - 1];
+        if (std && last && last.joined && last.standard === std) {
+          last.sections.push(group);
+          continue;
+        }
+        out.push(std ? { joined: true, standard: std, sections: [group] } : group);
+      }
+      // A "join" holding one section is just that card — unwrapped, so a lone
+      // Document result is not put in a container implying more is inside.
+      return out.map(item => (item.joined && item.sections.length === 1) ? item.sections[0] : item);
+    }
+
+    /**
+     * The standard a Document group belongs to, or null when the group is not
+     * joinable. Deprecated editions never join: on a version comparison each
+     * edition is its own card with its own amber notice, and stacking two
+     * editions in one box is exactly the confusion DO27 asked us to remove.
+     */
+    function joinableStandard(group) {
+      const primary = group.members && group.members[0];
+      if (!primary || primary.resultType !== 'excerpt' || primary.isDeprecated) return null;
+      return (primary.application && primary.application.standard) || null;
+    }
+
+    function renderJoinedDocumentCard(bundle, index) {
+      const style = RESULT_TYPE_STYLES.excerpt;
+      return `
+        <article class="result-card copy-guard bg-gray-50 rounded-xl border border-gray-100 shadow-sm p-2 relative overflow-hidden space-y-2"
+                 style="animation-delay: ${index * 40}ms; border-left: 3px ${style.line} ${style.banner};"
+                 data-joined-standard="${escapeHtml(bundle.standard)}">
+          ${bundle.sections.map(g => renderResultCard(g, index, { nested: true })).join('')}
+        </article>
+      `;
     }
 
     // Cluster consecutive results that belong to the same application block
@@ -1456,7 +1698,10 @@
     // the same pair the printed IES reference doc uses for its banners.
     const LOCATION_FILL = { Indoor: '#2E4A62', Outdoor: '#2E4A34' };
 
-    function renderResultCard(group, index) {
+    // `opts.nested` renders the card as a panel INSIDE a joined document card
+    // (client DO59) — same content, but the shell drops the outer article, its
+    // shadow and its left stripe, which the container now carries.
+    function renderResultCard(group, index, opts = {}) {
       const members = group.members;
       // Same-section Document results collapse into one card (client DO40); the
       // adjacent-table-row grouping below is unchanged.
@@ -1585,7 +1830,16 @@
       // copy-guard: excerpt text inside is not drag-selectable or copyable
       // (client DO36). The citation carries .allow-copy so a reader can always
       // copy the standard's NAME — that is how they buy or cite it.
-      const cardShell = (inner) => `
+      // Still an <article>: the footnote-marker and copy-guard handlers walk up to
+      // the nearest one to find "this card's" notes and citation, so a section
+      // inside a joined card has to be its own article or it would answer with
+      // the first section's.
+      const cardShell = (inner) => opts.nested ? `
+        <article class="bg-white rounded-lg border border-gray-100 p-3 relative overflow-hidden">
+          ${deprecatedBanner}
+          ${inner}
+        </article>
+      ` : `
         <article class="result-card copy-guard bg-white rounded-xl border border-gray-100 shadow-sm p-3 relative overflow-hidden"
                  style="animation-delay: ${index * 40}ms; border-left: 3px ${borderLineStyle} ${bannerHex};">
           ${deprecatedBanner}
@@ -1709,7 +1963,8 @@
           ${committeeHtml(result).replace('pl-[26px]', '')}
 
           <div class="mt-2 pt-2 border-t border-gray-100">
-            <span class="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">From the Standard</span>
+            <!-- Bold black, exactly as on every other card (client DO60). -->
+            <span class="text-[11px] font-bold text-gray-900 uppercase tracking-wider">From the Standard</span>
             <div class="mt-1.5 pl-3 border-l-2 border-gray-200 text-xs text-gray-700 leading-relaxed definition-body">
               <p class="mb-1"><strong class="allow-copy">${escapeHtml(def.term || '')}</strong></p>
               <div class="print-withhold">${bodyHtml}</div>
@@ -1989,19 +2244,121 @@
     function saveSearchButton(result, name) {
       const saveType = SAVEABLE_RESULT_TYPES[result.resultType];
       if (!saveType || result.isDeprecated) return '';
+
+      // Client DO61: "if that exact passage has already been saved to a search
+      // collection, change button text to '+ Save Again' and make fill colour
+      // 'greyed out' or less saturated" — so the reader can tell at a glance
+      // whether they have already filed this result, without opening the modal.
+      // Saving again is still allowed: the same passage legitimately belongs to
+      // more than one collection, and the server de-dupes per collection.
+      const key = savedResultKey(result);
+      const already = savedResultKeys.has(key);
       return `
           <button
-            class="save-search-btn text-xs px-2.5 py-1 bg-brand-secondary text-white rounded-lg hover:bg-brand-secondary-dark transition font-medium flex items-center gap-1"
+            class="save-search-btn text-xs px-2.5 py-1 text-white rounded-lg transition font-medium flex items-center gap-1 ${already ? 'hover:opacity-90' : 'hover:bg-brand-secondary-dark'}"
+            style="background-color: ${already ? SAVED_AGAIN_FILL : 'var(--brand-secondary)'};"
             data-payload="${escapeHtml(JSON.stringify(buildSavePayload(result, name)))}"
             data-name="${escapeHtml(name)}"
             data-citation="${escapeHtml(result.citation || '')}"
-            title="Save a reference to this result in one of your Saved Search Collections"
+            data-save-key="${escapeHtml(key)}"
+            data-saved="${already ? '1' : '0'}"
+            title="${already ? SAVED_AGAIN_TITLE : SAVE_TITLE}"
           >
             <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
               <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/>
             </svg>
-            Save Search
+            <span class="save-label">${already ? 'Save Again' : 'Save Search'}</span>
           </button>`;
+    }
+
+    // Desaturated slate for a result already filed away — "greyed out or less
+    // saturated", in the client's words (DO61).
+    const SAVED_AGAIN_FILL = '#8FA3B4';
+    const SAVE_TITLE = 'Save a reference to this result in one of your Saved Search Collections';
+    const SAVED_AGAIN_TITLE = 'Already saved to one of your Saved Search Collections — save it to another';
+
+    /**
+     * A stable identity for one result, used to remember that it is already in a
+     * collection (client DO61).
+     *
+     * Derived from the RESULT rather than from the save payload, so the key built
+     * while rendering a card and the key built while asking the server about a
+     * page of results are always the same string — the payload's resource_title
+     * can fall back to a display name that differs between those two moments.
+     */
+    function savedResultKey(result) {
+      if (!result) return '';
+      const app = result.application || {};
+      return [
+        SAVEABLE_RESULT_TYPES[result.resultType] || '',
+        app.standard || '',
+        result.resultType === 'application' ? (app.code || '') : '',
+        result.definition?.slug || '',
+        result.citationPage ?? result.excerpt?.pageNumber ?? '',
+        result.vitriumLink || result.standardLink || '',
+        result.resultType === 'reference' ? (result.excerpt?.text || '').slice(0, 120) : '',
+      ].join('|');
+    }
+
+    /**
+     * Remember a save locally so the buttons flip to "Save Again" immediately.
+     *
+     * The buttons are updated in place rather than by re-rendering the list: a
+     * re-render would collapse whatever "From the Standard" drop-down the reader
+     * has open, and this only changes a label and a fill.
+     */
+    function markSaved(keys) {
+      let added = false;
+      for (const key of keys || []) {
+        if (key && !savedResultKeys.has(key)) { savedResultKeys.add(key); added = true; }
+      }
+      if (!added) return;
+      for (const btn of document.querySelectorAll('.save-search-btn')) {
+        if (btn.dataset.saved === '1') continue;
+        if (!savedResultKeys.has(btn.dataset.saveKey || '')) continue;
+        btn.dataset.saved = '1';
+        btn.style.backgroundColor = SAVED_AGAIN_FILL;
+        btn.classList.remove('hover:bg-brand-secondary-dark');
+        btn.classList.add('hover:opacity-90');
+        btn.title = SAVED_AGAIN_TITLE;
+        const label = btn.querySelector('.save-label');
+        if (label) label.textContent = 'Save Again';
+      }
+    }
+
+    /**
+     * Ask which of the current results are already in one of the user's
+     * collections (client DO61). Deliberately after the page has rendered: the
+     * answer only changes a button's label, and it must never delay the results.
+     * A failure is silent — the button then reads "Save Search", which is the
+     * behaviour that shipped before, and the per-collection duplicate guard in
+     * the Worker still holds.
+     */
+    // Mirrors MAX_ITEMS in the Worker's savedStatus handler. The pool is 50, so
+    // this never bites today; it is here so a bigger pool degrades to "some
+    // buttons say Save Search" rather than to a 400 that loses all of them.
+    const SAVED_STATUS_MAX = 90;
+
+    async function refreshSavedState() {
+      const targets = allResults
+        .filter(r => SAVEABLE_RESULT_TYPES[r.resultType] && !r.isDeprecated)
+        .slice(0, SAVED_STATUS_MAX);
+      if (!targets.length) return;
+      try {
+        const flags = await LensyAPI.savedStatus(
+          targets.map(r => buildSavePayload(r, saveDisplayName(r)))
+        );
+        markSaved(targets.filter((_, i) => flags[i]).map(savedResultKey));
+      } catch (err) {
+        /* silent by design — see above */
+      }
+    }
+
+    /** The name buildSavePayload falls back to when a result carries no citation. */
+    function saveDisplayName(result) {
+      const app = result.application || {};
+      return app.fullName || app.category || app.code
+        || result.definition?.term || result.document?.title || '';
     }
 
     // ── Saved Search payloads (client DO37) ──────────────────────────────────
@@ -2218,19 +2575,24 @@
         ? escapeHtml((shown[0].text || '').substring(0, 150)) + ((shown[0].text || '').length > 150 ? '…' : '')
         : '';
 
+      // The disclosure heading is set in bold black (client DO60: "Make 'FROM THE
+      // STANDARD' drop-down more prominent … Format: bold, black font"). It is the
+      // control that reveals the standard's own words, so it should not read like
+      // the quietest thing on the card — the passage count is part of the label
+      // and carries the same weight.
       const excerptBlock = shown.length > 0 ? `
         <details class="mt-2 pt-2 border-t border-gray-100 group" ${shown.length === 1 ? 'open' : ''}>
           <summary class="cursor-pointer list-none select-none">
             <div class="flex items-center gap-1.5">
-              <svg class="w-3 h-3 text-gray-400 transition-transform group-open:rotate-90 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+              <svg class="w-3.5 h-3.5 text-gray-700 transition-transform group-open:rotate-90 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
                 <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/>
               </svg>
-              <span class="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">${excerptHeading}</span>
-              ${shown.length > 1 ? `<span class="text-[10px] text-gray-400">— ${passageLabel}</span>` : ''}
+              <span class="text-[11px] font-bold text-gray-900 uppercase tracking-wider">${excerptHeading}</span>
+              ${shown.length > 1 ? `<span class="text-[11px] font-bold text-gray-900">— ${passageLabel}</span>` : ''}
             </div>
-            ${shown.length > 1 ? `<p class="mt-1 pl-[18px] text-xs text-gray-400 italic truncate group-open:hidden">"${preview}"</p>` : ''}
+            ${shown.length > 1 ? `<p class="mt-1 pl-[20px] text-xs text-gray-400 italic truncate group-open:hidden">"${preview}"</p>` : ''}
           </summary>
-          <div class="mt-1.5 pl-[18px] space-y-2">${shown.map(excerptEntry).join('')}</div>
+          <div class="mt-1.5 pl-[20px] space-y-2">${shown.map(excerptEntry).join('')}</div>
         </details>
       ` : '';
 
@@ -2434,8 +2796,10 @@
     // The pending queue holds SAVE PAYLOADS (see buildSavePayload), not bare
     // application codes, so a Document, Reference or Definition can be saved the
     // same way an illuminance row can.
-    async function openSaveSearchModal(payloads, name, citation) {
+    async function openSaveSearchModal(payloads, name, citation, keys) {
       modalPendingCodes = Array.isArray(payloads) ? payloads : [payloads];
+      // What to mark as saved once the save succeeds (client DO61).
+      modalPendingKeys = Array.isArray(keys) ? keys.filter(Boolean) : (keys ? [keys] : []);
       document.getElementById('modal-app-name').textContent = name || 'Search result';
       document.getElementById('modal-app-citation').textContent = citation || '';
       document.getElementById('save-note').value = '';   // client DO50
@@ -2450,20 +2814,22 @@
       document.getElementById('project-modal').classList.add('hidden');
       document.body.style.overflow = '';
       modalPendingCodes = [];
+      modalPendingKeys = [];
     }
 
     // Bulk save from the checkbox selection. Only illuminance-table rows carry
     // checkboxes today, so the payloads are rebuilt from the visible results.
     async function addSelectedToProject() {
       if (selectedApplicationCodes.size === 0) return;
-      const payloads = visibleResults()
-        .filter(r => r.application?.code && selectedApplicationCodes.has(r.application.code))
-        .map(r => buildSavePayload(r, r.application.fullName || r.application.code));
+      const selected = visibleResults()
+        .filter(r => r.application?.code && selectedApplicationCodes.has(r.application.code));
+      const payloads = selected.map(r => buildSavePayload(r, r.application.fullName || r.application.code));
       if (payloads.length === 0) return;
       await openSaveSearchModal(
         payloads,
         `${payloads.length} search result${payloads.length > 1 ? 's' : ''} selected`,
         '',
+        selected.map(savedResultKey),
       );
     }
 
@@ -2509,8 +2875,10 @@
 
     async function addToExistingProject(projectId) {
       try {
+        const keys = [...modalPendingKeys];   // closeProjectModal clears them
         const saved = await LensyAPI.saveSearches(pendingWithNote(), projectId);
         closeProjectModal();
+        markSaved(keys);                      // buttons read "Save Again" (DO61)
         const n = (saved.inserted_ids || []).length;
         const dupes = (saved.skipped || []).length;
         showToast(
@@ -2547,6 +2915,7 @@
       const note = document.getElementById('new-project-note').value.trim();
 
       try {
+        const keys = [...modalPendingKeys];   // closeProjectModal clears them
         const created = await LensyAPI.createProject({
           name, client_name: client || null, location: location || null,
           notes: note || null, user_id: 1,
@@ -2554,6 +2923,7 @@
         const projectId = created.project.id;
         await LensyAPI.saveSearches(pendingWithNote(), projectId);
         closeProjectModal();
+        markSaved(keys);                      // buttons read "Save Again" (DO61)
         showToast(`Collection "${name}" created`, 'success');
       } catch (err) {
         document.getElementById('modal-error').textContent = err.message;
@@ -2602,6 +2972,9 @@
       allResults = [];
       currentPage = 1;
       activeDocFilter = null;
+      // Re-asked per search (DO61), so a result removed from a collection between
+      // two searches stops claiming it is saved.
+      savedResultKeys = new Set();
       setStandardLinks(null);
       updateBulkActionsUI();
     }
@@ -2672,7 +3045,10 @@
       const btn = e.target.closest('.save-search-btn');
       if (btn) {
         try {
-          openSaveSearchModal(JSON.parse(btn.dataset.payload), btn.dataset.name, btn.dataset.citation);
+          openSaveSearchModal(
+            JSON.parse(btn.dataset.payload), btn.dataset.name, btn.dataset.citation,
+            btn.dataset.saveKey,
+          );
         } catch {
           showToast('Could not read this result — please retry the search', 'error');
         }
@@ -2754,9 +3130,11 @@
 
     // ── Feature-flag init ────────────────────────────────────────────────────
     // Document Comparison ships dark until the deprecated corpus is confirmed
-    // live in the target environment (FEATURES.compareVersions).
+    // live in the target environment (FEATURES.compareVersions). Its control is
+    // now the banner button (DO57).
     if (FEATURES.compareVersions) {
-      document.getElementById('pill-compare-wrap').style.display = 'flex';
+      const navCompare = document.getElementById('nav-compare');
+      if (navCompare) navCompare.style.display = 'flex';
     }
     renderFilterPills();
 
