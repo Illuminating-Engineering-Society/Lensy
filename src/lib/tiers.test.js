@@ -69,6 +69,57 @@ describe('resolveTier', () => {
   });
 });
 
+// What production actually runs on since 2026-08-12. The cases above were
+// written against slugs that were GUESSES; Wicket emits none of them. These use
+// the real tier names, slugified by the AuthIES import into roles_json.
+describe('the live production configuration', () => {
+  const PROD = { LENSY_LITE: 'on', LENSY_SUBSCRIBER_ROLES: 'lighting-library-full-access' };
+
+  it('gives the 546 Lighting Library Full Access holders everything', () => {
+    expect(resolveTier(
+      { isMember: true, memberTier: 'Member Grade', roles: ['member', 'user', 'lighting-library-full-access'] },
+      PROD,
+    )).toBe('full');
+  });
+
+  it('gives a plain member LensyLite, which is the entire point', () => {
+    expect(resolveTier(
+      { isMember: true, memberTier: 'Member Grade', roles: ['member', 'user'] },
+      PROD,
+    )).toBe('lite');
+  });
+
+  it('keeps the four activated reviewer accounts on full', () => {
+    // Verified against production D1: all four hold administrator AND the
+    // subscription slug, so BOTH routes to 'full' cover them.
+    const reviewer = {
+      isMember: true, admin: true, memberTier: 'Diamond',
+      roles: ['member', 'user', 'administrator', 'lighting-library-full-access'],
+    };
+    expect(resolveTier(reviewer, PROD)).toBe('full');
+    expect(resolveTier({ ...reviewer, admin: false }, PROD)).toBe('full');
+  });
+
+  it('does NOT promote the narrower products — the open product question', () => {
+    // If IES decides these cohorts deserve more, it is a LENSY_SUBSCRIBER_ROLES
+    // change, and this test is the thing that should fail first.
+    for (const slug of [
+      'the-illuminance-selector',
+      'lighting-science-collection',
+      'lighting-practice-collection',
+      'lighting-applications-collection',
+      'roadway-lighting-collection',
+      'lighting-testing-and-measurements-collection',
+    ]) {
+      expect(resolveTier({ isMember: true, roles: ['member', slug] }, PROD)).toBe('lite');
+    }
+  });
+
+  it('locks out an IES account that is neither member nor subscriber', () => {
+    expect(resolveTier({ isMember: false, roles: ['user'] }, PROD)).toBe('none');
+  });
+});
+
 describe('liteContentTypes', () => {
   it('drops Illuminance Tables and Document Comparison', () => {
     const out = liteContentTypes(new Set(['tables', 'body', 'references', 'compare']));

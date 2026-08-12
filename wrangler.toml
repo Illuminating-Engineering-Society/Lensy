@@ -139,14 +139,35 @@ AUTH_IDP_BASE_URL = "https://auth.ies.org"
 ALLOW_MEMBERS_WITHOUT_INVITE = "true"
 # LensyLite (client DO53). "on" → IES members WITHOUT a Lighting Library
 # subscription get the limited tier: the Lighting Science collection only, with
-# Illuminance Tables, the AI Guide and Document Comparison locked. Left off here
-# on purpose — the subscription entitlement is not in the ies_auth cookie yet, so
-# switching it on today would demote every member, reviewers included. Turn it on
-# together with LENSY_SUBSCRIBER_ROLES once the IdP publishes the role slug.
-LENSY_LITE = "off"
+# Illuminance Tables, the AI Guide and Document Comparison locked.
+#
+# ON since 2026-08-12. It was off because the subscription entitlement did not
+# exist in the cookie; it does now. Wicket files Lighting Library purchases as
+# person memberships with membership_category='subscription', and the AuthIES
+# import writes them into roles_json as slugs, which ride the ies_auth cookie.
+#
+# Turning it on took ACCESS FROM NOBODY. Measured on production the same day:
+# the 5 rows in invited_users are all role 'admin'/'staff' (both in
+# FULL_ACCESS_INVITE_ROLES → full), and the only 4 accounts that have ever set a
+# password are those same admins, all 4 also holding lighting-library-full-access.
+# Everyone else is still 'pending' at the IdP and cannot sign in at all — so this
+# sets the policy BEFORE the population arrives rather than revoking anything.
+#
+# Leaving it off was the actual risk: with is_member now populated for 7,986
+# people and ALLOW_MEMBERS_WITHOUT_INVITE true, every member who activates would
+# otherwise land on FULL Lensy — the whole Library, for the 7,440 of them who
+# never bought it.
+LENSY_LITE = "on"
 # Comma-separated IdP role slugs that mean "has a Lighting Library subscription".
-# Unset → the defaults in src/lib/tiers.ts.
-# LENSY_SUBSCRIBER_ROLES = "lighting-library"
+# Unset → the defaults in src/lib/tiers.ts, none of which Wicket actually emits.
+#
+# This is the slugified Wicket membership tier name, and deliberately ONLY that
+# one: it is the tier that grants the whole Library (546 people). The narrower
+# products are NOT full access and are not listed — the per-collection
+# subscriptions (Practice / Applications / Roadway / Testing & Measurements) and
+# "The Illuminance Selector" (205 people). See the note in src/lib/tiers.ts:
+# what those cohorts should get is an open product question.
+LENSY_SUBSCRIBER_ROLES = "lighting-library-full-access"
 
 # Secrets set via `wrangler secret put`:
 # VITRIUM_API_KEY

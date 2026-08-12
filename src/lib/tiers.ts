@@ -14,19 +14,47 @@
  * the AI Guide and Document Comparison — and searches only the current Lighting
  * Science collection.
  *
- * ─── Two things this module is deliberately careful about ────────────────────
+ * ─── Where the signal comes from (resolved 2026-08-12) ───────────────────────
  *
- * 1. THE SUBSCRIPTION SIGNAL DOES NOT EXIST YET. The `ies_auth` cookie carries
- *    `isMember`, `memberTier` and the IdP's role slugs; none of them says
- *    "subscribes to the Lighting Library" today. So the check is written against
- *    a CONFIGURABLE list of role slugs (LENSY_SUBSCRIBER_ROLES) plus the member
- *    tier, and when IES publishes the real entitlement it is a var change rather
- *    than a code change.
+ * Wicket is the system of record. It files an IES grade and a Lighting Library
+ * purchase in the SAME resource — a person membership — separated only by
+ * `attributes.membership_category`:
  *
- * 2. IT IS OFF BY DEFAULT. With LENSY_LITE unset, every authorized visitor is
- *    'full' — exactly today's behaviour. Turning tiering on before the
- *    subscription signal is real would demote the client's own reviewers, who
- *    are IES members, in the middle of their beta. `LENSY_LITE=on` opts in.
+ *   'membership' | 'staff' | 'affiliate_membership'  → an IES membership
+ *                                                      (cookie `isMember`)
+ *   'subscription'                                   → a purchased product
+ *
+ * The AuthIES import slugifies each subscription tier name into `roles_json`,
+ * which rides the `ies_auth` cookie as a role slug. So the rule Shane Skwarek
+ * stated and Dan Ozminkowski confirmed — full = Lighting Library subscription,
+ * lite = active IES membership — needs no code here, only
+ * LENSY_SUBSCRIBER_ROLES="lighting-library-full-access".
+ *
+ * The check stays written against a CONFIGURABLE slug list rather than that
+ * literal, because the tier NAME is client-editable text in Wicket's admin.
+ *
+ * ─── Open product question: the narrower subscriptions ───────────────────────
+ *
+ * Wicket sells products that are not the whole Library, and none of them grants
+ * `full` today, so their holders land on `lite`:
+ *
+ *   "The Illuminance Selector"              205 people
+ *   "Lighting Practice Collection"            3
+ *   "Lighting Applications Collection"        3
+ *   "Lighting Science Collection"             3
+ *   "Roadway Lighting Collection"             3
+ *   "Lighting Testing & Measurements"         3
+ *
+ * Two of those map badly and IES has to decide, because the answer is product
+ * policy and not something this module should invent:
+ *
+ *  - Illuminance Selector subscribers are paying for exactly the tool Lensy
+ *    replaces, yet `lite` is the one tier that LOCKS Illuminance Tables.
+ *  - A Lighting Science Collection subscriber gets, on `lite`, precisely the
+ *    collection they paid for — free to every member.
+ *
+ * Nobody is harmed yet: none of these people has activated an IdP password, so
+ * none can sign in. Settle it before they do.
  */
 
 import type { ContentType } from '../types';
@@ -45,8 +73,17 @@ export const LITE_FALLBACK_PREFIX = 'LS-';
 /** Tools LensyLite does not include, by the filter name the UI uses. */
 export const LITE_BLOCKED_FILTERS = ['tables', 'guide', 'compare'] as const;
 
-/** Role slugs that mean "has a Lighting Library subscription", by default. */
+/**
+ * Role slugs that mean "has a Lighting Library subscription", by default.
+ *
+ * These were guesses made before the entitlement was found, and Wicket emits
+ * NONE of them — the real slug is `lighting-library-full-access`, set through
+ * LENSY_SUBSCRIBER_ROLES in wrangler.toml. They are kept only so a deployment
+ * that never configures the var still recognizes something plausible; the
+ * configured value is what production actually runs on.
+ */
 const DEFAULT_SUBSCRIBER_ROLES = [
+  'lighting-library-full-access',
   'lighting-library', 'lighting_library', 'library-subscriber',
   'lensy-subscriber', 'subscriber',
 ];
