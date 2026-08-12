@@ -289,10 +289,37 @@ describe('decideAccess', () => {
     expect(decideAccess(member, expired, true, NOW)).toEqual({ authorized: false, reason: 'expired', admin: false, firstLogin: false });
   });
 
-  it('without a row: members pass iff the bypass is on, non-members never', () => {
-    expect(decideAccess(member, null, true, NOW)).toEqual({ authorized: true, role: 'member', admin: false, firstLogin: false });
-    expect(decideAccess(member, null, false, NOW)).toEqual({ authorized: false, reason: 'not_invited', admin: false, firstLogin: false });
-    expect(decideAccess(guest, null, true, NOW)).toEqual({ authorized: false, reason: 'not_invited', admin: false, firstLogin: false });
+  it('without a row: a member is a member', () => {
+    expect(decideAccess(member, null, true, NOW))
+      .toEqual({ authorized: true, role: 'member', admin: false, firstLogin: false });
+  });
+
+  it('without a row: a non-member still gets in, as a visitor', () => {
+    // The door stopped denying `not_invited`. It was the only thing keeping a
+    // Lighting Library subscriber who is not an IES member out of the product
+    // they pay for — resolveTier called them 'full' while this bounced them.
+    // What a visitor SEES is the tier's job: 'none' buys no corpus access,
+    // because requireCorpusAccess refuses it.
+    expect(decideAccess(guest, null, true, NOW))
+      .toEqual({ authorized: true, role: 'visitor', admin: false, firstLogin: false });
+  });
+
+  it('ALLOW_MEMBERS_WITHOUT_INVITE=false restores the invite-only door', () => {
+    // The kill switch: the difference between "any IES account may sign in"
+    // and "only the allowlist may".
+    expect(decideAccess(member, null, false, NOW))
+      .toEqual({ authorized: false, reason: 'not_invited', admin: false, firstLogin: false });
+    expect(decideAccess(guest, null, false, NOW))
+      .toEqual({ authorized: false, reason: 'not_invited', admin: false, firstLogin: false });
+  });
+
+  it('a revoked row still wins over the open door', () => {
+    const revoked = { status: 'revoked', expires_at: null, role: 'guest', person_uuid: null };
+    expect(decideAccess(member, revoked, true, NOW).authorized).toBe(false);
+    // Revocation is how staff lock somebody out, so it must survive the door
+    // being open to everyone else — including for an IdP administrator.
+    const admin = payload({ isMember: true, roles: ['administrator'] });
+    expect(decideAccess(admin, revoked, true, NOW).authorized).toBe(false);
   });
 });
 

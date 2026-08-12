@@ -25,7 +25,7 @@ import { handleSearch } from './search';
 import { handleIngest } from './ingest';
 import { handleAdminScanOrphans, handleAdminEnumerateIds, handleAdminDeleteOrphans, handleAdminFlushCache, handleAdminSearchLog, handleAdminR2Multipart, handleAdminIndexStatus } from './admin';
 import { handleAdminUsers } from './users';
-import { handleAuthMe, handleDevLogin, requireReadAccess } from './session';
+import { handleAuthMe, handleDevLogin, requireReadAccess, requireCorpusAccess } from './session';
 import { buildLoginUrl, buildLogoutUrl } from '../lib/sso';
 import {
   normalizeSavedItem, savedItemCodes, newShareToken, CSV_COLUMNS, csvCell, csvRowFor,
@@ -73,9 +73,10 @@ export default {
         return Response.redirect(buildLogoutUrl(env, request.url), 302);
       }
 
-      // ── Search (requires an SSO session or the staff bearer secret) ──────
+      // ── Search (an SSO session or the staff bearer, AND a tier above
+      //    'none' — the door itself no longer turns anyone away) ────────────
       if (path === '/api/search' && request.method === 'POST') {
-        const denied = await requireReadAccess(request, env);
+        const denied = await requireCorpusAccess(request, env);
         if (denied) return withCors(denied);
         return withCors(await handleSearch(request, env, ctx));
       }
@@ -140,6 +141,12 @@ export default {
       }
 
       if (path.startsWith('/api/applications')) {
+        // The raw illuminance dataset — this IS the Illuminance Tables content,
+        // which LensyLite excludes and a 'none' visitor has no claim to. No
+        // page in src/frontend calls it, so gating it to 'full' costs the UI
+        // nothing; without this it was a way around the tables block.
+        const denied = await requireCorpusAccess(request, env, 'full');
+        if (denied) return withCors(denied);
         return withCors(await handleApplications(request, env, url));
       }
 

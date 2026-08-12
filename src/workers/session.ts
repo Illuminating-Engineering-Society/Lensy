@@ -261,6 +261,46 @@ export async function requireReadAccess(request: Request, env: Env): Promise<Res
   return gate.ok ? null : gate.response;
 }
 
+/**
+ * Gate for the endpoints that hand out STANDARDS CONTENT — search results and
+ * the illuminance dataset. Returns null when the request may proceed.
+ *
+ * `requireReadAccess` answers "is this a real session?", and since the door
+ * stopped denying `not_invited` that is true for every authenticated IES
+ * account. This answers the separate question "is this session entitled to the
+ * corpus at all?", which is what tier 'none' means.
+ *
+ * It has to exist as its own check. Before the door opened, 'none' was enforced
+ * only by decideAccess refusing entry — `handleSearch` looks exclusively for
+ * 'lite', so a 'none' request that reached it would have been served as though
+ * it were 'full'. Opening the door without this would have handed the whole
+ * Lighting Library to all 65,945 accounts.
+ */
+export async function requireCorpusAccess(
+  request: Request,
+  env: Env,
+  minimum: LensyTier = 'lite',
+): Promise<Response | null> {
+  const denied = await requireReadAccess(request, env);
+  if (denied) return denied;
+
+  const tier = await resolveRequestTier(request, env);
+  const rank = { none: 0, lite: 1, full: 2 } as const;
+  if (rank[tier] >= rank[minimum]) return null;
+
+  return new Response(
+    JSON.stringify({
+      error: 'subscription_required',
+      tier,
+      message:
+        tier === 'none'
+          ? 'A Lighting Library subscription or an active IES membership is required to search the standards.'
+          : 'This content is part of the full Lighting Library subscription.',
+    }),
+    { status: 403, headers: { 'Content-Type': 'application/json' } },
+  );
+}
+
 // ─── Admin/staff gate ─────────────────────────────────────────────────────────
 
 /**

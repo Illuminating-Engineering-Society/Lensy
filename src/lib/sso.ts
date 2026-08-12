@@ -455,5 +455,26 @@ export function decideAccess(
   if (allowMembersWithoutInvite && user.isMember) {
     return { authorized: true, role: 'member', admin: false, firstLogin: false };
   }
-  return { authorized: false, reason: 'not_invited', admin: false, firstLogin: false };
+
+  // ── The door is open to anyone the IdP authenticated ──────────────────────
+  //
+  // There is no `not_invited` denial any more. It was the only thing standing
+  // between a Lighting Library subscriber who is not an IES member and the
+  // product they pay for: `resolveTier` called them 'full' while this function
+  // bounced them at the door — 119 people, and the two halves of the same
+  // codebase disagreeing about the same person.
+  //
+  // What somebody SEES is the tier's job, not the door's. A visitor with no
+  // membership and no subscription resolves to 'none', which the corpus
+  // endpoints refuse (requireCorpusAccess in workers/api.ts) — so opening this
+  // grants no content. It lets them reach the app, open a collection shared
+  // with them (DO52), and be told what they would need.
+  //
+  // ALLOW_MEMBERS_WITHOUT_INVITE="false" restores the old invite-only door, and
+  // is now the kill switch for exactly that: it is the difference between "any
+  // IES account may sign in" and "only the allowlist may".
+  if (!allowMembersWithoutInvite) {
+    return { authorized: false, reason: 'not_invited', admin: false, firstLogin: false };
+  }
+  return { authorized: true, role: 'visitor', admin: false, firstLogin: false };
 }
