@@ -146,7 +146,9 @@ function tierFor(user: SsoUser, decision: AccessDecision, env: Env): LensyTier {
     roles: user.roles,
     isMember: user.isMember,
     memberTier: user.memberTier ?? null,
-    inviteRole: decision.role ?? null,
+    // What the invitation itself grants, independent of anything Wicket knows
+    // about them. Null for the members-without-invite path, which has no row.
+    inviteTier: decision.tier ?? null,
     admin: decision.admin,
   }, env);
 }

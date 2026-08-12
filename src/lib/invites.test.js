@@ -57,9 +57,20 @@ describe('parseInvite', () => {
       name: 'Dana Ruiz',
       organization: 'Firm LLC',
       role: 'staff',
+      // Not supplied above, so it takes the column default (migration 0012).
+      tier: 'full',
       expires_at: '2026-12-31T23:59:59Z',
       notes: 'Event guest',
     });
+  });
+
+  it('accepts an explicit tier and rejects anything else', () => {
+    const lite = parseInvite({ email: 'a@b.co', tier: 'LITE' });
+    expect(lite.ok).toBe(true);
+    expect(lite.value.tier).toBe('lite');
+    // The tier is what an invitation grants, so a typo must not fall through
+    // to a silent default that hands out the whole Library.
+    expect(parseInvite({ email: 'a@b.co', tier: 'premium' }).ok).toBe(false);
   });
 
   it('defaults role to guest and optionals to null', () => {

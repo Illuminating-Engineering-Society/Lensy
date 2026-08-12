@@ -31,6 +31,7 @@ import {
   effectiveStatus,
   INVITE_ROLES,
   INVITE_STATUSES,
+  INVITE_TIERS,
 } from '../lib/invites';
 import { sendInviteEmail, resolveAppUrl, type SendOutcome } from '../lib/email';
 import type { InvitedUserRow } from '../types';
@@ -147,10 +148,10 @@ async function createUsers(request: Request, env: Env): Promise<Response> {
     }
 
     const res = await env.DB.prepare(`
-      INSERT INTO invited_users (email, name, organization, role, expires_at, notes, invited_by)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO invited_users (email, name, organization, role, tier, expires_at, notes, invited_by)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `).bind(
-      invite.email, invite.name, invite.organization, invite.role,
+      invite.email, invite.name, invite.organization, invite.role, invite.tier,
       invite.expires_at, invite.notes, invitedBy
     ).run();
 
@@ -310,6 +311,15 @@ async function updateUser(request: Request, env: Env, id: string): Promise<Respo
     }
     fields.push('role = ?');
     values.push(role);
+  }
+
+  if ('tier' in patch) {
+    const tier = typeof patch.tier === 'string' ? patch.tier.trim().toLowerCase() : '';
+    if (!(INVITE_TIERS as readonly string[]).includes(tier)) {
+      return json({ error: `Invalid tier (expected ${INVITE_TIERS.join(' | ')})` }, 400);
+    }
+    fields.push('tier = ?');
+    values.push(tier);
   }
 
   if ('status' in patch) {

@@ -56,12 +56,8 @@ describe('resolveTier', () => {
     expect(resolveTier({ isMember: false, roles: [] }, ON)).toBe('none');
   });
 
-  it('never demotes staff or an invited subscriber', () => {
+  it('never demotes staff', () => {
     expect(resolveTier({ isMember: false, admin: true }, ON)).toBe('full');
-    expect(resolveTier({ isMember: true, inviteRole: 'admin' }, ON)).toBe('full');
-    expect(resolveTier({ isMember: true, inviteRole: 'subscriber' }, ON)).toBe('full');
-    // A plain invited guest is still a Lite user unless they subscribe.
-    expect(resolveTier({ isMember: true, inviteRole: 'member' }, ON)).toBe('lite');
   });
 
   it('does not read a membership tier as a subscription just for saying "member"', () => {
@@ -117,6 +113,46 @@ describe('the live production configuration', () => {
 
   it('locks out an IES account that is neither member nor subscriber', () => {
     expect(resolveTier({ isMember: false, roles: ['user'] }, PROD)).toBe('none');
+  });
+});
+
+// An invitation is a grant in its own right — the whole point of an allowlist
+// is reaching people the IES directory knows nothing about.
+describe('what an invitation grants', () => {
+  const PROD = { LENSY_LITE: 'on', LENSY_SUBSCRIBER_ROLES: 'lighting-library-full-access' };
+
+  it('admits a total stranger at the tier the row names', () => {
+    // No membership, no subscription, no roles: without the invite this is
+    // 'none', which is what a plain 'guest' used to get — in and shown nothing.
+    const stranger = { isMember: false, roles: [] };
+    expect(resolveTier(stranger, PROD)).toBe('none');
+    expect(resolveTier({ ...stranger, inviteTier: 'full' }, PROD)).toBe('full');
+    expect(resolveTier({ ...stranger, inviteTier: 'lite' }, PROD)).toBe('lite');
+  });
+
+  it('can only ever ADD access, never take it away', () => {
+    // A 'lite' invitation must not demote somebody who pays for the Library.
+    const subscriber = { isMember: true, roles: ['member', 'lighting-library-full-access'] };
+    expect(resolveTier({ ...subscriber, inviteTier: 'lite' }, PROD)).toBe('full');
+    // …nor an admin.
+    expect(resolveTier({ isMember: false, admin: true, inviteTier: 'lite' }, PROD)).toBe('full');
+  });
+
+  it('lifts a plain member to full when the row says so', () => {
+    expect(resolveTier({ isMember: true, roles: ['member'], inviteTier: 'full' }, PROD)).toBe('full');
+  });
+
+  it('ignores an unrecognized or missing tier rather than granting on it', () => {
+    const member = { isMember: true, roles: ['member'] };
+    expect(resolveTier({ ...member, inviteTier: 'premium' }, PROD)).toBe('lite');
+    expect(resolveTier({ ...member, inviteTier: '' }, PROD)).toBe('lite');
+    expect(resolveTier({ ...member, inviteTier: null }, PROD)).toBe('lite');
+    // And it cannot conjure access for someone with nothing.
+    expect(resolveTier({ isMember: false, roles: [], inviteTier: 'nonsense' }, PROD)).toBe('none');
+  });
+
+  it('is inert while tiering is off', () => {
+    expect(resolveTier({ isMember: false, inviteTier: 'lite' }, OFF)).toBe('full');
   });
 });
 

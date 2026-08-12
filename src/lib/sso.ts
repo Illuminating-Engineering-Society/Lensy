@@ -354,6 +354,8 @@ export function buildLogoutUrl(env: Env, requestUrl: string): string {
 
 export interface InviteDecisionRow extends InviteAccessRow {
   role: string;
+  /** Optional: rows written before migration 0012 do not carry it. */
+  tier?: string | null;
   person_uuid: string | null;
 }
 
@@ -361,8 +363,18 @@ export interface AccessDecision {
   authorized: boolean;
   /** Set when denied. */
   reason?: 'revoked' | 'expired' | 'not_invited';
-  /** invited_users.role, or 'member' for the members-without-invite path. */
+  /**
+   * invited_users.role, or 'member' for the members-without-invite path.
+   * Decides ADMIN RIGHTS only — see `tier` for what the invitation grants.
+   */
   role?: string;
+  /**
+   * invited_users.tier — what this invitation grants on its own, regardless of
+   * IES membership, Wicket roles or subscriptions. Undefined when there is no
+   * invite row (the members-without-invite path), in which case the tier comes
+   * entirely from what the person holds in Wicket.
+   */
+  tier?: string;
   /**
    * May use the staff surfaces (/admin/*, /api/admin/*, /api/ingest*). Always
    * false on a denial — a denied session is not an admin session.
@@ -389,16 +401,22 @@ export function hasIdpAdminRole(user: SsoUser): boolean {
  *    allowMembersWithoutInvite (ALLOW_MEMBERS_WITHOUT_INVITE var); everyone
  *    else needs an invite.
  *
- * `isMember` is now read from the IdP's D1 directory (kept fresh by its
- * read-only Wicket membership sync) rather than fetched from Wicket at each
- * login, so a lapsed membership stops granting the bypass only once that sync
- * lands. Guest access is unaffected — invited_users carries its own expiry.
+ * AN INVITATION STANDS ON ITS OWN. A row that is neither revoked nor expired
+ * admits its email whatever Wicket says — no membership, no subscription, no
+ * role required — and carries the tier it grants (`row.tier`). That is the
+ * whole purpose of an allowlist: reaching people the directory does not know.
+ *
+ * `isMember` is read from the IdP's D1 directory (kept fresh by its read-only
+ * Wicket membership sync) rather than fetched from Wicket at each login, so a
+ * lapsed membership stops granting the bypass only once that sync lands. Guest
+ * access is unaffected — invited_users carries its own expiry.
  *
  * Who is an ADMIN (the `admin` flag — staff pages and write endpoints):
  * the IdP's `administrator` role slug, or a Lensy invite row with role
  * 'admin'. The IdP role is the primary path: IES staff are administrators in
  * the directory and should not need a second grant here. The invite row stays
- * as the local escape hatch for an admin without the IdP role.
+ * as the local escape hatch for an admin without the IdP role. `role` decides
+ * this and nothing else now — the tier moved to its own column.
  *
  * Note admins are still ordinary members of the corpus gate — an administrator
  * whose invite row is revoked is denied outright, admin flag included.
@@ -422,6 +440,9 @@ export function decideAccess(
     return {
       authorized: true,
       role: row.role,
+      // Rows written before migration 0012 have no tier; 'full' is what they
+      // effectively had, so an older row cannot silently lose access.
+      tier: row.tier ?? 'full',
       admin: idpAdmin || row.role === 'admin',
       firstLogin: status === 'invited' || !row.person_uuid,
     };

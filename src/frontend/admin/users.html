@@ -109,6 +109,7 @@
                 <th class="px-4 py-3">Name</th>
                 <th class="px-4 py-3">Organization</th>
                 <th class="px-4 py-3">Role</th>
+                <th class="px-4 py-3">Grants</th>
                 <th class="px-4 py-3">Status</th>
                 <th class="px-4 py-3">Invite email</th>
                 <th class="px-4 py-3">Expires</th>
@@ -138,14 +139,22 @@
                     placeholder="guest@example.com&#10;dana@firm.com, Dana Ruiz, Firm LLC"
                     class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg font-mono focus:ring-2 focus:ring-brand-primary focus:border-transparent"></textarea>
         </div>
-        <div class="grid grid-cols-2 gap-3">
+        <div class="grid grid-cols-3 gap-3">
           <div>
-            <label class="block text-xs font-medium text-gray-600 mb-1">Role</label>
+            <label class="block text-xs font-medium text-gray-600 mb-1">Role <span class="text-gray-400">(admin rights)</span></label>
             <select id="inv-role" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white">
               <option value="guest" selected>guest</option>
               <option value="staff">staff</option>
               <option value="admin">admin</option>
             </select>
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-gray-600 mb-1">Grants</label>
+            <select id="inv-tier" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white">
+              <option value="full" selected>full — all of Lensy</option>
+              <option value="lite">lite — Lighting Science only</option>
+            </select>
+            <p class="mt-1 text-xs text-gray-400">Applies whether or not they are an IES member.</p>
           </div>
           <div>
             <label class="block text-xs font-medium text-gray-600 mb-1">Access expires <span class="text-gray-400">(optional)</span></label>
@@ -200,13 +209,20 @@
             <input id="edit-org" type="text" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg" />
           </div>
         </div>
-        <div class="grid grid-cols-3 gap-3">
+        <div class="grid grid-cols-4 gap-3">
           <div>
             <label class="block text-xs font-medium text-gray-600 mb-1">Role</label>
             <select id="edit-role" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white">
               <option value="guest">guest</option>
               <option value="staff">staff</option>
               <option value="admin">admin</option>
+            </select>
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-gray-600 mb-1">Grants</label>
+            <select id="edit-tier" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white">
+              <option value="full">full</option>
+              <option value="lite">lite</option>
             </select>
           </div>
           <div>
@@ -343,6 +359,9 @@
           <td class="px-4 py-3">${esc(u.name) || '<span class="text-gray-300">—</span>'}</td>
           <td class="px-4 py-3">${esc(u.organization) || '<span class="text-gray-300">—</span>'}</td>
           <td class="px-4 py-3">${esc(u.role)}</td>
+          <td class="px-4 py-3">${(u.tier || 'full') === 'lite'
+            ? '<span class="inline-block px-2 py-0.5 rounded-full text-xs font-medium bg-amber-50 text-amber-800">lite</span>'
+            : '<span class="inline-block px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-700">full</span>'}</td>
           <td class="px-4 py-3"><span class="inline-block px-2 py-0.5 rounded-full text-xs font-medium ${badge}">${esc(u.effective_status)}</span></td>
           <td class="px-4 py-3 text-xs">${inviteEmailCell(u)}</td>
           <td class="px-4 py-3 text-xs text-gray-500">${u.expires_at ? esc(u.expires_at.slice(0, 10)) : '—'}</td>
@@ -371,6 +390,7 @@
       const lines = document.getElementById('inv-emails').value.split('\n')
         .map(l => l.trim()).filter(Boolean);
       const role = document.getElementById('inv-role').value;
+      const tier = document.getElementById('inv-tier').value;
       const expires = document.getElementById('inv-expires').value || null;
       const invitedBy = document.getElementById('inv-by').value.trim() || null;
       const notes = document.getElementById('inv-notes').value.trim() || null;
@@ -379,7 +399,7 @@
       const payload = lines.map(line => {
         const [email, name, organization] = line.split(',').map(p => p.trim());
         return { email, name: name || null, organization: organization || null,
-                 role, expires_at: expires, notes, invited_by: invitedBy };
+                 role, tier, expires_at: expires, notes, invited_by: invitedBy };
       });
       if (payload.length === 0) return false;
 
@@ -433,6 +453,7 @@
       document.getElementById('edit-name').value = u.name || '';
       document.getElementById('edit-org').value = u.organization || '';
       document.getElementById('edit-role').value = u.role;
+      document.getElementById('edit-tier').value = u.tier || 'full';
       document.getElementById('edit-status').value = u.status;
       document.getElementById('edit-expires').value = u.expires_at ? u.expires_at.slice(0, 10) : '';
       document.getElementById('edit-notes').value = u.notes || '';
@@ -448,6 +469,7 @@
         name: document.getElementById('edit-name').value,
         organization: document.getElementById('edit-org').value,
         role: document.getElementById('edit-role').value,
+        tier: document.getElementById('edit-tier').value,
         status: document.getElementById('edit-status').value,
         expires_at: document.getElementById('edit-expires').value || null,
         notes: document.getElementById('edit-notes').value,

@@ -1,0 +1,21 @@
+-- Migration: 0012_invite_tier
+--
+-- An invitation is now a GRANT IN ITS OWN RIGHT, and it carries the tier.
+--
+-- Before this, `invited_users.role` did three jobs at once: open the door, hand
+-- out admin rights, and decide the access tier (LensyLite's
+-- FULL_ACCESS_INVITE_ROLES treated 'admin'/'staff'/'subscriber' as full). The
+-- last of those was both a surprise and a hole: the schema's own default role
+-- is 'guest', 'guest' was not in that set, and no other rule matched a guest —
+-- so with LENSY_LITE on, inviting somebody let them through the door and then
+-- showed them nothing. A guest invite resolved to tier 'none'.
+--
+-- `role` now means admin rights and nothing else. `tier` is what an invitation
+-- grants, chosen per row, independent of IES membership, Wicket roles or any
+-- subscription — which is the whole point of an invitation.
+--
+-- DEFAULT 'full' preserves what the five existing rows (3 admin, 2 staff) get
+-- today. It is not a claim that 'full' is the right default for a future event
+-- guest; the dashboard asks explicitly, and staff choose per invite.
+
+ALTER TABLE invited_users ADD COLUMN tier TEXT NOT NULL DEFAULT 'full';

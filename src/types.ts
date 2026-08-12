@@ -552,7 +552,10 @@ export interface InvitedUserRow {
   email: string;
   name: string | null;
   organization: string | null;
+  /** Admin rights only — 'guest' | 'staff' | 'admin'. Not the access tier. */
   role: string;
+  /** What the invitation grants: 'full' | 'lite' (migration 0012). */
+  tier: string;
   status: string;
   person_uuid: string | null;
   expires_at: string | null;

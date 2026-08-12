@@ -263,9 +263,16 @@ describe('decideAccess', () => {
   const guest = payload({ isMember: false, email: 'guest@example.com' });
 
   it('an invite row grants access and flags first login', () => {
-    const row = { status: 'invited', expires_at: null, role: 'guest', person_uuid: null };
+    const row = { status: 'invited', expires_at: null, role: 'guest', tier: 'lite', person_uuid: null };
     const d = decideAccess(guest, row, true, NOW);
-    expect(d).toEqual({ authorized: true, role: 'guest', admin: false, firstLogin: true });
+    expect(d).toEqual({ authorized: true, role: 'guest', tier: 'lite', admin: false, firstLogin: true });
+  });
+
+  it('a row written before migration 0012 still grants full', () => {
+    // No `tier` column on the row — it must not read as "grants nothing", or
+    // every pre-existing invitee would silently lose their access.
+    const row = { status: 'active', expires_at: null, role: 'guest', person_uuid: 'p-1' };
+    expect(decideAccess(guest, row, true, NOW).tier).toBe('full');
   });
 
   it('an already-active row is not a first login', () => {

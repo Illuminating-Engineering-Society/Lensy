@@ -9,8 +9,27 @@
  * Kept free of Worker bindings so it is unit-testable with plain vitest.
  */
 
+/**
+ * What an invite row's `role` decides: ADMIN RIGHTS, and nothing else.
+ *
+ * It used to also decide the access tier, through LensyLite's
+ * FULL_ACCESS_INVITE_ROLES. That is now `tier` below — see INVITE_TIERS.
+ */
 export const INVITE_ROLES = ['guest', 'staff', 'admin'] as const;
 export type InviteRole = (typeof INVITE_ROLES)[number];
+
+/**
+ * What an invitation GRANTS.
+ *
+ * An invitation stands on its own: it admits somebody to Lensy regardless of
+ * IES membership, Wicket roles or any subscription, and this is how much of
+ * Lensy they see. It can only ever ADD access — an invited person who
+ * separately holds a Lighting Library subscription still resolves to full (see
+ * resolveTier in lib/tiers.ts), so a 'lite' invite can never demote a paying
+ * subscriber.
+ */
+export const INVITE_TIERS = ['full', 'lite'] as const;
+export type InviteTier = (typeof INVITE_TIERS)[number];
 
 export const INVITE_STATUSES = ['invited', 'active', 'revoked'] as const;
 export type InviteStatus = (typeof INVITE_STATUSES)[number];
@@ -21,6 +40,7 @@ export interface NewInvite {
   name: string | null;
   organization: string | null;
   role: InviteRole;
+  tier: InviteTier;
   expires_at: string | null;
   notes: string | null;
 }
@@ -70,6 +90,13 @@ export function parseInvite(input: unknown): ParseInviteResult {
     return { ok: false, reason: `Invalid role "${role}" (expected ${INVITE_ROLES.join(' | ')})` };
   }
 
+  // Defaults to 'full', matching the column default and what the five rows
+  // that predate this field already get. Staff pick it explicitly per invite.
+  const tier = typeof body.tier === 'string' ? body.tier.trim().toLowerCase() : 'full';
+  if (!(INVITE_TIERS as readonly string[]).includes(tier)) {
+    return { ok: false, reason: `Invalid tier "${tier}" (expected ${INVITE_TIERS.join(' | ')})` };
+  }
+
   const expiry = normalizeExpiry(body.expires_at);
   if (!expiry.ok) return { ok: false, reason: 'Invalid expires_at (use YYYY-MM-DD or ISO timestamp)' };
 
@@ -80,6 +107,7 @@ export function parseInvite(input: unknown): ParseInviteResult {
       name: cleanOptional(body.name),
       organization: cleanOptional(body.organization),
       role: role as InviteRole,
+      tier: tier as InviteTier,
       expires_at: expiry.value,
       notes: cleanOptional(body.notes, 1000),
     },

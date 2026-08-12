@@ -88,8 +88,12 @@ const DEFAULT_SUBSCRIBER_ROLES = [
   'lensy-subscriber', 'subscriber',
 ];
 
-/** invited_users.role values that always keep full access. */
-const FULL_ACCESS_INVITE_ROLES = new Set(['admin', 'staff', 'subscriber']);
+/** Ordering used to combine an invitation with what someone holds in Wicket. */
+const TIER_RANK: Record<LensyTier, number> = { none: 0, lite: 1, full: 2 };
+
+function highest(a: LensyTier, b: LensyTier): LensyTier {
+  return TIER_RANK[a] >= TIER_RANK[b] ? a : b;
+}
 
 /** Is tiering switched on for this deployment? */
 export function liteEnabled(env: { LENSY_LITE?: string }): boolean {
@@ -108,8 +112,17 @@ export interface TierInput {
   /** IES membership, from the IdP directory. */
   isMember?: boolean;
   memberTier?: string | null;
-  /** invited_users.role for this email, when there is a row. */
-  inviteRole?: string | null;
+  /**
+   * `invited_users.tier` for this email, when there is a row.
+   *
+   * An invitation is a grant in its own right: it is what someone gets when
+   * Wicket says nothing about them at all. It replaced the old `inviteRole`
+   * input, which read the ROLE column and treated 'admin'/'staff'/'subscriber'
+   * as full — a rule that silently gave a plain 'guest' (the schema's own
+   * default) tier 'none', so inviting somebody let them in and showed them
+   * nothing.
+   */
+  inviteTier?: string | null;
   /** Staff rights (decideAccess.admin). */
   admin?: boolean;
 }
@@ -124,11 +137,24 @@ export function resolveTier(input: TierInput, env: { LENSY_LITE?: string; LENSY_
   // Tiering off → Lensy behaves as it always has.
   if (!liteEnabled(env)) return 'full';
 
-  // Staff and anyone IES explicitly invited as a subscriber keep everything.
+  // Staff keep every surface: the admin pages are gated on this too.
   if (input.admin) return 'full';
-  const inviteRole = String(input.inviteRole ?? '').toLowerCase();
-  if (FULL_ACCESS_INVITE_ROLES.has(inviteRole)) return 'full';
 
+  // What Wicket says they hold, on its own.
+  const earned = earnedTier(input, env);
+
+  // An invitation can only ever ADD access. Taking the higher of the two means
+  // a 'lite' invite cannot demote someone who separately pays for the Lighting
+  // Library, and an invite still stands alone for a guest Wicket knows nothing
+  // about — which is the entire purpose of the allowlist.
+  const invited = String(input.inviteTier ?? '').toLowerCase();
+  const granted: LensyTier = invited === 'full' ? 'full' : invited === 'lite' ? 'lite' : 'none';
+
+  return highest(earned, granted);
+}
+
+/** The tier someone's own IES entitlements earn them, ignoring any invitation. */
+function earnedTier(input: TierInput, env: { LENSY_SUBSCRIBER_ROLES?: string }): LensyTier {
   const roles = (input.roles ?? []).map(r => String(r).toLowerCase());
   const subscriber = subscriberRoles(env);
   if (roles.some(r => subscriber.includes(r))) return 'full';
