@@ -47,7 +47,14 @@ const DATA_VERSION_KEY = 'cache:data-version';
 //     before the query is read, and the comparison prompt gained the
 //     compare-the-content and packaging rules. Stored result sets have neither
 //     the new fields nor the new cards, and stored summaries predate the prompt.
-const SEARCH_CACHE_SCHEMA = 'v9';
+// v10: every Lighting Library link is served on lighting.ies.org instead of
+//     Vitrium's own viewer host (src/lib/library-url.js). The URL is baked into
+//     the stored result set — every vitriumLink, standardLink, reference-marker
+//     and reference link, and the AI Guide's citation hyperlinks — so a cached
+//     v9 answer keeps sending readers to the host that rejects the session and
+//     drops #page. Observed after the fix shipped: the Table of Contents
+//     (uncached) linked correctly while "Open in Library" on a result did not.
+const SEARCH_CACHE_SCHEMA = 'v10';
 
 function errMsg(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
