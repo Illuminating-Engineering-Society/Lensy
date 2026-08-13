@@ -31,6 +31,7 @@ import {
   normalizeSavedItem, savedItemCodes, newShareToken, CSV_COLUMNS, csvCell, csvRowFor,
 } from '../lib/collections.js';
 import { resolveCommittee } from '../lib/committees.js';
+import { toLibraryUrlOrNull } from '../lib/library-url.js';
 import { sendCollectionShareEmail, isEmailAddress, resolveAppUrl } from '../lib/email';
 
 // CORS: `*` with no Allow-Credentials, so a cross-origin page can never make a
@@ -274,6 +275,9 @@ async function handleStandards(request: Request, env: Env, url: URL): Promise<Re
     // result cards credit and link it identically (DO34).
     const standards = (result.results || []).map(s => ({
       ...s,
+      // The "Read" link opens the branded Library host, not Vitrium's own —
+      // see src/lib/library-url.js.
+      vitrium_web_url: toLibraryUrlOrNull(s.vitrium_web_url),
       committee: resolveCommittee(s.author),
       elearning: parseElearning(s.elearning_json),
     }));
@@ -283,10 +287,12 @@ async function handleStandards(request: Request, env: Env, url: URL): Promise<Re
   // GET /api/standards/:id
   const standard = await env.DB.prepare(
     'SELECT * FROM standards WHERE id = ?'
-  ).bind(id).first();
+  ).bind(id).first<Record<string, any>>();
 
   if (!standard) return json({ error: 'Standard not found' }, 404);
-  return json({ standard });
+  return json({
+    standard: { ...standard, vitrium_web_url: toLibraryUrlOrNull(standard.vitrium_web_url) },
+  });
 }
 
 // ─── Projects Handlers ────────────────────────────────────────────────────────
@@ -395,7 +401,10 @@ async function getProject(env: Env, projectId: string): Promise<Response> {
   // The snapshot wins for every displayed field; the join is used only to say
   // whether the row still exists in the current corpus, so the UI can flag an
   // item worth re-checking against the standard.
-  const applications = (rows.results || []).map(row => {
+  const applications = (rows.results || []).map(rawRow => {
+    // Saved links open the branded Library host whenever they were filed
+    // (src/lib/library-url.js).
+    const row: Record<string, any> = { ...rawRow, library_url: toLibraryUrlOrNull(rawRow.library_url) };
     const snapshot = parseSnapshot(row.snapshot_data);
     if (!snapshot) return { ...row, snapshotMissing: row.live_code == null };
 
@@ -502,7 +511,12 @@ async function collectionItems(env: Env, projectId: string) {
     WHERE project_id = ?
     ORDER BY sort_order, added_at
   `).bind(projectId).all<Record<string, any>>();
-  return rows.results || [];
+  // Rows saved before the branded-host rewrite still hold a view.protectedpdf.com
+  // link; correcting on read fixes them everywhere a saved item is shown — the
+  // collection view, the CSV export, the share email and a claimed copy — with
+  // no data migration.
+  return (rows.results || []).map((r): Record<string, any> =>
+    ({ ...r, library_url: toLibraryUrlOrNull(r.library_url) }));
 }
 
 /**

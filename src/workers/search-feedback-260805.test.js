@@ -376,7 +376,9 @@ describe('findStandardLookupResults (DO47)', () => {
     expect(card.document.thumbnailUrl).toBe('https://ies.org/cover.jpg');
     expect(card.document.description).toContain('classrooms');
     expect(card.committee.name).toBe('IES Education, Library and Office Lighting Committee');
-    expect(card.vitriumLink).toBe('https://view.protectedpdf.com/rp3');
+    // Stored as Vitrium's own viewer host; handed to the reader on the branded
+    // Library host, which is the one that holds the IES session.
+    expect(card.vitriumLink).toBe('https://lighting.ies.org/rp3');
   });
 
   it('prints the full designation AND title in the citation (DO45)', async () => {

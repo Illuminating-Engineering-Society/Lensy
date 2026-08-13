@@ -53,7 +53,9 @@ describe('normalizeSavedItem — the no-contents rule', () => {
     const { item } = normalizeSavedItem({ ...base, result_type: 'body' });
     expect(item.resource_title).toBe(base.resource_title);
     expect(item.page_number).toBe(72);
-    expect(item.library_url).toBe(base.library_url);
+    // The link is filed on the branded Library host — the page fragment, which
+    // is what makes the saved item point at the cited page, is carried across.
+    expect(item.library_url).toBe('https://lighting.ies.org/abc#page=72');
   });
 
   it('rejects an unsaveable kind — document comparisons must stay out', () => {

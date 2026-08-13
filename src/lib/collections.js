@@ -22,6 +22,8 @@
  * Plain ESM JS so the Worker and the tests share one definition of the rule.
  */
 
+import { toLibraryUrl } from './library-url.js';
+
 /** The four kinds a collection can hold, matching the search content types. */
 export const SAVEABLE_TYPES = ['body', 'tables', 'references', 'definitions'];
 
@@ -155,11 +157,16 @@ function clean(v) {
   return s ? s : null;
 }
 
-/** Only http(s) links are stored — never javascript: or data: from a client. */
+/**
+ * Only http(s) links are stored — never javascript: or data: from a client —
+ * and a Vitrium viewer host is rewritten to the branded Library one on the way
+ * in, so a saved link is filed in the form the reader should open
+ * (src/lib/library-url.js).
+ */
 function safeUrl(v) {
   const s = clean(v);
   if (!s) return null;
-  return /^https?:\/\//i.test(s) ? s : null;
+  return /^https?:\/\//i.test(s) ? toLibraryUrl(s) : null;
 }
 
 /**

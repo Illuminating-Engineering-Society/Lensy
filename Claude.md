@@ -1442,6 +1442,14 @@ A search for "office" returned RP-1-24 titled *Lighting Design for Commercial In
 - The ingest upsert refreshes `title` only when it has a real one (`excluded.title <> standards.id`), so a standard whose cover cannot be read keeps whatever was synced rather than being reset to its id.
 - The curated fallback list is now transcribed from those covers and is documented as a last resort — never a guess. It matters only for a standard that has not been re-ingested.
 
+### Library links open on lighting.ies.org, never on Vitrium's host
+
+Vitrium's document export gives each standard an opaque short code on Vitrium's OWN viewer host (`https://view.protectedpdf.com/2H4QTw#page=43`), and that is what `standards.vitrium_web_url` stores. Handing it to a reader fails twice: the IES Lighting Library session lives on `lighting.ies.org`, so the reader meets a Vitrium auth error, and after signing in the standard opens at page 1 — a `#page=N` fragment is never sent to a server, so it does not survive the sign-in bounce. The branded host serves the same short codes, so the fix is a host swap with path, query and fragment carried across verbatim (`toLibraryUrl` in `src/lib/library-url.js`).
+
+- Applied on the way OUT, at the few places a URL is read from D1 — `fetchStandardsIndex` and `selectStandardRows` (every search card, reference chip, AI-Guide citation link and application deep link is built from those two), `/api/standards` for the Table of Contents, and the saved-collection reads. Rows already stored with Vitrium's host are therefore corrected without a data migration, and the export stays the source of truth.
+- Also applied on the way IN for saved items (`normalizeSavedItem`), so a newly filed collection row holds the link in the form the reader should open. It is not part of the dedupe identity (`syntheticItemCode` ignores the URL), so nothing already saved changes code.
+- Any other link — a DOI, an ies.org glossary page, a Buy URL, an already-branded link — passes through untouched, which is why the rewrite is safe to apply to any link-shaped column.
+
 ### Access tiers: Lensy and LensyLite (client DO53)
 
 | Who | Tier | Gets |

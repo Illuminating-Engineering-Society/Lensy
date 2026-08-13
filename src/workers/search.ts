@@ -70,6 +70,7 @@ import {
   DEFINITIONS_STANDARD_FULL, DEFINITIONS_STANDARD_TITLE,
 } from '../lib/definitions.js';
 import { resolveCommittee } from '../lib/committees.js';
+import { toLibraryUrlOrNull } from '../lib/library-url.js';
 import {
   liteContentTypes, liteEnabled, LITE_COLLECTION, LITE_FALLBACK_PREFIX, LITE_NOTICE,
 } from '../lib/tiers';
@@ -935,7 +936,8 @@ async function selectStandardRows(env: Env, where: string, bindings: unknown[]):
       collection: r.collection || null,
       thumbnailUrl: r.thumbnail_url || null,
       buyUrl: r.buy_url || null,
-      webUrl: r.vitrium_web_url || null,
+      // Branded host, never Vitrium's own — see src/lib/library-url.js.
+      webUrl: toLibraryUrlOrNull(r.vitrium_web_url),
       status: r.status || 'Active',
       supersededBy: r.superseded_by || null,
       year: editionYear(r.id),
@@ -1860,7 +1862,9 @@ async function fetchStandardsIndex(db: D1Database): Promise<StandardsIndex> {
       r.id,
       {
         docId: r.vitrium_doc_id || null,
-        webUrl: r.vitrium_web_url || null,
+        // Every "Open in Library" link on every card is built from this one
+        // value, so the Vitrium → lighting.ies.org rewrite happens here, once.
+        webUrl: toLibraryUrlOrNull(r.vitrium_web_url),
         status: r.status || 'Active',
         supersededBy: r.superseded_by || null,
         // marker number → first body page citing it (DO31.4); null pre-0009.
@@ -3505,16 +3509,20 @@ function mergeResults(primary: SearchResult[], fallback: SearchResult[]): void {
  * (https://view.protectedpdf.com/XXXXXX) that cannot be constructed from a
  * doc ID, so the URL comes from data, not string-building:
  *
- *   1. Vitrium_Deep_Link — full URL curated on the application row, used as-is
+ *   1. Vitrium_Deep_Link — full URL curated on the application row
  *   2. Standard-level web viewer URL (standards.vitrium_web_url, populated
  *      by scripts/sync-metadata.js), plus a best-effort fragment:
  *      Link_Mapping section anchor, else #page=N from the app's Page_Number.
  *      If the viewer ignores fragments, the link still opens the document.
  *
+ * Either way the host handed to the reader is the branded lighting.ies.org one
+ * (src/lib/library-url.js): Vitrium's own host rejects the IES session and
+ * drops the #page fragment across its sign-in.
+ *
  * Returns null when no URL is known — the UI hides the button.
  */
 function buildVitriumLink(app: { Standard?: string | null; Page_Number?: number | null; Link_Mapping?: string | null; Vitrium_Deep_Link?: string | null }, linkCtx: LinkCtx = {}): string | null {
-  if (app.Vitrium_Deep_Link) return app.Vitrium_Deep_Link;
+  if (app.Vitrium_Deep_Link) return toLibraryUrlOrNull(app.Vitrium_Deep_Link);
 
   const webUrl = linkCtx.standardsIndex?.get(app.Standard ?? '')?.webUrl;
   if (!webUrl) return null;
