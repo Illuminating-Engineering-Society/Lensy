@@ -1358,7 +1358,7 @@ SHAREPOINT_TOKEN=<sharepoint-token>
 ## Notes
 
 This architecture prioritizes:
-1. **Authoritative content** over AI generation (excerpts + tables first, AI summary optional and collapsed by default)
+1. **Authoritative content** over AI generation (excerpts + tables are the answer; the AI Guide is a summary above them, on by default since 2026-08-14 but always dismissable)
 2. **Copyright compliance** (strict guardrails on quotation length, frequency, and UI copy-guards on AI sections)
 3. **Accurate citations** (always link back to specific pages in standards)
 4. **Scalability** (serverless infrastructure, vector search for semantic matching)
@@ -1405,6 +1405,20 @@ A fifth `resultType`, **`standard`**, is not a filter value: it is the whole-doc
 - **All four content kinds start selected and any combination is allowed** — nothing in the row locks anything else any more. Document Comparison used to disable the whole row; it no longer does.
 - **Illuminance Tables is a multi-select.** Its pill opens a panel holding Interior Applications and Exterior Applications, and the `tables` kind is DERIVED from them: clearing both excludes Illuminance Table results altogether. `alignTablesSelection` holds that invariant in both directions whenever the state is set from outside the panel (a demo search, a reset, or the content types the backend reports).
 - The Search button stayed, though the client's wireframe omits it: Enter alone is not a discoverable way to submit a search.
+
+### The AI Guide is on by default (client, 2026-08-14)
+
+"AI guide will now be on by default." `DEFAULT_FILTER_STATE.guide` is `true`, the toggle is painted pressed in the markup so the first paint matches the state a search will run with, and all four demo searches leave it on — a demo that silently un-pressed the toggle would read as the control breaking.
+
+What it changes and what it does not:
+
+- **Nothing about retrieval, scoring or ordering.** `includeAISummary` reaches only the response-cache key and the LensyLite check; `runSingleSearch` never sees it. The Guide is handed the top 8 results AFTER they are selected and ordered, so the flow is cards → Guide and never the reverse.
+- **Every uncached search now waits for a 70B generation**, because the AI runs inside the same `Promise.all` the response awaits. The KV summary cache absorbs repeats (keyed by mode + query + top-5 result codes), but a cold query is slower for everyone now, not only for the users who asked for an answer.
+- **The API default stays `false`** (`body.includeAISummary === true`), so ingest, the verification harness and the Phase 5 external API are unaffected. This is a UI default, not a protocol change.
+- **LensyLite still has it locked off** — `normalizeForTier` clears `guide` on every state replacement and `handleSearch` forces `includeAISummary = false` for tier `lite`, so the new default cannot spend the AI budget on a tier that does not include it.
+- `aiGuideRequiredNotice` (version comparison run without the Guide) now fires only when a user deliberately turns the toggle off.
+
+**The mismatch this makes visible.** The Guide reads better than the first few cards for structural reasons — it receives up to 3 passages per result (the ones collapsed behind "From the Standard"), it sees 8 results at once and may answer from the 6th, table rows reach the top partly on sheer volume of application vectors rather than on fit, and the 0.01 tie epsilon clusters sibling rows so the top cards are often four variants of one row. On by default puts that contrast on screen for every search. Closing it means feeding the Guide's citations BACK into card ranking, which nothing does today.
 
 ### Result cards from one document are joined (client DO59)
 

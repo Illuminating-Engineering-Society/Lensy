@@ -113,13 +113,19 @@ beforeAll(() => {
 // ─── DO32/DO57: the Content filter row ────────────────────────────────────────
 
 describe('filter pills', () => {
-  it('begins with every content kind selected (DO57 note 1)', () => {
+  it('begins with every content kind selected (DO57 note 1) and the AI Guide on', () => {
     run('resetFilters()');
     expect(JSON.parse(run('JSON.stringify(filterState)'))).toEqual({
       body: true, tables: true, definitions: true, references: true,
       interior: true, exterior: true,
-      guide: false, compare: false,
+      // The AI Guide is on by default (client, Aug 2026) — Compare Documents is not.
+      guide: true, compare: false,
     });
+  });
+
+  it('paints the AI Guide toggle pressed before any interaction', () => {
+    run('renderFilterPills()');
+    expect(pills.get('guide').getAttribute('aria-pressed')).toBe('true');
   });
 
   it('allows any combination of content kinds — nothing locks anything else', () => {
@@ -134,10 +140,12 @@ describe('filter pills', () => {
   });
 
   it('presses the AI Guide toggle in the search box rather than a filter pill', () => {
+    // On by default, so the first click switches it OFF.
     run('resetFilters(); toggleFilter("guide")');
-    expect(pills.get('guide').getAttribute('aria-pressed')).toBe('true');
-    run('toggleFilter("guide")');
     expect(pills.get('guide').getAttribute('aria-pressed')).toBe('false');
+    run('toggleFilter("guide")');
+    expect(pills.get('guide').getAttribute('aria-pressed')).toBe('true');
+    run('resetFilters()');
   });
 
   it('shows the hero hint only while Compare Documents is armed from the banner', () => {

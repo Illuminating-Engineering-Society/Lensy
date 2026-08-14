@@ -294,10 +294,12 @@
             />
             <!-- AI Guide: a toggle inside the box, modelled on the Google search
                  UI the client named (DO57 note 3). It is not a content filter —
-                 it adds a contextual summary ABOVE whatever the search returns. -->
-            <button id="guide-toggle" data-filter="guide" aria-pressed="false"
+                 it adds a contextual summary ABOVE whatever the search returns.
+                 Pressed in the markup as well as in DEFAULT_FILTER_STATE so the
+                 first paint matches the state a search will actually run with. -->
+            <button id="guide-toggle" data-filter="guide" aria-pressed="true"
                     class="guide-toggle shrink-0"
-                    title="Enables AI contextual summary">
+                    title="AI contextual summary — on by default; click to turn off">
               AI Guide<span class="lock-label"></span>
               <span class="guide-toggle-icon">
                 <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
@@ -683,6 +685,12 @@
     // section)". So all four content kinds start on, and `guide` / `compare`
     // remain in this object — they still travel with the request — but their
     // controls now live in the search box and the top banner respectively.
+    //
+    // `guide` now starts ON (client, Aug 2026: "AI guide will now be on by
+    // default"). It costs a 70B generation on every uncached search — the
+    // response waits for it — which is the price of the answer being present
+    // without being asked for. Turning the toggle off restores the old
+    // behaviour, and LensyLite still has it locked off (normalizeForTier).
     const DEFAULT_FILTER_STATE = Object.freeze({
       body: true,
       definitions: true,
@@ -690,7 +698,7 @@
       tables: true,
       interior: true,
       exterior: true,
-      guide: false,
+      guide: true,
       compare: false,
     });
     let filterState = { ...DEFAULT_FILTER_STATE };
@@ -921,6 +929,8 @@
     // Each state names EVERY content kind rather than the ones it wants on: the
     // defaults now have all four selected (DO57), so a partial state would leave
     // Definitions and References switched on in a demo that means to exclude them.
+    // Every demo leaves the AI Guide ON, matching the new default: a demo that
+    // silently un-pressed the toggle would read as the control breaking.
     const DEMO_SEARCHES = [
       { query: 'What are considerations for lighting parking garages?',
         state: { body: true, tables: true, definitions: false, references: false, guide: true } },
@@ -929,7 +939,7 @@
       { query: 'What is new in the current version of ANSI/IES RP-43?',
         state: { body: true, tables: true, definitions: false, references: false, compare: true, guide: true } },
       { query: 'Show me recommended illuminance levels for lighting walkways',
-        state: { tables: true, body: false, definitions: false, references: false, guide: false } },
+        state: { tables: true, body: false, definitions: false, references: false, guide: true } },
     ];
 
     function recentSearches() {
