@@ -76,6 +76,29 @@ const EMBED_MODEL = '@cf/baai/bge-base-en-v1.5';
 function excerptBudget(type: string | undefined): number {
   return (type === 'reference' || type === 'definition') ? 1500 : 500;
 }
+
+/**
+ * The excerpt a vector carries, cut to its budget on a CHARACTER boundary.
+ *
+ * `substring` counts UTF-16 code units, so a cut that lands inside a surrogate
+ * pair keeps the high half and drops the low one. A lone surrogate has no UTF-8
+ * encoding: it survives JSON.stringify as a "\ud835" escape, and Vectorize
+ * rejects the entire upsert batch when it tries to decode it —
+ * `VECTOR_UPSERT_ERROR (code = 40023): failed to parse upsert vectors request in
+ * json format`, which surfaces at the ingest script as a bare 500 with no clue
+ * which document or chunk was at fault.
+ *
+ * Observed on TM-31-20 (Measurement Uncertainty … Integrating Spheres), the one
+ * standard of the Lighting Measurements batch that would not index: its math
+ * notation is written in astral code points (𝐫 = U+1D42B, 𝛌 = U+1D6CC, 981 of
+ * them), and on p. 64 one lands astride the 500-char budget. Dropping the
+ * orphaned half costs a single character of an excerpt.
+ */
+export function excerptText(text: string, type: string | undefined): string {
+  const cut = text.substring(0, excerptBudget(type));
+  const last = cut.charCodeAt(cut.length - 1);
+  return (last >= 0xD800 && last <= 0xDBFF) ? cut.slice(0, -1) : cut;
+}
 const EMBED_BATCH = 100;       // Workers AI max per call
 const EMBED_MAX_ATTEMPTS = 3;  // retries per embedding batch (transient AI errors)
 const VECTORIZE_BATCH = 1000;  // Vectorize max per upsert
@@ -316,7 +339,7 @@ async function ingestDefinitions(request: Request, env: Env): Promise<Response> 
       definition_term: d.term,
       page_number: null,
       section: d.clause || null,
-      excerpt_text: d.text.substring(0, excerptBudget('definition')),
+      excerpt_text: excerptText(d.text, 'definition'),
       indoor_outdoor: null,
       tm24_eligible: null,
       status: 'current',
@@ -469,7 +492,7 @@ async function ingestParsedPDF(request: Request, env: Env): Promise<Response> {
       chunk_type: chunk.type || 'text',       // 'text' | 'table' | 'general_notes' | 'reference'
       page_number: chunk.pageNumber || null,
       section: chunk.section || null,         // e.g. "3.5" from IES section numbering
-      excerpt_text: chunk.text.substring(0, excerptBudget(chunk.type)),
+      excerpt_text: excerptText(chunk.text, chunk.type),
       indoor_outdoor: null,
       tm24_eligible: null,
       status,                                 // 'current' | 'deprecated'
@@ -841,7 +864,7 @@ async function ingestApplications(env: Env): Promise<Response> {
       chunk_type: 'application',
       page_number: null,
       section: null,
-      excerpt_text: texts[i].substring(0, 500),
+      excerpt_text: excerptText(texts[i], 'application'),
       indoor_outdoor: app.Indoor_Outdoor || 'Indoor',
       tm24_eligible: !!app.TM24_Eligible,
     },

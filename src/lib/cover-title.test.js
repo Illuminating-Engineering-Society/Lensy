@@ -11,9 +11,15 @@ import {
   extractCoverMetadata, extractCoverCommittee, sanitizeGlyphs, toTitleCase,
 } from './cover-title.js';
 
-/** The subsetted-font glyphs: U+001F is "(" or "-", U+001E is ")". */
+/**
+ * The subsetted-font glyphs. Which character each code stands for is decided by
+ * the font subset, so it differs per document and the codes collide:
+ *   RP-44-21   U+001F = "("   U+001E = ")"
+ *   LM-47-20   U+001F = "-"   U+001E = "("   U+001D = ")"
+ */
 const OPEN = String.fromCharCode(0x1F);
 const CLOSE = String.fromCharCode(0x1E);
+const CLOSE_2 = String.fromCharCode(0x1D);
 
 const page = (number, lines) => ({ number, text: lines.join('\n'), lines: lines.map(text => ({ text })) });
 
@@ -63,6 +69,46 @@ describe('extractCoverMetadata', () => {
       'AN AMERICAN NATIONAL STANDARD',
     ])]);
     expect(cover.title).toBe('Recommended Practice: Ultraviolet Germicidal Irradiation (UVGI)');
+  });
+
+  it('learns the hyphen glyph from the designation, so an LM cover reads', () => {
+    // The LM series subsets its font differently from RP-44-21 above: here
+    // U+001F is the hyphen and U+001E…U+001D is the bracket pair. Read with the
+    // other cover's rule this comes out "ANSI/IES LM-47(20)R2023-" titled
+    // "… DISCHARGE -HID- LAMPS".
+    const cover = extractCoverMetadata([page(1, [
+      `ANSI/IES LM${OPEN}47${OPEN}20${CLOSE}R2023${CLOSE_2}`,
+      'APPROVED METHOD:',
+      'LIFE TESTING OF HIGH INTENSITY',
+      `DISCHARGE ${CLOSE}HID${CLOSE_2} LAMPS`,
+      'AN AMERICAN NATIONAL STANDARD',
+    ])]);
+    expect(cover.designation).toBe('ANSI/IES LM-47-20(R2023)');
+    expect(cover.title).toBe('Approved Method: Life Testing of High Intensity Discharge (HID) Lamps');
+  });
+
+  it('reads a title that opens with the word the approval stamp uses', () => {
+    // Every LM standard titles itself "APPROVED METHOD: …". Stopping on
+    // "approved" left 40-odd of them showing their bare id as their name.
+    const cover = extractCoverMetadata([page(1, [
+      `ANSI/IES LM${OPEN}9${OPEN}20`,
+      'APPROVED METHOD:',
+      'ELECTRICAL AND PHOTOMETRIC',
+      'MEASUREMENT OF',
+      'FLUORESCENT LAMPS',
+      'AN AMERICAN NATIONAL STANDARD',
+    ])]);
+    expect(cover.title).toBe('Approved Method: Electrical and Photometric Measurement of Fluorescent Lamps');
+  });
+
+  it('still stops at an approval stamp that is not a title', () => {
+    const cover = extractCoverMetadata([page(1, [
+      'ANSI/IES RP-1-24',
+      'RECOMMENDED PRACTICE:',
+      'LIGHTING OFFICE SPACES',
+      'APPROVED BY THE ANSI BOARD OF STANDARDS REVIEW',
+    ])]);
+    expect(cover.title).toBe('Recommended Practice: Lighting Office Spaces');
   });
 
   it('skips an errata banner and co-publisher prefixes', () => {

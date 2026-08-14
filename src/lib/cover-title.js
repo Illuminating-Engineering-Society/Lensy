@@ -38,9 +38,18 @@
 const DESIGNATION_LINE_RE =
   /^((?:ANSI\/|BSR\/)?IES(?:\/[A-Z]{2,8})?\s+[A-Z]{1,4}-\d+(?:\.\d+)?-\d{2}[A-Z]?\d*(?:\s*\(\s*R\s*\d{2,4}\s*\))?(?:\s*\+\s*E\d+)?)\s*$/i;
 
-/** Lines that end the title block — everything below them is packaging. */
+/**
+ * Lines that end the title block — everything below them is packaging.
+ *
+ * "approved" is the approval stamp ("APPROVED BY THE ANSI BOARD…"), but it also
+ * opens the title of every standard in the LM series: "APPROVED METHOD:
+ * ELECTRICAL AND PHOTOMETRIC MEASUREMENT OF FLUORESCENT LAMPS". Without the
+ * lookahead the stop fires on the title's own first line, the title block comes
+ * back empty, and 40-odd Lighting Measurements standards fall back to showing
+ * their bare id as their name.
+ */
 const TITLE_STOP_RE =
-  /^(?:an\s+american\s+national\s+standard|approved|published|publication|prepared\s+by|copyright|©|www\.|https?:|ies\.org|illuminating\s+engineering\s+society|table\s+of\s+contents|preface|foreword|\d)/i;
+  /^(?:an\s+american\s+national\s+standard|approved(?!\s+method)|published|publication|prepared\s+by|copyright|©|www\.|https?:|ies\.org|illuminating\s+engineering\s+society|table\s+of\s+contents|preface|foreword|\d)/i;
 
 /** An errata banner printed between the designation and the title. */
 const ERRATA_LINE_RE = /^\+?\s*errata\s*\d*\s*$/i;
@@ -92,10 +101,57 @@ export function extractCoverMetadata(pages) {
 }
 
 function linesOf(page) {
-  const raw = page?.lines
+  const raw = rawLinesOf(page);
+  const hyphen = inferHyphenGlyph(raw);
+  return raw.map(t => sanitizeGlyphs(t, hyphen)).filter(Boolean);
+}
+
+function rawLinesOf(page) {
+  return page?.lines
     ? page.lines.map(l => l.text)
     : String(page?.text || '').split('\n');
-  return raw.map(t => sanitizeGlyphs(t)).filter(Boolean);
+}
+
+/**
+ * The designation line, read while its punctuation is still glyph codes, purely
+ * to capture the two separators inside it.
+ *
+ * A designation is "LM-9-20": whatever sits between the series, the number and
+ * the year IS a hyphen. That makes the cover teach us its own font, which is the
+ * only reliable way to read one — see inferHyphenGlyph.
+ */
+const DESIGNATION_SEPARATORS_RE = new RegExp(
+  '^(?:ANSI/|BSR/)?IES(?:/[A-Z]{2,8})?\\s+[A-Z]{1,4}' +
+  '([\\u0001-\\u001F-])\\d+(?:\\.\\d+)?([\\u0001-\\u001F-])\\d{2}',
+  'i',
+);
+
+/**
+ * Which control code THIS cover's font uses for a hyphen, or null.
+ *
+ * The substituted glyphs land on C0 control code points by font subset, so the
+ * mapping is per document and the codes collide across the corpus:
+ *
+ *     RP-44-21   U+001F = "("   U+001E = ")"
+ *     LM-47-20   U+001F = "-"   U+001E = "("   U+001D = ")"
+ *
+ * A fixed rule cannot serve both. Reading RP-44-21's rule onto an LM cover turns
+ * "LM-47-20(R2023)" into "LM-47(20)R2023-" and "DISCHARGE (HID) LAMPS" into
+ * "DISCHARGE -HID- LAMPS". So instead of assuming, we learn: the designation
+ * line's own separators are hyphens by definition, and once the hyphen code is
+ * known, every OTHER control code on the cover is free to be a bracket.
+ *
+ * Returns null for a cover whose designation prints real punctuation (most of
+ * the corpus), which leaves the original U+001F…U+001E bracket rule in charge.
+ */
+function inferHyphenGlyph(rawLines) {
+  for (const line of rawLines) {
+    const m = DESIGNATION_SEPARATORS_RE.exec(String(line || ''));
+    if (!m) continue;
+    const sep = [m[1], m[2]].find(s => s && s.charCodeAt(0) < 0x20);
+    if (sep) return sep;
+  }
+  return null;
 }
 
 /**
@@ -126,9 +182,32 @@ const DASH_GLYPH_RE = new RegExp(
   'g',
 );
 
-export function sanitizeGlyphs(text) {
-  return String(text || '')
-    .replace(BRACKET_GLYPH_RE, '($1)')
+// Any control-delimited run, for the covers that told us their hyphen code: a
+// pair whose delimiters are BOTH something other than that hyphen is a bracket.
+// Built from character codes for the same reason as the pair above.
+const CTRL_RANGE = String.fromCharCode(0x01) + '-' + String.fromCharCode(0x1F);
+const ANY_BRACKET_GLYPH_RE = new RegExp(
+  '([' + CTRL_RANGE + '])([^' + CTRL_RANGE + ']{1,60})([' + CTRL_RANGE + '])',
+  'g',
+);
+
+/**
+ * @param {string} text
+ * @param {string|null} [hyphenGlyph] the control code this cover uses for a
+ *   hyphen, from inferHyphenGlyph(). Omit for the corpus-wide default rule.
+ */
+export function sanitizeGlyphs(text, hyphenGlyph = null) {
+  let out = String(text || '');
+
+  if (hyphenGlyph) {
+    out = out.replace(ANY_BRACKET_GLYPH_RE, (whole, open, inner, close) =>
+      (open === hyphenGlyph || close === hyphenGlyph) ? whole : `(${inner})`);
+    out = out.split(hyphenGlyph).join('-');
+  } else {
+    out = out.replace(BRACKET_GLYPH_RE, '($1)');
+  }
+
+  return out
     .replace(DASH_GLYPH_RE, '-')
     .replace(/\s+/g, ' ')
     .trim();
