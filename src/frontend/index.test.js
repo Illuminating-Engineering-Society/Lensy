@@ -139,16 +139,19 @@ describe('filter pills', () => {
     run('resetFilters()');
   });
 
-  it('presses the AI Guide toggle in the search box rather than a filter pill', () => {
-    // On by default, so the first click switches it OFF.
+  it('presses the AI Guide toggle in the account menu and names the action', () => {
+    // On by default, so the first click switches it OFF — and the menu item
+    // then offers to turn it back on (wireframe: "Disable … (or) Enable …").
     run('resetFilters(); toggleFilter("guide")');
     expect(pills.get('guide').getAttribute('aria-pressed')).toBe('false');
+    expect(elements.get('menu-guide-label').textContent).toBe('Enable AI Guide');
     run('toggleFilter("guide")');
     expect(pills.get('guide').getAttribute('aria-pressed')).toBe('true');
+    expect(elements.get('menu-guide-label').textContent).toBe('Disable AI Guide');
     run('resetFilters()');
   });
 
-  it('shows the hero hint only while Compare Documents is armed from the banner', () => {
+  it('shows the hero hint only while Compare Versions is armed from the banner', () => {
     run('resetFilters()');
     expect(elements.get('compare-hint').classList.contains('hidden')).toBe(true);
     run('toggleFilter("compare")');
@@ -157,14 +160,15 @@ describe('filter pills', () => {
     run('toggleFilter("compare")');
   });
 
-  // DO57 note 2: Illuminance Tables is a drop-down multi-select, so the pill
-  // opens the panel and the two checkboxes are what select the kind.
-  it('opens the Illuminance Tables panel instead of toggling the kind', () => {
+  // 2026-08-20 wireframes: Illuminance Tables is the PARENT of its two
+  // applications in the sidebar — toggling the kind switches both together.
+  it('toggles both applications with the Illuminance Tables kind', () => {
     run('resetFilters(); toggleFilter("tables")');
-    expect(elements.get('location-menu').classList.contains('hidden')).toBe(false);
-    expect(JSON.parse(run('JSON.stringify(filterState)')).tables).toBe(true);
+    let st = JSON.parse(run('JSON.stringify(filterState)'));
+    expect([st.tables, st.interior, st.exterior]).toEqual([false, false, false]);
     run('toggleFilter("tables")');
-    expect(elements.get('location-menu').classList.contains('hidden')).toBe(true);
+    st = JSON.parse(run('JSON.stringify(filterState)'));
+    expect([st.tables, st.interior, st.exterior]).toEqual([true, true, true]);
   });
 
   it('excludes Illuminance Table results once both applications are cleared', () => {
@@ -838,5 +842,135 @@ describe('comparison notice', () => {
 
   it('is empty without a comparison', () => {
     expect(run('buildComparisonNotice(null)')).toBe('');
+  });
+});
+
+// ─── 2026-08-20 wireframes: client-side sort ──────────────────────────────────
+
+describe('result sorting', () => {
+  const r = (std, committee, score) => `{
+    resultType: 'excerpt', relevanceScore: ${score},
+    citationName: 'ANSI/IES ${std} Some Title',
+    application: { standard: '${std}' },
+    committee: ${committee ? `{ name: '${committee}' }` : 'null'},
+    excerpt: { text: 'x', chunkType: 'text', pageNumber: 1 }
+  }`;
+
+  it('defaults to the API order (Relevance)', () => {
+    run(`sortState = { key: 'relevance', dir: 'asc' }`);
+    const out = JSON.parse(run(`JSON.stringify(sortResults([${r('RP-10-20', null, 0.9)}, ${r('RP-2-20', null, 0.8)}])
+      .map(x => x.application.standard))`));
+    expect(out).toEqual(['RP-10-20', 'RP-2-20']);
+  });
+
+  it('sorts designations numerically — RP-2 before RP-10', () => {
+    run(`sortState = { key: 'designation', dir: 'asc' }`);
+    const out = JSON.parse(run(`JSON.stringify(sortResults([${r('RP-10-20', null, 0.9)}, ${r('RP-2-20', null, 0.8)}])
+      .map(x => x.application.standard))`));
+    expect(out).toEqual(['RP-2-20', 'RP-10-20']);
+  });
+
+  it('sorts by edition year and keeps unsortable results last, whatever the direction', () => {
+    run(`sortState = { key: 'date', dir: 'desc' }`);
+    const out = JSON.parse(run(`JSON.stringify(sortResults([
+      ${r('RP-8-18', null, 0.9)}, ${r('RP-6-24', null, 0.8)},
+      { resultType: 'excerpt', citationName: 'No designation here', excerpt: { text: 'x' } }
+    ]).map(x => x.application ? x.application.standard : null))`));
+    expect(out).toEqual(['RP-6-24', 'RP-8-18', null]);
+    run(`sortState = { key: 'relevance', dir: 'asc' }`);
+  });
+
+  it('sorts by the authoring committee name', () => {
+    run(`sortState = { key: 'committee', dir: 'asc' }`);
+    const out = JSON.parse(run(`JSON.stringify(sortResults([
+      ${r('RP-6-24', 'IES Sports Lighting Committee', 0.9)},
+      ${r('RP-1-24', 'IES Education Committee', 0.8)}
+    ]).map(x => x.committee.name))`));
+    expect(out).toEqual(['IES Education Committee', 'IES Sports Lighting Committee']);
+    run(`sortState = { key: 'relevance', dir: 'asc' }`);
+  });
+
+  it('reads the edition year off the designation', () => {
+    expect(run(`editionYearOf('RP-8-25+E2')`)).toBe(2025);
+    expect(run(`editionYearOf('LM-63-19R25')`)).toBe(2019);
+    expect(run(`editionYearOf('ANSI/IES RP-16-17')`)).toBe(2017);
+    expect(run(`editionYearOf('nonsense')`)).toBe(null);
+  });
+});
+
+// ─── 2026-08-20 wireframes: Documents narrowing in the sidebar ────────────────
+
+describe('Documents narrowing', () => {
+  it('derives the publication type from the designation, org prefixes included', () => {
+    expect(run(`pubTypeOf('RP-3-20+E1')`)).toBe('RP');
+    expect(run(`pubTypeOf('ANSI/IES/ALA RP-11-26')`)).toBe('RP');
+    expect(run(`pubTypeOf('LEM-1-90')`)).toBe('LEM');
+    expect(run(`pubTypeOf('not a designation')`)).toBe(null);
+  });
+
+  it('is inactive while everything — or nothing — is selected', () => {
+    run(`docFilterUniverse = { pubtype: [{value:'RP',label:'x'},{value:'LM',label:'y'}], title: [], committee: [] };
+         docFilterSelected = { pubtype: new Set(['RP','LM']), title: new Set(), committee: new Set() }`);
+    expect(run(`docGroupActive('pubtype')`)).toBe(false);
+    expect(run(`passesDocFilters({ application: { standard: 'LM-63-19' } })`)).toBe(true);
+    run(`docFilterSelected.pubtype = new Set()`);
+    expect(run(`docGroupActive('pubtype')`)).toBe(false);
+    expect(run(`passesDocFilters({ application: { standard: 'LM-63-19' } })`)).toBe(true);
+  });
+
+  it('narrows to the selected publication types once a real subset is chosen', () => {
+    run(`docFilterSelected.pubtype = new Set(['RP'])`);
+    expect(run(`passesDocFilters({ application: { standard: 'RP-6-24' } })`)).toBe(true);
+    expect(run(`passesDocFilters({ application: { standard: 'LM-63-19' } })`)).toBe(false);
+  });
+
+  it('matches Title selections by family, so deprecated editions stay with their standard', () => {
+    run(`docFilterSelected.pubtype = new Set(['RP','LM']);
+         docFilterUniverse.title = [{value:'RP-8-25+E2',label:'a'},{value:'RP-6-24',label:'b'}];
+         docFilterSelected.title = new Set(['RP-8-25+E2'])`);
+    expect(run(`passesDocFilters({ application: { standard: 'RP-8-22' }, isDeprecated: true })`)).toBe(true);
+    expect(run(`passesDocFilters({ application: { standard: 'RP-6-24' } })`)).toBe(false);
+    run(`resetFilters()`);
+  });
+
+  it('counts only APPLIED narrowing in the FILTER badge', () => {
+    run(`resetFilters()`);
+    expect(run(`filterAppliedTotal()`)).toBe(4);   // the four content kinds, nothing narrowed
+    run(`docFilterSelected.pubtype = new Set(['RP'])`);
+    expect(run(`filterAppliedTotal()`)).toBe(5);
+    run(`resetFilters()`);
+    expect(run(`filterAppliedTotal()`)).toBe(4);
+  });
+});
+
+// ─── 2026-08-20 wireframes: Compare Versions overlay ──────────────────────────
+
+describe('Compare Versions overlay', () => {
+  it('builds the comparison query in the phrasing the comparison path answers', () => {
+    expect(run(`buildCompareQuery(' RP-8 ')`)).toBe('What is new in the current version of RP-8?');
+  });
+});
+
+// ─── 2026-08-20 wireframes: standard-name auto-suggest ────────────────────────
+
+describe('standard-name auto-suggest', () => {
+  it('offers matching standards once the index is loaded', () => {
+    run(`standardsIndex = [
+      { id: 'RP-3-20+E1', full_designation: 'ANSI/IES RP-3-20+E1', title: 'Recommended Practice: Lighting Educational Facilities' },
+      { id: 'RP-6-24', full_designation: 'ANSI/IES RP-6-24', title: 'Recommended Practice: Lighting Sports and Recreational Areas' },
+    ]`);
+    run(`document.getElementById('search-input').value = 'rp-3'; renderSuggestions()`);
+    const box = elements.get('search-suggestions').innerHTML;
+    expect(box).toContain('Standards');
+    expect(box).toContain('RP-3-20+E1');
+    expect(box).not.toContain('RP-6-24');
+    run(`standardsIndex = []; document.getElementById('search-input').value = ''`);
+  });
+
+  it('stays silent for short or unmatched input', () => {
+    run(`standardsIndex = [{ id: 'RP-3-20+E1', title: 'Lighting Educational Facilities' }]`);
+    expect(JSON.parse(run(`JSON.stringify(standardsMatching('rp'))`))).toEqual([]);
+    expect(JSON.parse(run(`JSON.stringify(standardsMatching('skating rink brightness'))`))).toEqual([]);
+    run(`standardsIndex = []`);
   });
 });

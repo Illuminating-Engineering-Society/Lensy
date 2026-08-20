@@ -180,11 +180,13 @@
     if (!nav || document.getElementById('lensy-user-chip')) return;
     var chip = document.createElement('span');
     chip.id = 'lensy-user-chip';
-    chip.className = 'flex items-center gap-2 pl-3 ml-1 border-l border-white/20 text-blue-200';
+    // Neutral whites: the header banner is the IES gold on every page now
+    // (client wireframes, 2026-08-20), and blue-200 was unreadable on it.
+    chip.className = 'flex items-center gap-2 pl-3 ml-1 border-l border-white/25 text-white/90';
     chip.innerHTML =
       '<span class="hidden md:inline text-xs" title="' + esc(data.user.email) + '">' + esc(data.user.name) + '</span>' +
       '<a href="' + esc(data.logoutUrl || '/logout') + '" ' +
-      'class="px-3 py-1.5 rounded-md text-blue-200 hover:text-white hover:bg-white/10 transition">Sign out</a>';
+      'class="px-3 py-1.5 rounded-md text-white/90 hover:text-white hover:bg-white/15 transition">Sign out</a>';
     nav.appendChild(chip);
   }
 
@@ -217,10 +219,10 @@
     if (!nav || document.getElementById('lensy-user-chip')) return;
     var chip = document.createElement('span');
     chip.id = 'lensy-user-chip';
-    chip.className = 'flex items-center gap-2 pl-3 ml-1 border-l border-white/20 text-blue-200';
+    chip.className = 'flex items-center gap-2 pl-3 ml-1 border-l border-white/25 text-white/90';
     chip.innerHTML =
       '<a href="' + esc(loginUrl) + '" ' +
-      'class="px-3 py-1.5 rounded-md text-blue-200 hover:text-white hover:bg-white/10 transition">Sign in</a>';
+      'class="px-3 py-1.5 rounded-md text-white/90 hover:text-white hover:bg-white/15 transition">Sign in</a>';
     nav.appendChild(chip);
   }
 

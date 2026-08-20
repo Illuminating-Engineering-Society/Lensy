@@ -32,10 +32,11 @@
             'surface':              '#F7F7F7',  // Base — page background
             'ink':                  '#2C2C2C',  // Neutral — body text
             // Back-compat aliases: existing `ies-blue` usages are overwhelmingly
-            // CTAs/links/accents, so they map to Primary orange. The two large
-            // surfaces (header bar, hero gradient) are set to Secondary slate
-            // explicitly (header class + .hero-gradient), so aliasing to orange
-            // here is safe and means any un-audited usage still reads on-brand.
+            // CTAs/links/accents, so they map to Primary orange. The chrome
+            // (header banner, Search button, footer band) follows the client's
+            // 2026-08-20 wireframes — the IES gold — set explicitly with the
+            // accent tokens, so aliasing to orange here is safe and means any
+            // un-audited usage still reads on-brand.
             'ies-blue':      '#D95D2B',
             'ies-blue-dark': '#B84A20',
             'ies-gold':      '#EFA723',
@@ -98,74 +99,74 @@
     .result-card:hover { box-shadow: 0 4px 24px rgba(44,44,44,0.10); transform: translateY(-1px); }
     .lux-badge { font-variant-numeric: tabular-nums; }
     .ai-border { border-left: 3px solid var(--brand-accent); }
-    .hero-gradient { background: linear-gradient(135deg, #2C3D4F 0%, #3A5068 55%, #46617D 100%); }
-    .search-glow:focus-within { box-shadow: 0 0 0 3px rgba(217,93,43,0.25); }
+    .search-glow:focus-within { box-shadow: 0 0 0 3px rgba(239,167,35,0.35); }
     .skeleton { background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%); background-size: 200% 100%; animation: skeleton-loading 1.4s infinite; }
     @keyframes skeleton-loading { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
     .lux-value { font-size: 1.1rem; font-weight: 700; letter-spacing: -0.02em; }
     .fade-in { animation: fadeIn 0.25s ease-out; }
     @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
     .modal-backdrop { backdrop-filter: blur(4px); }
-    /* ── Content filter pills (DO32, one row since DO57) ──────────────────────
-       One control shape for every content kind. Unselected = outlined on the
-       hero gradient; selected = the brand primary fill. */
-    .filter-pill {
-      font-size: 0.8125rem; line-height: 1.25rem; font-weight: 600;
-      padding: 0.375rem 0.875rem; border-radius: 9999px;
-      border: 1px solid rgba(255,255,255,0.35); color: #fff;
-      background: rgba(255,255,255,0.08); transition: background .15s, border-color .15s, color .15s, opacity .15s;
-      white-space: nowrap;
+    /* ── Header nav (client wireframes, 2026-08-20) ───────────────────────────
+       The banner is the IES gold and its items read as white nav links.
+       Compare Versions is armed as a mode: while armed it carries a white
+       outline, the wireframe's own pressed treatment. */
+    .nav-item { color: rgba(255,255,255,0.92); }
+    .nav-item:hover:not([disabled]) { color: #fff; background: rgba(255,255,255,0.15); }
+    .nav-toggle { color: rgba(255,255,255,0.92); }
+    .nav-toggle:hover:not([disabled]) { color: #fff; background: rgba(255,255,255,0.15); }
+    .nav-toggle[aria-pressed="true"] {
+      color: #fff; background: rgba(255,255,255,0.12);
+      outline: 2px solid #fff; outline-offset: -2px; border-radius: 8px;
     }
-    .filter-pill:hover:not([disabled]) { background: rgba(255,255,255,0.18); }
-    .filter-pill[aria-pressed="true"] {
-      background: var(--brand-primary); border-color: var(--brand-primary); color: #fff;
-    }
-    .filter-pill[disabled] { opacity: 0.35; cursor: not-allowed; }
-    /* ── Illuminance Tables multi-select (DO57 note 2) ────────────────────────
-       The pill opens this panel; the two checkboxes inside are the control.
-       Clearing both is how "no Illuminance Table results" is expressed, so the
-       pill's own pressed state is derived from them rather than clicked. */
-    .loc-menu {
-      position: absolute; top: calc(100% + 6px); left: 0; z-index: 45;
-      display: flex; flex-direction: column; gap: 0.125rem;
-      background: #fff; color: var(--ink); border: 1px solid #E5E7EB;
-      border-radius: 10px; box-shadow: 0 12px 32px rgba(44,44,44,0.18);
-      padding: 0.375rem; min-width: 12.5rem; white-space: nowrap;
-    }
-    .loc-menu.hidden { display: none; }
-    .loc-option {
-      display: flex; align-items: center; gap: 0.5rem; cursor: pointer;
-      font-size: 0.8125rem; font-weight: 500; padding: 0.375rem 0.5rem; border-radius: 6px;
-    }
-    .loc-option:hover { background: #F3F4F6; }
-    /* ── AI Guide toggle, inside the search box (DO57 note 3) ─────────────────
-       Modelled on the Google search UI the client named: a quiet pill that sits
-       in the box and lights up when the Guide is on, rather than a filter that
-       has to be found in a row of unrelated controls. */
-    .guide-toggle {
-      display: inline-flex; align-items: center; gap: 0.375rem;
-      font-size: 0.8125rem; font-weight: 600; white-space: nowrap;
-      padding: 0.4375rem 0.5rem 0.4375rem 0.875rem; border-radius: 9999px;
-      border: 1px solid #D9DDE2; background: #fff; color: var(--brand-secondary);
-      transition: background .15s, border-color .15s, color .15s;
-    }
-    .guide-toggle:hover:not([disabled]) { background: #F3F5F7; }
-    .guide-toggle-icon {
-      display: inline-flex; align-items: center; justify-content: center;
-      width: 1.25rem; height: 1.25rem; border-radius: 9999px;
-      border: 1px solid currentColor;
-    }
-    .guide-toggle[aria-pressed="true"] {
-      background: #FDF4E2; border-color: var(--brand-accent); color: #8A5A0B;
-    }
-    .guide-toggle[disabled] { opacity: 0.5; cursor: not-allowed; }
-    /* Banner tools that toggle (Compare Documents) read as nav links until they
-       are armed, then as a pressed control — the header is where the reader looks
-       for tools, not for state, so the state has to be unmistakable. */
-    .nav-toggle { color: #BFDBFE; }
-    .nav-toggle:hover:not([disabled]) { color: #fff; background: rgba(255,255,255,0.10); }
-    .nav-toggle[aria-pressed="true"] { background: var(--brand-primary); color: #fff; }
     .nav-toggle[disabled] { opacity: 0.5; cursor: not-allowed; }
+    /* The account drop-down behind the hamburger (wireframe: email, tier,
+       AI Guide toggle, My Bookmarks, Subscribe). */
+    .menu-item {
+      display: flex; align-items: center; gap: 0.625rem; width: 100%;
+      padding: 0.5rem 1rem; font-size: 0.875rem; color: var(--ink);
+      text-align: left; transition: background .15s;
+    }
+    .menu-item:hover:not([disabled]) { background: #F3F4F6; }
+    .menu-item[disabled] { opacity: 0.5; cursor: not-allowed; }
+    /* auth-gate.js appends its own user chip + Sign out to the header nav; this
+       page renders both inside the account menu instead, so the chip is hidden
+       here (the other pages keep it). */
+    #lensy-user-chip { display: none !important; }
+    /* ── Sort / Filter sidebar (client wireframes, 2026-08-20) ────────────────
+       The floating trigger is anchored top-left; clicking it opens the sidebar
+       and greys out the rest of the page. Active sort options are bolded. */
+    .sort-option {
+      display: flex; align-items: center; gap: 0.625rem; width: 100%;
+      padding: 0.375rem 0.5rem; border-radius: 6px; font-size: 0.8125rem;
+      color: #4B5563; text-align: left; transition: background .15s;
+    }
+    .sort-option:hover { background: #F3F4F6; }
+    .sort-option[aria-pressed="true"] { font-weight: 700; color: var(--ink); }
+    .side-heading {
+      display: flex; align-items: center; gap: 0.5rem; cursor: pointer;
+      font-size: 0.75rem; font-weight: 700; letter-spacing: 0.05em;
+      text-transform: uppercase; color: var(--ink); list-style: none;
+      user-select: none; -webkit-user-select: none;
+    }
+    .side-heading::-webkit-details-marker { display: none; }
+    .side-sub {
+      display: flex; align-items: center; gap: 0.5rem; cursor: pointer;
+      font-size: 0.8125rem; font-weight: 600; color: #374151; list-style: none;
+      user-select: none; -webkit-user-select: none; padding: 0.25rem 0;
+    }
+    .side-sub::-webkit-details-marker { display: none; }
+    .side-check {
+      display: flex; align-items: flex-start; gap: 0.5rem; cursor: pointer;
+      font-size: 0.8125rem; color: #374151; padding: 0.25rem 0.125rem;
+      border-radius: 6px;
+    }
+    .side-check:hover { background: #F9FAFB; }
+    .side-list {
+      max-height: 13rem; overflow-y: auto; border: 1px solid #E5E7EB;
+      border-radius: 8px; padding: 0.25rem;
+    }
+    .chevron { transition: transform .15s; }
+    details[open] > summary .chevron { transform: rotate(180deg); }
     /* Rich text inside a Definition card: the definition is reproduced as
        published, so its own emphasis and inline math have to survive. */
     .definition-body p { margin-bottom: 0.5rem; }
@@ -217,174 +218,417 @@
 </head>
 <body class="bg-surface min-h-screen text-ink">
 
-  <!-- ── Header ───────────────────────────────────────────────────────────── -->
-  <header class="bg-brand-secondary text-white shadow-md no-print sticky top-0 z-40">
-    <div class="max-w-5xl mx-auto px-4 py-3 flex items-center justify-between">
-      <a href="/" class="flex items-center gap-3 group">
-        <div class="w-8 h-8 rounded-lg bg-white/15 flex items-center justify-center">
-          <svg class="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M12 3v1m0 16v1M4.22 4.22l.707.707M18.364 18.364l.707.707M3 12H2m20 0h-1M4.927 19.073l.707-.707M18.364 5.636l.707-.707M12 8a4 4 0 100 8 4 4 0 000-8z"/>
-          </svg>
+  <!-- ── Header (client wireframes, 2026-08-20) ──────────────────────────────
+       The IES gold banner: Browse Your Lighting Library (opens the reader),
+       Compare Versions (a floating window — a unique search type, not a page),
+       List Standards (formerly "Table of Contents"), and the hamburger account
+       menu, which holds everything user-specific: the signed-in email, which
+       Lensy this is, the AI Guide toggle, My Bookmarks (formerly "Saved
+       Searches"), Subscribe for non-subscribers, and Sign out. -->
+  <header class="text-white shadow-md no-print sticky top-0 z-40" style="background-color: var(--brand-accent);">
+    <div class="max-w-6xl mx-auto px-4 py-2.5 flex items-center justify-between gap-3">
+      <a href="/" class="flex items-center gap-2.5 shrink-0" title="Lensy — IES Assistant">
+        <div class="w-10 h-10 rounded bg-white/25 flex items-center justify-center">
+          <span class="font-display font-extrabold text-lg tracking-tight">IES</span>
         </div>
-        <div>
-          <!-- The wordmark says which Lensy this is (client DO53): LensyLite is
-               a different product to the reader, not a degraded one. -->
-          <span id="wordmark" class="font-display text-xl font-bold tracking-tight">Lensy</span>
-          <span class="hidden sm:inline text-blue-200 text-sm ml-2">IES Assistant</span>
-        </div>
+        <span class="sr-only">Lensy — IES Assistant</span>
       </a>
-      <!-- The tools that are not search FILTERS live here (client DO57): the
-           filter row below the search box is for content kinds only, so
-           Document Comparison moved up into the banner beside Saved Searches and
-           the Table of Contents. auth-gate.js appends the user chip + Sign out
-           to this same nav. -->
       <nav class="flex items-center gap-1 text-sm">
+        <a href="https://lighting.ies.org" target="_blank" rel="noopener" id="nav-library"
+           class="nav-item flex items-center gap-1.5 px-3 py-1.5 rounded-md transition"
+           title="Open your IES Lighting Library in a new browser tab">
+          <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M4 19.5V5a1 1 0 011-1h2a1 1 0 011 1v14.5M10 19.5V5a1 1 0 011-1h2a1 1 0 011 1v14.5M16.5 19.5l-2-14 2.5-.5 2.5 14z"/>
+          </svg>
+          <span class="hidden md:inline">Browse Your Lighting Library</span>
+          <span class="md:hidden">Library</span>
+        </a>
         <button id="nav-compare" data-filter="compare" aria-pressed="false"
+                onclick="openCompareOverlay()"
                 class="nav-toggle flex items-center gap-1.5 px-3 py-1.5 rounded-md transition"
                 style="display: none"
-                title="Compare a standard with its previous edition — AI summary of published changes">
+                title="Compare Versions — AI summary of changes between a standard and its previous edition">
           <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
             <path stroke-linecap="round" stroke-linejoin="round" d="M8 7V3m0 4H4m4 0h4M6 21V11m10 10v-4m0 4h4m-4 0h-4m2-14v10"/>
           </svg>
-          Compare Documents<span class="lock-label"></span>
+          <span class="hidden md:inline">Compare Versions</span>
+          <span class="md:hidden">Compare</span><span class="lock-label"></span>
         </button>
-        <a href="/projects.html" id="nav-projects"
-           class="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-blue-200 hover:text-white hover:bg-white/10 transition">
-          <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/>
-          </svg>
-          Saved Searches
-        </a>
         <a href="/contents" target="_blank" rel="noopener" id="nav-contents"
-           class="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-blue-200 hover:text-white hover:bg-white/10 transition"
-           title="Displays the IES Lighting Library's Table of Contents in a new browser tab">
+           class="nav-item flex items-center gap-1.5 px-3 py-1.5 rounded-md transition"
+           title="Lists every current IES standard in the Lighting Library, in a new browser tab">
           <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
             <path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h10"/>
           </svg>
-          Table of Contents
+          <span class="hidden md:inline">List Standards</span>
+          <span class="md:hidden">Standards</span>
         </a>
+
+        <!-- Account menu: all user-specific data and features (wireframe). -->
+        <div class="relative ml-1" id="account-wrap">
+          <button id="account-menu-btn" onclick="toggleAccountMenu()"
+                  aria-haspopup="true" aria-expanded="false"
+                  class="flex items-center gap-1.5 border border-white/80 rounded-full px-3 py-1.5 hover:bg-white/15 transition"
+                  title="Your account">
+            <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" d="M4 7h16M4 12h16M4 17h16"/>
+            </svg>
+            <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/>
+            </svg>
+          </button>
+          <div id="account-menu"
+               class="hidden absolute right-0 top-[calc(100%+8px)] w-72 bg-white text-ink rounded-xl shadow-xl border border-gray-200 py-1 z-50 text-left">
+            <p id="menu-email" class="px-4 py-2.5 text-sm font-medium text-gray-700 border-b border-gray-100 truncate">Signed in</p>
+            <!-- Which Lensy this is (client DO53) — set by applyTier. -->
+            <div class="menu-item cursor-default" title="Your access tier">
+              <svg class="w-4 h-4 text-gray-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/>
+              </svg>
+              <span id="menu-tier-label" class="font-bold">Lensy</span>
+            </div>
+            <!-- The AI Guide toggle lives here now (wireframe: "Toggles AI Guide
+                 'on' or 'off' for user account"). Still data-filter="guide": the
+                 state travels with the search exactly as before — only the
+                 control moved out of the search box. -->
+            <button id="menu-guide" data-filter="guide" aria-pressed="true" class="menu-item"
+                    title="The AI Guide adds a contextual summary above your search results — on by default">
+              <svg class="w-4 h-4 text-gray-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="9"/>
+                <path stroke-linecap="round" stroke-linejoin="round" d="M15.5 8.5l-2 5-5 2 2-5 5-2z"/>
+              </svg>
+              <span id="menu-guide-label">Disable AI Guide</span><span class="lock-label"></span>
+            </button>
+            <a href="/projects.html" id="nav-projects" class="menu-item"
+               title="Your saved search collections">
+              <svg class="w-4 h-4 text-gray-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z"/>
+              </svg>
+              My Bookmarks
+            </a>
+            <a href="https://store.ies.org/" target="_blank" rel="noopener" id="menu-subscribe" class="menu-item hidden"
+               title="Subscribe to unlock full Lensy and Lighting Library access">
+              <svg class="w-4 h-4 text-gray-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.3 4.6a1 1 0 00.9 1.4H19M9 21a1 1 0 100-2 1 1 0 000 2zm8 0a1 1 0 100-2 1 1 0 000 2z"/>
+              </svg>
+              Subscribe
+            </a>
+            <a href="/logout" id="menu-signout" class="menu-item border-t border-gray-100 text-gray-500">
+              <svg class="w-4 h-4 text-gray-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/>
+              </svg>
+              Sign out
+            </a>
+          </div>
+        </div>
       </nav>
     </div>
   </header>
 
-  <!-- ── Hero / Search Section ─────────────────────────────────────────────── -->
-  <!-- Layout per the client's DO57 wireframe ("Refine search UI — Simplify UI"):
-       the search box carries the AI Guide toggle inside it, Google-fashion, and
-       ONE filter row remains — Content, i.e. which KINDS of result appear. The
-       two tools that are not content kinds (AI Guide, Compare Documents) left the
-       filter section: the Guide is in the box, Document Comparison is in the top
-       banner. Final styling still pending from marketing. -->
-  <div id="hero-section" class="hero-gradient text-white no-print">
-    <div class="max-w-3xl mx-auto px-4 py-10 sm:py-12 text-center">
+  <!-- ── Hero / Search Section (client wireframes, 2026-08-20) ───────────────
+       A white hero: the circular Lensy/LensyLite mark (which one is set by the
+       visitor's tier — client DO53), then the search box with the gold Search
+       button. The content filters left this section for the Sort/Filter
+       sidebar; the AI Guide toggle left it for the account menu. -->
+  <div id="hero-section" class="bg-white no-print border-b border-gray-100">
+    <div id="hero-inner" class="max-w-3xl mx-auto px-4 py-10 sm:py-12 text-center">
 
-      <!-- Search box (input + AI Guide) with the filter reset beside it -->
-      <div class="flex items-stretch sm:items-center gap-3">
-        <div class="relative flex-1">
-          <div class="bg-white rounded-xl shadow-lg p-2 flex items-center gap-2 search-glow transition">
-            <input
-              type="text"
-              id="search-input"
-              placeholder="Type a question or find a document"
-              autocomplete="off"
-              class="flex-1 min-w-0 px-4 py-3 text-gray-900 text-base placeholder-gray-400 bg-transparent outline-none"
-              onkeydown="handleSearchKeydown(event)"
-              oninput="renderSuggestions()"
-              onfocus="openSuggestions()"
-              autofocus
-            />
-            <!-- AI Guide: a toggle inside the box, modelled on the Google search
-                 UI the client named (DO57 note 3). It is not a content filter —
-                 it adds a contextual summary ABOVE whatever the search returns.
-                 Pressed in the markup as well as in DEFAULT_FILTER_STATE so the
-                 first paint matches the state a search will actually run with. -->
-            <button id="guide-toggle" data-filter="guide" aria-pressed="true"
-                    class="guide-toggle shrink-0"
-                    title="AI contextual summary — on by default; click to turn off">
-              AI Guide<span class="lock-label"></span>
-              <span class="guide-toggle-icon">
-                <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                  <circle cx="12" cy="12" r="9"/>
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M15.5 8.5l-2 5-5 2 2-5 5-2z"/>
-                </svg>
-              </span>
-            </button>
-            <button
-              id="search-btn"
-              onclick="performSearch()"
-              class="px-5 py-3 bg-ies-blue text-white rounded-lg hover:bg-ies-blue-dark transition font-semibold flex items-center gap-2 shrink-0"
-            >
-              <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
-              </svg>
-              <span class="hidden sm:inline">Search</span>
-            </button>
-          </div>
+      <!-- The mark says which Lensy this is (client DO53): LensyLite is a
+           different product to the reader, not a degraded one. -->
+      <div id="hero-logo" class="mx-auto mb-8 w-40 h-40 rounded-full border-2 flex items-center justify-center"
+           style="border-color: var(--brand-accent);">
+        <div class="text-center px-3">
+          <span id="wordmark" class="font-display text-2xl font-bold italic tracking-tight text-ink">Lensy</span>
+          <p class="text-[10px] uppercase tracking-widest text-gray-400 mt-1">IES Assistant</p>
+        </div>
+      </div>
 
-          <!-- Suggestions drop-down: recent searches (auto-populated) above the
-               demo searches, which used to sit loose under the hero (DO32). -->
-          <div id="search-suggestions"
-               class="hidden absolute left-0 right-0 mt-1 bg-white rounded-xl shadow-xl border border-gray-100 text-left z-40 overflow-hidden">
-          </div>
+      <div class="relative text-left">
+        <div class="border-2 border-gray-300 rounded-2xl bg-white p-1.5 flex items-center gap-2 search-glow transition">
+          <input
+            type="text"
+            id="search-input"
+            placeholder="Type a topic or ask a question"
+            autocomplete="off"
+            class="flex-1 min-w-0 px-4 py-3 text-gray-900 text-base placeholder-gray-400 bg-transparent outline-none"
+            onkeydown="handleSearchKeydown(event)"
+            oninput="renderSuggestions()"
+            onfocus="openSuggestions()"
+            autofocus
+          />
+          <button
+            id="search-btn"
+            onclick="performSearch()"
+            class="px-5 py-3 text-white rounded-xl transition font-bold flex items-center gap-2 shrink-0 hover:brightness-95"
+            style="background-color: var(--brand-accent-dark, #D8930F);"
+          >
+            <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+            </svg>
+            <span class="hidden sm:inline">Search</span>
+          </button>
         </div>
 
-        <button onclick="resetFilters()" id="filters-reset"
-                class="w-9 h-9 self-center rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center transition shrink-0"
-                title="Reset — restore the default filter selections">
-          <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h5M20 20v-5h-5M20 9A8 8 0 006.3 5.3L4 8m0 7a8 8 0 0013.7 3.7L20 16"/>
-          </svg>
-        </button>
+        <!-- Suggestions drop-down: standards whose name the typed text matches
+             (wireframe: "Enable auto-suggest if the search appears to be the
+             name of a standard"), recent searches, then the demo searches. -->
+        <div id="search-suggestions"
+             class="hidden absolute left-0 right-0 mt-1 bg-white rounded-xl shadow-xl border border-gray-100 text-left z-40 overflow-hidden">
+        </div>
       </div>
 
-      <!-- Document Comparison is armed from the top banner, so say so here —
+      <!-- Compare Versions is armed from the top banner, so say so here —
            otherwise the only sign that the next search behaves differently is a
            button in the header the reader is no longer looking at. -->
-      <p id="compare-hint" class="hidden mt-3 text-xs text-blue-100 text-left">
-        <span class="font-semibold">Compare Documents is on.</span>
+      <p id="compare-hint" class="hidden mt-3 text-xs text-gray-600 text-left">
+        <span class="font-semibold">Compare Versions is on.</span>
         Name a standard ("what changed in RP-8?") and the next search summarizes the
         published changes against its previous edition.
-        <button onclick="toggleFilter('compare')" class="underline underline-offset-2 hover:text-white">Turn off</button>
+        <button onclick="toggleFilter('compare')" class="underline underline-offset-2 hover:text-ink">Turn off</button>
       </p>
-
-      <!-- Content row — WHICH kinds of result appear. ALL kinds are selected to
-           begin with and any combination is possible (client DO57 note 1).
-           Illuminance Tables is a multi-select: Interior and Exterior narrow the
-           table rows, and clearing both excludes Illuminance Table results
-           altogether (note 2). -->
-      <div class="mt-5 flex flex-wrap items-center justify-center gap-x-3 gap-y-2 text-left">
-        <span class="text-xs uppercase tracking-wider text-blue-300 shrink-0">Content</span>
-        <button class="filter-pill" data-filter="body"
-                title="Search document body — the prose of the standards">Documents</button>
-        <button class="filter-pill" data-filter="definitions"
-                title="Search within ANSI/IES LS-1 Definitions">Definitions</button>
-        <button class="filter-pill" data-filter="references"
-                title="Search within the References sections of the standards">References</button>
-        <span class="relative inline-flex">
-          <button class="filter-pill flex items-center gap-1.5" data-filter="tables"
-                  id="pill-tables" aria-haspopup="true" aria-expanded="false"
-                  title="Search within Recommended Illuminance Tables — choose Interior, Exterior, or both">
-            Illuminance Tables<span class="lock-label"></span>
-            <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3">
-              <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/>
-            </svg>
-          </button>
-          <span id="location-menu" class="loc-menu hidden">
-            <label class="loc-option">
-              <input type="checkbox" data-loc="interior" checked class="accent-ies-blue rounded"/>
-              Interior Applications
-            </label>
-            <label class="loc-option">
-              <input type="checkbox" data-loc="exterior" checked class="accent-ies-blue rounded"/>
-              Exterior Applications
-            </label>
-          </span>
-        </span>
-      </div>
     </div>
   </div>
 
+  <!-- ── Floating Sort / Filter trigger (client wireframes, 2026-08-20) ───────
+       Anchored top-left; either button opens the sidebar with that section
+       expanded. The count mirrors the FILTER heading inside the sidebar. -->
+  <div id="sortfilter-trigger"
+       class="no-print fixed left-3 top-[84px] z-30 flex flex-col rounded-lg border border-gray-200 bg-white shadow-m overflow-hidden">
+    <button onclick="openSidebar('sort')" class="flex flex-col items-center gap-0.5 px-2.5 py-2 hover:bg-gray-50 transition" title="Sort results">
+      <svg class="w-4 h-4 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M8 5v14m0 0l-3-3m3 3l3-3M16 19V5m0 0l-3 3m3-3l3 3"/>
+      </svg>
+      <span class="text-[10px] font-semibold text-gray-600">Sort</span>
+    </button>
+    <div class="h-px bg-gray-200"></div>
+    <button onclick="openSidebar('filter')" class="flex flex-col items-center gap-0.5 px-2.5 py-2 hover:bg-gray-50 transition" title="Filter results">
+      <svg class="w-4 h-4 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M3 5h18l-7 8v5l-4 2v-7L3 5z"/>
+      </svg>
+      <span class="text-[10px] font-semibold text-gray-600">Filter <span id="filter-trigger-count"></span></span>
+    </button>
+  </div>
+
+  <!-- ── Sort / Filter sidebar ────────────────────────────────────────────────
+       The rest of the page greys out while it is open (wireframe). "View
+       Results" applies the selections: content-kind changes re-run the search,
+       sort and document narrowing re-render the current results locally. -->
+  <div id="sidebar-backdrop" class="hidden fixed inset-0 bg-black/40 modal-backdrop z-[45] no-print" onclick="closeSidebar()"></div>
+  <aside id="sortfilter-sidebar"
+         class="hidden fixed left-0 top-0 bottom-0 w-[340px] max-w-[90vw] bg-white z-50 shadow-2xl flex flex-col no-print"
+         aria-label="Sort and filter">
+    <div class="flex justify-end p-3 pb-0">
+      <button onclick="closeSidebar()" class="p-1.5 text-gray-400 hover:text-gray-700 rounded-md hover:bg-gray-100 transition" title="Close">
+        <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
+        </svg>
+      </button>
+    </div>
+    <div class="flex-1 overflow-y-auto px-5 pb-4 space-y-4">
+
+      <!-- SORT: single choice, active option bolded (wireframe). -->
+      <details id="sort-section" open>
+        <summary class="side-heading py-2">
+          <svg class="w-4 h-4 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M8 5v14m0 0l-3-3m3 3l3-3M16 19V5m0 0l-3 3m3-3l3 3"/>
+          </svg>
+          Sort
+          <svg class="chevron w-3.5 h-3.5 ml-auto text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M5 15l7-7 7 7"/>
+          </svg>
+        </summary>
+        <div class="mt-1 space-y-0.5">
+          <button data-sort="relevance" aria-pressed="true" onclick="setSort('relevance')" class="sort-option"
+                  title="Best match first — the order the search returned">
+            <svg class="w-4 h-4 shrink-0 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M4 6h9M4 12h6M4 18h4M17 4v16m0 0l-3-3m3 3l3-3"/>
+            </svg>
+            Relevance (Default)
+          </button>
+          <button data-sort="date" aria-pressed="false" onclick="setSort('date')" class="sort-option"
+                  title="By edition year of the standard">
+            <svg class="w-4 h-4 shrink-0 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="9"/><path stroke-linecap="round" d="M12 7v5l3 2"/>
+            </svg>
+            Date
+          </button>
+          <button data-sort="title" aria-pressed="false" onclick="setSort('title')" class="sort-option"
+                  title="Alphabetically by document title">
+            <svg class="w-4 h-4 shrink-0 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M6 4h12M12 4v16m-3 0h6"/>
+            </svg>
+            Title
+          </button>
+          <button data-sort="designation" aria-pressed="false" onclick="setSort('designation')" class="sort-option"
+                  title="By designation — RP-2 before RP-10">
+            <span class="w-4 shrink-0 font-mono text-[9px] font-bold text-gray-400 leading-none">RP-#</span>
+            Designation (ANSI/IES RP-01)
+          </button>
+          <button data-sort="committee" aria-pressed="false" onclick="setSort('committee')" class="sort-option"
+                  title="Alphabetically by authoring technical committee">
+            <svg class="w-4 h-4 shrink-0 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M17 20h5v-2a4 4 0 00-3-3.87M9 20H4v-2a4 4 0 013-3.87M16 3.13a4 4 0 010 7.75M12 7a4 4 0 11-8 0 4 4 0 018 0z"/>
+            </svg>
+            Technical Committee
+          </button>
+        </div>
+        <div class="mt-3 pt-3 border-t border-gray-100 space-y-0.5">
+          <button data-sort-dir="asc" aria-pressed="true" onclick="setSortDir('asc')" class="sort-option">
+            <svg class="w-4 h-4 shrink-0 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M12 19V5m0 0l-5 5m5-5l5 5"/>
+            </svg>
+            Ascending
+          </button>
+          <button data-sort-dir="desc" aria-pressed="false" onclick="setSortDir('desc')" class="sort-option">
+            <svg class="w-4 h-4 shrink-0 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M12 5v14m0 0l-5-5m5 5l5-5"/>
+            </svg>
+            Descending
+          </button>
+        </div>
+      </details>
+
+      <div class="h-px bg-gray-200"></div>
+
+      <!-- FILTER: the content kinds (formerly the pill row under the search
+           box — client DO57, moved here by the 2026-08-20 wireframes) plus
+           document narrowing by publication type, title and committee. -->
+      <details id="filter-section" open>
+        <summary class="side-heading py-2">
+          <svg class="w-4 h-4 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M3 5h18l-7 8v5l-4 2v-7L3 5z"/>
+          </svg>
+          Filter <span id="filter-count" class="font-normal normal-case text-gray-400"></span>
+          <button onclick="event.preventDefault(); resetFilters()" class="ml-auto text-[11px] font-semibold normal-case tracking-normal text-ies-blue hover:underline">Reset all</button>
+          <svg class="chevron w-3.5 h-3.5 ml-1 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M5 15l7-7 7 7"/>
+          </svg>
+        </summary>
+
+        <!-- Contents — WHICH kinds of result appear. All selected to begin
+             with; any combination is possible (DO57 note 1). Clearing both
+             Interior and Exterior excludes Illuminance Tables (note 2). -->
+        <div class="mt-2">
+          <p class="text-xs font-bold text-gray-700 mb-1">Contents <span id="contents-count" class="font-normal text-gray-400"></span></p>
+          <div class="space-y-0.5">
+            <label class="side-check">
+              <input type="checkbox" data-filter="body" checked class="mt-0.5 rounded accent-ies-blue shrink-0"
+                     title="Search document body — the prose of the standards"/>
+              <svg class="w-4 h-4 mt-0.5 shrink-0 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M12 6.25c-2.4-1.6-5.2-1.6-8-.75v13c2.8-.85 5.6-.85 8 .75 2.4-1.6 5.2-1.6 8-.75v-13c-2.8-.85-5.6-.85-8 .75zm0 0v13"/>
+              </svg>
+              <span class="font-semibold">Document Body</span>
+            </label>
+            <label class="side-check">
+              <input type="checkbox" data-filter="definitions" checked class="mt-0.5 rounded accent-ies-blue shrink-0"
+                     title="Search within ANSI/IES LS-1 Definitions"/>
+              <span class="w-4 mt-0.5 shrink-0 font-mono text-[9px] font-bold text-gray-400 leading-4 text-center">A-Z</span>
+              <span class="font-semibold">Definitions <span class="font-normal text-gray-400">(ANSI/IES LS-1)</span></span>
+            </label>
+            <label class="side-check">
+              <input type="checkbox" data-filter="references" checked class="mt-0.5 rounded accent-ies-blue shrink-0"
+                     title="Search within the References sections of the standards"/>
+              <span class="w-4 mt-0.5 shrink-0 font-mono text-[9px] font-bold text-gray-400 leading-4 text-center">T¹</span>
+              <span class="font-semibold">References</span>
+            </label>
+            <label class="side-check">
+              <input type="checkbox" data-filter="tables" checked class="mt-0.5 rounded accent-ies-blue shrink-0"
+                     title="Search within Recommended Illuminance Tables — Interior, Exterior, or both"/>
+              <svg class="w-4 h-4 mt-0.5 shrink-0 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M12 3v1.5m0 15V21m9-9h-1.5m-15 0H3m14.7-5.7l-1 1m-9.4 9.4l-1 1m11.4 0l-1-1M7.3 6.3l-1-1M12 8a4 4 0 100 8 4 4 0 000-8z"/>
+              </svg>
+              <span class="font-semibold">Illuminance Tables<span class="lock-label"></span></span>
+            </label>
+            <div class="pl-10 space-y-0.5">
+              <label class="side-check">
+                <input type="checkbox" data-loc="interior" checked class="mt-0.5 rounded accent-ies-blue shrink-0"/>
+                <span>Interior</span>
+              </label>
+              <label class="side-check">
+                <input type="checkbox" data-loc="exterior" checked class="mt-0.5 rounded accent-ies-blue shrink-0"/>
+                <span>Exterior</span>
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <!-- Documents — narrows WHICH documents the results may come from.
+             All selected = no narrowing, exactly as the wireframe's
+             "Begin with all selected" implies. Applied client-side to the
+             current result set. -->
+        <div class="mt-4">
+          <p class="text-xs font-bold text-gray-700 mb-1">Documents</p>
+
+          <details class="mb-2">
+            <summary class="side-sub">
+              <span class="w-4 shrink-0 font-mono text-[9px] font-bold text-gray-400 leading-none">RP-#</span>
+              Publication Type <span id="pubtype-count" class="font-normal text-gray-400"></span>
+              <svg class="chevron w-3 h-3 ml-auto text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M5 15l7-7 7 7"/>
+              </svg>
+            </summary>
+            <div id="pubtype-list" class="mt-1 space-y-0.5"></div>
+          </details>
+
+          <details class="mb-2">
+            <summary class="side-sub">
+              <svg class="w-4 h-4 shrink-0 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M6 4h12M12 4v16m-3 0h6"/>
+              </svg>
+              Title <span id="title-count" class="font-normal text-gray-400"></span>
+              <svg class="chevron w-3 h-3 ml-auto text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M5 15l7-7 7 7"/>
+              </svg>
+            </summary>
+            <div class="mt-1">
+              <input type="text" id="title-search" placeholder="Search"
+                     oninput="setDocFilterSearch('title', this.value)"
+                     class="w-full px-2.5 py-1.5 mb-1 border border-gray-200 rounded-lg text-xs focus:ring-2 focus:ring-ies-blue focus:border-transparent"/>
+              <div class="flex items-center gap-2 text-[11px] mb-1">
+                <button onclick="setAllDocFilter('title', true)" class="text-ies-blue hover:underline">Select all</button>
+                <span class="text-gray-300">·</span>
+                <button onclick="setAllDocFilter('title', false)" class="text-ies-blue hover:underline">Unselect all</button>
+              </div>
+              <div id="title-list" class="side-list space-y-0.5"></div>
+            </div>
+          </details>
+
+          <details>
+            <summary class="side-sub">
+              <svg class="w-4 h-4 shrink-0 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M17 20h5v-2a4 4 0 00-3-3.87M9 20H4v-2a4 4 0 013-3.87M16 3.13a4 4 0 010 7.75M12 7a4 4 0 11-8 0 4 4 0 018 0z"/>
+              </svg>
+              Technical Committee <span id="committee-count" class="font-normal text-gray-400"></span>
+              <svg class="chevron w-3 h-3 ml-auto text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M5 15l7-7 7 7"/>
+              </svg>
+            </summary>
+            <div class="mt-1">
+              <input type="text" id="committee-search" placeholder="Search"
+                     oninput="setDocFilterSearch('committee', this.value)"
+                     class="w-full px-2.5 py-1.5 mb-1 border border-gray-200 rounded-lg text-xs focus:ring-2 focus:ring-ies-blue focus:border-transparent"/>
+              <div class="flex items-center gap-2 text-[11px] mb-1">
+                <button onclick="setAllDocFilter('committee', true)" class="text-ies-blue hover:underline">Select all</button>
+                <span class="text-gray-300">·</span>
+                <button onclick="setAllDocFilter('committee', false)" class="text-ies-blue hover:underline">Unselect all</button>
+              </div>
+              <div id="committee-list" class="side-list space-y-0.5"></div>
+            </div>
+          </details>
+        </div>
+      </details>
+    </div>
+    <div class="p-4 border-t border-gray-100">
+      <button onclick="closeSidebar()"
+              class="w-full py-2.5 text-white rounded-lg text-sm font-bold transition hover:brightness-95"
+              style="background-color: var(--brand-accent-dark, #D8930F);">
+        View Results
+      </button>
+    </div>
+  </aside>
+
   <!-- ── Compact search bar (shown after first search) ──────────────────────── -->
-  <div id="compact-search" class="hidden no-print bg-white border-b border-gray-200 sticky top-[57px] z-30 shadow-sm">
+  <div id="compact-search" class="hidden no-print bg-white border-b border-gray-200 sticky top-[61px] z-30 shadow-sm">
     <div class="max-w-5xl mx-auto px-4 py-3 flex gap-2">
       <input
         type="text"
@@ -527,16 +771,91 @@
     </div>
   </div>
 
-  <!-- ── Footer ───────────────────────────────────────────────────────────── -->
-  <footer class="text-center text-xs text-gray-400 py-8 mt-8 border-t border-gray-100 no-print">
-    <p class="font-medium text-gray-500">Lensy — IES Standards Search Assistant</p>
-    <p class="mt-1">
-      <a href="https://www.ies.org" class="hover:underline hover:text-gray-600">Illuminating Engineering Society</a>
-      <span class="mx-2">·</span>
-      <a href="mailto:Standards@ies.org" class="hover:underline hover:text-gray-600">Standards@ies.org</a>
+  <!-- ── Footer (client wireframes, 2026-08-20: the cream band) ─────────────── -->
+  <footer class="text-center text-xs py-8 mt-8 no-print" style="background-color: #FBF3DF;">
+    <p class="font-bold text-sm text-ink">Lensy — IES Assistant</p>
+    <p class="mt-1 text-gray-600">
+      <a href="https://www.ies.org" class="hover:underline">Illuminating Engineering Society</a>
+      <span class="mx-1.5">·</span>
+      <a href="mailto:Standards@ies.org" class="underline underline-offset-2 hover:text-ink">Standards@ies.org</a>
     </p>
-    <p class="mt-2 text-gray-300">Always refer to the full IES Standard for authoritative guidance.</p>
+    <p class="mt-3 text-gray-500">Always refer to the full IES Standards for authoritative guidance</p>
   </footer>
+
+  <!-- ── Compare Versions overlay (client wireframes, 2026-08-20) ─────────────
+       A floating window, to emphasize that this is a unique search type. The
+       suggestion list fills from the standards index; limiting it to standards
+       with a previous edition available (the wireframe's auto-filter) needs the
+       API to say which families carry one — until then every current standard
+       is offered. -->
+  <div id="compare-overlay" class="hidden fixed inset-0 z-50 flex items-start justify-center pt-24 px-4 no-print">
+    <div class="absolute inset-0 bg-black/30 modal-backdrop" onclick="closeCompareOverlay()"></div>
+    <div class="relative bg-white rounded-2xl shadow-2xl w-full max-w-xl p-6 fade-in">
+      <button onclick="closeCompareOverlay()" class="absolute top-3 right-3 p-1.5 text-gray-400 hover:text-gray-700 rounded-md hover:bg-gray-100 transition" title="Close">
+        <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
+        </svg>
+      </button>
+      <h3 class="text-center text-lg font-bold text-gray-900">Compare Versions</h3>
+      <p class="text-center text-xs text-gray-500 mt-1.5 max-w-md mx-auto leading-relaxed">
+        This tool utilizes AI technology to summarize changes between a published standard and its
+        previous edition. Perform a manual review of both documents for authoritative analysis.
+      </p>
+      <div class="mt-4 relative">
+        <div class="border-2 border-gray-300 rounded-xl p-1.5 flex items-center gap-2 search-glow transition">
+          <input type="text" id="compare-input"
+                 placeholder="Type the name of a current standard to compare"
+                 autocomplete="off"
+                 class="flex-1 min-w-0 px-3 py-2.5 text-sm text-gray-900 placeholder-gray-400 bg-transparent outline-none"
+                 oninput="renderCompareSuggestions()"
+                 onkeydown="if(event.key==='Enter')compareFromOverlay()"/>
+          <button onclick="compareFromOverlay()"
+                  class="px-4 py-2.5 text-white rounded-lg text-sm font-bold transition shrink-0 hover:brightness-95"
+                  style="background-color: var(--brand-accent-dark, #D8930F);">
+            Compare
+          </button>
+        </div>
+        <div id="compare-suggestions"
+             class="hidden absolute left-0 right-0 mt-1 bg-white rounded-xl shadow-xl border border-gray-100 text-left z-50 overflow-hidden max-h-64 overflow-y-auto">
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Refine your search overlay (client wireframes, 2026-08-20) ───────────
+       Shown over the results when a search came back broad or low-confidence.
+       Not a chatbot: one brief follow-up, clickable suggestion terms drawn from
+       the result set, and an explicit way to continue without refining. -->
+  <div id="refine-overlay" class="hidden fixed inset-0 z-50 flex items-start justify-center pt-24 px-4 no-print">
+    <div class="absolute inset-0 bg-black/30 modal-backdrop" onclick="closeRefineOverlay()"></div>
+    <div class="relative bg-white rounded-2xl shadow-2xl w-full max-w-xl p-6 fade-in">
+      <h3 class="text-center text-lg font-bold text-gray-900">Refine your search?</h3>
+      <p class="text-center text-xs text-gray-500 mt-1.5">
+        This search resulted in a wide range of results:<br>
+        <span id="refine-query" class="font-medium text-gray-700"></span>
+      </p>
+      <div id="refine-chips" class="hidden mt-3 flex flex-wrap gap-1.5 justify-center"></div>
+      <div class="mt-4 border-2 border-gray-300 rounded-xl p-1.5 flex items-center gap-2 search-glow transition">
+        <input type="text" id="refine-input"
+               placeholder="What specifically are you searching for?"
+               autocomplete="off"
+               class="flex-1 min-w-0 px-3 py-2.5 text-sm text-gray-900 placeholder-gray-400 bg-transparent outline-none"
+               onkeydown="if(event.key==='Enter')performRefine()"/>
+        <button onclick="performRefine()"
+                class="px-4 py-2.5 text-white rounded-lg text-sm font-bold transition shrink-0 flex items-center gap-1.5 hover:brightness-95"
+                style="background-color: var(--brand-accent-dark, #D8930F);">
+          <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+          </svg>
+          Refine Search
+        </button>
+      </div>
+      <button onclick="closeRefineOverlay()"
+              class="mx-auto mt-4 block px-4 py-2 border border-gray-300 rounded-lg text-sm text-gray-600 hover:bg-gray-50 transition">
+        No thanks. Continue without refining.
+      </button>
+    </div>
+  </div>
 
   <!-- ── Add to Project Modal ───────────────────────────────────────────────── -->
   <div id="project-modal" class="hidden fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4">
@@ -675,16 +994,16 @@
     let allResults = [];
     let currentPage = 1;
 
-    // ── Filter state (DO32, revised by DO57) ─────────────────────────────────
+    // ── Filter state (DO32, revised by DO57 and the 2026-08-20 wireframes) ───
     // One object drives every control, so the visible state and the request
     // payload can never disagree.
     //
-    // DO57 changed the defaults and the shape of the row: "Begin with all
-    // 'contents' filters selected … any combination of the 'contents' filters is
-    // possible (AI Guide and Compare Documents are removed from the filter
-    // section)". So all four content kinds start on, and `guide` / `compare`
-    // remain in this object — they still travel with the request — but their
-    // controls now live in the search box and the top banner respectively.
+    // DO57 set the defaults: all four content kinds start on, any combination
+    // is possible, and `guide` / `compare` remain in this object — they still
+    // travel with the request. The 2026-08-20 wireframes moved the CONTROLS:
+    // the content kinds are checkboxes in the Sort/Filter sidebar, the AI
+    // Guide toggle is in the account menu, and Compare Versions is armed from
+    // its floating window in the banner.
     //
     // `guide` now starts ON (client, Aug 2026: "AI guide will now be on by
     // default"). It costs a 70B generation on every uncached search — the
@@ -731,6 +1050,10 @@
       accessTier = tier === 'lite' ? 'lite' : 'full';
       document.getElementById('wordmark').textContent = isLite() ? 'LensyLite' : 'Lensy';
       document.title = isLite() ? 'LensyLite — IES Standards Search' : 'Lensy — IES Standards Search';
+      // The account menu names the tier and offers Subscribe to non-subscribers
+      // (wireframe: "Subscribe (if non-subscriber)").
+      document.getElementById('menu-tier-label').textContent = isLite() ? 'LensyLite' : 'Lensy';
+      document.getElementById('menu-subscribe').classList.toggle('hidden', !isLite());
       if (isLite()) {
         filterState = normalizeForTier(filterState);
         const banner = document.getElementById('lite-banner');
@@ -741,14 +1064,27 @@
       renderFilterPills();
     }
 
-    // The signed-in member's tier arrives with the session (auth-gate.js).
+    // The signed-in member's tier arrives with the session (auth-gate.js). The
+    // account menu takes the email and the Sign out link from the chip
+    // auth-gate appends (hidden here by CSS — this page renders both itself).
     document.addEventListener('lensy:auth', (e) => {
       if (e.detail && e.detail.tier) applyTier(e.detail.tier);
+      const who = e.detail && (e.detail.email || e.detail.name);
+      if (who) document.getElementById('menu-email').textContent = who;
+      const chipLink = document.querySelector('#lensy-user-chip a');
+      if (chipLink && chipLink.getAttribute) {
+        const href = chipLink.getAttribute('href');
+        const signout = document.getElementById('menu-signout');
+        if (href && signout) signout.setAttribute('href', href);
+      }
+      // The sidebar's Documents lists and the name auto-suggest read the
+      // standards index; fetched once the session is confirmed.
+      loadStandardsIndex();
     });
 
     // Every control that reflects a filter carries data-filter, whichever chrome
-    // it lives in: a Content pill, the AI Guide toggle in the search box, or the
-    // Compare Documents button in the banner (DO57).
+    // it lives in: a Contents checkbox in the sidebar, the AI Guide toggle in
+    // the account menu, or the Compare Versions button in the banner.
     function pillFor(name) {
       return document.querySelector(`[data-filter="${name}"]`);
     }
@@ -760,6 +1096,15 @@
         const pill = pillFor(name);
         if (!pill) continue;
         pill.setAttribute('aria-pressed', on ? 'true' : 'false');
+        // Sidebar content kinds are checkboxes; buttons ignore `checked`.
+        if (pill.type === 'checkbox') pill.checked = !!on;
+      }
+
+      // Illuminance Tables is the PARENT of Interior/Exterior: half-selected
+      // shows as indeterminate, like a folder with one of two files ticked.
+      const tablesBox = pillFor('tables');
+      if (tablesBox && tablesBox.type === 'checkbox') {
+        tablesBox.indeterminate = !!filterState.tables && !(filterState.interior && filterState.exterior);
       }
 
       // The Interior / Exterior checkboxes ARE the Illuminance Tables filter, so
@@ -777,14 +1122,15 @@
         if (pill) pill.disabled = lockedForTier(name);
       }
 
+      // The account menu names the ACTION, not the state (wireframe: "Disable
+      // AI Guide (or) Enable AI Guide").
+      const guideLabel = document.getElementById('menu-guide-label');
+      if (guideLabel) guideLabel.textContent = filterState.guide ? 'Disable AI Guide' : 'Enable AI Guide';
+
       // Comparison is armed from the banner, so the hero says so — see the
       // #compare-hint markup.
       const hint = document.getElementById('compare-hint');
       if (hint) hint.classList.toggle('hidden', !filterState.compare);
-
-      // A cleared Illuminance Tables multi-select closes its own panel: leaving
-      // it open over an unpressed pill reads as a control that ignored the click.
-      if (!filterState.tables) setLocationMenu(false);
 
       // LensyLite: the three tools a subscription unlocks stay visible, locked
       // (client DO53). Applied LAST so nothing above can re-enable them, and the
@@ -795,34 +1141,28 @@
           if (!pill) continue;
           pill.disabled = true;
           pill.setAttribute('aria-pressed', 'false');
+          if (pill.type === 'checkbox') pill.checked = false;
           pill.title = 'Included with a Lighting Library subscription';
+          // The lock glyph sits inside the control when it is a button, and on
+          // the row label when the control is a checkbox input.
           const label = pill.querySelector ? pill.querySelector('.lock-label') : null;
           if (label) label.textContent = ' 🔒';
+          const row = pill.closest ? pill.closest('label') : null;
+          const rowLock = row && row.querySelector ? row.querySelector('.lock-label') : null;
+          if (rowLock) rowLock.textContent = ' 🔒';
         }
       }
+
+      updateFilterCounts();
     }
 
-    // ── Illuminance Tables panel (DO57 note 2) ───────────────────────────────
-    function setLocationMenu(open) {
-      const menu = document.getElementById('location-menu');
-      const pill = document.getElementById('pill-tables');
-      if (!menu || !pill) return;
-      const show = !!open && !lockedForTier('tables');
-      menu.classList.toggle('hidden', !show);
-      pill.setAttribute('aria-expanded', show ? 'true' : 'false');
-    }
+    // ── Illuminance Tables multi-select (DO57 note 2, sidebar since the
+    //    2026-08-20 wireframes) ──────────────────────────────────────────────
+    // The Interior/Exterior checkboxes sit permanently under the Illuminance
+    // Tables row in the Filter sidebar; the parent row's own state is DERIVED
+    // from them (syncTablesFromLocation), and ticking the parent sets both.
 
-    function locationMenuOpen() {
-      const menu = document.getElementById('location-menu');
-      return !!menu && !menu.classList.contains('hidden');
-    }
-
-    function toggleLocationMenu() {
-      if (lockedForTier('tables')) return;
-      setLocationMenu(!locationMenuOpen());
-    }
-
-    /** One of Interior / Exterior Applications changed inside the panel. */
+    /** One of Interior / Exterior changed inside the sidebar. */
     function setLocation(name, on) {
       if (name !== 'interior' && name !== 'exterior') return;
       if (lockedForTier('tables')) return;
@@ -832,6 +1172,19 @@
 
     function toggleLocation(name) {
       setLocation(name, !filterState[name]);
+    }
+
+    /** A content kind set directly (the sidebar checkboxes). `tables` drives
+     *  both of its applications — that is what a parent checkbox means. */
+    function setContentKind(name, on) {
+      if (!(name in filterState) || lockedForTier(name)) { renderFilterPills(); return; }
+      if (name === 'tables') {
+        filterState.interior = !!on;
+        filterState.exterior = !!on;
+      } else {
+        filterState[name] = !!on;
+      }
+      renderFilterPills();
     }
 
     /** Is this filter locked by the visitor's access tier (client DO53)? */
@@ -844,9 +1197,9 @@
       // Belt and braces with the disabled attribute: a locked tool cannot be
       // switched on from anywhere (client DO53).
       if (lockedForTier(name)) return;
-      // Illuminance Tables is the multi-select — a click on the pill opens it
-      // rather than flipping a boolean the two checkboxes own (DO57 note 2).
-      if (name === 'tables') { toggleLocationMenu(); return; }
+      // Illuminance Tables is the parent of its two applications — toggling the
+      // kind switches Interior and Exterior together (DO57 note 2).
+      if (name === 'tables') { setContentKind('tables', !filterState.tables); return; }
       filterState[name] = !filterState[name];
       renderFilterPills();
     }
@@ -870,7 +1223,7 @@
 
     function resetFilters() {
       filterState = normalizeForTier({ ...DEFAULT_FILTER_STATE });
-      setLocationMenu(false);
+      resetDocFilters();
       renderFilterPills();
     }
 
@@ -900,24 +1253,593 @@
 
     document.addEventListener('click', e => {
       const pill = e.target.closest ? e.target.closest('[data-filter]') : null;
-      if (pill && !pill.disabled) { toggleFilter(pill.dataset.filter); return; }
+      if (pill && !pill.disabled) {
+        // Compare Versions opens its floating window via its own handler — the
+        // filter is armed from inside the window, not by the nav click itself.
+        if (pill.id === 'nav-compare') return;
+        // Checkbox controls are read from their own `change` event: a click on
+        // their <label> is delivered twice, and a toggle-on-click would cancel
+        // itself out.
+        if (pill.type === 'checkbox') return;
+        toggleFilter(pill.dataset.filter);
+        return;
+      }
 
-      // A click anywhere else dismisses the Illuminance Tables panel.
-      if (locationMenuOpen() && !(e.target.closest && e.target.closest('#location-menu'))) {
-        setLocationMenu(false);
+      // A click anywhere else dismisses the account menu.
+      if (accountMenuOpen() && !(e.target.closest && e.target.closest('#account-wrap'))) {
+        setAccountMenu(false);
       }
     });
 
-    // The panel's checkboxes are read from their own `change` event, not from a
-    // click: a click on the <label> is delivered twice (once for the label, once
-    // forwarded to the input), and a toggle-on-click would cancel itself out.
+    // Checkbox filter controls (sidebar): the content kinds, their Interior /
+    // Exterior applications, and the Documents narrowing lists.
     document.addEventListener('change', e => {
       const box = e.target.closest ? e.target.closest('[data-loc]') : null;
-      if (box) setLocation(box.dataset.loc, box.checked);
+      if (box) { setLocation(box.dataset.loc, box.checked); return; }
+      const kind = e.target.closest ? e.target.closest('input[data-filter]') : null;
+      if (kind) { setContentKind(kind.dataset.filter, kind.checked); return; }
+      const doc = e.target.closest ? e.target.closest('[data-doc-filter]') : null;
+      if (doc) setDocFilterValue(doc.dataset.docFilter, doc.dataset.value, doc.checked);
     });
 
     document.addEventListener('keydown', e => {
-      if (e.key === 'Escape') setLocationMenu(false);
+      if (e.key !== 'Escape') return;
+      closeSidebar();          // closing applies — the checkboxes changed live
+      setAccountMenu(false);
+      closeCompareOverlay();
+      closeRefineOverlay();
+    });
+
+    // ── Sort (client wireframes, 2026-08-20) ─────────────────────────────────
+    // Client-side only: the API's ranking is "Relevance (Default)", and the
+    // other keys reorder the SAME result pool, so no extra round-trip and no
+    // change to what the search returned.
+    const SORT_KEYS = ['relevance', 'date', 'title', 'designation', 'committee'];
+    let sortState = { key: 'relevance', dir: 'asc' };
+
+    function setSort(key) {
+      if (!SORT_KEYS.includes(key)) return;
+      sortState.key = key;
+      updateSortUI();
+    }
+
+    function setSortDir(dir) {
+      sortState.dir = dir === 'desc' ? 'desc' : 'asc';
+      updateSortUI();
+    }
+
+    function updateSortUI() {
+      for (const el of document.querySelectorAll('[data-sort]') || []) {
+        el.setAttribute('aria-pressed', el.dataset.sort === sortState.key ? 'true' : 'false');
+      }
+      for (const el of document.querySelectorAll('[data-sort-dir]') || []) {
+        el.setAttribute('aria-pressed', el.dataset.sortDir === sortState.dir ? 'true' : 'false');
+      }
+    }
+
+    /** Strip the org prefix ("ANSI/IES ", "BSR/IES/AVIXA ") off a designation. */
+    function normalizeDesignation(designation) {
+      return String(designation || '').trim().toUpperCase()
+        .replace(/^(?:ANSI|BSR|IES)(?:\/[A-Z]+)*\s+/, '');
+    }
+
+    /** The designation a result belongs to, for sorting and document filters. */
+    function resultDesignation(r) {
+      if (!r) return null;
+      const direct = r.application?.standard || r.document?.id;
+      if (direct) return String(direct);
+      const m = /\b((?:LS|LP|RP|LM|LEM|TM|DG|HB|G|WP)-[\d.]+(?:-\d{2,4})?(?:\+E\d+)?(?:R\d+)?)\b/i
+        .exec(r.citationName || r.citation || '');
+      return m ? m[1].toUpperCase() : null;
+    }
+
+    /** "RP-8-25+E2" → 2025; "LM-63-19R25" → 2019 (the edition, not the reaffirmation). */
+    function editionYearOf(designation) {
+      const d = normalizeDesignation(designation).replace(/\s*\(R\d+\)$/, '');
+      const m = /-(\d{2})(?:\+E\d+)?(?:R\d{2})?$/.exec(d);
+      if (!m) return null;
+      const yy = Number(m[1]);
+      return yy + (yy >= 80 ? 1900 : 2000);
+    }
+
+    /** Numeric-aware designation compare: RP-2 before RP-10, then by edition. */
+    function compareDesignations(a, b) {
+      const parse = (id) => {
+        const m = /^([A-Z]+)-(\d+)(?:\.(\d+))?(?:-(\d{2}))?/.exec(normalizeDesignation(id));
+        return m ? [m[1], Number(m[2]), Number(m[3] || 0), Number(m[4] || 0)] : [normalizeDesignation(id), Infinity, 0, 0];
+      };
+      const [pa, na, sa, ea] = parse(a);
+      const [pb, nb, sb, eb] = parse(b);
+      return pa.localeCompare(pb) || na - nb || sa - sb || ea - eb;
+    }
+
+    /** The family a designation belongs to: "RP-8-25+E2" → "RP-8". */
+    function familyOf(designation) {
+      const m = /^([A-Z]+-\d+(?:\.\d+)?)/.exec(normalizeDesignation(designation));
+      return m ? m[1] : null;
+    }
+
+    function titleOf(r) {
+      const std = resultDesignation(r);
+      if (std && standardsTitleMap[std]) return standardsTitleMap[std];
+      const name = r.citationName || r.citation || '';
+      const stripped = name
+        .replace(/^(?:ANSI|BSR|IES)(?:\/[A-Z]+)*\s+/i, '')
+        .replace(/^[A-Z]+-[\d.]+(?:-\d{2,4})?(?:\+E\d+)?(?:R\d+)?\s*/i, '')
+        .trim();
+      return stripped || null;
+    }
+
+    function sortValue(r, key) {
+      if (key === 'date') return editionYearOf(resultDesignation(r));
+      if (key === 'title') { const t = titleOf(r); return t ? t.toLowerCase() : null; }
+      if (key === 'designation') return resultDesignation(r);
+      if (key === 'committee') { const c = r.committee?.name; return c ? c.toLowerCase() : null; }
+      return null;
+    }
+
+    /**
+     * Order a result pool by the active sort. Stable, with results the key does
+     * not apply to (no date, no committee, …) kept LAST regardless of direction
+     * — a missing value is not "smallest", it is "not sortable by this".
+     */
+    function sortResults(list) {
+      const { key, dir } = sortState;
+      if (key === 'relevance') return dir === 'desc' ? [...list].reverse() : list;
+      const mul = dir === 'desc' ? -1 : 1;
+      return list
+        .map((r, i) => ({ r, i, v: sortValue(r, key) }))
+        .sort((a, b) => {
+          if (a.v == null && b.v == null) return a.i - b.i;
+          if (a.v == null) return 1;
+          if (b.v == null) return -1;
+          const c = key === 'designation'
+            ? compareDesignations(a.v, b.v)
+            : (typeof a.v === 'number' ? a.v - b.v : String(a.v).localeCompare(String(b.v)));
+          return c !== 0 ? mul * c : a.i - b.i;
+        })
+        .map(d => d.r);
+    }
+
+    // ── Standards index (sidebar lists + name auto-suggest) ──────────────────
+    // One fetch of /api/standards fills the Title / Publication Type /
+    // Technical Committee lists and the "appears to be the name of a standard"
+    // suggestions. If it fails, the lists fill from each search's own results.
+    let standardsIndex = [];
+    let standardsTitleMap = {};
+
+    async function loadStandardsIndex() {
+      if (standardsIndex.length) return;
+      try {
+        const res = await fetch('/api/standards');
+        if (!res.ok) return;
+        const data = await res.json();
+        standardsIndex = (data.standards || []).filter(s => s && s.id);
+        standardsTitleMap = {};
+        for (const s of standardsIndex) {
+          if (s.title && s.title !== s.id) standardsTitleMap[s.id] = s.title;
+        }
+        seedDocFilterUniverse();
+      } catch { /* the sidebar lists then fill from search results instead */ }
+    }
+
+    // ── Document filters (client wireframes, 2026-08-20) ─────────────────────
+    // Publication Type / Title / Technical Committee, multi-select, all
+    // selected to begin with. "All selected" (and "none selected") means NO
+    // narrowing — the group only bites while a real subset is chosen. Applied
+    // client-side to the current result pool.
+    const DOC_FILTER_GROUPS = ['pubtype', 'title', 'committee'];
+    const PUB_TYPE_LABELS = {
+      LS: 'Lighting Science', LP: 'Lighting Practice', RP: 'Recommended Practice',
+      LM: 'Lighting Measurements', TM: 'Technical Memorandum', G: 'Guide',
+      WP: 'White Paper', DG: 'Design Guide', HB: 'Handbook', LEM: 'Lighting Energy Management',
+    };
+    // The wireframe's order; anything else the corpus adds follows alphabetically.
+    const PUB_TYPE_ORDER = ['LS', 'LP', 'RP', 'LM', 'TM', 'G', 'WP'];
+
+    let docFilterUniverse = { pubtype: [], title: [], committee: [] };
+    let docFilterSelected = { pubtype: new Set(), title: new Set(), committee: new Set() };
+    let docFilterSearch = { title: '', committee: '' };
+
+    function pubTypeOf(designation) {
+      const m = /^([A-Z]+)-/.exec(normalizeDesignation(designation));
+      return m ? m[1] : null;
+    }
+
+    function seedDocFilterUniverse() {
+      if (!standardsIndex.length) return;
+      const pub = new Map(), title = new Map(), com = new Map();
+      for (const s of standardsIndex) {
+        const p = pubTypeOf(s.id);
+        if (p) pub.set(p, PUB_TYPE_LABELS[p] || p);
+        title.set(s.id, {
+          label: s.full_designation || `ANSI/IES ${s.id}`,
+          sub: (s.title && s.title !== s.id) ? s.title : '',
+        });
+        const c = s.committee?.name
+          || (s.author ? (/^ies\b/i.test(String(s.author)) ? String(s.author) : `IES ${s.author}`) : null);
+        if (c) com.set(c, c);
+      }
+      setDocFilterUniverse(pub, title, com);
+    }
+
+    /** Fallback when /api/standards was unavailable: fill from the result set. */
+    function seedUniverseFromResults() {
+      if (standardsIndex.length || docFilterUniverse.title.length || !allResults.length) return;
+      const pub = new Map(), title = new Map(), com = new Map();
+      for (const r of allResults) {
+        const std = resultDesignation(r);
+        if (std) {
+          const p = pubTypeOf(std);
+          if (p) pub.set(p, PUB_TYPE_LABELS[p] || p);
+          if (!title.has(std)) title.set(std, { label: std, sub: titleOf(r) || '' });
+        }
+        const c = r.committee?.name;
+        if (c) com.set(c, c);
+      }
+      setDocFilterUniverse(pub, title, com);
+    }
+
+    function setDocFilterUniverse(pub, title, com) {
+      // Whatever the reader had DESELECTED survives a universe refresh; new
+      // entries arrive selected, matching "begin with all selected".
+      const deselected = {};
+      for (const g of DOC_FILTER_GROUPS) {
+        deselected[g] = new Set(
+          docFilterUniverse[g].map(i => i.value).filter(v => !docFilterSelected[g].has(v))
+        );
+      }
+      const orderPub = (a, b) => {
+        const ia = PUB_TYPE_ORDER.indexOf(a.value), ib = PUB_TYPE_ORDER.indexOf(b.value);
+        if (ia !== -1 || ib !== -1) return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
+        return a.value.localeCompare(b.value);
+      };
+      docFilterUniverse = {
+        pubtype: [...pub.entries()].map(([value, label]) => ({ value, label })).sort(orderPub),
+        title: [...title.entries()].map(([value, meta]) => ({ value, ...meta }))
+          .sort((a, b) => compareDesignations(a.value, b.value)),
+        committee: [...com.keys()].sort((a, b) => a.localeCompare(b)).map(v => ({ value: v, label: v })),
+      };
+      for (const g of DOC_FILTER_GROUPS) {
+        docFilterSelected[g] = new Set(
+          docFilterUniverse[g].map(i => i.value).filter(v => !deselected[g].has(v))
+        );
+      }
+      renderDocFilterLists();
+    }
+
+    /** Is this group actually narrowing? All or none selected = inactive. */
+    function docGroupActive(group) {
+      const u = docFilterUniverse[group].length;
+      const s = docFilterSelected[group].size;
+      return u > 0 && s > 0 && s < u;
+    }
+
+    function docGroupAppliedCount(group) {
+      return docGroupActive(group) ? docFilterSelected[group].size : 0;
+    }
+
+    function contentSelectedCount() {
+      return CONTENT_PILLS.filter(name => filterState[name]).length;
+    }
+
+    // The FILTER badge: the selected content kinds plus every applied document
+    // narrowing (the wireframe's "Indicates qty filters applied").
+    function filterAppliedTotal() {
+      return contentSelectedCount()
+        + DOC_FILTER_GROUPS.reduce((n, g) => n + docGroupAppliedCount(g), 0);
+    }
+
+    function updateFilterCounts() {
+      const set = (id, text) => {
+        const el = document.getElementById(id);
+        if (el) el.textContent = text;
+      };
+      set('contents-count', `(${contentSelectedCount()})`);
+      set('pubtype-count', `(${docGroupAppliedCount('pubtype')})`);
+      set('title-count', `(${docGroupAppliedCount('title')})`);
+      set('committee-count', `(${docGroupAppliedCount('committee')})`);
+      set('filter-count', `(${filterAppliedTotal()})`);
+      set('filter-trigger-count', `(${filterAppliedTotal()})`);
+    }
+
+    function docFilterListHtml(group) {
+      if (!docFilterUniverse[group].length) {
+        return `<p class="text-[11px] text-gray-400 px-1 py-1.5">The list fills from the library index once it loads.</p>`;
+      }
+      const q = String(docFilterSearch[group] || '').toLowerCase();
+      const items = docFilterUniverse[group].filter(i =>
+        !q || i.value.toLowerCase().includes(q)
+          || String(i.label || '').toLowerCase().includes(q)
+          || String(i.sub || '').toLowerCase().includes(q));
+      if (!items.length) {
+        return `<p class="text-[11px] text-gray-400 px-1 py-1.5">Nothing matches that filter.</p>`;
+      }
+      return items.map(i => `
+        <label class="side-check">
+          <input type="checkbox" data-doc-filter="${group}" data-value="${escapeHtml(i.value)}"
+                 ${docFilterSelected[group].has(i.value) ? 'checked' : ''}
+                 class="mt-0.5 rounded accent-ies-blue shrink-0"/>
+          <span class="text-xs leading-snug min-w-0">
+            ${group === 'pubtype' ? `<span class="font-mono font-bold mr-1">${escapeHtml(i.value)}</span>` : ''}
+            <span class="${group === 'title' ? 'font-medium' : ''}">${escapeHtml(i.label)}</span>
+            ${i.sub ? `<span class="block text-[11px] text-gray-400">${escapeHtml(i.sub)}</span>` : ''}
+          </span>
+        </label>`).join('');
+    }
+
+    function renderDocFilterLists(onlyGroup) {
+      const containers = { pubtype: 'pubtype-list', title: 'title-list', committee: 'committee-list' };
+      for (const g of DOC_FILTER_GROUPS) {
+        if (onlyGroup && g !== onlyGroup) continue;
+        const el = document.getElementById(containers[g]);
+        if (el) el.innerHTML = docFilterListHtml(g);
+      }
+      if (!onlyGroup) {
+        const ts = document.getElementById('title-search');
+        if (ts) ts.value = docFilterSearch.title || '';
+        const cs = document.getElementById('committee-search');
+        if (cs) cs.value = docFilterSearch.committee || '';
+      }
+      updateFilterCounts();
+    }
+
+    function setDocFilterSearch(group, value) {
+      if (!(group in docFilterSearch)) return;
+      docFilterSearch[group] = String(value || '');
+      renderDocFilterLists(group);
+    }
+
+    function setDocFilterValue(group, value, on) {
+      if (!DOC_FILTER_GROUPS.includes(group) || value == null) return;
+      if (on) docFilterSelected[group].add(value);
+      else docFilterSelected[group].delete(value);
+      updateFilterCounts();
+    }
+
+    function setAllDocFilter(group, on) {
+      if (!DOC_FILTER_GROUPS.includes(group)) return;
+      docFilterSelected[group] = new Set(on ? docFilterUniverse[group].map(i => i.value) : []);
+      renderDocFilterLists(group);
+    }
+
+    function resetDocFilters() {
+      for (const g of DOC_FILTER_GROUPS) {
+        docFilterSelected[g] = new Set(docFilterUniverse[g].map(i => i.value));
+      }
+      docFilterSearch = { title: '', committee: '' };
+      renderDocFilterLists();
+    }
+
+    /**
+     * Does a result survive the Documents narrowing? Titles match by FAMILY
+     * (RP-8), so a version comparison's deprecated editions stay with the
+     * current edition the reader selected.
+     */
+    function passesDocFilters(r) {
+      const std = resultDesignation(r);
+      if (docGroupActive('pubtype')) {
+        if (!std || !docFilterSelected.pubtype.has(pubTypeOf(std))) return false;
+      }
+      if (docGroupActive('title')) {
+        const fam = std && familyOf(std);
+        if (!fam) return false;
+        let hit = false;
+        for (const sel of docFilterSelected.title) {
+          if (familyOf(sel) === fam) { hit = true; break; }
+        }
+        if (!hit) return false;
+      }
+      if (docGroupActive('committee')) {
+        const c = r.committee?.name;
+        if (!c || !docFilterSelected.committee.has(c)) return false;
+      }
+      return true;
+    }
+
+    // ── Sort / Filter sidebar chrome ─────────────────────────────────────────
+    let lastSearchFiltersKey = '';
+
+    function openSidebar(section) {
+      const aside = document.getElementById('sortfilter-sidebar');
+      const backdrop = document.getElementById('sidebar-backdrop');
+      if (!aside) return;
+      aside.classList.remove('hidden');
+      if (backdrop) backdrop.classList.remove('hidden');
+      document.body.style.overflow = 'hidden';
+      // The clicked trigger's section opens; the other collapses (wireframe).
+      const sort = document.getElementById('sort-section');
+      const filter = document.getElementById('filter-section');
+      if (sort) sort.open = section !== 'filter';
+      if (filter) filter.open = section !== 'sort';
+    }
+
+    function closeSidebar() {
+      const aside = document.getElementById('sortfilter-sidebar');
+      if (!aside || aside.classList.contains('hidden')) return;
+      aside.classList.add('hidden');
+      const backdrop = document.getElementById('sidebar-backdrop');
+      if (backdrop) backdrop.classList.add('hidden');
+      document.body.style.overflow = '';
+      applySidebarSelections();
+    }
+
+    /**
+     * Apply what the sidebar now says. Content kinds and Interior/Exterior
+     * change WHAT the API is asked for, so those re-run the search; sort and
+     * the Documents narrowing reorder/trim the pool already on screen.
+     */
+    function applySidebarSelections() {
+      if (!lastQuery) return;
+      if (!anyContentSelected()) {
+        showToast('Choose at least one content type to search', 'error');
+        return;
+      }
+      if (JSON.stringify(collectFilters()) !== lastSearchFiltersKey) {
+        document.getElementById('search-input').value = lastQuery;
+        performSearch();
+        return;
+      }
+      currentPage = 1;
+      renderDocChips();
+      renderResultsPage();
+      updateBulkActionsUI();
+    }
+
+    // ── Account menu (client wireframes, 2026-08-20) ─────────────────────────
+    function accountMenuOpen() {
+      const m = document.getElementById('account-menu');
+      return !!m && !m.classList.contains('hidden');
+    }
+
+    function setAccountMenu(open) {
+      const m = document.getElementById('account-menu');
+      if (!m) return;
+      m.classList.toggle('hidden', !open);
+      const btn = document.getElementById('account-menu-btn');
+      if (btn) btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    }
+
+    function toggleAccountMenu() {
+      setAccountMenu(!accountMenuOpen());
+    }
+
+    // ── Compare Versions overlay (client wireframes, 2026-08-20) ─────────────
+    function openCompareOverlay() {
+      if (lockedForTier('compare')) return;
+      const el = document.getElementById('compare-overlay');
+      if (!el) return;
+      el.classList.remove('hidden');
+      document.body.style.overflow = 'hidden';
+      const input = document.getElementById('compare-input');
+      if (input && input.focus) input.focus();
+      renderCompareSuggestions();
+    }
+
+    function closeCompareOverlay() {
+      const el = document.getElementById('compare-overlay');
+      if (!el || el.classList.contains('hidden')) return;
+      el.classList.add('hidden');
+      document.body.style.overflow = '';
+    }
+
+    // The phrasing the comparison path answers best (it is the demo search's) —
+    // the backend resolves the family and the prior edition from it.
+    function buildCompareQuery(name) {
+      return `What is new in the current version of ${String(name || '').trim()}?`;
+    }
+
+    function compareFromOverlay(designation) {
+      const input = document.getElementById('compare-input');
+      const raw = stripQueryLabel(designation != null ? designation : (input ? input.value : ''));
+      if (!raw) return;
+      if (lockedForTier('compare')) return;
+      filterState.compare = true;
+      if (!filterState.body) filterState.body = true;   // the comparison reads the documents' prose
+      renderFilterPills();
+      document.getElementById('search-input').value = buildCompareQuery(raw);
+      closeCompareOverlay();
+      performSearch();
+    }
+
+    function renderCompareSuggestions() {
+      const box = document.getElementById('compare-suggestions');
+      const input = document.getElementById('compare-input');
+      if (!box || !input) return;
+      const q = String(input.value || '').trim().toLowerCase();
+      const rows = standardsIndex.filter(s =>
+        !q || String(s.id).toLowerCase().includes(q)
+          || String(s.full_designation || '').toLowerCase().includes(q)
+          || String(s.title || '').toLowerCase().includes(q)
+      ).slice(0, 8);
+      if (!rows.length) { box.classList.add('hidden'); box.innerHTML = ''; return; }
+      box.innerHTML = rows.map(s => `
+        <button class="compare-suggestion w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 transition"
+                data-designation="${escapeHtml(s.id)}">
+          <span class="font-semibold">${escapeHtml(s.full_designation || 'ANSI/IES ' + s.id)}</span>
+          ${(s.title && s.title !== s.id) ? `<span class="text-gray-500"> — ${escapeHtml(s.title)}</span>` : ''}
+        </button>`).join('');
+      box.classList.remove('hidden');
+    }
+
+    document.getElementById('compare-suggestions').addEventListener('mousedown', e => {
+      const btn = e.target.closest ? e.target.closest('.compare-suggestion') : null;
+      if (!btn) return;
+      e.preventDefault();
+      compareFromOverlay(btn.dataset.designation);
+    });
+
+    // ── Refine your search overlay (client wireframes, 2026-08-20) ───────────
+    // One brief follow-up when a search came back broad or low-confidence —
+    // a dynamic filter, not a chatbot. Dismissing it (any close that is not a
+    // refinement) is remembered per query, so it never nags the same search.
+    let refineBaseQuery = '';
+    let refineDismissedQuery = null;
+
+    function maybeOfferRefine(data) {
+      if (!data || data.isVersionComparison || filterState.compare) return;
+      const query = data.query || lastQuery;
+      if (!query || query === refineDismissedQuery) return;
+      const distinct = new Set(allResults.map(resultDesignation).filter(Boolean)).size;
+      const broad = allResults.length >= 20 && distinct >= 5;
+      if (!data.noStrongMatch && !broad) return;
+      openRefineOverlay(query);
+    }
+
+    /** Clickable suggestion terms, drawn from the applications in the results. */
+    function refineSuggestionsFrom(results) {
+      const seen = new Set();
+      const out = [];
+      for (const r of results) {
+        const label = r.application?.category;
+        if (!label || seen.has(label)) continue;
+        seen.add(label);
+        out.push(label);
+        if (out.length >= 6) break;
+      }
+      return out;
+    }
+
+    function openRefineOverlay(query) {
+      const el = document.getElementById('refine-overlay');
+      if (!el) return;
+      refineBaseQuery = query;
+      document.getElementById('refine-query').textContent = `"${query}"`;
+      const chips = refineSuggestionsFrom(allResults);
+      const wrap = document.getElementById('refine-chips');
+      if (wrap) {
+        wrap.innerHTML = chips.map(c => `
+          <button class="refine-chip text-xs px-2.5 py-1 rounded-full border border-gray-300 text-gray-600 hover:border-ies-blue hover:text-ies-blue transition"
+                  data-term="${escapeHtml(c)}">${escapeHtml(c)}</button>`).join('');
+        wrap.classList.toggle('hidden', chips.length === 0);
+      }
+      const input = document.getElementById('refine-input');
+      if (input) input.value = '';
+      el.classList.remove('hidden');
+    }
+
+    function closeRefineOverlay() {
+      const el = document.getElementById('refine-overlay');
+      if (!el || el.classList.contains('hidden')) return;
+      el.classList.add('hidden');
+      refineDismissedQuery = refineBaseQuery;   // "No thanks" sticks for this query
+    }
+
+    function performRefine(term) {
+      const input = document.getElementById('refine-input');
+      const extra = String(term != null ? term : (input ? input.value : '')).trim();
+      if (!extra) return;
+      const refined = `${refineBaseQuery} ${extra}`;
+      refineDismissedQuery = refined;   // don't re-prompt on the refined search
+      const el = document.getElementById('refine-overlay');
+      if (el) el.classList.add('hidden');
+      document.getElementById('search-input').value = refined;
+      performSearch();
+    }
+
+    document.getElementById('refine-chips').addEventListener('click', e => {
+      const chip = e.target.closest ? e.target.closest('.refine-chip') : null;
+      if (chip) performRefine(chip.dataset.term);
     });
 
     // ── Suggestions: recent searches + the client's demo searches (DO32) ──────
@@ -958,14 +1880,33 @@
 
     const CLOCK_ICON = `<svg class="w-3.5 h-3.5 text-gray-300 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path stroke-linecap="round" d="M12 7v5l3 2"/></svg>`;
     const GLASS_ICON = `<svg class="w-3.5 h-3.5 text-gray-300 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>`;
+    const DOC_ICON = `<svg class="w-3.5 h-3.5 text-gray-300 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6M9 8h2m8-2v14a2 2 0 01-2 2H7a2 2 0 01-2-2V4a2 2 0 012-2h7l5 5z"/></svg>`;
+
+    /**
+     * Standards whose NAME the typed text matches (wireframe: "Enable
+     * auto-suggest if the search appears to be the name of a standard").
+     * A row's data-query is the designation, so clicking it runs the search
+     * that returns the whole-document card (DO47).
+     */
+    function standardsMatching(typed) {
+      const q = String(typed || '').trim().toLowerCase();
+      if (q.length < 3 || !standardsIndex.length) return [];
+      return standardsIndex.filter(s =>
+        String(s.id).toLowerCase().includes(q)
+          || String(s.full_designation || '').toLowerCase().includes(q)
+          || String(s.title || '').toLowerCase().includes(q)
+      ).slice(0, 5);
+    }
 
     function renderSuggestions() {
       const box = document.getElementById('search-suggestions');
-      const typed = document.getElementById('search-input').value.trim().toLowerCase();
+      const typedRaw = document.getElementById('search-input').value.trim();
+      const typed = typedRaw.toLowerCase();
 
+      const stds = standardsMatching(typedRaw);
       const recent = recentSearches().filter(q => !typed || q.toLowerCase().includes(typed));
       const demos = DEMO_SEARCHES.filter(d => !typed || d.query.toLowerCase().includes(typed));
-      if (recent.length === 0 && demos.length === 0) { closeSuggestions(); return; }
+      if (stds.length === 0 && recent.length === 0 && demos.length === 0) { closeSuggestions(); return; }
 
       const section = (label, rows) => rows.length === 0 ? '' : `
         <p class="px-4 pt-3 pb-1 text-[11px] font-semibold uppercase tracking-wider text-gray-400">${label}</p>
@@ -976,7 +1917,10 @@
           ${icon}<span class="truncate">${escapeHtml(text)}</span>
         </button>`;
 
+      const stdLabel = (s) => `${s.full_designation || `ANSI/IES ${s.id}`}${(s.title && s.title !== s.id) ? ` — ${s.title}` : ''}`;
+
       box.innerHTML =
+        section('Standards', stds.map(s => row(DOC_ICON, stdLabel(s), `data-query="${escapeHtml(s.id)}"`))) +
         section('Recent', recent.map(q => row(CLOCK_ICON, q, `data-query="${escapeHtml(q)}"`))) +
         section('Try searching for', demos.map((d, i) => row(GLASS_ICON, d.query, `data-query="${escapeHtml(d.query)}" data-demo="${i}"`))) +
         '<div class="h-2"></div>';
@@ -1080,20 +2024,28 @@
       lastQuery = query;
       rememberSearch(query);
       closeSuggestions();
+      setAccountMenu(false);
+      closeCompareOverlay();
+      const refine = document.getElementById('refine-overlay');
+      if (refine) refine.classList.add('hidden');   // superseded by the new search, not dismissed
 
       // Sync compact search bar
       document.getElementById('compact-search-input').value = query;
       document.getElementById('hero-section').classList.add('no-print');
 
-      // Shrink hero after first search
-      document.getElementById('hero-section').style.paddingTop = '2rem';
-      document.getElementById('hero-section').style.paddingBottom = '2rem';
+      // Shrink hero after first search: the mark gives way to the results.
+      document.getElementById('hero-logo').classList.add('hidden');
+      document.getElementById('hero-inner').style.paddingTop = '1.25rem';
+      document.getElementById('hero-inner').style.paddingBottom = '1.25rem';
       document.getElementById('compact-search').classList.remove('hidden');
 
       showLoading(true);
       clearResults();
 
       const filters = collectFilters();
+      // What this search was ASKED with — the sidebar compares against it to
+      // know whether closing needs a re-run or just a local re-render.
+      lastSearchFiltersKey = JSON.stringify(filters);
       const includeAI = !!filterState.guide;
 
       try {
@@ -1181,11 +2133,20 @@
         return;
       }
 
+      // If /api/standards was unavailable, the sidebar's Documents lists fill
+      // from this result set instead.
+      seedUniverseFromResults();
+
       renderDocChips();
       renderResultsPage();
       // Which of these are already filed away (client DO61). Not awaited: it only
       // relabels buttons, and the results are already on screen.
       refreshSavedState();
+
+      // Broad or low-confidence search → one brief follow-up prompt (client
+      // wireframes, 2026-08-20). After the results render, so "No thanks"
+      // lands on a page that is already answering.
+      maybeOfferRefine(data);
     }
 
     // ── Document filter chips ────────────────────────────────────────────────
@@ -1198,7 +2159,9 @@
       const wrap = document.getElementById('doc-chips');
       const seen = [];
       const counts = {};
-      for (const r of allResults) {
+      // Counted over the sidebar-narrowed pool, so a chip never promises more
+      // results than the list below it will show.
+      for (const r of allResults.filter(passesDocFilters)) {
         const std = r.application?.standard;
         if (!std) continue;
         if (!counts[std]) { seen.push(std); counts[std] = 0; }
@@ -1240,13 +2203,14 @@
     }
 
     function visibleResults() {
-      if (!activeDocFilter) return allResults;
-      return allResults.filter(r => r.application?.standard === activeDocFilter);
+      let pool = allResults.filter(passesDocFilters);
+      if (activeDocFilter) pool = pool.filter(r => r.application?.standard === activeDocFilter);
+      return pool;
     }
 
     // Render the current page's slice of the visible results plus pagination.
     function renderResultsPage() {
-      const pool = visibleResults();
+      const pool = sortResults(visibleResults());
       const total = pool.length;
       const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
       currentPage = Math.min(Math.max(1, currentPage), totalPages);
@@ -3147,8 +4111,12 @@
       if (navCompare) navCompare.style.display = 'flex';
     }
     renderFilterPills();
+    renderDocFilterLists();
+    // If the session was confirmed before this script ran, the auth event has
+    // already fired — fetch the standards index now instead of never.
+    if (window.lensyUser) loadStandardsIndex();
 
-    // Deep link: /?q=RP-2-20+E1 runs that search on load. The Table of Contents
+    // Deep link: /?q=RP-2-20+E1 runs that search on load. The List Standards
     // page's "Search in Lensy" buttons use it (DO32).
     (function runQueryFromUrl() {
       const q = new URLSearchParams(location.search).get('q');

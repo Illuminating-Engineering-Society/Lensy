@@ -1397,7 +1397,21 @@ The UI label for each kind matches the filter label exactly — "Documents" filt
 
 A fifth `resultType`, **`standard`**, is not a filter value: it is the whole-document card a designation or title search returns (see below). It is a Document, so it borrows the `excerpt` label, line style and palette rather than owning a fifth one.
 
-### The search UI is one row of content filters (client DO57)
+### The 2026-08-20 wireframe round moved every control (UI only)
+
+The client's annotated wireframes reorganized the search page chrome. **`filterState` and what reaches the API did not change** — the same `guide`/`compare`/content-kind booleans travel exactly as before; only their CONTROLS moved. All existing tier locks (DO53) still apply to the relocated controls, because everything still carries `data-filter`.
+
+- **Gold banner on every page**: Browse Your Lighting Library (opens `lighting.ies.org`), **Compare Versions** (formerly Compare Documents — now opens a floating window with its own input; the window arms `compare` and runs `buildCompareQuery(designation)`, the demo search's phrasing), **List Standards** (formerly Table of Contents, page heading renamed too), and a hamburger **account menu**: signed-in email, tier name, the **AI Guide toggle** (moved out of the search box; menu item reads "Disable/Enable AI Guide"), **My Bookmarks** (formerly Saved Searches, → projects.html), Subscribe (lite only), Sign out. auth-gate's appended chip is CSS-hidden on index only; the menu copies its logout href.
+- **White hero** with the circular Lensy/LensyLite mark (`#wordmark` still lives there, so `applyTier` is unchanged in contract) and the search box with the gold Search button. Placeholder: "Type a topic or ask a question".
+- **The content filters left the hero for a Sort/Filter sidebar**, opened from a floating trigger anchored top-left. Contents checkboxes = the same four kinds (labels per wireframe: "Document Body", "Definitions (ANSI/IES LS-1)", "References", "Illuminance Tables"); Interior/Exterior are permanent nested checkboxes and the Illuminance Tables row is their PARENT (toggling the kind switches both; the old click-to-open `location-menu` is gone). "View Results"/backdrop/Escape all APPLY: content-kind or Interior/Exterior changes re-run the search (compared against `lastSearchFiltersKey`), everything else re-renders locally.
+- **Sort** (client-side reorder of the same pool): Relevance (default = API order), Date (`editionYearOf` off the designation), Title, Designation (numeric-aware), Technical Committee; asc/desc; un-sortable results always land last.
+- **Documents narrowing** (client-side, all-selected = inactive): Publication Type (prefix of the designation), Title (matches by FAMILY via `familyOf`, so deprecated comparison editions stay with their standard), Technical Committee. Lists fill from `/api/standards` (fetched on `lensy:auth`), falling back to the current result set. Counts follow the wireframe: Contents shows its selected count, Documents groups show 0 unless actually narrowing, FILTER/trigger badge is the sum.
+- **Standard-name auto-suggest** in the search box: ≥3 typed chars matching a designation or title offer up to 5 standards; clicking runs the designation search (→ DO47 whole-document card).
+- **Refine your search overlay**: after results render, if `noStrongMatch` or the pool is broad (≥20 results across ≥5 standards), one brief follow-up with clickable terms drawn from the result categories; "No thanks" is remembered per query. Never on comparisons.
+- **Cream footer** ("Lensy — IES Assistant").
+- Wireframe items needing backend support, left as UI-only best effort: the Compare Versions suggestion list cannot yet be limited to standards WITH a previous edition (the index doesn't say), and the refine prompt's question is generic rather than query-aware.
+
+### The search UI is one row of content filters (client DO57) — superseded by the 2026-08-20 wireframes above; the filterState contract described here still holds
 
 "Refine search UI / Simplify UI." The filter section holds content KINDS and nothing else; the two tools that are not kinds moved to where they are used.
 
