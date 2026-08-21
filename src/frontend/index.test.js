@@ -951,6 +951,54 @@ describe('Compare Versions overlay', () => {
   });
 });
 
+// ─── 2026-08-20: AI curation — "Cited by AI Guide" badges ─────────────────────
+
+describe('AI curation badges', () => {
+  const cited = `{
+    resultType: 'excerpt', relevanceScore: 0.7, citedByGuide: true,
+    citationName: 'ANSI/IES RP-8-25+E2 Recommended Practice: Lighting Roadway and Parking Facilities',
+    citationPage: 21,
+    application: { standard: 'RP-8-25+E2' },
+    excerpt: { text: 'A passage of prose long enough to survive the table-dump filter on a card.',
+               chunkType: 'text', pageNumber: 21, section: '4.2' }
+  }`;
+
+  it('badges a card the AI Guide cites', () => {
+    const card = run(`renderResultCard({ key: 'k', members: [${cited}] }, 0)`);
+    expect(card).toContain('Cited by AI Guide');
+  });
+
+  it('leaves an uncited card unbadged', () => {
+    const card = run(`renderResultCard({ key: 'k', members: [{ ...${cited}, citedByGuide: false }] }, 0)`);
+    expect(card).not.toContain('Cited by AI Guide');
+  });
+
+  it('badges a merged section card when ANY of its passages was cited', () => {
+    const card = run(`renderResultCard({ key: 'k', members: [
+      { ...${cited}, citedByGuide: false },
+      { ...${cited}, citedByGuide: true,
+        excerpt: { text: 'Second passage of the same section, also long enough to render.',
+                   chunkType: 'text', pageNumber: 22, section: '4.2' } }
+    ] }, 0)`);
+    expect(card).toContain('Cited by AI Guide');
+  });
+
+  it('badges Definition and whole-document cards the same way', () => {
+    const def = run(`renderDefinitionCard({ resultType: 'definition', relevanceScore: 1, citedByGuide: true,
+      citationName: 'ANSI/IES LS-1-25', citationPage: null,
+      definition: { slug: 'glare', term: 'glare', clause: '4.9', html: '<p>x</p>', sourceUrl: null },
+      excerpt: { text: 'Sensation produced by luminances.' } }, 0)`);
+    expect(def).toContain('Cited by AI Guide');
+
+    const std = run(`renderStandardCard({ resultType: 'standard', relevanceScore: 1, citedByGuide: true,
+      citationName: 'ANSI/IES RP-3-20+E1', citationPage: null,
+      application: { standard: 'RP-3-20+E1' },
+      document: { id: 'RP-3-20+E1', designation: 'ANSI/IES RP-3-20+E1', title: 'T', description: 'D',
+                  thumbnailUrl: null, buyUrl: null, collection: null, matchedOn: 'designation' } }, 0)`);
+    expect(std).toContain('Cited by AI Guide');
+  });
+});
+
 // ─── 2026-08-20 wireframes: standard-name auto-suggest ────────────────────────
 
 describe('standard-name auto-suggest', () => {

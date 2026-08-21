@@ -76,6 +76,7 @@ import {
 } from '../lib/tiers';
 import { resolveRequestTier } from './session';
 import { generateResponse } from '../lib/ai-summary';
+import { rerankResults, extractGuideCitations, curateResults } from '../lib/curation';
 import { formatCitation, composeStandardName } from '../lib/citations';
 import { looksLikeFormalReference, referenceCitationKey } from '../lib/references.js';
 import { referenceEntryNumber } from '../lib/reference-markers.js';
@@ -93,9 +94,9 @@ import {
 } from '../lib/cache';
 import standardsSchema from '../config/standards-schema.json';
 import type {
-  AIMode, ApplicationRow, ComparisonContext, ContentType, Excerpt, FootnoteMarks, FormattedApplication,
-  OutdoorGuidance, ReferenceLink, ReferenceMarker, RelatedApplication, SearchFilters, SearchResult,
-  StandardIndexEntry, StandardRow, StandardsIndex, VectorMetadata,
+  AIMode, ApplicationRow, ComparisonContext, ContentType, CurationInfo, Excerpt, FootnoteMarks,
+  FormattedApplication, OutdoorGuidance, ReferenceLink, ReferenceMarker, RelatedApplication,
+  SearchFilters, SearchResult, StandardIndexEntry, StandardRow, StandardsIndex, VectorMetadata,
 } from '../types';
 
 // ── Local shapes for internal plumbing ──────────────────────────────────────
@@ -546,9 +547,46 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
       })()
     : Promise.resolve(null);
 
-  const [related, aiSummary] = await Promise.all([relatedPromise, aiPromise]);
+  // ── AI rerank of the whole pool (client request, 2026-08-20) ─────────────────
+  // Runs IN PARALLEL with the Guide: its output is a short JSON array while the
+  // Guide writes paragraphs, so it adds no wall-clock time to an uncached search.
+  // Gated exactly like the Guide — turning the AI Guide off loses the curation,
+  // by design — and never on version comparisons, whose order is a client
+  // specification of its own (current first, then deprecated newest → oldest).
+  // Fail-open: null keeps the vector order. Not separately KV-cached — the
+  // response cache absorbs repeats of the same search wholesale.
+  const rerankPromise = (includeAISummary && !isVersionComparison && allResults.results.length > 1)
+    ? rerankResults(env.AI, rawQuery, allResults.results).catch((err) => {
+        console.error('AI rerank failed (non-fatal):', errMsg(err));
+        return null;
+      })
+    : Promise.resolve(null);
+
+  const [related, aiSummary, rerankOrder] = await Promise.all([relatedPromise, aiPromise, rerankPromise]);
   if (allResults.results.length > 0) {
     allResults.results[0].relatedApplications = related;
+  }
+
+  // ── AI curation of the card order (client request, 2026-08-20) ───────────────
+  // The Guide's own citations promote the cards it actually answered from, and
+  // the rerank order decides the rest — "the cards' selection and priority
+  // heavily influenced by the logic used by the AI Guide". A degraded summary
+  // contributes no citations: its fallback text is a bare list of every
+  // standard in the result set, which would "cite" everything. Runs BEFORE the
+  // whole-document cards below, so a named standard still lands on top.
+  let curation: CurationInfo | null = null;
+  if (includeAISummary && !isVersionComparison && allResults.results.length > 1) {
+    const summary = aiSummary as { text?: string; degraded?: boolean } | null;
+    const cited = (summary && !summary.degraded)
+      ? extractGuideCitations(summary.text || '', allResults.results)
+      : new Set<number>();
+    const curated = curateResults(allResults.results, { order: rerankOrder, cited });
+    allResults.results = curated.results;
+    curation = {
+      applied: curated.changed || curated.promoted > 0,
+      reranked: Array.isArray(rerankOrder) && rerankOrder.length > 0,
+      promoted: curated.promoted,
+    };
   }
 
   // ── Whole-document cards (client DO47) ───────────────────────────────────────
@@ -621,6 +659,9 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
     aiGuideRequiredNotice,
     results: applyUnits(allResults.results, units),
     aiSummary,
+    // Whether (and how) the AI curated the card order — null when the Guide is
+    // off, which is exactly when the list is the plain vector ranking.
+    curation,
     // Front-cover Library URLs for every standard in this result set, so the UI
     // can hyperlink the standards the AI Guide names in its prose (DO24).
     standardLinks: buildStandardLinkMap(allResults.results),

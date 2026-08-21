@@ -292,7 +292,7 @@
                  state travels with the search exactly as before — only the
                  control moved out of the search box. -->
             <button id="menu-guide" data-filter="guide" aria-pressed="true" class="menu-item"
-                    title="The AI Guide adds a contextual summary above your search results — on by default">
+                    title="The AI Guide adds a contextual summary above your results AND curates the result order — turning it off returns the plain ranking">
               <svg class="w-4 h-4 text-gray-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                 <circle cx="12" cy="12" r="9"/>
                 <path stroke-linecap="round" stroke-linejoin="round" d="M15.5 8.5l-2 5-5 2 2-5 5-2z"/>
@@ -439,11 +439,11 @@
         </summary>
         <div class="mt-1 space-y-0.5">
           <button data-sort="relevance" aria-pressed="true" onclick="setSort('relevance')" class="sort-option"
-                  title="Best match first — the order the search returned">
+                  title="Best match first — the order the search returned; AI-curated while the AI Guide is on">
             <svg class="w-4 h-4 shrink-0 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
               <path stroke-linecap="round" stroke-linejoin="round" d="M4 6h9M4 12h6M4 18h4M17 4v16m0 0l-3-3m3 3l3-3"/>
             </svg>
-            Relevance (Default)
+            <span id="sort-relevance-label">Relevance (Default)</span>
           </button>
           <button data-sort="date" aria-pressed="false" onclick="setSort('date')" class="sort-option"
                   title="By edition year of the standard">
@@ -2039,6 +2039,22 @@
       document.getElementById('hero-inner').style.paddingBottom = '1.25rem';
       document.getElementById('compact-search').classList.remove('hidden');
 
+      // The compact bar is sticky and paints OVER the fixed trigger wherever
+      // they overlap (same z-index, later in the DOM) — which hid the trigger's
+      // Sort half behind the white bar. The bar ranges between its flow
+      // position (unscrolled: below the shrunken hero) and its stuck position
+      // (61px, under the header), so the trigger moves below the LOWEST of
+      // those — the flow bottom, summed from scroll-independent flow heights.
+      const trigger = document.getElementById('sortfilter-trigger');
+      const compact = document.getElementById('compact-search');
+      if (trigger && trigger.style) {
+        const headerEl = document.querySelector('header');
+        const headerH = (headerEl && headerEl.offsetHeight) || 61;
+        const heroH = document.getElementById('hero-section').offsetHeight || 110;
+        const barH = (compact && compact.offsetHeight) || 62;
+        trigger.style.top = (headerH + heroH + barH + 9) + 'px';
+      }
+
       showLoading(true);
       clearResults();
 
@@ -2069,7 +2085,16 @@
       setStandardLinks(data.standardLinks);
       updateBulkActionsUI();
 
-      document.getElementById('results-meta').textContent = `for "${data.query}"`;
+      // The AI curated this order (client request, 2026-08-20): say so where
+      // the count is, and let the Relevance sort own the fact — with the Guide
+      // off, the server returns the plain vector ranking and neither appears.
+      const curated = !!(data.curation && data.curation.applied);
+      document.getElementById('results-meta').textContent =
+        `for "${data.query}"${curated ? ' · ordered by the AI Guide' : ''}`;
+      const relevanceLabel = document.getElementById('sort-relevance-label');
+      if (relevanceLabel) {
+        relevanceLabel.textContent = curated ? 'Relevance — AI curated (Default)' : 'Relevance (Default)';
+      }
 
       // The response says which Lensy answered (client DO53) — the authority on
       // the tier, and the path that also covers a session established before
@@ -2672,6 +2697,19 @@
     // the same pair the printed IES reference doc uses for its banners.
     const LOCATION_FILL = { Indoor: '#2E4A62', Outdoor: '#2E4A34' };
 
+    // A result the AI Guide's answer actually cites (server flag citedByGuide,
+    // client request 2026-08-20): the AI curation promotes it toward the top,
+    // and this badge is the reader's explanation of WHY it floated there. Gold,
+    // like everything the AI contributes.
+    function citedBadge(cited) {
+      if (!cited) return '';
+      return `
+        <span class="text-xs px-2 py-0.5 rounded-full font-medium border bg-amber-50 text-amber-800 border-amber-200"
+              title="The AI Guide's answer cites this result — promoted by the AI curation">
+          Cited by AI Guide
+        </span>`;
+    }
+
     // `opts.nested` renders the card as a panel INSIDE a joined document card
     // (client DO59) — same content, but the shell drops the outer article, its
     // shadow and its left stripe, which the container now carries.
@@ -2696,6 +2734,9 @@
       // searches ("what's new in RP-6?"). They must read as historical
       // context, never as guidance — amber stripe + explicit banner.
       const isDeprecated = !!primary.isDeprecated;
+      // Any member cited by the AI Guide badges the whole card — a merged
+      // section card must not lose the flag its second passage carried.
+      const guideCited = members.some(m => m && m.citedByGuide);
 
       // Sub_Category banner colors per IlluminanceTables_Reference_260421
       // (Interior = dark blue #2E4A62, Exterior = dark green #2E4A34). The
@@ -2829,7 +2870,7 @@
           <div class="flex items-start justify-between gap-2 mb-1.5">
             <div class="min-w-0">${subCategoryBanner}</div>
             <div class="flex items-center gap-1.5 shrink-0 flex-wrap justify-end">
-              ${locationBadge}
+              ${citedBadge(guideCited)}${locationBadge}
             </div>
           </div>
           <div class="flex items-baseline flex-wrap gap-x-2 gap-y-1 mb-1">
@@ -2862,7 +2903,7 @@
             <div class="min-w-0">${headerBanner}</div>
           </div>
           <div class="flex items-center gap-1.5 shrink-0 flex-wrap justify-end">
-            ${typeChip}${locationBadge}${rowBadges(app)}
+            ${citedBadge(guideCited)}${typeChip}${locationBadge}${rowBadges(app)}
           </div>
         </div>
 
@@ -2919,7 +2960,7 @@
             <span class="inline-block text-[11px] font-bold tracking-wider uppercase px-2.5 py-1 rounded"
                   style="background-color: ${style.banner}; color: #fff;">Definition</span>
             <div class="flex items-center gap-1.5 shrink-0 flex-wrap justify-end">
-              ${def.clause ? `<span class="text-xs px-2 py-0.5 rounded-full font-medium border ${style.chip}">§${escapeHtml(def.clause)}</span>` : ''}
+              ${citedBadge(result.citedByGuide)}${def.clause ? `<span class="text-xs px-2 py-0.5 rounded-full font-medium border ${style.chip}">§${escapeHtml(def.clause)}</span>` : ''}
             </div>
           </div>
 
@@ -2993,7 +3034,7 @@
             <span class="inline-block text-sm font-bold text-white px-2.5 py-1 rounded align-middle"
                   style="background-color: ${bannerHex};">${escapeHtml(doc.id || '')}</span>
             <div class="flex items-center gap-1.5 shrink-0 flex-wrap justify-end">
-              <span class="text-xs px-2 py-0.5 rounded-full font-medium border ${style.chip}">${style.label}</span>
+              ${citedBadge(result.citedByGuide)}<span class="text-xs px-2 py-0.5 rounded-full font-medium border ${style.chip}">${style.label}</span>
             </div>
           </div>
 

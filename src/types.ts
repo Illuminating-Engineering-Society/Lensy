@@ -396,6 +396,22 @@ export interface SearchResult {
   isDeprecated?: boolean;
   supersededBy?: string | null;
   deprecationNotice?: string;
+  /**
+   * The AI Guide's answer cites this result (designation + section/page match,
+   * src/lib/curation.ts). Set only when the Guide is on; the UI badges it and
+   * curation promotes it toward the top of the list.
+   */
+  citedByGuide?: boolean;
+}
+
+/** How (and whether) the AI curated the card order (client request, 2026-08-20). */
+export interface CurationInfo {
+  /** True when the returned order differs from the plain vector ranking. */
+  applied: boolean;
+  /** The parallel AI rerank pass produced a usable order. */
+  reranked: boolean;
+  /** How many Guide-cited results were promoted to the front. */
+  promoted: number;
 }
 
 /** Which prompt the AI Guide ran (client DO24/DO25/DO26.5). */
