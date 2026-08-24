@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>My Saved Search Collections — Lensy</title>
+  <title>My Bookmark Collections — Lensy</title>
   <!-- SSO gate: hides the app until /api/auth/me authorizes the visitor.
        Must load before anything renders.
        data-public-when-share: a ?share= link stays open to anyone (client DO52)
@@ -113,15 +113,15 @@
     <!-- Page title + New project button -->
     <div class="flex items-center justify-between mb-6 no-print">
       <div>
-        <h1 id="page-heading" class="text-2xl font-bold text-gray-900">My Saved Search Collections</h1>
-        <p id="page-subheading" class="text-sm text-gray-400 mt-0.5">Save and share search result references</p>
+        <h1 id="page-heading" class="text-2xl font-bold text-gray-900">My Bookmark Collections</h1>
+        <p id="page-subheading" class="text-sm text-gray-400 mt-0.5">Bookmark and share search result references</p>
       </div>
       <button id="page-actions" onclick="openNewProjectModal()"
         class="flex items-center gap-2 px-4 py-2.5 bg-ies-blue text-white rounded-xl text-sm font-semibold hover:bg-ies-blue-dark transition shadow-sm">
         <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
           <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/>
         </svg>
-        New Search Collection
+        New Bookmark Collection
       </button>
     </div>
 
@@ -301,7 +301,7 @@
     <div class="absolute inset-0 bg-black/40 modal-backdrop" onclick="closeProjectModal()"></div>
     <div class="relative bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 fade-in">
       <div class="flex items-center justify-between mb-5">
-        <h3 id="modal-title" class="text-lg font-bold text-gray-900">New Search Collection</h3>
+        <h3 id="modal-title" class="text-lg font-bold text-gray-900">New Bookmark Collection</h3>
         <button onclick="closeProjectModal()" class="text-gray-400 hover:text-gray-600 p-1 rounded-md hover:bg-gray-100 transition">
           <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
             <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
@@ -1122,7 +1122,7 @@
     // ── New / edit project modal ─────────────────────────────────────────────
     function openNewProjectModal() {
       editingProjectId = null;
-      document.getElementById('modal-title').textContent = 'New Search Collection';
+      document.getElementById('modal-title').textContent = 'New Bookmark Collection';
       document.getElementById('modal-save-btn').textContent = 'Create Collection';
       document.getElementById('modal-project-name').value = '';
       document.getElementById('modal-project-note').value = '';

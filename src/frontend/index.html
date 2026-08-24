@@ -165,8 +165,29 @@
       max-height: 13rem; overflow-y: auto; border: 1px solid #E5E7EB;
       border-radius: 8px; padding: 0.25rem;
     }
+    /* How many results a filter would keep — the wireframe's "(#) displays
+       total of results in each filter". */
+    .side-count { font-size: 0.6875rem; color: #9CA3AF; font-variant-numeric: tabular-nums; }
     .chevron { transition: transform .15s; }
     details[open] > summary .chevron { transform: rotate(180deg); }
+    /* ── Docked sidebar (wide screens, client wireframes 2026-08-20) ──────────
+       "If wide screen: filter sidebar begins open (don't gray out screen)."
+       So on a wide screen the panel is part of the page rather than a modal:
+       no backdrop, no scroll lock, and the CONTENT moves aside so nothing the
+       reader wants sits behind it. The gold header keeps its own full width and
+       is overlaid by the panel, exactly as the wireframe draws it. */
+    body.sidebar-docked #hero-section,
+    body.sidebar-docked #compact-search,
+    body.sidebar-docked main,
+    body.sidebar-docked #lite-banner,
+    body.sidebar-docked footer { padding-left: 340px; }
+    @media print {
+      body.sidebar-docked #hero-section,
+      body.sidebar-docked #compact-search,
+      body.sidebar-docked main,
+      body.sidebar-docked #lite-banner,
+      body.sidebar-docked footer { padding-left: 0; }
+    }
     /* Rich text inside a Definition card: the definition is reproduced as
        published, so its own emphasis and inline math have to survive. */
     .definition-body p { margin-bottom: 0.5rem; }
@@ -219,12 +240,11 @@
 <body class="bg-surface min-h-screen text-ink">
 
   <!-- ── Header (client wireframes, 2026-08-20) ──────────────────────────────
-       The IES gold banner: Browse Your Lighting Library (opens the reader),
-       Compare Versions (a floating window — a unique search type, not a page),
-       List Standards (formerly "Table of Contents"), and the hamburger account
-       menu, which holds everything user-specific: the signed-in email, which
-       Lensy this is, the AI Guide toggle, My Bookmarks (formerly "Saved
-       Searches"), Subscribe for non-subscribers, and Sign out. -->
+       The IES gold banner carries exactly two menus: "Library Tools" — the
+       three whole-library actions collapsed into one drop-down — and the
+       account menu, which holds everything user-specific (the signed-in email,
+       which Lensy this is, the AI Guide toggle, My Bookmarks, Subscribe for
+       non-subscribers, Sign out). -->
   <header class="text-white shadow-md no-print sticky top-0 z-40" style="background-color: var(--brand-accent);">
     <div class="max-w-6xl mx-auto px-4 py-2.5 flex items-center justify-between gap-3">
       <a href="/" class="flex items-center gap-2.5 shrink-0" title="Lensy — IES Assistant">
@@ -234,35 +254,52 @@
         <span class="sr-only">Lensy — IES Assistant</span>
       </a>
       <nav class="flex items-center gap-1 text-sm">
-        <a href="https://lighting.ies.org" target="_blank" rel="noopener" id="nav-library"
-           class="nav-item flex items-center gap-1.5 px-3 py-1.5 rounded-md transition"
-           title="Open your IES Lighting Library in a new browser tab">
-          <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M4 19.5V5a1 1 0 011-1h2a1 1 0 011 1v14.5M10 19.5V5a1 1 0 011-1h2a1 1 0 011 1v14.5M16.5 19.5l-2-14 2.5-.5 2.5 14z"/>
-          </svg>
-          <span class="hidden md:inline">Browse Your Lighting Library</span>
-          <span class="md:hidden">Library</span>
-        </a>
-        <button id="nav-compare" data-filter="compare" aria-pressed="false"
-                onclick="openCompareOverlay()"
-                class="nav-toggle flex items-center gap-1.5 px-3 py-1.5 rounded-md transition"
-                style="display: none"
-                title="Compare Versions — AI summary of changes between a standard and its previous edition">
-          <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M8 7V3m0 4H4m4 0h4M6 21V11m10 10v-4m0 4h4m-4 0h-4m2-14v10"/>
-          </svg>
-          <span class="hidden md:inline">Compare Versions</span>
-          <span class="md:hidden">Compare</span><span class="lock-label"></span>
-        </button>
-        <a href="/contents" target="_blank" rel="noopener" id="nav-contents"
-           class="nav-item flex items-center gap-1.5 px-3 py-1.5 rounded-md transition"
-           title="Lists every current IES standard in the Lighting Library, in a new browser tab">
-          <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h10"/>
-          </svg>
-          <span class="hidden md:inline">List Standards</span>
-          <span class="md:hidden">Standards</span>
-        </a>
+
+        <!-- Library Tools: the three library-wide actions, collapsed into one
+             menu to the left of the account menu (wireframe). The icon is the
+             open-book mark the wireframe sketches — the client noted they were
+             unsure what it should be, so it is one glyph to swap, not a
+             layout to redo. -->
+        <div class="relative" id="library-tools-wrap">
+          <button id="library-tools-btn" onclick="toggleLibraryTools()"
+                  aria-haspopup="true" aria-expanded="false"
+                  class="nav-item flex items-center gap-2 px-3 py-1.5 rounded-md transition"
+                  title="Library tools — browse, compare editions, list every standard">
+            <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M12 6.5c-2.2-1.5-4.8-1.5-7.5-.7v12c2.7-.8 5.3-.8 7.5.7 2.2-1.5 4.8-1.5 7.5-.7v-12c-2.7-.8-5.3-.8-7.5.7zm0 0v12"/>
+            </svg>
+            <span class="font-medium">Library Tools</span>
+            <svg class="w-3 h-3 opacity-80" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/>
+            </svg>
+          </button>
+          <div id="library-tools-menu"
+               class="hidden absolute right-0 top-[calc(100%+8px)] w-72 bg-white text-ink rounded-xl shadow-xl border border-gray-200 py-1 z-50 text-left">
+            <a href="https://lighting.ies.org" target="_blank" rel="noopener" id="nav-library" class="menu-item"
+               title="Open your IES Lighting Library in a new browser tab">
+              <svg class="w-4 h-4 text-gray-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M4 19.5V5a1 1 0 011-1h2a1 1 0 011 1v14.5M10 19.5V5a1 1 0 011-1h2a1 1 0 011 1v14.5M16.5 19.5l-2-14 2.5-.5 2.5 14z"/>
+              </svg>
+              Browse Your Lighting Library
+            </a>
+            <button id="nav-compare" data-filter="compare" aria-pressed="false"
+                    onclick="openCompareOverlay()" class="menu-item"
+                    style="display: none"
+                    title="Compare Versions — AI summary of changes between a standard and its previous edition">
+              <svg class="w-4 h-4 text-gray-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M8 7V3m0 4H4m4 0h4M6 21V11m10 10v-4m0 4h4m-4 0h-4m2-14v10"/>
+              </svg>
+              Compare Versions<span class="lock-label"></span>
+            </button>
+            <a href="/contents" target="_blank" rel="noopener" id="nav-contents" class="menu-item"
+               title="Lists every current IES standard in the Lighting Library, in a new browser tab">
+              <svg class="w-4 h-4 text-gray-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h10"/>
+              </svg>
+              List Standards
+            </a>
+          </div>
+        </div>
 
         <!-- Account menu: all user-specific data and features (wireframe). -->
         <div class="relative ml-1" id="account-wrap">
@@ -300,7 +337,7 @@
               <span id="menu-guide-label">Disable AI Guide</span><span class="lock-label"></span>
             </button>
             <a href="/projects.html" id="nav-projects" class="menu-item"
-               title="Your saved search collections">
+               title="Your bookmark collections">
               <svg class="w-4 h-4 text-gray-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                 <path stroke-linecap="round" stroke-linejoin="round" d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z"/>
               </svg>
@@ -377,23 +414,83 @@
         </div>
       </div>
 
-      <!-- Compare Versions is armed from the top banner, so say so here —
-           otherwise the only sign that the next search behaves differently is a
-           button in the header the reader is no longer looking at. -->
-      <p id="compare-hint" class="hidden mt-3 text-xs text-gray-600 text-left">
-        <span class="font-semibold">Compare Versions is on.</span>
-        Name a standard ("what changed in RP-8?") and the next search summarizes the
-        published changes against its previous edition.
-        <button onclick="toggleFilter('compare')" class="underline underline-offset-2 hover:text-ink">Turn off</button>
-      </p>
+      <!-- ── Advanced Search (client wireframes, 2026-08-20) ──────────────────
+           Shown BEFORE the first search only: it opens the Contents filters as
+           checkboxes under the search bar, so a reader can scope a search
+           before running it. Once results exist the Sort/Filter sidebar owns
+           the same controls, and this link steps aside rather than offering a
+           second copy of them on the page. -->
+      <div id="advanced-search-wrap" class="mt-2 text-left">
+        <button id="advanced-search-toggle" onclick="toggleAdvancedSearch()"
+                aria-expanded="false" aria-controls="advanced-search-panel"
+                class="text-sm text-ies-blue underline underline-offset-4 hover:text-brand-primary-dark transition">
+          Advanced Search
+        </button>
+
+        <div id="advanced-search-panel" class="hidden mt-3">
+          <p class="text-xs font-bold text-gray-700 mb-1.5">
+            Contents <span id="hero-contents-count" class="font-normal text-gray-400"></span>
+          </p>
+          <!-- The same four content kinds the sidebar carries; both sets of
+               controls read and write the one filterState, so they can never
+               disagree about what the next search will ask for. -->
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-0.5">
+            <div class="space-y-0.5">
+              <label class="side-check">
+                <input type="checkbox" data-filter="body" checked class="mt-0.5 rounded accent-ies-blue shrink-0"
+                       title="Search document body — the prose of the standards"/>
+                <svg class="w-4 h-4 mt-0.5 shrink-0 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M12 6.25c-2.4-1.6-5.2-1.6-8-.75v13c2.8-.85 5.6-.85 8 .75 2.4-1.6 5.2-1.6 8-.75v-13c-2.8-.85-5.6-.85-8 .75zm0 0v13"/>
+                </svg>
+                <span class="font-semibold">Document Body</span>
+              </label>
+              <label class="side-check">
+                <input type="checkbox" data-filter="definitions" checked class="mt-0.5 rounded accent-ies-blue shrink-0"
+                       title="Search within ANSI/IES LS-1 Definitions"/>
+                <span class="w-4 mt-0.5 shrink-0 font-mono text-[9px] font-bold text-gray-400 leading-4 text-center">A-Z</span>
+                <span class="font-semibold">Definitions <span class="font-normal text-gray-400">(ANSI/IES LS-1)</span></span>
+              </label>
+              <label class="side-check">
+                <input type="checkbox" data-filter="references" checked class="mt-0.5 rounded accent-ies-blue shrink-0"
+                       title="Search within the References sections of the standards"/>
+                <span class="w-4 mt-0.5 shrink-0 font-mono text-[9px] font-bold text-gray-400 leading-4 text-center">T¹</span>
+                <span class="font-semibold">References</span>
+              </label>
+            </div>
+            <div class="space-y-0.5">
+              <label class="side-check">
+                <input type="checkbox" data-filter="tables" checked class="mt-0.5 rounded accent-ies-blue shrink-0"
+                       title="Search within Recommended Illuminance Tables — Interior, Exterior, or both"/>
+                <svg class="w-4 h-4 mt-0.5 shrink-0 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M12 3v1.5m0 15V21m9-9h-1.5m-15 0H3m14.7-5.7l-1 1m-9.4 9.4l-1 1m11.4 0l-1-1M7.3 6.3l-1-1M12 8a4 4 0 100 8 4 4 0 000-8z"/>
+                </svg>
+                <span class="font-semibold">Illuminance Tables<span class="lock-label"></span></span>
+              </label>
+              <div class="pl-6 space-y-0.5">
+                <label class="side-check">
+                  <input type="checkbox" data-loc="interior" checked class="mt-0.5 rounded accent-ies-blue shrink-0"/>
+                  <span>Interior</span>
+                </label>
+                <label class="side-check">
+                  <input type="checkbox" data-loc="exterior" checked class="mt-0.5 rounded accent-ies-blue shrink-0"/>
+                  <span>Exterior</span>
+                </label>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 
   <!-- ── Floating Sort / Filter trigger (client wireframes, 2026-08-20) ───────
        Anchored top-left; either button opens the sidebar with that section
-       expanded. The count mirrors the FILTER heading inside the sidebar. -->
+       expanded. The count mirrors the FILTER heading inside the sidebar.
+       Hidden until a search has run ("Don't display until after search") — and
+       hidden again while the sidebar is docked open on a wide screen, where it
+       would only duplicate the panel already on screen. -->
   <div id="sortfilter-trigger"
-       class="no-print fixed left-3 top-[84px] z-30 flex flex-col rounded-lg border border-gray-200 bg-white shadow-m overflow-hidden">
+       class="hidden no-print fixed left-3 top-[84px] z-30 flex-col rounded-lg border border-gray-200 bg-white shadow-m overflow-hidden">
     <button onclick="openSidebar('sort')" class="flex flex-col items-center gap-0.5 px-2.5 py-2 hover:bg-gray-50 transition" title="Sort results">
       <svg class="w-4 h-4 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
         <path stroke-linecap="round" stroke-linejoin="round" d="M8 5v14m0 0l-3-3m3 3l3-3M16 19V5m0 0l-3 3m3-3l3 3"/>
@@ -518,18 +615,21 @@
                 <path stroke-linecap="round" stroke-linejoin="round" d="M12 6.25c-2.4-1.6-5.2-1.6-8-.75v13c2.8-.85 5.6-.85 8 .75 2.4-1.6 5.2-1.6 8-.75v-13c-2.8-.85-5.6-.85-8 .75zm0 0v13"/>
               </svg>
               <span class="font-semibold">Document Body</span>
+              <span class="side-count ml-auto" data-count-for="body"></span>
             </label>
             <label class="side-check">
               <input type="checkbox" data-filter="definitions" checked class="mt-0.5 rounded accent-ies-blue shrink-0"
                      title="Search within ANSI/IES LS-1 Definitions"/>
               <span class="w-4 mt-0.5 shrink-0 font-mono text-[9px] font-bold text-gray-400 leading-4 text-center">A-Z</span>
               <span class="font-semibold">Definitions <span class="font-normal text-gray-400">(ANSI/IES LS-1)</span></span>
+              <span class="side-count ml-auto" data-count-for="definitions"></span>
             </label>
             <label class="side-check">
               <input type="checkbox" data-filter="references" checked class="mt-0.5 rounded accent-ies-blue shrink-0"
                      title="Search within the References sections of the standards"/>
               <span class="w-4 mt-0.5 shrink-0 font-mono text-[9px] font-bold text-gray-400 leading-4 text-center">T¹</span>
               <span class="font-semibold">References</span>
+              <span class="side-count ml-auto" data-count-for="references"></span>
             </label>
             <label class="side-check">
               <input type="checkbox" data-filter="tables" checked class="mt-0.5 rounded accent-ies-blue shrink-0"
@@ -538,15 +638,18 @@
                 <path stroke-linecap="round" stroke-linejoin="round" d="M12 3v1.5m0 15V21m9-9h-1.5m-15 0H3m14.7-5.7l-1 1m-9.4 9.4l-1 1m11.4 0l-1-1M7.3 6.3l-1-1M12 8a4 4 0 100 8 4 4 0 000-8z"/>
               </svg>
               <span class="font-semibold">Illuminance Tables<span class="lock-label"></span></span>
+              <span class="side-count ml-auto" data-count-for="tables"></span>
             </label>
             <div class="pl-10 space-y-0.5">
               <label class="side-check">
                 <input type="checkbox" data-loc="interior" checked class="mt-0.5 rounded accent-ies-blue shrink-0"/>
                 <span>Interior</span>
+                <span class="side-count ml-auto" data-count-for="interior"></span>
               </label>
               <label class="side-check">
                 <input type="checkbox" data-loc="exterior" checked class="mt-0.5 rounded accent-ies-blue shrink-0"/>
                 <span>Exterior</span>
+                <span class="side-count ml-auto" data-count-for="exterior"></span>
               </label>
             </div>
           </div>
@@ -559,7 +662,7 @@
         <div class="mt-4">
           <p class="text-xs font-bold text-gray-700 mb-1">Documents</p>
 
-          <details class="mb-2">
+          <details class="mb-2" id="pubtype-section">
             <summary class="side-sub">
               <span class="w-4 shrink-0 font-mono text-[9px] font-bold text-gray-400 leading-none">RP-#</span>
               Publication Type <span id="pubtype-count" class="font-normal text-gray-400"></span>
@@ -570,7 +673,7 @@
             <div id="pubtype-list" class="mt-1 space-y-0.5"></div>
           </details>
 
-          <details class="mb-2">
+          <details class="mb-2" id="title-section">
             <summary class="side-sub">
               <svg class="w-4 h-4 shrink-0 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                 <path stroke-linecap="round" stroke-linejoin="round" d="M6 4h12M12 4v16m-3 0h6"/>
@@ -593,7 +696,7 @@
             </div>
           </details>
 
-          <details>
+          <details id="committee-section">
             <summary class="side-sub">
               <svg class="w-4 h-4 shrink-0 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                 <path stroke-linecap="round" stroke-linejoin="round" d="M17 20h5v-2a4 4 0 00-3-3.87M9 20H4v-2a4 4 0 013-3.87M16 3.13a4 4 0 010 7.75M12 7a4 4 0 11-8 0 4 4 0 018 0z"/>
@@ -619,10 +722,10 @@
       </details>
     </div>
     <div class="p-4 border-t border-gray-100">
-      <button onclick="closeSidebar()"
+      <button onclick="applySidebar()"
               class="w-full py-2.5 text-white rounded-lg text-sm font-bold transition hover:brightness-95"
               style="background-color: var(--brand-accent-dark, #D8930F);">
-        View Results
+        Apply
       </button>
     </div>
   </aside>
@@ -711,21 +814,15 @@
               <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
                 <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/>
               </svg>
-              <span id="add-selected-label">Save Search (0)</span>
+              <span id="add-selected-label">Bookmark (0)</span>
             </button>
           </div>
-          <button onclick="window.print()" class="p-1.5 text-gray-400 hover:text-gray-600 rounded-md hover:bg-gray-100 transition" title="Print">
-            <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-              <path stroke-linecap="round" stroke-linejoin="round" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"/>
-            </svg>
-          </button>
+          <!-- The print button is gone (client wireframes, 2026-08-20: "remove
+               'print'"). The browser's own Ctrl/Cmd-P still works and still
+               withholds the excerpt text (DO36) — this removed the invitation,
+               not the deterrent. -->
         </div>
       </div>
-
-      <!-- Document filter chips — generated from the standards present in the
-           current result set; clicking one narrows the list to that document
-           (client request: quick doc-narrowing near the top of results). -->
-      <div id="doc-chips" class="hidden flex-wrap items-center gap-1.5 mb-4 no-print"></div>
 
       <!-- Low-confidence advisory (shown when API returns noStrongMatch=true) -->
       <div
@@ -834,7 +931,11 @@
         This search resulted in a wide range of results:<br>
         <span id="refine-query" class="font-medium text-gray-700"></span>
       </p>
-      <div id="refine-chips" class="hidden mt-3 flex flex-wrap gap-1.5 justify-center"></div>
+      <!-- The AI writes this question for the search in hand, in ten words or
+           less (client wireframes, 2026-08-20); the chips below are its own
+           suggested answers to it. -->
+      <p id="refine-question" class="text-center text-sm font-semibold text-gray-800 mt-3"></p>
+      <div id="refine-chips" class="hidden mt-2 flex flex-wrap gap-1.5 justify-center"></div>
       <div class="mt-4 border-2 border-gray-300 rounded-xl p-1.5 flex items-center gap-2 search-glow transition">
         <input type="text" id="refine-input"
                placeholder="What specifically are you searching for?"
@@ -862,7 +963,7 @@
     <div class="absolute inset-0 bg-black/40 modal-backdrop" onclick="closeProjectModal()"></div>
     <div class="relative bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 fade-in">
       <div class="flex items-center justify-between mb-5">
-        <h3 class="text-lg font-bold text-gray-900">Save Search</h3>
+        <h3 class="text-lg font-bold text-gray-900">Bookmark</h3>
         <button onclick="closeProjectModal()" class="text-gray-400 hover:text-gray-600 p-1 rounded-md hover:bg-gray-100 transition">
           <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
             <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
@@ -898,7 +999,7 @@
           <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
             <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/>
           </svg>
-          New collection
+          New Bookmark Collection
         </button>
       </div>
 
@@ -936,7 +1037,7 @@
           </div>
           <button onclick="createProjectAndAdd()"
             class="w-full py-2.5 bg-ies-blue text-white rounded-lg text-sm font-semibold hover:bg-ies-blue-dark transition">
-            Create Collection &amp; Save
+            Create Collection &amp; Bookmark
           </button>
         </div>
       </div>
@@ -973,12 +1074,24 @@
     // Rebuilt per search from /api/projects/saved-status, and added to locally as
     // soon as a save succeeds so the button flips without another round-trip.
     let savedResultKeys = new Set();
-    let activeDocFilter = null; // standard id chip currently narrowing results
     // standard designation → Lighting Library front-cover URL, for hyperlinking
     // the standards the AI Guide names in its prose (client DO24). The regex is
     // rebuilt from the map's keys on every search.
     let standardLinks = {};
     let standardsLinkRegex = null;
+    // standard → { sections: {"4.2": url}, pages: {"21": url} }, so the LOCATORS
+    // the Guide names link to the page they came from (client, 2026-08-20).
+    let sectionLinks = {};
+
+    // ── Low-confidence tail (client wireframes, 2026-08-20) ──────────────────
+    // "Instead of limiting to 50, let's display all results BUT introduce a
+    //  'View low-confidence matches' bar after high-confidence results, in the
+    //  style of a 'read more' element, when sorted by Relevance."
+    // The threshold travels with the response so this bar and the advisory
+    // banner can never disagree about what "confident" means.
+    const DEFAULT_CONFIDENCE_THRESHOLD = 0.6;
+    let confidenceThreshold = DEFAULT_CONFIDENCE_THRESHOLD;
+    let showLowConfidence = false;
 
     // ── Pagination ─────────────────────────────────────────────────────────────
     // The API returns a single pool of up to POOL_SIZE results (backend
@@ -1083,28 +1196,38 @@
     });
 
     // Every control that reflects a filter carries data-filter, whichever chrome
-    // it lives in: a Contents checkbox in the sidebar, the AI Guide toggle in
-    // the account menu, or the Compare Versions button in the banner.
+    // it lives in: a Contents checkbox in the sidebar, the same checkbox in the
+    // hero's Advanced Search panel, the AI Guide toggle in the account menu, or
+    // Compare Versions in the Library Tools menu.
+    //
+    // A content kind now has TWO controls (hero + sidebar), so everything that
+    // paints state paints ALL of them — a single querySelector would leave the
+    // hero panel showing whatever it was last set to while the sidebar moved on.
+    function pillsFor(name) {
+      return Array.from(document.querySelectorAll(`[data-filter="${name}"]`) || []);
+    }
+
     function pillFor(name) {
-      return document.querySelector(`[data-filter="${name}"]`);
+      return pillsFor(name)[0] || null;
     }
 
     function renderFilterPills() {
       syncTablesFromLocation();
 
       for (const [name, on] of Object.entries(filterState)) {
-        const pill = pillFor(name);
-        if (!pill) continue;
-        pill.setAttribute('aria-pressed', on ? 'true' : 'false');
-        // Sidebar content kinds are checkboxes; buttons ignore `checked`.
-        if (pill.type === 'checkbox') pill.checked = !!on;
+        for (const pill of pillsFor(name)) {
+          pill.setAttribute('aria-pressed', on ? 'true' : 'false');
+          // Content kinds are checkboxes; buttons ignore `checked`.
+          if (pill.type === 'checkbox') pill.checked = !!on;
+        }
       }
 
       // Illuminance Tables is the PARENT of Interior/Exterior: half-selected
       // shows as indeterminate, like a folder with one of two files ticked.
-      const tablesBox = pillFor('tables');
-      if (tablesBox && tablesBox.type === 'checkbox') {
-        tablesBox.indeterminate = !!filterState.tables && !(filterState.interior && filterState.exterior);
+      for (const tablesBox of pillsFor('tables')) {
+        if (tablesBox.type === 'checkbox') {
+          tablesBox.indeterminate = !!filterState.tables && !(filterState.interior && filterState.exterior);
+        }
       }
 
       // The Interior / Exterior checkboxes ARE the Illuminance Tables filter, so
@@ -1118,8 +1241,7 @@
       // Any combination of content kinds is allowed (DO57 note 1) — nothing in
       // the row locks anything else. Only the access tier disables a control.
       for (const name of [...CONTENT_PILLS, 'guide', 'compare']) {
-        const pill = pillFor(name);
-        if (pill) pill.disabled = lockedForTier(name);
+        for (const pill of pillsFor(name)) pill.disabled = lockedForTier(name);
       }
 
       // The account menu names the ACTION, not the state (wireframe: "Disable
@@ -1127,29 +1249,24 @@
       const guideLabel = document.getElementById('menu-guide-label');
       if (guideLabel) guideLabel.textContent = filterState.guide ? 'Disable AI Guide' : 'Enable AI Guide';
 
-      // Comparison is armed from the banner, so the hero says so — see the
-      // #compare-hint markup.
-      const hint = document.getElementById('compare-hint');
-      if (hint) hint.classList.toggle('hidden', !filterState.compare);
-
       // LensyLite: the three tools a subscription unlocks stay visible, locked
       // (client DO53). Applied LAST so nothing above can re-enable them, and the
       // padlock is appended to whatever label the rules above settled on.
       if (isLite()) {
         for (const name of LITE_LOCKED_FILTERS) {
-          const pill = pillFor(name);
-          if (!pill) continue;
-          pill.disabled = true;
-          pill.setAttribute('aria-pressed', 'false');
-          if (pill.type === 'checkbox') pill.checked = false;
-          pill.title = 'Included with a Lighting Library subscription';
-          // The lock glyph sits inside the control when it is a button, and on
-          // the row label when the control is a checkbox input.
-          const label = pill.querySelector ? pill.querySelector('.lock-label') : null;
-          if (label) label.textContent = ' 🔒';
-          const row = pill.closest ? pill.closest('label') : null;
-          const rowLock = row && row.querySelector ? row.querySelector('.lock-label') : null;
-          if (rowLock) rowLock.textContent = ' 🔒';
+          for (const pill of pillsFor(name)) {
+            pill.disabled = true;
+            pill.setAttribute('aria-pressed', 'false');
+            if (pill.type === 'checkbox') pill.checked = false;
+            pill.title = 'Included with a Lighting Library subscription';
+            // The lock glyph sits inside the control when it is a button, and on
+            // the row label when the control is a checkbox input.
+            const label = pill.querySelector ? pill.querySelector('.lock-label') : null;
+            if (label) label.textContent = ' 🔒';
+            const row = pill.closest ? pill.closest('label') : null;
+            const rowLock = row && row.querySelector ? row.querySelector('.lock-label') : null;
+            if (rowLock) rowLock.textContent = ' 🔒';
+          }
         }
       }
 
@@ -1265,9 +1382,12 @@
         return;
       }
 
-      // A click anywhere else dismisses the account menu.
+      // A click anywhere else dismisses the banner menus.
       if (accountMenuOpen() && !(e.target.closest && e.target.closest('#account-wrap'))) {
         setAccountMenu(false);
+      }
+      if (libraryToolsOpen() && !(e.target.closest && e.target.closest('#library-tools-wrap'))) {
+        setLibraryTools(false);
       }
     });
 
@@ -1284,8 +1404,10 @@
 
     document.addEventListener('keydown', e => {
       if (e.key !== 'Escape') return;
-      closeSidebar();          // closing applies — the checkboxes changed live
+      // A docked panel is part of the page, not a modal — Escape leaves it be.
+      if (!sidebarDocked) closeSidebar();   // closing applies: the checkboxes changed live
       setAccountMenu(false);
+      setLibraryTools(false);
       closeCompareOverlay();
       closeRefineOverlay();
     });
@@ -1446,36 +1568,40 @@
       return m ? m[1] : null;
     }
 
-    function seedDocFilterUniverse() {
-      if (!standardsIndex.length) return;
-      const pub = new Map(), title = new Map(), com = new Map();
-      for (const s of standardsIndex) {
-        const p = pubTypeOf(s.id);
-        if (p) pub.set(p, PUB_TYPE_LABELS[p] || p);
-        title.set(s.id, {
-          label: s.full_designation || `ANSI/IES ${s.id}`,
-          sub: (s.title && s.title !== s.id) ? s.title : '',
-        });
-        const c = s.committee?.name
-          || (s.author ? (/^ies\b/i.test(String(s.author)) ? String(s.author) : `IES ${s.author}`) : null);
-        if (c) com.set(c, c);
-      }
-      setDocFilterUniverse(pub, title, com);
-    }
-
-    /** Fallback when /api/standards was unavailable: fill from the result set. */
+    /**
+     * Rebuild the Documents lists from the CURRENT RESULT SET (client
+     * wireframes, 2026-08-20: "hide document titles and Technical Committees
+     * unless they appear in the search results"). Each entry carries how many
+     * results it accounts for — the wireframe's "(#) displays total of results
+     * in each filter" — and a group with nothing in it is hidden entirely
+     * rather than offering a filter that can only ever remove everything.
+     *
+     * Derived from the results and not from /api/standards, so the lists are
+     * always about what is on screen: a Title list of all 113 standards is a
+     * catalogue, not a filter.
+     */
     function seedUniverseFromResults() {
-      if (standardsIndex.length || docFilterUniverse.title.length || !allResults.length) return;
       const pub = new Map(), title = new Map(), com = new Map();
       for (const r of allResults) {
         const std = resultDesignation(r);
         if (std) {
           const p = pubTypeOf(std);
-          if (p) pub.set(p, PUB_TYPE_LABELS[p] || p);
-          if (!title.has(std)) title.set(std, { label: std, sub: titleOf(r) || '' });
+          if (p) {
+            const prev = pub.get(p);
+            pub.set(p, { label: PUB_TYPE_LABELS[p] || p, count: (prev ? prev.count : 0) + 1 });
+          }
+          const prevTitle = title.get(std);
+          title.set(std, {
+            label: r.application?.standardFull || std,
+            sub: titleOf(r) || '',
+            count: (prevTitle ? prevTitle.count : 0) + 1,
+          });
         }
         const c = r.committee?.name;
-        if (c) com.set(c, c);
+        if (c) {
+          const prev = com.get(c);
+          com.set(c, { label: c, count: (prev ? prev.count : 0) + 1 });
+        }
       }
       setDocFilterUniverse(pub, title, com);
     }
@@ -1495,10 +1621,11 @@
         return a.value.localeCompare(b.value);
       };
       docFilterUniverse = {
-        pubtype: [...pub.entries()].map(([value, label]) => ({ value, label })).sort(orderPub),
+        pubtype: [...pub.entries()].map(([value, meta]) => ({ value, ...meta })).sort(orderPub),
         title: [...title.entries()].map(([value, meta]) => ({ value, ...meta }))
           .sort((a, b) => compareDesignations(a.value, b.value)),
-        committee: [...com.keys()].sort((a, b) => a.localeCompare(b)).map(v => ({ value: v, label: v })),
+        committee: [...com.entries()].map(([value, meta]) => ({ value, ...meta }))
+          .sort((a, b) => a.value.localeCompare(b.value)),
       };
       for (const g of DOC_FILTER_GROUPS) {
         docFilterSelected[g] = new Set(
@@ -1530,22 +1657,53 @@
         + DOC_FILTER_GROUPS.reduce((n, g) => n + docGroupAppliedCount(g), 0);
     }
 
+    /**
+     * How many of the current results each content kind accounts for — the
+     * wireframe's "(#) displays total of results in each filter". Counted over
+     * the whole pool rather than the narrowed one, so a count never drops to
+     * zero because of a filter the reader is about to change.
+     */
+    function contentKindCounts() {
+      const counts = { body: 0, definitions: 0, references: 0, tables: 0, interior: 0, exterior: 0 };
+      for (const r of allResults) {
+        const type = r.resultType || 'application';
+        if (type === 'reference') counts.references++;
+        else if (type === 'definition') counts.definitions++;
+        else if (type === 'application') {
+          counts.tables++;
+          const loc = r.application?.indoorOutdoor;
+          if (loc === 'Indoor') counts.interior++;
+          else if (loc === 'Outdoor') counts.exterior++;
+        } else counts.body++;   // 'excerpt' and the whole-document card
+      }
+      return counts;
+    }
+
     function updateFilterCounts() {
       const set = (id, text) => {
         const el = document.getElementById(id);
         if (el) el.textContent = text;
       };
       set('contents-count', `(${contentSelectedCount()})`);
+      set('hero-contents-count', `(${contentSelectedCount()})`);
       set('pubtype-count', `(${docGroupAppliedCount('pubtype')})`);
       set('title-count', `(${docGroupAppliedCount('title')})`);
       set('committee-count', `(${docGroupAppliedCount('committee')})`);
       set('filter-count', `(${filterAppliedTotal()})`);
       set('filter-trigger-count', `(${filterAppliedTotal()})`);
+
+      // Per-kind result totals beside each Contents checkbox. Blank before the
+      // first search: a count of 0 would read as "this kind found nothing".
+      const counts = allResults.length ? contentKindCounts() : null;
+      for (const el of document.querySelectorAll('[data-count-for]') || []) {
+        const kind = el.dataset.countFor;
+        el.textContent = counts ? String(counts[kind] ?? 0) : '';
+      }
     }
 
     function docFilterListHtml(group) {
       if (!docFilterUniverse[group].length) {
-        return `<p class="text-[11px] text-gray-400 px-1 py-1.5">The list fills from the library index once it loads.</p>`;
+        return `<p class="text-[11px] text-gray-400 px-1 py-1.5">Nothing in these results to filter by.</p>`;
       }
       const q = String(docFilterSearch[group] || '').toLowerCase();
       const items = docFilterUniverse[group].filter(i =>
@@ -1560,11 +1718,12 @@
           <input type="checkbox" data-doc-filter="${group}" data-value="${escapeHtml(i.value)}"
                  ${docFilterSelected[group].has(i.value) ? 'checked' : ''}
                  class="mt-0.5 rounded accent-ies-blue shrink-0"/>
-          <span class="text-xs leading-snug min-w-0">
+          <span class="text-xs leading-snug min-w-0 flex-1">
             ${group === 'pubtype' ? `<span class="font-mono font-bold mr-1">${escapeHtml(i.value)}</span>` : ''}
             <span class="${group === 'title' ? 'font-medium' : ''}">${escapeHtml(i.label)}</span>
             ${i.sub ? `<span class="block text-[11px] text-gray-400">${escapeHtml(i.sub)}</span>` : ''}
           </span>
+          ${i.count != null ? `<span class="side-count">${i.count}</span>` : ''}
         </label>`).join('');
     }
 
@@ -1574,6 +1733,11 @@
         if (onlyGroup && g !== onlyGroup) continue;
         const el = document.getElementById(containers[g]);
         if (el) el.innerHTML = docFilterListHtml(g);
+        // A group with nothing in the current results is hidden outright
+        // (client: "hide document titles and Technical Committees unless they
+        // appear in the search results").
+        const section = document.getElementById(`${g}-section`);
+        if (section) section.classList.toggle('hidden', docFilterUniverse[g].length === 0);
       }
       if (!onlyGroup) {
         const ts = document.getElementById('title-search');
@@ -1639,19 +1803,51 @@
 
     // ── Sort / Filter sidebar chrome ─────────────────────────────────────────
     let lastSearchFiltersKey = '';
+    // Wide screens dock the panel open beside the results; narrow ones open it
+    // over them (client wireframes, 2026-08-20). One breakpoint decides which,
+    // and `sidebarDocked` remembers which mode the open panel is in.
+    const DOCK_MIN_WIDTH = 1280;
+    let sidebarDocked = false;
+    // The panel docks itself once per session, on the first results. Reopening
+    // one the reader deliberately closed would be a nuisance, not a feature.
+    let sidebarAutoDocked = false;
 
-    function openSidebar(section) {
+    function wideScreen() {
+      return (window.innerWidth || 0) >= DOCK_MIN_WIDTH;
+    }
+
+    function sidebarOpen() {
       const aside = document.getElementById('sortfilter-sidebar');
-      const backdrop = document.getElementById('sidebar-backdrop');
+      return !!aside && !aside.classList.contains('hidden');
+    }
+
+    /**
+     * Open the panel. On a wide screen it DOCKS: no backdrop, no scroll lock,
+     * and the page content shifts clear of it (the wireframe's "don't gray out
+     * screen"). On a narrow one it stays the modal overlay it was.
+     */
+    function openSidebar(section, opts = {}) {
+      const aside = document.getElementById('sortfilter-sidebar');
       if (!aside) return;
+      const dock = opts.dock != null ? !!opts.dock : wideScreen();
+      sidebarDocked = dock;
+
       aside.classList.remove('hidden');
-      if (backdrop) backdrop.classList.remove('hidden');
-      document.body.style.overflow = 'hidden';
+      const backdrop = document.getElementById('sidebar-backdrop');
+      if (backdrop) backdrop.classList.toggle('hidden', dock);
+      document.body.style.overflow = dock ? '' : 'hidden';
+      document.body.classList.toggle('sidebar-docked', dock);
+      // While the panel is docked open, its own trigger would just duplicate it.
+      updateSortFilterTrigger();
+
       // The clicked trigger's section opens; the other collapses (wireframe).
+      // Opening it docked leaves both expanded — there is room for them.
       const sort = document.getElementById('sort-section');
       const filter = document.getElementById('filter-section');
-      if (sort) sort.open = section !== 'filter';
-      if (filter) filter.open = section !== 'sort';
+      if (section === 'sort' || section === 'filter') {
+        if (sort) sort.open = section !== 'filter';
+        if (filter) filter.open = section !== 'sort';
+      }
     }
 
     function closeSidebar() {
@@ -1661,7 +1857,33 @@
       const backdrop = document.getElementById('sidebar-backdrop');
       if (backdrop) backdrop.classList.add('hidden');
       document.body.style.overflow = '';
+      document.body.classList.remove('sidebar-docked');
+      sidebarDocked = false;
+      updateSortFilterTrigger();
       applySidebarSelections();
+    }
+
+    /**
+     * "Apply" (the wireframe renamed it from "View Results"). Applies the
+     * selections and, when the panel is an overlay, gets out of the way so the
+     * results are visible. A docked panel stays open — it is part of the page.
+     */
+    function applySidebar() {
+      if (sidebarDocked) { applySidebarSelections(); return; }
+      closeSidebar();
+    }
+
+    /**
+     * The floating Sort/Filter trigger is shown only once a search has run
+     * ("Don't display until after search"), and never while the docked panel is
+     * already on screen.
+     */
+    function updateSortFilterTrigger() {
+      const trigger = document.getElementById('sortfilter-trigger');
+      if (!trigger) return;
+      const show = !!lastQuery && !(sidebarOpen() && sidebarDocked);
+      trigger.classList.toggle('hidden', !show);
+      trigger.classList.toggle('flex', show);
     }
 
     /**
@@ -1681,9 +1903,47 @@
         return;
       }
       currentPage = 1;
-      renderDocChips();
       renderResultsPage();
       updateBulkActionsUI();
+    }
+
+    // A window narrowed past the breakpoint (a rotate, a split screen) must not
+    // keep the docked padding: the panel would then sit over the content it was
+    // docked to keep clear of. Closing it is the honest resolution — the trigger
+    // comes back with it.
+    window.addEventListener('resize', () => {
+      if (sidebarDocked && !wideScreen()) closeSidebar();
+    });
+
+    // ── Library Tools menu (client wireframes, 2026-08-20) ───────────────────
+    function libraryToolsOpen() {
+      const m = document.getElementById('library-tools-menu');
+      return !!m && !m.classList.contains('hidden');
+    }
+
+    function setLibraryTools(open) {
+      const m = document.getElementById('library-tools-menu');
+      if (!m) return;
+      m.classList.toggle('hidden', !open);
+      const btn = document.getElementById('library-tools-btn');
+      if (btn) btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    }
+
+    function toggleLibraryTools() {
+      const next = !libraryToolsOpen();
+      if (next) setAccountMenu(false);   // one banner menu open at a time
+      setLibraryTools(next);
+    }
+
+    // ── Advanced Search (client wireframes, 2026-08-20) ──────────────────────
+    // Opens the Contents filters under the search bar, before a search has run.
+    function toggleAdvancedSearch() {
+      const panel = document.getElementById('advanced-search-panel');
+      const btn = document.getElementById('advanced-search-toggle');
+      if (!panel) return;
+      const open = panel.classList.contains('hidden');
+      panel.classList.toggle('hidden', !open);
+      if (btn) btn.setAttribute('aria-expanded', open ? 'true' : 'false');
     }
 
     // ── Account menu (client wireframes, 2026-08-20) ─────────────────────────
@@ -1701,7 +1961,9 @@
     }
 
     function toggleAccountMenu() {
-      setAccountMenu(!accountMenuOpen());
+      const next = !accountMenuOpen();
+      if (next) setLibraryTools(false);   // one banner menu open at a time
+      setAccountMenu(next);
     }
 
     // ── Compare Versions overlay (client wireframes, 2026-08-20) ─────────────
@@ -1776,36 +2038,49 @@
     let refineBaseQuery = '';
     let refineDismissedQuery = null;
 
+    /**
+     * Offer the follow-up ONLY on a low-confidence search (client wireframes,
+     * 2026-08-20: "let's only display this follow-up question if the top search
+     * results are below a predetermined high-confidence threshold. Perhaps this
+     * shows up 1 out of every 4 queries or so").
+     *
+     * That threshold is the server's `noStrongMatch`, so the prompt and the
+     * advisory banner always agree — a "wide range of results" heuristic of our
+     * own fired far more often than one query in four.
+     */
     function maybeOfferRefine(data) {
       if (!data || data.isVersionComparison || filterState.compare) return;
+      if (!data.noStrongMatch) return;
       const query = data.query || lastQuery;
       if (!query || query === refineDismissedQuery) return;
-      const distinct = new Set(allResults.map(resultDesignation).filter(Boolean)).size;
-      const broad = allResults.length >= 20 && distinct >= 5;
-      if (!data.noStrongMatch && !broad) return;
-      openRefineOverlay(query);
+      openRefineOverlay(query, data.refinePrompt);
     }
 
-    /** Clickable suggestion terms, drawn from the applications in the results. */
-    function refineSuggestionsFrom(results) {
-      const seen = new Set();
-      const out = [];
-      for (const r of results) {
-        const label = r.application?.category;
-        if (!label || seen.has(label)) continue;
-        seen.add(label);
-        out.push(label);
-        if (out.length >= 6) break;
-      }
-      return out;
-    }
+    // The question the overlay falls back to when the model gave us nothing
+    // usable. Deliberately generic — better than no prompt, worse than the
+    // AI-written one, and never a reason to hide the overlay.
+    const REFINE_FALLBACK_QUESTION = 'What specifically are you searching for?';
 
-    function openRefineOverlay(query) {
+    function openRefineOverlay(query, prompt) {
       const el = document.getElementById('refine-overlay');
       if (!el) return;
       refineBaseQuery = query;
       document.getElementById('refine-query').textContent = `"${query}"`;
-      const chips = refineSuggestionsFrom(allResults);
+
+      // The follow-up question is written by the AI for THIS search, in ten
+      // words or less, and the chips are its own suggested answers — keywords,
+      // applications and topics, never document designations (the client's
+      // note: "many users do not have these memorized").
+      const question = (prompt && prompt.question) || REFINE_FALLBACK_QUESTION;
+      const input = document.getElementById('refine-input');
+      if (input) {
+        input.value = '';
+        input.placeholder = question;
+      }
+      const heading = document.getElementById('refine-question');
+      if (heading) heading.textContent = question;
+
+      const chips = (prompt && Array.isArray(prompt.terms)) ? prompt.terms : [];
       const wrap = document.getElementById('refine-chips');
       if (wrap) {
         wrap.innerHTML = chips.map(c => `
@@ -1813,8 +2088,6 @@
                   data-term="${escapeHtml(c)}">${escapeHtml(c)}</button>`).join('');
         wrap.classList.toggle('hidden', chips.length === 0);
       }
-      const input = document.getElementById('refine-input');
-      if (input) input.value = '';
       el.classList.remove('hidden');
     }
 
@@ -2025,6 +2298,7 @@
       rememberSearch(query);
       closeSuggestions();
       setAccountMenu(false);
+      setLibraryTools(false);
       closeCompareOverlay();
       const refine = document.getElementById('refine-overlay');
       if (refine) refine.classList.add('hidden');   // superseded by the new search, not dismissed
@@ -2033,11 +2307,15 @@
       document.getElementById('compact-search-input').value = query;
       document.getElementById('hero-section').classList.add('no-print');
 
-      // Shrink hero after first search: the mark gives way to the results.
+      // Shrink hero after first search: the mark gives way to the results, and
+      // Advanced Search steps aside — the Sort/Filter panel owns those controls
+      // from here (client wireframes, 2026-08-20).
       document.getElementById('hero-logo').classList.add('hidden');
+      document.getElementById('advanced-search-wrap').classList.add('hidden');
       document.getElementById('hero-inner').style.paddingTop = '1.25rem';
       document.getElementById('hero-inner').style.paddingBottom = '1.25rem';
       document.getElementById('compact-search').classList.remove('hidden');
+      updateSortFilterTrigger();   // "don't display until after search"
 
       // The compact bar is sticky and paints OVER the fixed trigger wherever
       // they overlap (same z-index, later in the DOM) — which hid the trigger's
@@ -2081,8 +2359,13 @@
       selectedApplicationCodes = new Set();
       allResults = data.results || [];
       currentPage = 1;
-      activeDocFilter = null;
       setStandardLinks(data.standardLinks);
+      setSectionLinks(data.sectionLinks);
+      // Every search starts with the low-confidence tail folded away again
+      // (client wireframes, 2026-08-20).
+      showLowConfidence = false;
+      confidenceThreshold = typeof data.confidenceThreshold === 'number'
+        ? data.confidenceThreshold : DEFAULT_CONFIDENCE_THRESHOLD;
       updateBulkActionsUI();
 
       // The AI curated this order (client request, 2026-08-20): say so where
@@ -2153,100 +2436,87 @@
       if (!allResults.length) {
         document.getElementById('results-heading').textContent = 'Results';
         document.getElementById('results-list').innerHTML = '';
-        document.getElementById('doc-chips').classList.add('hidden');
         document.getElementById('no-results').classList.remove('hidden');
         return;
       }
 
-      // If /api/standards was unavailable, the sidebar's Documents lists fill
-      // from this result set instead.
+      // The sidebar's Documents lists describe THESE results (client
+      // wireframes: hide titles and committees that do not appear in them).
       seedUniverseFromResults();
 
-      renderDocChips();
       renderResultsPage();
       // Which of these are already filed away (client DO61). Not awaited: it only
       // relabels buttons, and the results are already on screen.
       refreshSavedState();
 
-      // Broad or low-confidence search → one brief follow-up prompt (client
-      // wireframes, 2026-08-20). After the results render, so "No thanks"
-      // lands on a page that is already answering.
+      // Wide screens meet the filters already open beside the results (client
+      // wireframes: "if wide screen: filter sidebar begins open"); narrow ones
+      // meet the collapsed trigger. Only on the first results of a session —
+      // reopening a panel the reader deliberately closed would be a nuisance.
+      if (!sidebarAutoDocked && wideScreen()) {
+        sidebarAutoDocked = true;
+        openSidebar(null, { dock: true });
+      }
+
+      // Low-confidence search → one brief follow-up prompt (client wireframes,
+      // 2026-08-20). After the results render, so "No thanks" lands on a page
+      // that is already answering.
       maybeOfferRefine(data);
     }
 
-    // ── Document filter chips ────────────────────────────────────────────────
-    // One chip per standard present in the result set, ordered by first
-    // appearance (the list is relevance-ordered, so first appearance = best
-    // match). Clicking a chip narrows the rendered list to that document;
-    // clicking it again (or "All") clears the narrowing. Purely client-side —
-    // no extra API round-trip, stays inside the same cached response.
-    function renderDocChips() {
-      const wrap = document.getElementById('doc-chips');
-      const seen = [];
-      const counts = {};
-      // Counted over the sidebar-narrowed pool, so a chip never promises more
-      // results than the list below it will show.
-      for (const r of allResults.filter(passesDocFilters)) {
-        const std = r.application?.standard;
-        if (!std) continue;
-        if (!counts[std]) { seen.push(std); counts[std] = 0; }
-        counts[std]++;
-      }
-
-      if (seen.length < 2) {
-        wrap.classList.add('hidden');
-        wrap.classList.remove('flex');
-        wrap.innerHTML = '';
-        return;
-      }
-
-      // The standard id travels via a data attribute, never an inline JS
-      // string — HTML-escaping does not JS-escape, so an id containing a
-      // quote must not reach an onclick expression.
-      const chip = (label, value, active, count) => `
-        <button
-          class="doc-chip text-xs px-2.5 py-1 rounded-full border font-medium transition ${active
-            ? 'bg-ies-blue text-white border-ies-blue'
-            : 'bg-white text-gray-600 border-gray-200 hover:border-ies-blue hover:text-ies-blue'}"
-          data-std="${escapeHtml(value ?? '')}"
-        >${escapeHtml(label)}${count != null ? ` <span class="${active ? 'text-blue-200' : 'text-gray-400'}">${count}</span>` : ''}</button>`;
-
-      wrap.innerHTML =
-        `<span class="text-xs text-gray-400 mr-1">Narrow to:</span>` +
-        chip('All Documents', null, activeDocFilter === null, null) +
-        seen.map(std => chip(std, std, activeDocFilter === std, counts[std])).join('');
-      wrap.classList.remove('hidden');
-      wrap.classList.add('flex');
-    }
-
-    function setDocFilter(std) {
-      activeDocFilter = (std && activeDocFilter !== std) ? std : null;
-      currentPage = 1;
-      renderDocChips();
-      renderResultsPage();
-      updateBulkActionsUI();
-    }
-
+    // The "Narrow to:" chip row is gone (client wireframes, 2026-08-20: "we can
+    // remove these dynamic filters now that we have the dynamic sidebar") — the
+    // sidebar's Title group narrows by document, with counts, and does it for
+    // Publication Type and Technical Committee too.
     function visibleResults() {
-      let pool = allResults.filter(passesDocFilters);
-      if (activeDocFilter) pool = pool.filter(r => r.application?.standard === activeDocFilter);
-      return pool;
+      return allResults.filter(passesDocFilters);
+    }
+
+    /**
+     * Is this result a high-confidence match? Whole-document cards always are —
+     * the reader named the standard, and its score is not a semantic one.
+     */
+    function isHighConfidence(r) {
+      if (!r) return false;
+      if (r.resultType === 'standard') return true;
+      return (r.relevanceScore || 0) >= confidenceThreshold;
+    }
+
+    /**
+     * Split the pool at the confidence threshold (client wireframes,
+     * 2026-08-20). Only under the Relevance sort: under Date or Title the list
+     * is deliberately not ranked, so "everything after here is weaker" would be
+     * a lie. The split is on the pool, not the page, so the bar appears once.
+     */
+    function splitByConfidence(pool) {
+      if (sortState.key !== 'relevance') return { shown: pool, hidden: [] };
+      const shown = [];
+      const hidden = [];
+      for (const r of pool) (isHighConfidence(r) ? shown : hidden).push(r);
+      // Nothing cleared the bar: show the list rather than an empty page behind
+      // a bar the reader has to press to see any result at all.
+      if (shown.length === 0) return { shown: hidden, hidden: [] };
+      return { shown, hidden };
     }
 
     // Render the current page's slice of the visible results plus pagination.
     function renderResultsPage() {
       const pool = sortResults(visibleResults());
-      const total = pool.length;
+      const { shown, hidden } = splitByConfidence(pool);
+      const renderable = showLowConfidence ? [...shown, ...hidden] : shown;
+
+      const total = renderable.length;
       const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
       currentPage = Math.min(Math.max(1, currentPage), totalPages);
 
       const start = (currentPage - 1) * PAGE_SIZE;
       const end = Math.min(start + PAGE_SIZE, total);
-      const pageResults = pool.slice(start, end);
+      const pageResults = renderable.slice(start, end);
 
-      // Heading reflects the full result count; the range hint sits in the meta line.
+      // The heading counts everything retrieval found; the low-confidence bar
+      // below says how many of them are folded away.
       document.getElementById('results-heading').textContent =
-        `${total} Result${total !== 1 ? 's' : ''}`;
+        `${pool.length} Result${pool.length !== 1 ? 's' : ''}`;
 
       // Group consecutive sibling rows (same standard + banner + application)
       // into one card so the application title prints once — client feedback:
@@ -2254,9 +2524,38 @@
       // Then join sequential Document cards of one standard (client DO59).
       const groups = joinDocumentGroups(groupSiblingResults(pageResults));
 
+      // The bar sits after the last high-confidence result, so it only belongs
+      // on the page that actually ends the confident band.
+      const onLastPage = currentPage === totalPages;
+      const lowBar = (!showLowConfidence && hidden.length > 0 && onLastPage)
+        ? renderLowConfidenceBar(hidden.length)
+        : '';
+
       const list = document.getElementById('results-list');
       list.innerHTML = groups.map((g, i) => g.joined ? renderJoinedDocumentCard(g, i) : renderResultCard(g, i)).join('')
+        + lowBar
         + renderPaginationControls(totalPages, start + 1, end, total);
+    }
+
+    // A 'read more' element, in the client's words — not a filter and not a
+    // page: the weaker matches are there, folded, and one press reveals them.
+    function renderLowConfidenceBar(count) {
+      return `
+        <button onclick="revealLowConfidence()"
+                class="no-print w-full mt-3 py-3 px-4 rounded-xl border border-dashed border-gray-300 bg-white
+                       text-sm text-gray-600 hover:border-ies-blue hover:text-ies-blue transition
+                       flex items-center justify-center gap-2">
+          <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/>
+          </svg>
+          <span>View ${count} low-confidence match${count === 1 ? '' : 'es'}</span>
+        </button>`;
+    }
+
+    function revealLowConfidence() {
+      showLowConfidence = true;
+      renderResultsPage();
+      refreshSavedState();
     }
 
     // ── DO59: sequential Document cards from one standard become ONE card ─────
@@ -2472,6 +2771,7 @@
       // Structured rendering (headings, bullets) with the standards the AI
       // names hyperlinked to the Lighting Library (client DO24).
       const textEl = document.getElementById('ai-summary-text');
+      aiCurrentStandard = null;   // the running locator context starts fresh
       textEl.innerHTML = renderAIText(summary.text || '');
       textEl.classList.remove('whitespace-pre-line');
 
@@ -2521,9 +2821,12 @@
       const lines = String(raw || '').split('\n');
       const COMPARE_HEADINGS = /^(what appears to be new|likely technical updates|possible deletions|further reading)\b/i;
 
-      let html = '';
-      let inList = false;
-      const closeList = () => { if (inList) { html += '</ul>'; inList = false; } };
+      // Blocks are collected rather than concatenated, so the "Continue
+      // Reading" fold below can cut on a block boundary instead of guessing
+      // where one ended inside a string.
+      const blocks = [];
+      let list = null;
+      const closeList = () => { if (list) { blocks.push(`${list}</ul>`); list = null; } };
 
       for (const line of lines) {
         const t = line.trim();
@@ -2534,22 +2837,62 @@
         if (md || COMPARE_HEADINGS.test(bare)) {
           closeList();
           const label = (md ? md[1] : bare).replace(/^\*\*|\*\*$/g, '').replace(/:$/, '');
-          html += `<h4 class="font-display text-sm font-bold text-gray-900 mt-3 mb-1 first:mt-0">${inlineAI(label)}</h4>`;
+          blocks.push(`<h4 class="font-display text-sm font-bold text-gray-900 mt-3 mb-1 first:mt-0">${inlineAI(label)}</h4>`);
           continue;
         }
 
         const li = /^(?:[-*•]|\d{1,2}[.)])\s+(.*)$/.exec(t);
         if (li) {
-          if (!inList) { html += '<ul class="list-disc pl-5 space-y-1 my-1.5">'; inList = true; }
-          html += `<li>${inlineAI(li[1])}</li>`;
+          if (!list) list = '<ul class="list-disc pl-5 space-y-1 my-1.5">';
+          list += `<li>${inlineAI(li[1])}</li>`;
           continue;
         }
 
         closeList();
-        html += `<p class="mb-2">${inlineAI(t)}</p>`;
+        blocks.push(`<p class="mb-2">${inlineAI(t)}</p>`);
       }
       closeList();
-      return html;
+      return foldAIBlocks(blocks);
+    }
+
+    /**
+     * "Display approximately 1st 'paragraph' then 'Continue Reading' element to
+     * expand" (client wireframes, 2026-08-20).
+     *
+     * The lead is everything up to and including the first PARAGRAPH — a fold
+     * that opened on a bare heading ("What appears to be new") would show the
+     * reader a label and no answer. Everything after it is in the DOM from the
+     * start, just hidden, so expanding costs no round-trip and printing still
+     * withholds the whole thing (the copy guard is on the container).
+     */
+    function foldAIBlocks(blocks) {
+      if (!blocks.length) return '';
+      let cut = -1;
+      for (let i = 0; i < blocks.length; i++) {
+        if (blocks[i].startsWith('<p')) { cut = i; break; }
+      }
+      // No paragraph at all (a pure bullet list), or nothing after the lead:
+      // there is nothing worth folding.
+      if (cut === -1 || cut >= blocks.length - 1) return blocks.join('');
+
+      const lead = blocks.slice(0, cut + 1).join('');
+      const rest = blocks.slice(cut + 1).join('');
+      return `${lead}
+        <div id="ai-summary-more" class="hidden">${rest}</div>
+        <button id="ai-summary-more-btn" onclick="expandAIGuide()"
+                class="no-print mt-1 inline-flex items-center gap-1 text-xs font-semibold text-ies-blue hover:underline">
+          Continue Reading
+          <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/>
+          </svg>
+        </button>`;
+    }
+
+    function expandAIGuide() {
+      const more = document.getElementById('ai-summary-more');
+      const btn = document.getElementById('ai-summary-more-btn');
+      if (more) more.classList.remove('hidden');
+      if (btn) btn.classList.add('hidden');
     }
 
     function inlineAI(text) {
@@ -2563,8 +2906,71 @@
         if (!href) return match;
         return `<a href="${href}" target="_blank" rel="noopener" class="text-ies-blue hover:underline break-all">${core}</a>${tail}`;
       }));
+      // Locators BEFORE designations: this pass reads the designations as plain
+      // text to know which standard a "§4.2" belongs to, and linkifyStandards
+      // would have wrapped them in anchors first.
+      html = transformTextSegments(html, linkifyLocators);
       html = transformTextSegments(html, linkifyStandards);
       return html;
+    }
+
+    // ── Locator links in AI prose (client, 2026-08-20) ───────────────────────
+    // The Guide writes "ANSI/IES RP-8-25+E2, Section 4.2, p. 21". The
+    // designation already links to the front cover (DO24); these link the
+    // SECTION and the PAGE to the page they were retrieved from, which is what
+    // "links to chapters" asks for — and it is the only way back into the
+    // document on a version comparison, where the passage cards are gone.
+    //
+    // Scanned in reading order with a running "which standard are we in", so a
+    // locator is attributed to the designation that most recently preceded it.
+    // Fail-closed: a locator with no retrieved page stays plain text, exactly
+    // like a designation that is not in the link map.
+    let aiCurrentStandard = null;
+
+    // The designation tail has to admit the edition and errata suffixes the
+    // corpus actually uses — "RP-8-25+E2", "LM-63-19R25" — while stopping short
+    // of the sentence punctuation that follows them, hence the "must end on a
+    // word character or +" ending.
+    const LOCATOR_SCAN_RE = new RegExp(
+      '(?<![\\w-])((?:ANSI|BSR|IES)?(?:\\/[A-Z]+)*\\s*(?:RP|LP|LS|LEM|LM|TM|DG|HB|WP|G)-\\d+(?:[\\w.+-]*[\\w+])?)(?![\\w-])'
+      + '|(§\\s*|Section\\s+)(\\d+(?:\\.\\d+)*)(?![\\d.])'
+      + '|(p\\.\\s*|pp\\.\\s*|page\\s+)(\\d{1,4})(?!\\d)',
+      'gi',
+    );
+
+    function linkifyLocators(segment) {
+      if (!sectionLinks || Object.keys(sectionLinks).length === 0) return segment;
+      return segment.replace(LOCATOR_SCAN_RE, (match, designation, secPrefix, section, pagePrefix, page) => {
+        if (designation) {
+          const key = sectionLinkKeyFor(designation);
+          if (key) aiCurrentStandard = key;
+          return match;   // linkifyStandards handles designations
+        }
+        const entry = aiCurrentStandard ? sectionLinks[aiCurrentStandard] : null;
+        if (!entry) return match;
+
+        const url = section ? entry.sections?.[section] : entry.pages?.[page];
+        if (!url) return match;
+        const label = section ? `${secPrefix}${section}` : `${pagePrefix}${page}`;
+        const what = section ? `section ${section}` : `page ${page}`;
+        return `<a href="${escapeHtml(url)}" target="_blank" rel="noopener"
+          class="text-ies-blue hover:underline"
+          title="Open ${escapeHtml(what)} of ${escapeHtml(aiCurrentStandard)} in the IES Lighting Library">${label}</a>`;
+      });
+    }
+
+    /** Which sectionLinks key a designation in the prose refers to, if any. */
+    function sectionLinkKeyFor(designation) {
+      const raw = String(designation || '').trim().toUpperCase();
+      if (sectionLinks[raw]) return raw;
+      // "ANSI/IES RP-8-25+E2" → "RP-8-25+E2"
+      const bare = raw.replace(/^(?:ANSI|BSR|IES)(?:\/[A-Z]+)*\s*/, '');
+      return sectionLinks[bare] ? bare : null;
+    }
+
+    function setSectionLinks(map) {
+      sectionLinks = (map && typeof map === 'object') ? map : {};
+      aiCurrentStandard = null;
     }
 
     // Apply `fn` to the TEXT parts of an HTML string, skipping tags and the
@@ -3282,15 +3688,15 @@
             <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
               <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/>
             </svg>
-            <span class="save-label">${already ? 'Save Again' : 'Save Search'}</span>
+            <span class="save-label">${already ? 'Bookmark Again' : 'Bookmark'}</span>
           </button>`;
     }
 
     // Desaturated slate for a result already filed away — "greyed out or less
     // saturated", in the client's words (DO61).
     const SAVED_AGAIN_FILL = '#8FA3B4';
-    const SAVE_TITLE = 'Save a reference to this result in one of your Saved Search Collections';
-    const SAVED_AGAIN_TITLE = 'Already saved to one of your Saved Search Collections — save it to another';
+    const SAVE_TITLE = 'Bookmark a reference to this result in one of your Bookmark Collections';
+    const SAVED_AGAIN_TITLE = 'Already in one of your Bookmark Collections — bookmark it to another as well';
 
     /**
      * A stable identity for one result, used to remember that it is already in a
@@ -3337,7 +3743,7 @@
         btn.classList.add('hover:opacity-90');
         btn.title = SAVED_AGAIN_TITLE;
         const label = btn.querySelector('.save-label');
-        if (label) label.textContent = 'Save Again';
+        if (label) label.textContent = 'Bookmark Again';
       }
     }
 
@@ -3898,8 +4304,8 @@
         const dupes = (saved.skipped || []).length;
         showToast(
           n > 0
-            ? `Saved ${n} search${n > 1 ? 'es' : ''} to the collection`
-            : dupes > 0 ? 'Already in this collection' : 'Nothing was saved',
+            ? `Bookmarked ${n} result${n > 1 ? 's' : ''} to the collection`
+            : dupes > 0 ? 'Already in this collection' : 'Nothing was bookmarked',
           n > 0 || dupes > 0 ? 'success' : 'error',
         );
       } catch (err) {
@@ -3979,18 +4385,15 @@
       document.getElementById('ai-summary-card').classList.add('hidden');
       document.getElementById('no-results').classList.add('hidden');
       document.getElementById('no-strong-match-banner').classList.add('hidden');
-      const chips = document.getElementById('doc-chips');
-      chips.classList.add('hidden');
-      chips.classList.remove('flex');
-      chips.innerHTML = '';
       selectedApplicationCodes = new Set();
       allResults = [];
       currentPage = 1;
-      activeDocFilter = null;
+      showLowConfidence = false;
       // Re-asked per search (DO61), so a result removed from a collection between
       // two searches stops claiming it is saved.
       savedResultKeys = new Set();
       setStandardLinks(null);
+      setSectionLinks(null);
       updateBulkActionsUI();
     }
 
@@ -4032,7 +4435,7 @@
 
       bulkActions.classList.toggle('hidden', !hasResults);
       addSelectedBtn.disabled = n === 0;
-      label.textContent = `Add to Project${n > 0 ? ` (${n})` : ''}`;
+      label.textContent = `Bookmark${n > 0 ? ` (${n})` : ''}`;
       if (selectAll) selectAll.checked = hasResults && pool.every(c => selectedApplicationCodes.has(c));
     }
 
@@ -4073,12 +4476,6 @@
     document.getElementById('results-list').addEventListener('change', e => {
       const cb = e.target.closest('.result-checkbox');
       if (cb) toggleSelection(cb.dataset.code, cb.checked);
-    });
-
-    // Delegated doc-chip clicks (chips are re-rendered on every filter change)
-    document.getElementById('doc-chips').addEventListener('click', e => {
-      const chip = e.target.closest('.doc-chip');
-      if (chip) setDocFilter(chip.dataset.std || null);
     });
 
     // Close modal on Escape

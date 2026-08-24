@@ -77,6 +77,7 @@ import {
 import { resolveRequestTier } from './session';
 import { generateResponse } from '../lib/ai-summary';
 import { rerankResults, extractGuideCitations, curateResults } from '../lib/curation';
+import { generateRefinePrompt } from '../lib/refine';
 import { formatCitation, composeStandardName } from '../lib/citations';
 import { looksLikeFormalReference, referenceCitationKey } from '../lib/references.js';
 import { referenceEntryNumber } from '../lib/reference-markers.js';
@@ -116,7 +117,14 @@ function errMsg(err: unknown): string { return err instanceof Error ? err.messag
 
 const EMBED_MODEL = '@cf/baai/bge-base-en-v1.5';
 const VECTOR_TOP_K = 50;      // Vectorize caps topK at 50 when returning metadata; fetch the max, dedupe down to limit
-const MAX_LIMIT = 50;         // upper bound on the result pool the UI paginates over (client-side; 25/page)
+// Upper bound on the result pool the UI paginates over (client-side; 25/page).
+// Raised 50 → 200 (client wireframes, 2026-08-20: "instead of limiting to 50,
+// let's display all results"). This is everything RETRIEVAL produced, not the
+// whole library: the vector index still answers with topK=50 matches, which the
+// pipeline expands (application rows, per-standard body chunks, reference and
+// definition probes, backfills) into more results than that. The cap is now a
+// payload guard rather than the thing deciding what the user may see.
+const MAX_LIMIT = 200;
 const MIN_VECTOR_RESULTS = 3; // below this, run text fallback
 const STRONG_MATCH_THRESHOLD = 0.60; // top relevanceScore below this → flag noStrongMatch
 
@@ -562,7 +570,29 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
       })
     : Promise.resolve(null);
 
-  const [related, aiSummary, rerankOrder] = await Promise.all([relatedPromise, aiPromise, rerankPromise]);
+  // ── "Refine your search?" follow-up (client wireframes, 2026-08-20) ──────────
+  // "Let's only display this follow-up question if the top search results are
+  //  below a predetermined high-confidence threshold." That threshold is the one
+  //  the advisory banner already uses (STRONG_MATCH_THRESHOLD), so a search is
+  //  either confident enough for both or for neither.
+  //
+  // Generated in parallel with the Guide, from the pre-document-card score: a
+  // designation or title lookup is answered by a whole-document card below and
+  // is never a low-confidence search, so it is excluded here rather than
+  // generating a prompt the payload would then discard.
+  const preCardTopScore = allResults.results.reduce((max, r) => Math.max(max, r.relevanceScore || 0), 0);
+  const wantsRefine = preCardTopScore < STRONG_MATCH_THRESHOLD
+    && !isVersionComparison && !referencesOnly && !definitionsOnly && !isMultiQuery
+    && !parseDesignationQuery(rawQuery) && allResults.results.length > 0;
+  const refinePromise = wantsRefine
+    ? generateRefinePrompt(env.AI, rawQuery, allResults.results).catch((err) => {
+        console.error('refine prompt failed (non-fatal):', errMsg(err));
+        return null;
+      })
+    : Promise.resolve(null);
+
+  const [related, aiSummary, rerankOrder, refinePrompt] =
+    await Promise.all([relatedPromise, aiPromise, rerankPromise, refinePromise]);
   if (allResults.results.length > 0) {
     allResults.results[0].relatedApplications = related;
   }
@@ -614,6 +644,26 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
     ];
   }
 
+  // ── Comparison results are document cards only (client, 2026-08-20) ─────────
+  // "Compare Versions cards: for this search type, JUST present: 1. AI Guide
+  //  (as much detail as possible with links to chapters) 2. 'Document Title'
+  //  cards … No other search result cards."
+  //
+  // Applied HERE, after the AI has been generated: the comparison analysis is
+  // written FROM those passage cards, so they have to exist through the
+  // generation and only then leave the response. The link maps below are built
+  // from the pre-strip list for the same reason — the Guide's prose cites pages
+  // the reader can no longer see as cards, and those citations must still link.
+  const linkSourceResults = allResults.results;
+  if (isVersionComparison) {
+    const documentCardsOnly = allResults.results.filter(r => r.resultType === 'standard');
+    // Never strip the list to nothing: if the family could not be resolved
+    // there are no edition cards to keep, and an empty list under a written
+    // analysis reads as a broken search. Keeping the passages is the honest
+    // degradation — they are what the analysis was written from.
+    if (documentCardsOnly.length > 0) allResults.results = documentCardsOnly;
+  }
+
   // ── Confidence flag ──────────────────────────────────────────────────────────
   // The UI uses noStrongMatch to render a yellow advisory banner above the
   // results. We never filter the list itself — the user still sees the closest
@@ -662,9 +712,20 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
     // Whether (and how) the AI curated the card order — null when the Guide is
     // off, which is exactly when the list is the plain vector ranking.
     curation,
+    // The AI-written follow-up question + its suggestion terms, for the "Refine
+    // your search?" overlay. Present only on a low-confidence search.
+    refinePrompt,
+    // The score below which a result is a low-confidence match. The UI splits
+    // the list at this value behind a "View low-confidence matches" bar, so the
+    // bar and the advisory banner can never disagree about what "confident" means.
+    confidenceThreshold: STRONG_MATCH_THRESHOLD,
     // Front-cover Library URLs for every standard in this result set, so the UI
     // can hyperlink the standards the AI Guide names in its prose (DO24).
-    standardLinks: buildStandardLinkMap(allResults.results),
+    standardLinks: buildStandardLinkMap(linkSourceResults),
+    // Per-standard section/page → Library URL, so the UI can also hyperlink the
+    // LOCATORS the Guide names ("§4.2", "p. 21") and not just the designations
+    // (client, 2026-08-20: the comparison Guide needs "links to chapters").
+    sectionLinks: buildSectionLinkMap(linkSourceResults),
     timestamp: new Date().toISOString(),
     _depDbg: depDbg || undefined,
   };
@@ -696,6 +757,62 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
  * result set are included — the model is instructed to cite from them, and a
  * link is never fabricated for anything else.
  */
+/**
+ * Section number and page number → Lighting Library URL, per standard.
+ *
+ * The AI Guide names locators in prose ("§4.2", "p. 21"); with this map the UI
+ * can turn them into links to the page they came from, instead of only
+ * hyperlinking the designation. It matters most on a version comparison, where
+ * the passage cards are no longer shown (client, 2026-08-20: the comparison
+ * should present "as much detail as possible with links to chapters") — the
+ * Guide's own locators become the way back into the document.
+ *
+ * Built ONLY from what retrieval actually returned, so a locator the model
+ * invented has no entry and stays plain text — the same rule the designation
+ * links follow (DO24: a link is never fabricated).
+ */
+export function buildSectionLinkMap(
+  results: SearchResult[],
+): Record<string, { sections: Record<string, string>; pages: Record<string, string> }> {
+  const MAX_STANDARDS = 24;
+  const MAX_PER_STANDARD = 40;
+  const map: Record<string, { sections: Record<string, string>; pages: Record<string, string> }> = {};
+
+  for (const r of results) {
+    const id = r.application?.standard;
+    if (!id) continue;
+    if (!map[id] && Object.keys(map).length >= MAX_STANDARDS) continue;
+    if (!map[id]) map[id] = { sections: {}, pages: {} };
+    const entry = map[id];
+
+    const excerpts: Array<Partial<Excerpt>> = [
+      ...(r.excerpts || []),
+      ...(r.excerpt ? [r.excerpt] : []),
+      // The card's own citation carries a page and a page-targeted link even
+      // when its excerpt list is empty.
+      ...(r.citationPage != null ? [{ pageNumber: r.citationPage, vitriumLink: r.vitriumLink }] : []),
+    ];
+
+    for (const e of excerpts) {
+      const url = e.vitriumLink;
+      if (!url) continue;
+      if (e.section && Object.keys(entry.sections).length < MAX_PER_STANDARD && !entry.sections[e.section]) {
+        entry.sections[String(e.section)] = url;
+      }
+      if (e.pageNumber != null && Object.keys(entry.pages).length < MAX_PER_STANDARD) {
+        const page = String(e.pageNumber);
+        if (!entry.pages[page]) entry.pages[page] = url;
+      }
+    }
+  }
+
+  // A standard that yielded no locator at all would only bloat the payload.
+  for (const [id, entry] of Object.entries(map)) {
+    if (Object.keys(entry.sections).length === 0 && Object.keys(entry.pages).length === 0) delete map[id];
+  }
+  return map;
+}
+
 function buildStandardLinkMap(results: SearchResult[]): Record<string, string> {
   const map: Record<string, string> = {};
   for (const r of results) {

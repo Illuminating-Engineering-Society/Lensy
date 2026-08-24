@@ -76,23 +76,46 @@ beforeAll(() => {
         if (!pills.has(m[1])) pills.set(m[1], stubElement(`pill:${m[1]}`));
         return pills.get(m[1]);
       },
-      // The Interior / Exterior checkboxes inside the Illuminance Tables panel.
       querySelectorAll(sel) {
-        if (!/\[data-loc\]/.test(String(sel))) return [];
-        return ['interior', 'exterior'].map(name => {
-          const id = `loc:${name}`;
-          if (!elements.has(id)) {
-            const el = stubElement(id);
-            el.dataset.loc = name;
-            elements.set(id, el);
-          }
-          return elements.get(id);
-        });
+        const s = String(sel);
+        // A content kind now has two controls (the sidebar and the hero's
+        // Advanced Search panel); everything that paints state paints them all,
+        // so the stub answers with the one pill the assertions read.
+        const f = /\[data-filter="([^"]+)"\]/.exec(s);
+        if (f) {
+          if (!pills.has(f[1])) pills.set(f[1], stubElement(`pill:${f[1]}`));
+          return [pills.get(f[1])];
+        }
+        // The Interior / Exterior checkboxes under Illuminance Tables.
+        if (/\[data-loc\]/.test(s)) {
+          return ['interior', 'exterior'].map(name => {
+            const id = `loc:${name}`;
+            if (!elements.has(id)) {
+              const el = stubElement(id);
+              el.dataset.loc = name;
+              elements.set(id, el);
+            }
+            return elements.get(id);
+          });
+        }
+        // Per-kind result totals beside each Contents checkbox.
+        if (/\[data-count-for\]/.test(s)) {
+          return ['body', 'definitions', 'references', 'tables', 'interior', 'exterior'].map(kind => {
+            const id = `count:${kind}`;
+            if (!elements.has(id)) {
+              const el = stubElement(id);
+              el.dataset.countFor = kind;
+              elements.set(id, el);
+            }
+            return elements.get(id);
+          });
+        }
+        return [];
       },
       addEventListener() {},
       body: { style: {} },
     },
-    window: { scrollTo() {}, location: { search: '' } },
+    window: { scrollTo() {}, addEventListener() {}, innerWidth: 1440, location: { search: '' } },
     location: { search: '' },
     localStorage: {
       _m: new Map(),
@@ -151,12 +174,14 @@ describe('filter pills', () => {
     run('resetFilters()');
   });
 
-  it('shows the hero hint only while Compare Versions is armed from the banner', () => {
+  // The hero hint is gone (client wireframes, 2026-08-20: "Compare Versions
+  // results: delete this text") — Compare Versions is armed and run from its own
+  // floating window, so the state never outlives the search it belongs to.
+  it('still carries the Compare Versions state on its Library Tools control', () => {
     run('resetFilters()');
-    expect(elements.get('compare-hint').classList.contains('hidden')).toBe(true);
+    expect(pills.get('compare').getAttribute('aria-pressed')).toBe('false');
     run('toggleFilter("compare")');
     expect(pills.get('compare').getAttribute('aria-pressed')).toBe('true');
-    expect(elements.get('compare-hint').classList.contains('hidden')).toBe(false);
     run('toggleFilter("compare")');
   });
 
@@ -561,7 +586,7 @@ describe('Document card for a designation search', () => {
     const card = run(`renderStandardCard(${result}, 0)`);
     expect(card).toContain('IES Education, Library and Office Lighting Committee');
     expect(card).toContain('Open in Library');
-    expect(card).toContain('Save Search');
+    expect(card).toContain('Bookmark');
     expect(card).toContain('https://store.ies.org/rp-3');
   });
 
@@ -576,12 +601,12 @@ describe('Document card for a designation search', () => {
     expect(card).toContain('Best practices to light classrooms');
   });
 
-  it('marks a deprecated edition and withholds Save Search', () => {
+  it('marks a deprecated edition and withholds the Bookmark button', () => {
     const card = run(`renderStandardCard({ ...${result}, isDeprecated: true,
       deprecationNotice: 'ANSI/IES RP-8-22 is deprecated and has been replaced by RP-8-25+E2.' }, 0)`);
     expect(card).toContain('Deprecated');
     expect(card).toContain('replaced by RP-8-25+E2');
-    expect(card).not.toContain('Save Search');
+    expect(card).not.toContain('save-search-btn');
   });
 
   it('emits no script or event-handler markup', () => {
@@ -609,7 +634,7 @@ describe('AI Guide naming', () => {
 
 // ─── DO54: Definition cards are saveable ──────────────────────────────────────
 
-describe('Save Search on a Definition card', () => {
+describe('Bookmark button on a Definition card', () => {
   const definition = `{
     resultType: 'definition', relevanceScore: 1,
     citation: 'ANSI/IES LS-1-25, §4.1.5',
@@ -622,9 +647,9 @@ describe('Save Search on a Definition card', () => {
     excerpt: { text: 'A photometer for measuring the directional light distribution.' }
   }`;
 
-  it('offers the same "+ Save Search" button the other cards offer', () => {
+  it('offers the same "+ Bookmark" button the other cards offer', () => {
     const card = run(`renderDefinitionCard(${definition}, 0)`);
-    expect(card).toContain('Save Search');
+    expect(card).toContain('Bookmark');
     expect(card).toContain('save-search-btn');
     expect(card).toContain('Open Definition');
   });
@@ -776,7 +801,7 @@ describe('"From the Standard" prominence', () => {
 
 // ─── DO61: "+ Save Again" for a result already in a collection ─────────────────
 
-describe('Save Search / Save Again', () => {
+describe('Bookmark / Bookmark Again', () => {
   const result = `{
     resultType: 'application', relevanceScore: 0.9,
     citation: 'ANSI/IES RP-6-24, Table A-2, Row 205, p. 83',
@@ -786,20 +811,20 @@ describe('Save Search / Save Again', () => {
     application: { standard: 'RP-6-24', code: 'RP-6-24_205', fullName: 'Soccer — Class I' }
   }`;
 
-  it('offers "Save Search" for a result that is not saved yet', () => {
+  it('offers "Bookmark" for a result that is not saved yet', () => {
     run('savedResultKeys = new Set()');
     const html = run(`saveSearchButton(${result}, 'Soccer')`);
-    expect(html).toContain('Save Search');
-    expect(html).not.toContain('Save Again');
+    expect(html).toContain('>Bookmark<');
+    expect(html).not.toContain('Bookmark Again');
     expect(html).toContain('background-color: var(--brand-secondary)');
   });
 
-  it('reads "Save Again" in a less saturated fill once it is saved', () => {
+  it('reads "Bookmark Again" in a less saturated fill once it is saved', () => {
     run(`savedResultKeys = new Set([savedResultKey(${result})])`);
     const html = run(`saveSearchButton(${result}, 'Soccer')`);
-    expect(html).toContain('Save Again');
+    expect(html).toContain('Bookmark Again');
     expect(html).toContain('background-color: #8FA3B4');
-    expect(html).toContain('Already saved to one of your Saved Search Collections');
+    expect(html).toContain('Already in one of your Bookmark Collections');
     run('savedResultKeys = new Set()');
   });
 
@@ -996,6 +1021,157 @@ describe('AI curation badges', () => {
       document: { id: 'RP-3-20+E1', designation: 'ANSI/IES RP-3-20+E1', title: 'T', description: 'D',
                   thumbnailUrl: null, buyUrl: null, collection: null, matchedOn: 'designation' } }, 0)`);
     expect(std).toContain('Cited by AI Guide');
+  });
+});
+
+// ─── 2026-08-20 wireframes: the low-confidence tail ───────────────────────────
+
+describe('low-confidence matches', () => {
+  const hit = (score, over = '') => `{
+    resultType: 'excerpt', relevanceScore: ${score},
+    citationName: 'ANSI/IES RP-8-25+E2 Title', citationPage: 21,
+    application: { standard: 'RP-8-25+E2' },
+    excerpt: { text: 'A passage of prose long enough to survive the filter.', chunkType: 'text', pageNumber: 21 }
+    ${over}
+  }`;
+
+  it('splits the pool at the threshold the server sent', () => {
+    const split = JSON.parse(run(`confidenceThreshold = 0.6;
+      sortState = { key: 'relevance', dir: 'asc' };
+      JSON.stringify((() => {
+        const s = splitByConfidence([${hit(0.9)}, ${hit(0.7)}, ${hit(0.4)}, ${hit(0.2)}]);
+        return { shown: s.shown.length, hidden: s.hidden.length };
+      })())`));
+    expect(split).toEqual({ shown: 2, hidden: 2 });
+  });
+
+  it('treats a whole-document card as confident whatever it scored', () => {
+    expect(run(`isHighConfidence({ resultType: 'standard', relevanceScore: 0.1 })`)).toBe(true);
+    expect(run(`isHighConfidence({ resultType: 'excerpt', relevanceScore: 0.1 })`)).toBe(false);
+  });
+
+  it('does not split under a sort where "weaker below" would be a lie', () => {
+    const split = JSON.parse(run(`sortState = { key: 'title', dir: 'asc' };
+      JSON.stringify((() => {
+        const s = splitByConfidence([${hit(0.9)}, ${hit(0.2)}]);
+        return { shown: s.shown.length, hidden: s.hidden.length };
+      })())`));
+    expect(split).toEqual({ shown: 2, hidden: 0 });
+    run(`sortState = { key: 'relevance', dir: 'asc' }`);
+  });
+
+  it('shows the whole list rather than an empty page when nothing clears the bar', () => {
+    const split = JSON.parse(run(`sortState = { key: 'relevance', dir: 'asc' };
+      JSON.stringify((() => {
+        const s = splitByConfidence([${hit(0.3)}, ${hit(0.2)}]);
+        return { shown: s.shown.length, hidden: s.hidden.length };
+      })())`));
+    expect(split).toEqual({ shown: 2, hidden: 0 });
+  });
+
+  it('offers the bar as a read-more element naming how many are folded away', () => {
+    const html = run(`renderLowConfidenceBar(7)`);
+    expect(html).toContain('View 7 low-confidence matches');
+    expect(html).toContain('revealLowConfidence()');
+    expect(run(`renderLowConfidenceBar(1)`)).toContain('View 1 low-confidence match<');
+  });
+});
+
+// ─── 2026-08-20 wireframes: AI Guide "Continue Reading" ───────────────────────
+
+describe('AI Guide fold', () => {
+  it('shows the first paragraph and folds the rest behind Continue Reading', () => {
+    const html = run(`renderAIText('First paragraph of guidance.\\n\\nSecond paragraph.\\n\\nThird paragraph.')`);
+    expect(html).toContain('First paragraph of guidance.');
+    expect(html).toContain('Continue Reading');
+    expect(html).toContain('id="ai-summary-more"');
+    // Everything is in the DOM from the start — the fold is presentation only.
+    expect(html).toContain('Third paragraph.');
+    // The lead sits outside the folded container.
+    expect(html.indexOf('First paragraph')).toBeLessThan(html.indexOf('ai-summary-more'));
+  });
+
+  it('carries a heading into the lead so the fold never opens on a bare label', () => {
+    const html = run(`renderAIText('## Overview\\n\\nThe guidance says this.\\n\\nAnd then this.')`);
+    expect(html.indexOf('Overview')).toBeLessThan(html.indexOf('ai-summary-more'));
+    expect(html.indexOf('The guidance says this.')).toBeLessThan(html.indexOf('ai-summary-more'));
+  });
+
+  it('does not fold a one-paragraph answer', () => {
+    const html = run(`renderAIText('Only one paragraph here.')`);
+    expect(html).not.toContain('Continue Reading');
+  });
+});
+
+// ─── 2026-08-20: locator links in AI prose ────────────────────────────────────
+
+describe('AI locator links', () => {
+  const map = `{ 'RP-8-25+E2': {
+    sections: { '4.2': 'https://lighting.ies.org/rp8#page=21' },
+    pages: { '21': 'https://lighting.ies.org/rp8#page=21' } } }`;
+
+  it('links a section to the page it was retrieved from, using the named standard', () => {
+    run(`setSectionLinks(${map})`);
+    const out = run(`linkifyLocators('ANSI/IES RP-8-25+E2, Section 4.2 covers parking.')`);
+    expect(out).toContain('href="https://lighting.ies.org/rp8#page=21"');
+    expect(out).toContain('Section 4.2</a>');
+  });
+
+  it('links a page reference the same way', () => {
+    run(`setSectionLinks(${map})`);
+    const out = run(`linkifyLocators('See RP-8-25+E2, p. 21 for the criteria.')`);
+    expect(out).toContain('p. 21</a>');
+  });
+
+  it('leaves a locator with no retrieved page as plain text', () => {
+    run(`setSectionLinks(${map})`);
+    expect(run(`linkifyLocators('RP-8-25+E2, Section 9.9 says something.')`)).not.toContain('<a ');
+  });
+
+  it('leaves locators alone when no standard has been named yet', () => {
+    run(`setSectionLinks(${map})`);
+    expect(run(`linkifyLocators('Section 4.2 is relevant.')`)).not.toContain('<a ');
+  });
+
+  it('is inert without a map', () => {
+    run('setSectionLinks(null)');
+    expect(run(`linkifyLocators('RP-8-25+E2, Section 4.2')`)).not.toContain('<a ');
+  });
+});
+
+// ─── 2026-08-20 wireframes: sidebar counts, derived from the results ──────────
+
+describe('sidebar filter counts', () => {
+  const app = (loc) => `{ resultType: 'application', relevanceScore: 0.8,
+    application: { standard: 'RP-6-24', standardFull: 'ANSI/IES RP-6-24', indoorOutdoor: '${loc}' },
+    committee: { name: 'IES Sports Lighting Committee' } }`;
+  const doc = `{ resultType: 'excerpt', relevanceScore: 0.7,
+    citationName: 'ANSI/IES RP-1-24 Title',
+    application: { standard: 'RP-1-24', standardFull: 'ANSI/IES RP-1-24' },
+    committee: { name: 'IES Education, Library and Office Lighting Committee' },
+    excerpt: { text: 'x', pageNumber: 3 } }`;
+
+  it('counts the results each content kind accounts for', () => {
+    run(`allResults = [${app('Indoor')}, ${app('Outdoor')}, ${doc},
+      { resultType: 'definition', relevanceScore: 1, application: { standard: 'LS-1-25' } },
+      { resultType: 'reference', relevanceScore: 0.5, application: { standard: 'RP-6-24' } }]`);
+    const counts = JSON.parse(run('JSON.stringify(contentKindCounts())'));
+    expect(counts).toEqual({ body: 1, definitions: 1, references: 1, tables: 2, interior: 1, exterior: 1 });
+  });
+
+  it('builds the Documents lists from the results, with per-entry counts', () => {
+    run(`allResults = [${app('Indoor')}, ${app('Outdoor')}, ${doc}]; seedUniverseFromResults()`);
+    const universe = JSON.parse(run('JSON.stringify(docFilterUniverse)'));
+    expect(universe.title.map(t => [t.value, t.count])).toEqual([['RP-1-24', 1], ['RP-6-24', 2]]);
+    expect(universe.pubtype.map(p => [p.value, p.count])).toEqual([['RP', 3]]);
+    expect(universe.committee.map(c => c.count)).toEqual([1, 2]);
+  });
+
+  it('starts with everything selected, so a fresh result set narrows nothing', () => {
+    run(`allResults = [${app('Indoor')}, ${doc}]; seedUniverseFromResults()`);
+    expect(run(`docGroupActive('title')`)).toBe(false);
+    expect(run(`passesDocFilters(${doc})`)).toBe(true);
+    run('resetFilters()');
   });
 });
 

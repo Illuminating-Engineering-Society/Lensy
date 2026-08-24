@@ -3,7 +3,7 @@ import {
   normalizeContentTypes, buildReferenceLink, curatedStandardInfo,
   deriveLightingZone, reserveBodySlots, buildComparisonContext, matchesStandardScope, buildResult, buildChunkResults, looksLikeFrontMatter,
   editionYear, orderComparisonResults, requestedDeprecatedEdition, spreadAcrossSections,
-  isResolvableDoi, isBrokenDoiUrl, definitionSearchTerm,
+  isResolvableDoi, isBrokenDoiUrl, definitionSearchTerm, buildSectionLinkMap,
 } from './search';
 
 // ─── Content-type normalization ───────────────────────────────────────────────
@@ -452,5 +452,73 @@ describe('looksLikeFrontMatter', () => {
   it('treats missing text as packaging (nothing to compare)', () => {
     expect(looksLikeFrontMatter('')).toBe(true);
     expect(looksLikeFrontMatter(null)).toBe(true);
+  });
+});
+
+// ─── Locator links for the AI Guide (client, 2026-08-20) ──────────────────────
+//
+// The comparison now shows document cards only, so the Guide's own "§4.2" and
+// "p. 21" are the reader's way back into the standard. This map is what the UI
+// turns them into links with — and it is built from retrieval alone, so a
+// locator the model invented has no entry and stays plain text.
+
+describe('buildSectionLinkMap', () => {
+  const result = (std, excerpts, over = {}) => ({
+    resultType: 'excerpt',
+    relevanceScore: 0.7,
+    application: { standard: std },
+    excerpt: excerpts[0] || null,
+    excerpts,
+    ...over,
+  });
+
+  it('maps sections and pages to the URL the passage came from', () => {
+    const map = buildSectionLinkMap([
+      result('RP-8-25+E2', [
+        { section: '4.2', pageNumber: 21, vitriumLink: 'https://lighting.ies.org/rp8#page=21' },
+        { section: '7.1', pageNumber: 63, vitriumLink: 'https://lighting.ies.org/rp8#page=63' },
+      ]),
+    ]);
+    expect(map['RP-8-25+E2'].sections['4.2']).toBe('https://lighting.ies.org/rp8#page=21');
+    expect(map['RP-8-25+E2'].pages['63']).toBe('https://lighting.ies.org/rp8#page=63');
+  });
+
+  it('keeps editions apart, so a comparison links each to its own pages', () => {
+    const map = buildSectionLinkMap([
+      result('RP-8-25+E2', [{ section: '4.2', pageNumber: 21, vitriumLink: 'https://lighting.ies.org/new#page=21' }]),
+      result('RP-8-22', [{ section: '4.2', pageNumber: 19, vitriumLink: 'https://lighting.ies.org/old#page=19' }],
+        { isDeprecated: true }),
+    ]);
+    expect(map['RP-8-25+E2'].sections['4.2']).toContain('/new#page=21');
+    expect(map['RP-8-22'].sections['4.2']).toContain('/old#page=19');
+  });
+
+  it('falls back to the card citation for a result with no excerpt list', () => {
+    const map = buildSectionLinkMap([{
+      resultType: 'application',
+      application: { standard: 'RP-6-24' },
+      excerpt: null,
+      citationPage: 83,
+      vitriumLink: 'https://lighting.ies.org/rp6#page=83',
+    }]);
+    expect(map['RP-6-24'].pages['83']).toBe('https://lighting.ies.org/rp6#page=83');
+  });
+
+  it('omits a standard that yielded no locator at all', () => {
+    const map = buildSectionLinkMap([
+      result('RP-1-24', [{ section: null, pageNumber: null, vitriumLink: null }]),
+    ]);
+    expect(map['RP-1-24']).toBeUndefined();
+  });
+
+  it('keeps the FIRST url for a repeated locator, and survives an empty set', () => {
+    const map = buildSectionLinkMap([
+      result('RP-6-24', [
+        { section: '5.4', pageNumber: 40, vitriumLink: 'https://lighting.ies.org/a#page=40' },
+        { section: '5.4', pageNumber: 41, vitriumLink: 'https://lighting.ies.org/b#page=41' },
+      ]),
+    ]);
+    expect(map['RP-6-24'].sections['5.4']).toContain('/a#page=40');
+    expect(buildSectionLinkMap([])).toEqual({});
   });
 });

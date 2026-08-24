@@ -85,65 +85,21 @@
     //
     // Two levels of grouping, then one sort:
     //
-    //   1. Webstore CATEGORY, in the client's stated order — Lighting Science,
-    //      Lighting Practice, Lighting Applications, Lighting Measurements and
-    //      Testing, Roadway Lighting. Anything else follows, alphabetically.
-    //   2. AUTHOR inside each category — the authoring committee from Vitrium's
-    //      Author metadata, printed as "IES [author]", sorted alphabetically and
-    //      hyperlinked to its public committee page.
-    //   3. Standards inside each author group, alphabetically by designation,
-    //      with the full title and the Vitrium content description.
+    //   1. AUTHORING COMMITTEE — from Vitrium's Author metadata, printed as
+    //      "IES [author]", sorted alphabetically and hyperlinked to its public
+    //      committee page.
+    //   2. Standards inside each committee, alphanumerically by designation
+    //      ("RP-2" before "RP-10"), with the full title and the content
+    //      description.
     //
-    // The metadata comes from the Vitrium/webstore export, so until it is present
-    // the page falls back to grouping by series — which is how the printed
-    // library is organized and never leaves the page ungrouped.
-
-    // Webstore product categories, in the order the client specified. Matched
-    // case- and punctuation-insensitively so "Part 2: Lighting Practice" and
-    // "Lighting Practice" land in the same group.
-    const CATEGORY_ORDER = [
-      'Lighting Science',
-      'Lighting Practice',
-      'Lighting Applications',
-      'Lighting Measurements and Testing',
-      'Roadway Lighting',
-    ];
-
-    const foldCategory = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
-
-    /** A collection value → its canonical category label, or the value itself. */
-    function categoryLabel(raw) {
-      const folded = foldCategory(raw);
-      if (!folded) return null;
-      const known = CATEGORY_ORDER.find(c => {
-        const k = foldCategory(c);
-        return folded === k || folded.endsWith(k) || folded.includes(k);
-      });
-      return known || String(raw).trim();
-    }
-
-    const SERIES = [
-      { prefix: 'RP', label: 'Recommended Practices (RP)' },
-      { prefix: 'LP', label: 'Lighting Practice (LP)' },
-      { prefix: 'LS', label: 'Lighting Science (LS)' },
-      { prefix: 'TM', label: 'Technical Memoranda (TM)' },
-      { prefix: 'LM', label: 'Approved Methods (LM)' },
-      { prefix: 'DG', label: 'Design Guides (DG)' },
-      { prefix: 'G',  label: 'Guidelines (G)' },
-      { prefix: 'HB', label: 'Handbooks (HB)' },
-      { prefix: 'LEM', label: 'Lighting Energy Management (LEM)' },
-    ];
+    // The webstore Category level is GONE (client, 2026-08-20: "no longer group
+    // by collection/type. Just group by Committee name (alphabetical) then sort
+    // alphanumeric by designation") — a reader looking for a standard knows who
+    // wrote it far more often than which product bundle it ships in. Standards
+    // whose committee the export has not supplied are collected under one
+    // honest heading rather than left looking mis-filed.
 
     let allStandards = [];
-
-    function seriesOf(id) {
-      const m = /^([A-Z]+)-/.exec(String(id || '').toUpperCase());
-      const prefix = m ? m[1] : '';
-      // LEM before LM/LS so the longer prefix wins.
-      const found = [...SERIES].sort((a, b) => b.prefix.length - a.prefix.length)
-        .find(s => prefix === s.prefix);
-      return found ? found.label : 'Other';
-    }
 
     // Sort within a series by document number, then edition — "RP-2" before
     // "RP-10", which a plain string sort gets wrong.
@@ -170,11 +126,6 @@
         el.textContent = err.message;
         el.classList.remove('hidden');
       }
-    }
-
-    /** Which grouping the available metadata supports. */
-    function groupLabelFor(s) {
-      return categoryLabel(s.collection) || seriesOf(s.id);
     }
 
     /** The committee credit line for one standard: "IES [author]" (DO46). */
@@ -205,58 +156,44 @@
         `${matches.length} of ${allStandards.length} standard${allStandards.length === 1 ? '' : 's'}`;
       document.getElementById('toc-empty').classList.toggle('hidden', matches.length > 0);
 
-      // Say plainly when the export has not supplied the collection metadata yet,
-      // rather than letting the page look like it is grouping by Collection when
-      // it is actually falling back to series.
-      const withCollection = allStandards.filter(s => s.collection).length;
+      // Say plainly when the metadata this page is built on has not arrived —
+      // an ungrouped list looks like a bug otherwise. Descriptions come from the
+      // same Vitrium/webstore export as the committee attribution.
       const notice = document.getElementById('toc-metadata-notice');
       const withAuthor = allStandards.filter(s => authorLabelFor(s)).length;
-      if (withCollection === 0 && allStandards.length > 0) {
-        notice.textContent = 'Grouped by series: the Vitrium/webstore export has not supplied the Category (Collection) '
-          + 'metadata yet. Once it does, this page groups by webstore Category, then by authoring committee, automatically.';
+      const withDescription = allStandards.filter(s => s.description).length;
+      if (withAuthor === 0 && allStandards.length > 0) {
+        notice.textContent = 'The Vitrium/webstore export has not supplied the Author (authoring committee) metadata yet, '
+          + 'so every standard is listed together. Grouping by committee resumes automatically once it does.';
         notice.classList.remove('hidden');
-      } else if (withAuthor === 0 && allStandards.length > 0) {
-        notice.textContent = 'Grouped by Category. The export has not supplied the Author (authoring committee) metadata '
-          + 'yet, so the second grouping level is empty.';
+      } else if (withDescription === 0 && allStandards.length > 0) {
+        notice.textContent = 'Grouped by authoring committee. The export has not supplied the content descriptions yet, '
+          + 'so each standard shows its designation and title only.';
         notice.classList.remove('hidden');
       } else {
         notice.classList.add('hidden');
       }
 
-      const groups = new Map();
-      for (const s of matches) {
-        const label = groupLabelFor(s);
-        if (!groups.has(label)) groups.set(label, []);
-        groups.get(label).push(s);
-      }
-      // Categories print in the client's stated order (DO46); anything the
-      // export adds beyond those five follows alphabetically. The series
-      // fallback keeps the printed library's own order.
-      const ordered = withCollection > 0
-        ? [
-            ...CATEGORY_ORDER.filter(c => groups.has(c)),
-            ...[...groups.keys()].filter(k => !CATEGORY_ORDER.includes(k)).sort((a, b) => a.localeCompare(b)),
-          ]
-        : [...SERIES.map(s => s.label), 'Other'].filter(l => groups.has(l));
-
+      // ONE level of grouping: the authoring committee (client, 2026-08-20:
+      // "no longer group by collection/type. Just group by Committee name
+      // (alphabetical) then sort alphanumeric by designation"). The webstore
+      // Category grouping is gone — a reader looking for a standard knows who
+      // wrote it far more often than which product bundle it ships in.
       const wrap = document.getElementById('toc-groups');
-      wrap.innerHTML = ordered.map(label => `
-        <section>
-          <h2 class="text-sm font-bold uppercase tracking-wider text-gray-500 mb-2">${escapeHtml(label)}</h2>
-          ${renderAuthorGroups(groups.get(label))}
-        </section>
-      `).join('');
+      wrap.innerHTML = renderCommitteeGroups(matches);
       wrap.classList.remove('hidden');
     }
 
     /**
-     * Second-level grouping: by author (the authoring committee), alphabetically,
-     * with the committee name hyperlinked to its public page (client DO46).
+     * The only grouping: by authoring committee, alphabetically, with the
+     * committee name hyperlinked to its public page (client DO46, promoted to
+     * the sole grouping level 2026-08-20). Standards inside a committee sort
+     * alphanumerically by designation.
      *
      * Standards whose Author metadata has not been supplied yet are collected
      * under one honest heading rather than under an invented committee.
      */
-    function renderAuthorGroups(standards) {
+    function renderCommitteeGroups(standards) {
       const byAuthor = new Map();
       for (const s of standards) {
         const label = authorLabelFor(s) || '';
@@ -285,12 +222,12 @@
           : '<span class="text-gray-400 font-normal">Authoring committee not yet supplied</span>';
 
         return `
-          <div class="mb-4">
-            <h3 class="text-xs font-semibold text-gray-600 mb-1.5">${heading}</h3>
+          <section class="mb-6">
+            <h2 class="text-sm font-bold text-gray-700 mb-1.5">${heading}</h2>
             <div class="bg-white rounded-xl border border-gray-100 divide-y divide-gray-100 overflow-hidden">
               ${rows.map(row).join('')}
             </div>
-          </div>`;
+          </section>`;
       }).join('');
     }
 
@@ -324,16 +261,23 @@
            </div>`
         : '';
 
+      // "Keep to 'Open in Library'" (client, 2026-08-20) — the button now says
+      // where it goes rather than what to do when you get there.
       const read = s.vitrium_web_url
         ? `<a href="${escapeHtml(s.vitrium_web_url)}" target="_blank" rel="noopener"
              class="text-xs px-2.5 py-1 bg-brand-primary text-white rounded-lg hover:bg-brand-primary-dark transition font-medium whitespace-nowrap text-center"
-             title="Read ${escapeHtml(s.id)} in the IES Lighting Library">Read</a>`
+             title="Open ${escapeHtml(s.id)} in the IES Lighting Library">Open in Library</a>`
         : `<span class="text-xs text-gray-300 whitespace-nowrap text-center" title="No Lighting Library URL synced for this standard yet">Not linked</span>`;
       const buy = s.buy_url
         ? `<a href="${escapeHtml(s.buy_url)}" target="_blank" rel="noopener"
              class="text-xs px-2.5 py-1 border border-gray-200 rounded-lg text-gray-600 hover:bg-gray-50 transition font-medium whitespace-nowrap text-center">Buy</a>`
         : '';
 
+      // The per-row "Search" button is gone (client, 2026-08-20) — this page is
+      // a catalogue of the library, and searching a single standard from it was
+      // a second, weaker way into a search box that is one click away.
+      // "## pages indexed" is gone with it: an ingest statistic, not a fact
+      // about the standard.
       return `
         <div class="px-4 py-3 flex flex-wrap sm:flex-nowrap items-start gap-4 hover:bg-gray-50 transition">
           ${thumb}
@@ -341,14 +285,10 @@
             <p class="text-sm font-semibold text-gray-900">${escapeHtml(designation)}</p>
             ${title ? `<p class="text-xs text-gray-600">${escapeHtml(title)}</p>` : ''}
             ${s.description ? `<p class="text-xs text-gray-500 mt-1 leading-relaxed">${escapeHtml(s.description)}</p>` : ''}
-            ${s.page_count ? `<p class="text-[11px] text-gray-300 mt-1">${s.page_count} pages indexed</p>` : ''}
           </div>
           ${elearning}
           <div class="flex sm:flex-col items-stretch gap-1.5 shrink-0">
             ${read}${buy}
-            <a href="/?q=${encodeURIComponent(s.id)}"
-               class="text-xs px-2.5 py-1 bg-brand-secondary text-white rounded-lg hover:bg-brand-secondary-dark transition font-medium whitespace-nowrap text-center"
-               title="Search inside ${escapeHtml(s.id)} in Lensy">Search</a>
           </div>
         </div>`;
     }
