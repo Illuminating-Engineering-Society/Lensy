@@ -23,7 +23,23 @@
  *  3. API mode — fetches document metadata from the Vitrium API:
  *       VITRIUM_API_KEY=xxx node scripts/sync-metadata.js
  *
- * Flags: --dry-run (preview, no writes), --local (write to local D1 + KV).
+ * Flags: --dry-run (preview, no writes), --local (write to local D1 + KV),
+ *        --portal <PortalDocuments.json> (see below).
+ *
+ * ── --portal: cover images, descriptions and committees ──────────────────────
+ * Vitrium's export carries none of those. The Lighting Library portal's own
+ * document list does, so it is joined onto the CSV by Doc Code (274/274 rows
+ * match) and fills:
+ *
+ *   LatestVersionId → the cover URL   https://lighting.ies.org/api/portal/ies/
+ *                                     Thumbnail?externalKey=<LatestVersionId>
+ *   Description     → standards.description
+ *   Authors         → standards.author (the authoring committee)
+ *
+ * NOTE the trap: the portal's `externalKey` is the LatestVersionId, NOT the
+ * "External Key" column in Vitrium's export. Those are different identifiers
+ * that share a name — every Vitrium External Key answers 404 on the thumbnail
+ * endpoint (verified 2026-08-24 across the whole export).
  *
  * After a live sync the script bumps the search-cache data version (KV) so
  * cached responses with stale/missing Vitrium links are invalidated.
@@ -44,6 +60,10 @@ const D1_TARGET = IS_LOCAL ? '--local' : '--remote';
 
 const CSV_FILE = argValue('--csv');
 const MAPPING_FILE = argValue('--file');
+// The Lighting Library portal's own document list (its PortalDocuments JSON).
+// Enriches the CSV export with the three things Vitrium's export does not
+// carry: the cover image, the content description and the authoring committee.
+const PORTAL_FILE = argValue('--portal');
 
 function argValue(flag) {
   const idx = process.argv.indexOf(flag);
@@ -66,8 +86,16 @@ async function main() {
   console.log(`Source: ${CSV_FILE ? `CSV (${CSV_FILE})` : MAPPING_FILE ? `file (${MAPPING_FILE})` : `API (${VITRIUM_API_URL})`}`);
   console.log(`Mode: ${DRY_RUN ? 'Dry Run (no writes)' : 'Live'} — D1 target: ${D1_TARGET}\n`);
 
+  // The portal's document list, when supplied, fills the cover image,
+  // description and committee that Vitrium's export does not carry.
+  const portalByCode = PORTAL_FILE ? loadPortalDocuments(PORTAL_FILE) : null;
+  if (PORTAL_FILE && !CSV_FILE) {
+    console.error('Error: --portal enriches a CSV export; pass --csv as well.');
+    process.exit(1);
+  }
+
   // Resolve the list of { standardId, docId, webUrl } entries to write
-  const entries = CSV_FILE ? loadCsvExport(CSV_FILE)
+  const entries = CSV_FILE ? loadCsvExport(CSV_FILE, portalByCode)
     : MAPPING_FILE ? loadMappingFile(MAPPING_FILE)
     : await fetchFromApi();
   console.log(`Resolved ${entries.length} standard → Vitrium mappings.\n`);
@@ -86,12 +114,19 @@ async function main() {
   const statements = entries.map((e) => {
     const { standardId, docId, webUrl } = e;
     const col = (name, value) => `${name} = ${value != null ? `'${sqlEsc(value)}'` : name}`;
+    // Fill-only-if-empty. The authoring committee is read off each PDF's cover
+    // during ingest ("Prepared by the … Committee", client DO29/DO46) for 110 of
+    // 113 standards, and that is a transcription of the document itself. The
+    // portal's Authors field is good metadata but it is not better than the
+    // cover, so it FILLS the gaps and never overwrites what ingest established.
+    const fillCol = (name, value) =>
+      `${name} = ${value != null ? `COALESCE(${name}, '${sqlEsc(value)}')` : name}`;
     return `
 UPDATE standards
 SET vitrium_doc_id = '${sqlEsc(docId)}',
     ${col('vitrium_web_url', webUrl)},
     ${col('collection', e.collection)},
-    ${col('author', e.author)},
+    ${fillCol('author', e.author)},
     ${col('description', e.description)},
     ${col('thumbnail_url', e.thumbnailUrl)},
     ${col('buy_url', e.buyUrl)},
@@ -149,21 +184,58 @@ WHERE Standard = '${sqlEsc(standardId)}';
 // ─── CSV mode (Vitrium "Web Viewer URLs" export) ──────────────────────────────
 
 /**
- * The Lighting Library's public cover-image endpoint, for one document's
- * External Key. Verified 2026-08-24: 200 image/png, no credential required.
+ * The Lighting Library's public cover-image endpoint, for one document's PORTAL
+ * key. Verified 2026-08-24: 200 image/png, no credential required.
  *
- *   https://lighting.ies.org/api/portal/ies/Thumbnail?externalKey=<guid>
+ *   https://lighting.ies.org/api/portal/ies/Thumbnail?externalKey=<portal guid>
  *
- * Returns null for a missing key, so a row without one leaves thumbnail_url
- * untouched rather than storing a URL that will 404.
+ * The key belongs to the portal, not to Vitrium — see loadCsvExport(). Returns
+ * null for a missing key, so a row without one leaves thumbnail_url untouched
+ * rather than storing a URL that will 404.
  */
-function thumbnailUrlFor(externalKey) {
-  const key = String(externalKey || '').trim();
+function thumbnailUrlFor(portalKey) {
+  const key = String(portalKey || '').trim();
   if (!key) return null;
   return `https://lighting.ies.org/api/portal/ies/Thumbnail?externalKey=${encodeURIComponent(key)}`;
 }
 
-function loadCsvExport(filePath) {
+/**
+ * The portal's document list, indexed by Doc Code — the one field it shares
+ * with Vitrium's export, and which matched every row when this was written.
+ *
+ * Returns a Map: docCode → { thumbnailUrl, description, author }.
+ */
+function loadPortalDocuments(filePath) {
+  const raw = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+  const docs = Array.isArray(raw) ? raw : (raw.PortalDocuments || raw.documents || []);
+  if (!Array.isArray(docs) || docs.length === 0) {
+    console.error(`Error: ${filePath} holds no PortalDocuments array.`);
+    process.exit(1);
+  }
+
+  const byCode = new Map();
+  let covers = 0, descriptions = 0, authors = 0;
+  for (const d of docs) {
+    const code = String(d.DocCode || '').trim();
+    if (!code) continue;
+    // The cover key is the LATEST VERSION id: a reaffirmed printing gets a new
+    // version and a new cover, and the version id is what the portal itself
+    // asks the thumbnail endpoint for.
+    const thumbnailUrl = thumbnailUrlFor(d.LatestVersionId);
+    const description = String(d.Description || '').trim() || null;
+    const author = String(d.Authors || '').trim() || null;
+    if (thumbnailUrl) covers++;
+    if (description) descriptions++;
+    if (author) authors++;
+    byCode.set(code, { thumbnailUrl, description, author });
+  }
+
+  console.log(`  Portal documents: ${byCode.size} — ${covers} cover image(s), `
+    + `${descriptions} description(s), ${authors} committee credit(s).`);
+  return byCode;
+}
+
+function loadCsvExport(filePath, portalByCode = null) {
   const rows = parseCsv(fs.readFileSync(filePath, 'utf8'));
   if (rows.length < 2) return [];
 
@@ -172,6 +244,8 @@ function loadCsvExport(filePath) {
   const iFolder = col('folder path');
   const iTitle = col('title');
   const iDocId = col('doc id');
+  // The join key to the portal's document list (--portal).
+  const iDocCode = col('doc code');
   const iUrl = col('web viewer url');
   if (iTitle === -1 || iDocId === -1 || iUrl === -1) {
     console.error('Error: CSV must have "Title", "Doc ID" and "Web Viewer URL" columns.');
@@ -197,33 +271,48 @@ function loadCsvExport(filePath) {
   const iThumbnail   = firstCol('thumbnail', 'thumbnail url', 'cover', 'cover url');
   const iBuy         = firstCol('buy url', 'buy', 'store url', 'webstore url', 'product url');
   const iElearning   = firstCol('elearning', 'e-learning', 'elearning products');
-  // The cover image is served by the Lighting Library portal, keyed by the
-  // document's EXTERNAL KEY — not by Vitrium's Doc ID, Folder ID, Doc Code or
-  // the viewer short code, all four of which answer 404. Measured 2026-08-24
-  // against a known key: the endpoint is PUBLIC (200, image/png), so the URL can
-  // go straight into an <img> with no proxy, no API key and no reader session.
+  // ── Cover images (measured 2026-08-24) ─────────────────────────────────────
+  // The Lighting Library portal serves covers publicly — 200 image/png, no
+  // credential, so a URL can go straight into an <img> with no proxy:
   //
-  // The column exists in the stock Vitrium export but has been empty in every
-  // row we have been given, which is the only reason covers are missing. Nothing
-  // else is needed: populate it and the next sync fills every thumbnail.
-  const iExternalKey = firstCol('external key', 'externalkey', 'external id');
+  //   https://lighting.ies.org/api/portal/ies/Thumbnail?externalKey=<guid>
+  //
+  // CRITICAL: that `externalKey` is the PORTAL's identifier and is NOT Vitrium's
+  // "External Key" column, however much the names invite the assumption. Tested
+  // against the 2026-08-24 export, in which 108 of 113 current standards carry a
+  // Vitrium External Key: every one of those keys answers 404, while a known
+  // portal key still answers 200. Vitrium's Doc ID, Folder ID, Doc Code and the
+  // viewer short code all 404 as well, and the endpoint ignores every parameter
+  // name except `externalKey`.
+  //
+  // So the mapping has to come from the portal itself, and this script accepts
+  // it as either a ready-made URL or a portal key — never from Vitrium's column,
+  // which would fill the library with 108 dead image links.
+  const iPortalKey = firstCol('portal key', 'portalkey', 'thumbnail key', 'cover key');
+  // Read only to WARN about the trap above, never to build a URL.
+  const iVitriumExternalKey = firstCol('external key', 'externalkey', 'external id');
 
   const tocCols = [
     iCollection !== -1 && 'Collection', iAuthor !== -1 && 'Author',
     iDescription !== -1 && 'Description', iThumbnail !== -1 && 'Thumbnail',
-    iExternalKey !== -1 && 'External Key (→ cover image)',
+    iPortalKey !== -1 && 'Portal Key (→ cover image)',
     iBuy !== -1 && 'Buy URL', iElearning !== -1 && 'eLearning',
   ].filter(Boolean);
 
-  // A present-but-empty External Key column is the state every export we have
-  // been given is in, and it is the single reason no cover renders. Say so
-  // plainly here rather than letting the sync look like it worked.
-  if (iExternalKey !== -1 && iThumbnail === -1) {
-    const withKey = rows.slice(1).filter(r => (r[iExternalKey] || '').trim()).length;
-    console.log(withKey > 0
-      ? `  External Key present on ${withKey} row(s) — cover images will be filled in.`
-      : '  WARNING: the "External Key" column is present but EMPTY on every row, so no cover '
-        + 'images can be built. Ask for the export with External Key populated.');
+  // Covers come from a Thumbnail URL column or a Portal Key column. If neither
+  // is here, say what is actually needed — and say it precisely, because a
+  // populated Vitrium "External Key" column looks like the answer and is not.
+  if (iThumbnail === -1 && iPortalKey === -1 && !portalByCode) {
+    const vitriumKeys = iVitriumExternalKey !== -1
+      ? rows.slice(1).filter(r => (r[iVitriumExternalKey] || '').trim()).length
+      : 0;
+    console.log('  No cover images in this export: it carries neither a "Thumbnail" URL column '
+      + 'nor a "Portal Key" column.');
+    if (vitriumKeys > 0) {
+      console.log(`  NOTE: the Vitrium "External Key" column IS populated (${vitriumKeys} rows), but it is a `
+        + 'DIFFERENT identifier from the portal\'s externalKey and answers 404 on the thumbnail '
+        + 'endpoint. Verified 2026-08-24 — do not build cover URLs from it.');
+    }
   }
   console.log(tocCols.length > 0
     ? `  Table of Contents columns found: ${tocCols.join(', ')}`
@@ -250,15 +339,23 @@ function loadCsvExport(filePath) {
     const existing = byStandard.get(standardId);
 
     const cell = (i) => (i !== -1 && row[i] ? String(row[i]).trim() || null : null);
+    // What the portal knows about this document, joined by Doc Code. A column
+    // in the CSV still wins — it is hand-curated — but the CSV carries none of
+    // these three today, so in practice the portal supplies them.
+    const portal = (portalByCode && iDocCode !== -1)
+      ? (portalByCode.get(String(row[iDocCode] || '').trim()) || null)
+      : null;
     const entry = {
       standardId, docId, webUrl,
       collection: cell(iCollection),
-      author: cell(iAuthor),
-      description: cell(iDescription),
-      // An explicit Thumbnail/Cover column wins; otherwise the portal URL is
-      // built from the External Key. Either way the column may be absent and
-      // the field simply stays null.
-      thumbnailUrl: cell(iThumbnail) || thumbnailUrlFor(cell(iExternalKey)),
+      author: cell(iAuthor) || (portal ? portal.author : null),
+      description: cell(iDescription) || (portal ? portal.description : null),
+      // An explicit Thumbnail/Cover URL wins; otherwise the portal URL is built
+      // from a PORTAL key. Never from Vitrium's "External Key" — see the note
+      // above the column lookups. Both columns may be absent, in which case the
+      // field stays null and the stored cover is left untouched.
+      thumbnailUrl: cell(iThumbnail) || thumbnailUrlFor(cell(iPortalKey))
+        || (portal ? portal.thumbnailUrl : null),
       buyUrl: cell(iBuy),
       // Accepts "Title|URL" pairs separated by ; or a newline, which is what a
       // spreadsheet cell can realistically hold:

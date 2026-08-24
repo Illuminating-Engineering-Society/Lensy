@@ -1397,6 +1397,30 @@ The UI label for each kind matches the filter label exactly — "Documents" filt
 
 A fifth `resultType`, **`standard`**, is not a filter value: it is the whole-document card a designation or title search returns (see below). It is a Document, so it borrows the `excerpt` label, line style and palette rather than owning a fifth one.
 
+### Cover images and descriptions come from the PORTAL, not from Vitrium (2026-08-24)
+
+The Lighting Library portal serves every cover publicly:
+
+```
+https://lighting.ies.org/api/portal/ies/Thumbnail?externalKey=<LatestVersionId>
+```
+
+200 `image/png`, **no credential** — so the URL goes straight into an `<img>`; no Worker proxy, no API key, no reader session. `lighting.ies.org` is in `img-src` (it was not before), and every cover carries a delegated `error` handler so a bad key degrades to the "No cover" placeholder instead of a broken-image icon.
+
+**The trap that cost a round of debugging:** that `externalKey` is the portal's **`LatestVersionId`**, NOT the "External Key" column in Vitrium's export. They are different identifiers sharing a name. Measured across the whole 2026-08-24 export, in which 108 of 113 current standards carry a Vitrium External Key: **every one answers 404**, while a portal key answers 200. Vitrium's Doc ID, Folder ID, Doc Code and the viewer short code all 404 too, and the endpoint ignores every parameter name except `externalKey` (unknown names return `null`). `sync-metadata.js` therefore refuses to build cover URLs from the Vitrium column and prints a warning naming the confusion.
+
+The portal's own document list (`PortalDocuments` JSON, saved at `scripts/data/portal-documents.json`) is the source, joined onto the CSV export by **Doc Code** — 274/274 rows matched. It supplies the three things Vitrium's export does not carry:
+
+| Portal field | Column | Coverage (113 current) |
+|---|---|---|
+| `LatestVersionId` → cover URL | `thumbnail_url` | 113 |
+| `Description` | `description` | 79 |
+| `Authors` | `author` | 112 |
+
+Run as `node scripts/sync-metadata.js --csv <export.csv> --portal scripts/data/portal-documents.json`. Synced 2026-08-24: covers 1 → **111**, descriptions 0 → **79**, committees 110 → **112**. (111 not 113: `LS-1` is the definitions source and has no Vitrium PDF, and `RP-8-25+E1` is a stale Active row superseded by `+E2` — it appears in no export.)
+
+`author` is written with `COALESCE`, never overwritten: the committee is transcribed from each PDF's cover at ingest (DO29/DO46) for 110 standards, and the portal's field fills the gaps rather than replacing a reading of the document itself. `description` and `thumbnail_url` are plain overwrites — the portal is their only source.
+
 ### The 2026-08-24 wireframe round: Library Tools, a docked sidebar, and every result
 
 The client's second annotated round. Mostly UI, with four backend changes.
