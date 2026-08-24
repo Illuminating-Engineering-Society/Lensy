@@ -239,9 +239,16 @@
       const designation = s.full_designation || `ANSI/IES ${s.id}`;
       const title = (s.title && s.title !== s.id) ? s.title : '';
 
+      // A cover that fails to load (a stale External Key, a CSP block) hides
+      // itself and reveals the placeholder beside it, so the row degrades to the
+      // way a row with no cover already looks — never a broken-image icon. The
+      // swap is done by the delegated handler at the bottom of this script.
       const thumb = s.thumbnail_url
         ? `<img src="${escapeHtml(s.thumbnail_url)}" alt="Cover of ${escapeHtml(s.id)}"
-               class="w-14 h-auto rounded border border-gray-200 shrink-0" loading="lazy"/>`
+               class="cover-thumb w-14 h-auto rounded border border-gray-200 shrink-0" loading="lazy"/>
+           <div class="cover-fallback w-14 h-[72px] rounded border border-dashed border-gray-200 shrink-0 items-center justify-center" style="display:none">
+             <span class="text-[9px] text-gray-300 text-center leading-tight px-1">No cover</span>
+           </div>`
         : `<div class="w-14 h-[72px] rounded border border-dashed border-gray-200 shrink-0 flex items-center justify-center">
              <span class="text-[9px] text-gray-300 text-center leading-tight px-1">No cover</span>
            </div>`;
@@ -298,6 +305,17 @@
       return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;')
         .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
     }
+
+    // A cover that 404s or is blocked reveals the "No cover" placeholder beside
+    // it. `error` does not bubble, so this listens in the CAPTURE phase — one
+    // handler for the whole page instead of an inline onerror per row.
+    document.addEventListener('error', (e) => {
+      const img = e.target;
+      if (!(img instanceof Element) || !img.classList.contains('cover-thumb')) return;
+      img.style.display = 'none';
+      const fallback = img.nextElementSibling;
+      if (fallback && fallback.classList.contains('cover-fallback')) fallback.style.display = 'flex';
+    }, true);
 
     document.getElementById('toc-filter').addEventListener('input', render);
     loadContents();

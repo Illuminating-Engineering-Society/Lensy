@@ -3425,9 +3425,13 @@
             || 'This edition has been superseded. Shown for version comparison only — refer to the current standard for guidance.')}</span>
         </div>` : '';
 
+      // A cover that fails to load removes itself rather than leaving a
+      // broken-image icon on the card (see the delegated handler below). No
+      // inline onerror: card markup is built from data and stays free of event
+      // handlers, which is what the "no event-handler markup" test guards.
       const thumb = doc.thumbnailUrl ? `
         <img src="${escapeHtml(doc.thumbnailUrl)}" alt="Cover of ${escapeHtml(doc.id || '')}"
-             class="w-16 h-auto rounded border border-gray-200 shrink-0" loading="lazy"/>` : '';
+             class="cover-thumb w-16 h-auto rounded border border-gray-200 shrink-0" loading="lazy"/>` : '';
 
       const description = doc.description ? `
         <p class="text-xs text-gray-600 leading-relaxed">${escapeHtml(doc.description)}</p>` : '';
@@ -4543,6 +4547,16 @@
     document.addEventListener('dragstart', e => {
       if (inGuardedContent(e.target)) e.preventDefault();
     });
+
+    // A cover image that fails to load — a stale External Key, a CSP block —
+    // removes itself rather than leaving a broken-image icon on the card.
+    // `error` does not bubble, hence the CAPTURE phase.
+    document.addEventListener('error', (e) => {
+      const img = e.target;
+      if (img instanceof Element && img.classList && img.classList.contains('cover-thumb')) {
+        img.remove();
+      }
+    }, true);
 
     // ── Feature-flag init ────────────────────────────────────────────────────
     // Document Comparison ships dark until the deprecated corpus is confirmed

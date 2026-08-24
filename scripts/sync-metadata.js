@@ -148,6 +148,21 @@ WHERE Standard = '${sqlEsc(standardId)}';
 
 // ─── CSV mode (Vitrium "Web Viewer URLs" export) ──────────────────────────────
 
+/**
+ * The Lighting Library's public cover-image endpoint, for one document's
+ * External Key. Verified 2026-08-24: 200 image/png, no credential required.
+ *
+ *   https://lighting.ies.org/api/portal/ies/Thumbnail?externalKey=<guid>
+ *
+ * Returns null for a missing key, so a row without one leaves thumbnail_url
+ * untouched rather than storing a URL that will 404.
+ */
+function thumbnailUrlFor(externalKey) {
+  const key = String(externalKey || '').trim();
+  if (!key) return null;
+  return `https://lighting.ies.org/api/portal/ies/Thumbnail?externalKey=${encodeURIComponent(key)}`;
+}
+
 function loadCsvExport(filePath) {
   const rows = parseCsv(fs.readFileSync(filePath, 'utf8'));
   if (rows.length < 2) return [];
@@ -182,12 +197,34 @@ function loadCsvExport(filePath) {
   const iThumbnail   = firstCol('thumbnail', 'thumbnail url', 'cover', 'cover url');
   const iBuy         = firstCol('buy url', 'buy', 'store url', 'webstore url', 'product url');
   const iElearning   = firstCol('elearning', 'e-learning', 'elearning products');
+  // The cover image is served by the Lighting Library portal, keyed by the
+  // document's EXTERNAL KEY — not by Vitrium's Doc ID, Folder ID, Doc Code or
+  // the viewer short code, all four of which answer 404. Measured 2026-08-24
+  // against a known key: the endpoint is PUBLIC (200, image/png), so the URL can
+  // go straight into an <img> with no proxy, no API key and no reader session.
+  //
+  // The column exists in the stock Vitrium export but has been empty in every
+  // row we have been given, which is the only reason covers are missing. Nothing
+  // else is needed: populate it and the next sync fills every thumbnail.
+  const iExternalKey = firstCol('external key', 'externalkey', 'external id');
 
   const tocCols = [
     iCollection !== -1 && 'Collection', iAuthor !== -1 && 'Author',
     iDescription !== -1 && 'Description', iThumbnail !== -1 && 'Thumbnail',
+    iExternalKey !== -1 && 'External Key (→ cover image)',
     iBuy !== -1 && 'Buy URL', iElearning !== -1 && 'eLearning',
   ].filter(Boolean);
+
+  // A present-but-empty External Key column is the state every export we have
+  // been given is in, and it is the single reason no cover renders. Say so
+  // plainly here rather than letting the sync look like it worked.
+  if (iExternalKey !== -1 && iThumbnail === -1) {
+    const withKey = rows.slice(1).filter(r => (r[iExternalKey] || '').trim()).length;
+    console.log(withKey > 0
+      ? `  External Key present on ${withKey} row(s) — cover images will be filled in.`
+      : '  WARNING: the "External Key" column is present but EMPTY on every row, so no cover '
+        + 'images can be built. Ask for the export with External Key populated.');
+  }
   console.log(tocCols.length > 0
     ? `  Table of Contents columns found: ${tocCols.join(', ')}`
     : '  No Table of Contents columns in this export (Collection, Author, Description, Thumbnail, Buy URL, eLearning) — those fields stay as they are.');
@@ -218,7 +255,10 @@ function loadCsvExport(filePath) {
       collection: cell(iCollection),
       author: cell(iAuthor),
       description: cell(iDescription),
-      thumbnailUrl: cell(iThumbnail),
+      // An explicit Thumbnail/Cover column wins; otherwise the portal URL is
+      // built from the External Key. Either way the column may be absent and
+      // the field simply stays null.
+      thumbnailUrl: cell(iThumbnail) || thumbnailUrlFor(cell(iExternalKey)),
       buyUrl: cell(iBuy),
       // Accepts "Title|URL" pairs separated by ; or a newline, which is what a
       // spreadsheet cell can realistically hold:
