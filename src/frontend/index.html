@@ -1098,7 +1098,11 @@
     // MAX_LIMIT). We page over that pool entirely client-side — no extra
     // network round-trips on page change, and it stays within one response
     // cache entry per query.
-    const POOL_SIZE = 50;  // matches backend MAX_LIMIT
+    // Matches backend MAX_LIMIT. Raised 50 → 200 with it (client wireframes,
+    // 2026-08-20: "instead of limiting to 50, let's display all results") —
+    // asking for 50 while the API was willing to return 200 would have left the
+    // low-confidence bar folding away a pool that had already been truncated.
+    const POOL_SIZE = 200;
     const PAGE_SIZE = 25;  // results shown per page (client request)
     // Mirrors EXCERPTS_PER_RESULT in src/workers/search.ts — the cap on the
     // "From the Standard" drop-down. At the cap the label reads "Top N passages"
