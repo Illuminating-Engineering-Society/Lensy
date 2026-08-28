@@ -1275,35 +1275,40 @@ const CHECKS = [
 
   {
     id: 'DO46',
-    title: 'Table of Contents groups by Category, then by authoring committee',
+    title: 'List Standards groups by authoring committee, and by nothing else',
     async run() {
       const page = await loadTocHtml();
       const required = [
-        ['category order', /const CATEGORY_ORDER\s*=\s*\[/],
-        ['Lighting Science first', /'Lighting Science',\s*\n\s*'Lighting Practice'/],
-        ['author grouping', /function renderAuthorGroups/],
+        ['committee grouping', /function renderCommitteeGroups/],
         ['committee hyperlink', /ies\.org\/committee|committee\.url/],
       ];
       const missing = required.filter(([, re]) => !re.test(page.text)).map(([name]) => name);
-      if (missing.length > 0) return fail(`the Table of Contents page is missing: ${missing.join(', ')} [${page.source}]`);
+      if (missing.length > 0) return fail(`the List Standards page is missing: ${missing.join(', ')} [${page.source}]`);
+
+      // The Category level was REMOVED on 2026-08-20 at the client's request
+      // ("groups by authoring committee only"), and the page was renamed from
+      // Table of Contents to List Standards. This check used to REQUIRE the
+      // webstore Category order, so it failed on the change that satisfied the
+      // request — asserting its absence is what keeps it from creeping back.
+      if (/const CATEGORY_ORDER\s*=\s*\[/.test(page.text)) {
+        return fail(`the webstore Category grouping level is back [${page.source}]`);
+      }
 
       await loadStandards();
       if (ctx.standardsError) {
         return blocked(`the page reads the standards list, and ${ctx.standardsError}`, 'apply the migrations');
       }
       const active = ctx.active || [];
-      const withCollection = active.filter(s => s.collection).length;
       const withAuthor = active.filter(s => s.committee?.name || s.author).length;
-      if (withCollection === 0 || withAuthor === 0) {
+      if (withAuthor === 0) {
         return blocked(
-          `the grouping is implemented, but the data is not there yet: ${withCollection}/${active.length} standards ` +
-          `carry a Category and ${withAuthor}/${active.length} carry an Author`,
-          'add the Collection and Author columns to the Vitrium CSV export, then run npm run sync-metadata',
+          `the grouping is implemented, but no standard carries an Author, so the page lists them all together`,
+          'the committee is read off each PDF cover at ingest — run npm run ingest, or supply an Author column in the Vitrium CSV and run npm run sync-metadata',
         );
       }
       return pass(
-        `grouping implemented [${page.source}]; ${withCollection}/${active.length} standards carry a Category ` +
-        `and ${withAuthor}/${active.length} an authoring committee`,
+        `grouped by authoring committee alone [${page.source}]; ` +
+        `${withAuthor}/${active.length} standards carry one`,
       );
     },
   },
@@ -2198,7 +2203,12 @@ const CHECKS = [
       const html = await loadIndexHtml();
       const required = [
         ['the disarm', /function disarmCompare/],
-        ['called after the search', /if \(wasComparing\) disarmCompare\(\)/],
+        // BOTH halves of the condition. `filterState.compare` is not redundant:
+        // "what's new in RP-8?" arms nothing up front — the WORKER recognizes the
+        // phrasing and renderResults arms the pill from isVersionComparison — so
+        // `wasComparing` alone is false on exactly the path that was reported as
+        // sticky. An earlier version of this check required the one-armed form.
+        ['called after the search', /if \(wasComparing \|\| filterState\.compare\) disarmCompare\(\)/],
         ['the filter key re-stamped', /lastSearchFiltersKey = JSON\.stringify\(collectFilters\(\)\)/],
       ];
       const missing = required.filter(([, re]) => !re.test(html.text)).map(([n]) => n);

@@ -36,6 +36,24 @@ export const AI_FORMULA_PLACEHOLDER = '';
 // equation rather than prose.
 const BAR_RE = /_{3,}/g;
 
+// The SAME bar drawn over a one- or two-character denominator, which arrives as
+// a single underscore standing on its own — so the run-of-three test above never
+// sees it. This is what let an Annex A.5 passage reach a card still carrying
+// "√ B", "B _", "_1 x" and "(A": every one of its lines failed the whole-passage
+// test individually, so not one of them was dropped.
+//
+// Only a token made ENTIRELY of underscores (plus the digits the subsetted font
+// glues onto them) counts. "TM_30" and "a_b" are not fraction bars.
+const LONE_BAR_RE = /(?:^|\s)_+\d*(?=\s|$)/;
+
+// Symbols that ARE an equation by themselves. Deliberately much narrower than
+// MATH_RE: "±", "≥", "≈", "×" and every Greek letter appear in ordinary IES
+// sentences ("within ±10% of target", "the wavelength λ"), and treating those as
+// proof is exactly what made an earlier version rewrite criteria. A radical, an
+// integral, a summation, a product or a partial derivative appears in IES prose
+// nowhere at all.
+const STRONG_SYMBOL_RE = /[√∫∑∏∂]/;
+
 // Operators and relations that essentially never appear in IES prose.
 // Deliberately EXCLUDES the en dash (–) and hyphen: "LS-7-20, Vision – Eye and
 // Brain" is a title, not an equation. U+2212 MINUS SIGN is included; it is what
@@ -94,17 +112,43 @@ export function formulaSignals(text) {
  * then removed the operator while keeping the number — turning a criterion into
  * a different criterion. So the ONLY evidence accepted is:
  *
- *   • a fraction bar (three or more underscores — pdfjs's rendering of the rule
- *     over a denominator, and nothing IES prose contains), or
+ *   • a fraction bar (pdfjs's rendering of the rule over a denominator, and
+ *     nothing IES prose contains) — a run of underscores, or a lone one, which
+ *     is the same bar over a short denominator, or
+ *   • a symbol that is an equation on its own: √ ∫ ∑ ∏ ∂. Not ± ≥ ≈ × or a
+ *     Greek letter — those are prose, and the list above is where the line is
+ *     drawn, or
  *   • an assignment: "X =" together with at least one symbol, which is what an
  *     equation is. "≡" counts as the assignment only beside a Greek symbol.
  */
 export function hasFormula(text) {
-  const s = formulaSignals(text);
+  const t = String(text || '');
+  const s = formulaSignals(t);
   if (s.bars > 0) return true;
+  if (LONE_BAR_RE.test(t) || STRONG_SYMBOL_RE.test(t)) return true;
   const symbols = s.math + s.greek + s.supersub;
-  const assigns = s.equations > 0 || (RELATION_RE.test(String(text || '')) && s.greek > 0);
+  const assigns = s.equations > 0 || (RELATION_RE.test(t) && s.greek > 0);
   return assigns && symbols > 0;
+}
+
+/**
+ * Is this line the DEBRIS of an equation rather than a sentence?
+ *
+ * Only ever asked of a line inside a passage that already contains a formula,
+ * which is what makes it safe to be this blunt: "1 1 ( 1) (A-53)", "(A", "1)]",
+ * "√ B" and "2 2 2 −1 _1" are all fragments of one equation that pdfjs handed
+ * back in reading order, and none of them carries a word.
+ *
+ * A line survives when it reads as a sentence — it contains a word AND is not
+ * overwhelmingly punctuation and digits. "(cos(90 − ϕ))" has one word and
+ * nothing else, and a sentence does not end on a bracket.
+ */
+export function isFormulaDebris(line) {
+  const t = String(line || '').trim();
+  if (!t) return true;
+  if (!/[A-Za-z]{3,}/.test(t)) return true;
+  const s = formulaSignals(t);
+  return s.letterRatio < 0.5 && !/[.:;]$/.test(t);
 }
 
 /**
@@ -141,6 +185,7 @@ function isEquationAnchor(token) {
   const t = String(token || '');
   if (!t) return false;
   if (/_{3,}/.test(t)) return true;
+  if (/^_+\d*$/.test(t)) return true;   // the same bar over a short denominator
   if (/[A-Za-z0-9)\]ΑΒΓΔΕΖΗΘΙΚΛΜΝΞΟΠΡΣΤΥΦΧΨΩαβγδεζηθικλμνξοπρστυφχψω]\s*=(?!=)/.test(t) || t === '=') return true;
   return /[≡≈∝∫∑√∂∆∏]/.test(t);
 }
@@ -181,10 +226,15 @@ function isEquationPart(token) {
  * returned untouched even when it carries operators or Greek letters — the
  * review case that mattered, because deleting "≥" from "ratios of ≥0.7" leaves a
  * different criterion behind rather than an obviously missing one.
+ *
+ * `force` skips that per-line gate. It is passed ONLY from redactFormulas, for a
+ * line inside a passage already known to hold an equation: "Areatotal = Areaarc
+ * + Areaellipse (A-54)" is an equation, but on its own it carries no symbol at
+ * all, so the whole-passage test calls it prose and it reached the card intact.
  */
-export function stripInlineFormula(line) {
+export function stripInlineFormula(line, { force = false } = {}) {
   const raw = String(line || '');
-  if (!hasFormula(raw)) return raw;
+  if (!force && !hasFormula(raw)) return raw;
 
   const tokens = raw.split(/(\s+)/);   // keep the whitespace, so spacing survives
   const isSpace = (t) => /^\s+$/.test(t);
@@ -253,9 +303,14 @@ export function redactFormulas(text) {
   for (const line of raw.split(/\n+/)) {
     if (!line.trim()) continue;
     if (isFormulaLine(line)) { redacted++; continue; }
-    const stripped = stripInlineFormula(line);
+    // Forced, because the passage already qualifies: judging each line by the
+    // whole-passage rule is what let an equation broken across fifteen short
+    // lines through, every line individually looking like prose or like nothing.
+    const stripped = stripInlineFormula(line, { force: true });
     if (stripped !== line) redacted++;
-    if (stripped.trim()) kept.push(stripped.trim());
+    if (!stripped.trim()) continue;
+    if (isFormulaDebris(stripped)) { redacted++; continue; }
+    kept.push(stripped.trim());
   }
 
   const out = kept.join('\n');

@@ -21,6 +21,22 @@ const LP9_PASSAGE = [
   'where: where:',
 ].join('\n');
 
+// Annex A.5 of the LM "Average Luminance (Calculated) for Indoor Luminaires"
+// guide, p. 26 — captured VERBATIM from a production /api/search response on
+// 2026-08-28, which is to say this is text a card actually printed. It is the
+// second shape of the same failure: the bars arrived as LONE underscores, no
+// single line carries both an assignment and a symbol, and the one line that is
+// plainly an equation ("Areatotal = …") carries no symbol at all. Every line
+// therefore passed the whole-passage test individually and none was dropped.
+const ANNEX_A5_PASSAGE = [
+  '[Section A.5]', '(cos(90 − ϕ))', '_', '2', 'y', '_1', '√ B', '1', 'B _', '_1 x',
+  '2 2 2 −1 _1', '1 (A1)[ 1√A −x + A sin', '1 1 ( 1) (A-53)', '(A', '1)]',
+  'Areatotal = Areaarc + Areaellipse (A-54)',
+  'InCase 3the projected area for the elliptical portion is zero once the vertical angle (ϕ) is 90°.',
+  '16',
+  'Approved Method: IES Guide for Determination of Average Luminance (Calculated) for Indoor Luminaires',
+].join('\n');
+
 // TM-28-20 / the AI Guide answer the client marked up in DO072a.
 const AI_SENTENCE =
   'This formula, ΦtbLM-84 = ΦLM-84 · exp(−t·αLM-84), is used to approximate the luminous flux maintenance over time.';
@@ -101,6 +117,26 @@ describe('redactFormulas', () => {
   it('is a no-op on prose', () => {
     const prose = 'Uniformity, the even distribution of illuminance across a task plane, is desirable.';
     expect(redactFormulas(prose)).toEqual({ text: prose, redacted: 0, mostlyFormula: false });
+  });
+
+  it('clears the debris of an equation broken across many short lines', () => {
+    const out = redactFormulas(ANNEX_A5_PASSAGE);
+    // What the acceptance check greps for — a card must carry neither.
+    expect(out.text).not.toMatch(/_{3,}/);
+    expect(out.text).not.toMatch(/[≡∝∞∫∑√]/);
+    // Nor any of the fragments, including the ones made only of digits and
+    // brackets, which no earlier rule could see.
+    for (const debris of ['(cos(90', '_1 x', '(A-53)', '1)]', 'Areatotal =']) {
+      expect(out.text).not.toContain(debris);
+    }
+    // The sentences around it survive: the passage is still worth listing,
+    // because the reader needs the link to the page that prints the formula.
+    expect(out.text).toContain('the projected area for the elliptical portion is zero');
+    expect(out.text).toContain('Average Luminance (Calculated) for Indoor Luminaires');
+    expect(out.redacted).toBeGreaterThan(0);
+    // Prose survives, so the card prints it ALONGSIDE the notice rather than
+    // replacing the whole passage with it.
+    expect(out.mostlyFormula).toBe(false);
   });
 });
 
