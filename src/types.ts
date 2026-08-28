@@ -113,6 +113,16 @@ export interface StandardRow {
   reference_markers_json: string | null;
   /** { "<sectionNumber>": "<printed title>" } — migration 0011, client DO40. */
   sections_json: string | null;
+  /**
+   * The table of contents: [{ number, title, page }] in document order —
+   * migration 0015, client DO082. Null for a standard ingested before it.
+   */
+  outline_json: string | null;
+  /**
+   * Table and figure captions: [{ kind, label, caption, page }] — migration
+   * 0015, client DO086. Null for a standard ingested before it.
+   */
+  assets_json: string | null;
   /** Table of Contents metadata from the Vitrium/webstore export (migration 0010). */
   collection: string | null;
   thumbnail_url: string | null;
@@ -260,6 +270,31 @@ export interface SectionCrumb {
   title: string | null;
 }
 
+/** One line of a document's table of contents (client DO082). */
+export interface OutlineEntry {
+  number: string;
+  title: string;
+  /** The page it was printed on; null when reconstructed from sections_json. */
+  page: number | null;
+}
+
+/**
+ * A table or figure, identified by its CAPTION (client DO086).
+ *
+ * The caption is the only part of a table or figure that is reliably text — its
+ * cells may be a raster image, which nothing in a text-only pipeline can read —
+ * and it is enough to name the thing and link to its page.
+ */
+export interface DocumentAsset {
+  kind: 'table' | 'figure';
+  /** "Table C-1", "Figure 5-1" — as the standard prints it. */
+  label: string;
+  caption: string;
+  page: number;
+  /** Page-targeted Lighting Library URL, added at query time. */
+  url?: string | null;
+}
+
 export interface Excerpt {
   text: string;
   pageNumber: number | null;
@@ -272,7 +307,22 @@ export interface Excerpt {
    * Absent when the standard was ingested before section titles were captured.
    */
   sectionPath?: SectionCrumb[];
+  /**
+   * The CHAPTER this section belongs to (client DO073: "4.3.3.1 and 4.2.4 both
+   * equal chapter 4"). Present whenever the section number is trustworthy, even
+   * when no title was indexed for the chapter — the card then prints "Ch. 8".
+   */
+  chapter?: { number: string; title: string | null };
   chunkType: string;
+  /**
+   * A formula was printed in this passage and has been removed (client DO072).
+   *
+   * A PDF equation is a layout, not a string: the text extraction loses the
+   * fraction bars and alignment, so the reconstruction is wrong. `text` holds
+   * the readable remainder — empty when the passage was nothing but the
+   * equation — and the card prints a "see it in the Library" line instead.
+   */
+  formulaOmitted?: boolean;
   /**
    * Page-targeted Lighting Library URL for THIS excerpt (client DO22: the
    * "From the Standard" drop-down carries an "Open in Library" link per
@@ -387,6 +437,13 @@ export interface SearchResult {
   referenceLink?: ReferenceLink;
   /** Standards whose References sections carry this same cited work (DO26.4). */
   referenceMarkers?: ReferenceMarker[];
+  /**
+   * Tables and figures in this standard whose CAPTION matches the query
+   * (client DO086). Each carries its printed label, its page and a link to it,
+   * so a rasterized table can still be found and opened even though nothing in
+   * a text-only pipeline can read its cells.
+   */
+  assets?: DocumentAsset[];
   /** Present only on resultType 'definition' (client DO33). */
   definition?: DefinitionPayload;
   /** Present only on resultType 'standard' — the whole-document card (DO47). */
@@ -432,6 +489,13 @@ export interface ComparisonContext {
    * the UI so the reader can open them, but excluded from the AI comparison.
    */
   alsoDeprecated?: Array<{ id: string; name: string; url: string | null }>;
+  /**
+   * Every other printing of this family IS the current edition, reaffirmed
+   * (client DO083): TM-31-20(R26) beside TM-31-20. There is no prior edition to
+   * compare against, and both the prompt and the advisory have to say so rather
+   * than describe the same document as two.
+   */
+  reaffirmedOnly?: boolean;
 }
 
 export interface AISummary {
@@ -445,6 +509,16 @@ export interface AISummary {
    * been replaced by the current [new]", with both editions hyperlinked.
    */
   comparison?: ComparisonContext;
+  /**
+   * The Authority Having Jurisdiction compliance notice, printed ABOVE the
+   * answer when the search touches life safety, egress, healthcare, energy code,
+   * a local ordinance or security lighting (client DO084).
+   *
+   * Decided outside the model (src/lib/guardrails.ts) and rendered by the UI, so
+   * it cannot be forgotten or paraphrased; the model is told it is there and
+   * told not to repeat it.
+   */
+  authorityNotice?: string | null;
   /**
    * True when the text is the no-model safe fallback produced because every
    * AI model attempt errored. Degraded summaries are never cached, so the
@@ -470,7 +544,41 @@ export interface SearchRequestBody {
   filters?: SearchFilters;
   limit?: number;
   units?: 'lux' | 'fc' | 'both';
+  /**
+   * How long an answer the AI Guide should write (client note, 2026-08-20:
+   * "Not every search will demand references to multiple standards … We need an
+   * option to adapt"). 'auto' lets the model match the question; 'brief' and
+   * 'full' pin it. Part of the response cache key.
+   */
+  answerStyle?: AnswerStyle;
   debug?: boolean;
+}
+
+/** @see SearchRequestBody.answerStyle */
+export type AnswerStyle = 'auto' | 'brief' | 'full';
+
+/** One clickable way out of a zero-result search (client DO077). */
+export interface NoResultsSuggestion {
+  /** What the button says. */
+  label: string;
+  /**
+   * What pressing it does:
+   *   'enable_content_type' — tick `value` in Contents and search again
+   *   'clear_location'      — drop the Interior/Exterior narrowing
+   *   'clear_filters'       — reset every filter to the defaults
+   *   'search'              — run `value` as a new query (a spelling correction)
+   *   'rephrase'            — put the caret back in the search box
+   *   'contact'             — mail Standards@ies.org
+   */
+  action: 'enable_content_type' | 'clear_location' | 'clear_filters' | 'search' | 'rephrase' | 'contact';
+  value?: string;
+}
+
+/** The alternative paths offered instead of a bare "No results found" (DO077). */
+export interface NoResultsGuidance {
+  /** One sentence naming the most likely reason there was nothing to show. */
+  message: string;
+  suggestions: NoResultsSuggestion[];
 }
 
 export interface SearchResponse {
@@ -484,6 +592,23 @@ export interface SearchResponse {
   noStrongMatchMessage: string | null;
   results: SearchResult[];
   aiSummary: AISummary | null;
+  /**
+   * Why no AI Guide accompanies these results even though one was requested
+   * (client DO075: a search that is just a standard's designation or title gets
+   * the document, not an essay). null when the Guide ran or was never asked for.
+   */
+  aiGuideSuppressed?: string | null;
+  /** Present only when `results` is empty (client DO077). */
+  noResultsGuidance?: NoResultsGuidance | null;
+  /** The AHJ compliance notice for this search, if any (client DO084). */
+  authorityNotice?: string | null;
+  /**
+   * The question was judged not answerable from lighting standards (DO085), so
+   * no cards and no AI Guide were returned.
+   */
+  outOfScope?: boolean;
+  /** The question was refused outright (DO085) — weaponization or harm. */
+  refused?: boolean;
   /**
    * standard id / full designation → front-of-document Lighting Library URL,
    * for every standard in this result set. The UI hyperlinks the standards the
@@ -549,6 +674,10 @@ export interface IngestRequestBody {
   chunks?: IngestChunk[];
   /** section number → printed section title, from extractSectionTitles (DO40). */
   sections?: Record<string, string>;
+  /** Every heading in document order, with its page — extractOutline (DO082). */
+  outline?: OutlineEntry[];
+  /** Table and figure captions — extractDocumentAssets (DO086). */
+  assets?: DocumentAsset[];
   tables?: TableData[];
   applications?: Partial<ApplicationRow>[];
   r2Key?: string | null;

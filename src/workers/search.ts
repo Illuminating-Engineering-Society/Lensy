@@ -81,6 +81,17 @@ import { generateRefinePrompt } from '../lib/refine';
 import { formatCitation, composeStandardName } from '../lib/citations';
 import { looksLikeFormalReference, referenceCitationKey } from '../lib/references.js';
 import { referenceEntryNumber } from '../lib/reference-markers.js';
+import {
+  sanitizeSectionTitle, isPlausibleSectionNumber, chapterOf,
+} from '../lib/section-titles.js';
+import { redactFormulas } from '../lib/formula.js';
+import {
+  parseCaptionLine, matchAssets, assetQueryTerms,
+} from '../lib/document-assets.js';
+import { buildNoResultsGuidance } from '../lib/no-results';
+import {
+  AUTHORITY_NOTICE, needsAuthorityNotice, isRefusedQuery, isOutOfScope, REFUSAL_MESSAGE,
+} from '../lib/guardrails';
 import { hasEnvConsiderationColumns, parseLightingZoneLabel } from '../lib/illuminance-fields.js';
 import {
   getDataVersion,
@@ -95,9 +106,10 @@ import {
 } from '../lib/cache';
 import standardsSchema from '../config/standards-schema.json';
 import type {
-  AIMode, ApplicationRow, ComparisonContext, ContentType, CurationInfo, Excerpt, FootnoteMarks,
-  FormattedApplication, OutdoorGuidance, ReferenceLink, ReferenceMarker, RelatedApplication,
-  SearchFilters, SearchResult, StandardIndexEntry, StandardRow, StandardsIndex, VectorMetadata,
+  AIMode, AnswerStyle, ApplicationRow, ComparisonContext, ContentType, CurationInfo,
+  DocumentAsset, Excerpt, FootnoteMarks, FormattedApplication, NoResultsGuidance,
+  OutdoorGuidance, ReferenceLink, ReferenceMarker, RelatedApplication, SearchFilters,
+  SearchResult, StandardIndexEntry, StandardRow, StandardsIndex, VectorMetadata,
 } from '../types';
 
 // ── Local shapes for internal plumbing ──────────────────────────────────────
@@ -320,6 +332,13 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
     units = 'both',
   } = body;
   let includeAISummary = body.includeAISummary === true;
+  // How long an answer the Guide should write (client note, 2026-08-20: "Not
+  // every search will demand references to multiple standards. Some users just
+  // want a single specific answer which exists in only one standard … We need
+  // an option to adapt"). 'auto' — the default — lets the model match the shape
+  // of the question; 'brief' and 'full' pin it for a caller that knows better.
+  const answerStyle: AnswerStyle =
+    body.answerStyle === 'brief' || body.answerStyle === 'full' ? body.answerStyle : 'auto';
 
   // ── Access tier (client DO53) ────────────────────────────────────────────────
   // LensyLite is an IES member benefit for people who do not subscribe to the
@@ -342,6 +361,51 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
   // key, intent detection and the embedding all see the same clean text.
   const rawQuery = stripQueryLabel(query).trim().substring(0, 500);
 
+  // ── A question we will not answer (client DO085) ─────────────────────────────
+  // "How can I use lighting fixtures to build a bomb?" was answered with four
+  // paragraphs of IES citations and fifty result cards. There is no reading of
+  // that question the standards address, and dressing a refusal in citations is
+  // worse than refusing. Decided by pattern before ANY retrieval, so it costs
+  // nothing and reaches neither Vectorize nor the model; logged like any other
+  // search so staff can see it happened.
+  if (isRefusedQuery(rawQuery)) {
+    const refusedPayload = {
+      query: rawQuery,
+      isMultiQuery: false,
+      isVersionComparison: false,
+      // The caller's OWN content types, not an empty list: the UI syncs its
+      // Contents checkboxes from this field, so sending [] cleared all four and
+      // left the reader unable to run any further search until they re-ticked one.
+      contentTypes: [...normalizeContentTypes(filters, rawQuery)],
+      tier,
+      liteNotice: null,
+      noStrongMatch: false,
+      noStrongMatchMessage: null,
+      aiGuideRequiredNotice: null,
+      results: [] as SearchResult[],
+      aiSummary: null,
+      aiGuideSuppressed: 'out_of_scope',
+      authorityNotice: null,
+      outOfScope: true,
+      refused: true,
+      noResultsGuidance: buildNoResultsGuidance({
+        query: rawQuery,
+        contentTypes: [],
+        outOfScope: true,
+        message: REFUSAL_MESSAGE,
+      }),
+      curation: null,
+      refinePrompt: null,
+      confidenceThreshold: STRONG_MATCH_THRESHOLD,
+      standardLinks: {},
+      sectionLinks: {},
+      timestamp: new Date().toISOString(),
+    };
+    const logWrite = logSearch(env, refusedPayload, false);
+    if (ctx?.waitUntil) ctx.waitUntil(logWrite); else await logWrite;
+    return jsonResponse({ ...refusedPayload, cached: false });
+  }
+
   // ── Response cache ───────────────────────────────────────────────────────────
   // Identical searches skip the entire pipeline (Workers AI embedding,
   // Vectorize query, D1 lookups, and the optional 70B AI summary — the
@@ -355,11 +419,17 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
     limit: cleanLimit,
     units,
     includeAISummary,
+    // The answer style changes the Guide's text, so it changes the response.
+    answerStyle,
     // The tier changes what a search RETURNS, so it has to change the key —
     // otherwise a LensyLite answer could be served to a subscriber, or the
     // reverse (client DO53).
     tier,
   });
+  // NOTE on DO075 below: the Guide can still be suppressed AFTER this key is
+  // built, and that is safe — the suppression is a pure function of the query
+  // and the corpus, and the corpus is already in the key via `dataVersion`. A
+  // given key therefore always resolves to the same answer.
   // debug requests bypass the cache entirely: they must observe the live
   // pipeline, and their _depDbg payload must never be served to real users.
   const cachedPayload = body.debug ? null : await getCachedSearch(kv, cacheKey);
@@ -394,6 +464,20 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
   const inferred = inferFiltersFromQuery(rawQuery, isVersionComparison);
   const mergedFilters = { ...inferred, ...filters };
 
+  // ── Whole-document lookup, started early (client DO047 + DO075) ─────────────
+  // The cards themselves are added far below, AFTER the AI has run, exactly as
+  // before — nothing about the prompt or the curation may change. What moved
+  // earlier is only the QUESTION it answers: "is this query just the name of a
+  // standard?" DO075 needs that answer before the Guide is launched:
+  //
+  //   "Disable the AI Guide if user searches for a specific standard without
+  //    any additional question/query."
+  //
+  // Started in parallel with retrieval so it costs no wall-clock time.
+  const documentLookupPromise = (!isVersionComparison && !isMultiQuery && contentTypes.has('body'))
+    ? findStandardLookupResults(env, rawQuery)
+    : Promise.resolve([] as SearchResult[]);
+
   let allResults;
 
   if (isMultiQuery) {
@@ -412,6 +496,23 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
   if (isLite) {
     liteAllowed = await liteAllowedStandards(env);
     allResults.results = restrictToStandards(allResults.results, liteAllowed);
+  }
+
+  // ── The query IS a standard: no AI Guide (client DO075) ─────────────────────
+  // `findStandardLookupResults` only answers for a query that is WHOLLY a
+  // designation or a document title (parseDesignationQuery is anchored, and the
+  // title path rejects anything shaped like a question), so its answering is
+  // precisely the client's "searches for a specific standard without any
+  // additional question". The reader wants the document; an essay about it is
+  // noise, and it costs a 70B generation.
+  let documentCards = await documentLookupPromise;
+  // A Lite user cannot be handed a document outside their collection, not even
+  // by naming it exactly (client DO53).
+  if (liteAllowed) documentCards = restrictToStandards(documentCards, liteAllowed);
+  let aiGuideSuppressed: string | null = null;
+  if (includeAISummary && documentCards.length > 0) {
+    includeAISummary = false;
+    aiGuideSuppressed = 'standard_lookup';
   }
 
   // ── Deprecated content (version-comparison queries ONLY) ─────────────────────
@@ -480,6 +581,70 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
     console.error('section title lookup failed (non-fatal):', errMsg(err));
   }
 
+  // ── Tables and figures the query is asking for (client DO086) ────────────────
+  // Attached after the section titles and BEFORE the AI Guide, so the model can
+  // cite "Table C-1, p. 62" — the client's own failing example — and the card can
+  // link to it. Fail-open: no assets simply means no chips.
+  try {
+    await attachDocumentAssets(env, allResults.results, rawQuery);
+  } catch (err) {
+    console.error('document asset lookup failed (non-fatal):', errMsg(err));
+  }
+
+  // ── Is the question even about lighting? (client DO085) ──────────────────────
+  // "If user asks a question that is completely 'out of scope' … the AI Guide
+  //  should not force a references to standards, and we should not see 50
+  //  results. Perhaps in this instance, the 'Refine your search' prompt can be
+  //  the first to state that no relevant results were found."
+  //
+  // The score BEFORE the whole-document cards are added, which is the same
+  // measure the refine prompt uses: this check therefore only runs on the ~1-in-4
+  // searches that already came back weak, and it runs BEFORE the 70B Guide so an
+  // out-of-scope question never pays for one. Never on a comparison, a
+  // multi-query, or a search that named a standard — those are not questions in
+  // the sense this is about.
+  //
+  // Which AI Guide prompt applies (client DO24 / DO25 / DO26.5): a comparison
+  // gets the three-section "what changed" analysis, a References-only search
+  // gets the reference-frequency answer, everything else gets guidance. Declared
+  // here because the scope check below excludes both special modes.
+  const referencesOnly = contentTypes.has('references') && !contentTypes.has('tables') && !contentTypes.has('body');
+  // A Definitions-only search is a terminology lookup, not a request for lighting
+  // recommendations (client DO33) — the low-confidence advisory does not apply.
+  const definitionsOnly = contentTypes.has('definitions')
+    && !contentTypes.has('tables') && !contentTypes.has('body') && !contentTypes.has('references');
+  const aiMode: AIMode = isVersionComparison ? 'comparison' : (referencesOnly ? 'references' : 'guide');
+
+  const preCardTopScore = allResults.results.reduce((max, r) => Math.max(max, r.relevanceScore || 0), 0);
+  const weakSearch = preCardTopScore < STRONG_MATCH_THRESHOLD
+    && !isVersionComparison && !referencesOnly && !definitionsOnly && !isMultiQuery
+    // A search that resolved to a DOCUMENT — by designation or by title — is not
+    // a question, so it is neither out of scope nor in need of refinement.
+    && documentCards.length === 0
+    && !parseDesignationQuery(rawQuery) && allResults.results.length > 0;
+  let outOfScope = false;
+  if (weakSearch) {
+    outOfScope = await isOutOfScope(env.AI, rawQuery, allResults.results);
+    if (outOfScope) {
+      // No cards, no Guide. The client's example returned fifty cards and four
+      // paragraphs of citations for "what color are zebras?".
+      allResults.results = [];
+      includeAISummary = false;
+    }
+  }
+
+  // ── The AHJ compliance notice (client DO084) ─────────────────────────────────
+  // "AI Guide needs to present 'disclaimer' text for all instances of
+  //  health/safety, public safety, fire code, and egress lighting." Decided from
+  //  the query AND from what retrieval returned — a question about corridor
+  //  lighting answered out of an egress section needs it just as much — and
+  //  rendered by the UI rather than asked of the model, so it cannot be
+  //  forgotten. Computed after attachSectionTitles: the section TITLES are part
+  //  of the evidence.
+  const authorityNotice = !outOfScope && needsAuthorityNotice(rawQuery, allResults.results)
+    ? AUTHORITY_NOTICE
+    : null;
+
   // ── Related applications + optional AI summary (run concurrently) ────────────
   // Related apps: top result only, and only for true application rows — chunk
   // results have no D1 identity to find siblings for. Exclude only the seed
@@ -496,15 +661,6 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
     ? getRelatedApplications(env, seed, [seed.code])
     : Promise.resolve([]);
 
-  // Which AI Guide prompt applies (client DO24 / DO25 / DO26.5): a comparison
-  // gets the three-section "what changed" analysis, a References-only search
-  // gets the reference-frequency answer, everything else gets guidance.
-  const referencesOnly = contentTypes.has('references') && !contentTypes.has('tables') && !contentTypes.has('body');
-  // A Definitions-only search is a terminology lookup, not a request for lighting
-  // recommendations (client DO33) — the low-confidence advisory does not apply.
-  const definitionsOnly = contentTypes.has('definitions')
-    && !contentTypes.has('tables') && !contentTypes.has('body') && !contentTypes.has('references');
-  const aiMode: AIMode = isVersionComparison ? 'comparison' : (referencesOnly ? 'references' : 'guide');
   // The current edition comes from D1 (newest Active edition of the family) and
   // only falls back to "first non-deprecated result" when the family could not be
   // resolved — the result list is ranked by relevance, so its first entry is not
@@ -525,12 +681,18 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
           const resultCodes = allResults.results.slice(0, 5).map(r => r.application?.code).filter(Boolean);
           // The mode is part of the key: the same query+results can produce a
           // guide OR a comparison, and they must not share a cache entry.
-          const aiKey = await buildAISummaryCacheKey(dataVersion, aiMode, rawQuery, resultCodes);
+          // The style is part of the key: the same question answered briefly and
+          // answered in full are different answers.
+          const aiKey = await buildAISummaryCacheKey(
+            dataVersion, `${aiMode}:${answerStyle}`, rawQuery, resultCodes,
+          );
           const cached = body.debug ? null : await getCachedAISummary(kv, aiKey);
           if (cached) return cached;
           const generated = await generateResponse(env.AI, rawQuery, allResults.results, {
             mode: aiMode,
             comparison: comparisonContext,
+            answerStyle,
+            authorityNotice,
           });
           // Degraded summaries (every model errored) are never cached — the
           // next identical search retries the models instead of pinning the
@@ -580,10 +742,11 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
   // designation or title lookup is answered by a whole-document card below and
   // is never a low-confidence search, so it is excluded here rather than
   // generating a prompt the payload would then discard.
-  const preCardTopScore = allResults.results.reduce((max, r) => Math.max(max, r.relevanceScore || 0), 0);
-  const wantsRefine = preCardTopScore < STRONG_MATCH_THRESHOLD
-    && !isVersionComparison && !referencesOnly && !definitionsOnly && !isMultiQuery
-    && !parseDesignationQuery(rawQuery) && allResults.results.length > 0;
+  // `weakSearch` is that same test, computed above because the out-of-scope
+  // check (DO085) needed it before the Guide was launched. An out-of-scope
+  // search has no results left, so it asks for no refinement either — its
+  // "restate the question" invitation is the empty state's own (DO077).
+  const wantsRefine = weakSearch && !outOfScope;
   const refinePromise = wantsRefine
     ? generateRefinePrompt(env.AI, rawQuery, allResults.results).catch((err) => {
         console.error('refine prompt failed (non-fatal):', errMsg(err));
@@ -621,19 +784,15 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
 
   // ── Whole-document cards (client DO47) ───────────────────────────────────────
   // "A search for the name or designation of a standard should return a direct
-  //  link to that standard." Added after the related/AI work above so neither
+  //  link to that standard." Merged after the related/AI work above so neither
   //  changes behaviour, and BEFORE the confidence flag below: finding the exact
   //  document the user named is a strong match by definition.
   // Gated on the Documents pill: a whole standard IS a Document, so a user who
   // narrowed the search to Definitions or References has said they do not want
   // one. The default selection includes Documents, so a bare "RP-3-20" — and the
   // Table of Contents deep link — answers with the document out of the box.
-  let documentCards = (!isVersionComparison && !isMultiQuery && contentTypes.has('body'))
-    ? await findStandardLookupResults(env, rawQuery)
-    : [];
-  // A Lite user cannot be handed a document outside their collection, not even
-  // by naming it exactly (client DO53).
-  if (liteAllowed) documentCards = restrictToStandards(documentCards, liteAllowed);
+  // (The lookup itself ran up with retrieval, because DO075 needs its answer
+  // before the Guide is launched.)
   if (documentCards.length > 0) {
     const cardIds = new Set(documentCards.map(c => c.application.standard));
     allResults.results = [
@@ -678,8 +837,11 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
   // The advisory doesn't apply to References or version-comparison searches
   // (client feedback DO11): reference entries legitimately score lower, and a
   // comparison isn't looking for lighting recommendations in the first place.
+  // An out-of-scope search is not a weak match, it is a refusal to answer — the
+  // advisory would say "the results below are the closest available" over an
+  // empty list, and the log would record the two refusal kinds differently.
   const noStrongMatch = !referencesOnly && !definitionsOnly && !isVersionComparison
-    && topScore < STRONG_MATCH_THRESHOLD;
+    && !outOfScope && topScore < STRONG_MATCH_THRESHOLD;
 
   // Comparison searches need the AI Guide to synthesize "what changed" across
   // editions — without it the user just sees raw excerpts. Tell them to turn
@@ -692,6 +854,25 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
     ? 'The AI Guide is required for document comparisons. Please toggle the "Enable Guide" filter on and ' +
       'repeat your search, or perform a manual comparison to verify revisions.'
     : null;
+
+  // ── Nothing found: alternative paths, not a dead end (client DO077) ─────────
+  // "If no results found, provide alternative paths … depending on the nature of
+  //  the query." Built from the query and the filters that were actually
+  //  applied, so it names the real cause rather than guessing; the LS-1 terms
+  //  are read only on this path, which is rare.
+  let noResultsGuidance: NoResultsGuidance | null = null;
+  if (allResults.results.length === 0) {
+    noResultsGuidance = buildNoResultsGuidance({
+      query: rawQuery,
+      contentTypes,
+      filters: mergedFilters,
+      tier,
+      outOfScope,
+      // An out-of-scope search needs no spelling check: the words are spelt
+      // fine, they are just not about lighting.
+      vocabulary: outOfScope ? [] : await definitionVocabulary(env),
+    });
+  }
 
   const payload = {
     query: rawQuery,
@@ -709,6 +890,18 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
     aiGuideRequiredNotice,
     results: applyUnits(allResults.results, units),
     aiSummary,
+    // Why there is no Guide above these results (client DO075, and DO085 when
+    // the question was not about lighting at all). The UI reads it to stay
+    // silent instead of printing "the AI Guide could not generate a response",
+    // which would read as a fault.
+    aiGuideSuppressed: outOfScope ? 'out_of_scope' : aiGuideSuppressed,
+    // The AHJ compliance notice, when this search touches a regulated topic
+    // (client DO084). At the top level as well as on the summary, so it is shown
+    // even when the reader has the AI Guide switched off.
+    authorityNotice,
+    outOfScope,
+    // Ways out of an empty result set (client DO077).
+    noResultsGuidance,
     // Whether (and how) the AI curated the card order — null when the Guide is
     // off, which is exactly when the list is the plain vector ranking.
     curation,
@@ -733,7 +926,13 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
   // Store after responding when possible (waitUntil); never blocks the user.
   // A payload whose requested AI summary degraded is NOT cached: serving it
   // from cache would pin the fallback text even after the models recover.
-  const skipCache = body.debug || (includeAISummary && (aiSummary as { degraded?: boolean } | null)?.degraded === true);
+  // An out-of-scope verdict is a MODEL's judgement, not a property of the corpus
+  // (unlike the DO075 designation suppression beside it), so it is never cached:
+  // one flaky "NO" would otherwise pin an empty result set — and the message that
+  // the standards cannot answer this — on a real lighting question for 24 hours,
+  // with no way for the reader to clear it by retrying.
+  const skipCache = body.debug || outOfScope
+    || (includeAISummary && (aiSummary as { degraded?: boolean } | null)?.degraded === true);
   const cacheWrite = skipCache ? Promise.resolve() : putCachedSearch(kv, cacheKey, payload);
   const logWrite = logSearch(env, payload, false);
   if (ctx?.waitUntil) {
@@ -938,12 +1137,26 @@ export function buildComparisonContext(
   // Newest first, so [0] is the comparison target.
   editions.sort((a, b) => editionYear(b.id) - editionYear(a.id) || b.id.localeCompare(a.id));
 
+  // A REAFFIRMED printing is the same edition, not a prior one (client DO083):
+  // TM-31-20(R26) must be compared against TM-31-17, never against TM-31-20.
+  // Filtered before the target is picked, and only when it leaves something —
+  // if every "prior" edition is the current one reaffirmed, there is genuinely
+  // nothing to compare and the advisory says so rather than inventing changes.
+  const currentBase = baseEdition(currentOverride?.id
+    || results.find(r => !r.isDeprecated)?.application?.standard);
+  const comparable = currentBase
+    ? editions.filter(e => baseEdition(e.id) !== currentBase)
+    : editions;
+
   const wanted = requestedEdition ? requestedEdition.toUpperCase() : null;
   const targetIdx = wanted
-    ? Math.max(0, editions.findIndex(e => e.id.toUpperCase().startsWith(wanted)))
+    ? Math.max(0, comparable.findIndex(e => e.id.toUpperCase().startsWith(wanted)))
     : 0;
-  const target = editions[targetIdx] ? [editions[targetIdx]] : [];
-  const alsoDeprecated = editions.filter((_, i) => i !== targetIdx);
+  const target = comparable[targetIdx] ? [comparable[targetIdx]] : [];
+  // Everything else that is in the results and is not the target — including a
+  // reaffirmed printing of the current edition, which the reader may still want
+  // to open even though it is not what the analysis is against.
+  const alsoDeprecated = editions.filter(e => !target.some(t => t.id === e.id));
 
   const currents = results.filter(r => !r.isDeprecated && r.application?.standard);
   const supersededBy = results.find(r => r.isDeprecated && r.supersededBy)?.supersededBy || null;
@@ -971,7 +1184,12 @@ export function buildComparisonContext(
           }
         : null);
 
-  return { current, deprecated: target, alsoDeprecated };
+  // Nothing left to compare against once the reaffirmed printings are excluded
+  // (client DO083). Flagged rather than silently empty, so the prompt is told to
+  // say so and the advisory does not list the current edition as an older one.
+  const reaffirmedOnly = editions.length > 0 && comparable.length === 0;
+
+  return { current, deprecated: target, alsoDeprecated, reaffirmedOnly };
 }
 
 /**
@@ -1217,7 +1435,12 @@ export function addMissingEditionCards(results: SearchResult[], editions: Family
   const present = new Set(
     results.map(r => String(r.application?.standard || '').toUpperCase()).filter(Boolean)
   );
-  const missing = editions.filter(e => !present.has(e.id.toUpperCase()));
+  // A reaffirmed printing of an edition already on screen is the SAME document
+  // (client DO083), so it does not get a card of its own: two cards for
+  // TM-31-20 and TM-31-20(R26) read as two editions to compare.
+  const presentBases = new Set([...present].map(baseEdition).filter(Boolean));
+  const missing = editions.filter(e =>
+    !present.has(e.id.toUpperCase()) && !presentBases.has(baseEdition(e.id)));
   if (missing.length === 0) return results;
 
   const cards = missing.map(e => {
@@ -1242,6 +1465,23 @@ export function addMissingEditionCards(results: SearchResult[], editions: Family
 }
 
 /** Embed one text, reusing the KV embedding cache. */
+/**
+ * The LS-1 terminology, as a spelling vocabulary for a zero-result search
+ * (client DO077). Read only on that path — it is a full table scan of a small
+ * table, and it never runs on a search that found something. Fail-open: without
+ * it the guidance simply offers no "did you mean".
+ */
+async function definitionVocabulary(env: Env): Promise<string[]> {
+  try {
+    const rows = await env.DB.prepare('SELECT term FROM definitions LIMIT 2000')
+      .all<{ term: string }>();
+    return (rows.results || []).map(r => r.term).filter(Boolean);
+  } catch (err) {
+    console.error('definition vocabulary read failed (non-fatal):', errMsg(err));
+    return [];
+  }
+}
+
 async function embedQueryText(env: Env, text: string): Promise<number[]> {
   const cached = await getCachedEmbedding(env.SESSIONS, EMBED_MODEL, text);
   if (cached) return cached;
@@ -1565,11 +1805,19 @@ async function runSingleSearch(rawQuery: string, filters: SearchFilters, limit: 
     // reference listing that collapsed to one entry per standard would be
     // useless as a bibliography view.
     const refResults = buildChunkResults(liveRefs, linkCtx, { perStandard: Infinity })
-      .map(r => ({
-        ...r,
-        referenceLink: buildReferenceLink(r.excerpt?.text || '', standardsIndex),
-        referenceMarkers: lookupReferenceMarkers(markerIndex, r.excerpt?.text || '', standardsIndex),
-      }));
+      .map(r => {
+        const entryText = r.excerpt?.text || '';
+        return {
+          ...r,
+          referenceLink: buildReferenceLink(entryText, standardsIndex),
+          // The excerpt index is handed over so a chip can fall back to a body
+          // page that names the cited work (client DO064).
+          referenceMarkers: lookupReferenceMarkers(markerIndex, entryText, standardsIndex, {
+            citedDesignation: citedStandardDesignation(entryText),
+            excerptIndex,
+          }),
+        };
+      });
     if (refResults.length > 0) {
       results.push(...refResults);
       results.sort(compareResults);
@@ -1867,7 +2115,68 @@ function buildReferenceMarkerIndex(matches: VMatch[]): ReferenceMarkerIndex {
   return index;
 }
 
-function lookupReferenceMarkers(index: ReferenceMarkerIndex, text: string, standardsIndex: StandardsIndex): ReferenceMarker[] {
+/**
+ * The IES standard a reference entry cites, as a bare designation.
+ *
+ * "6. Illuminating Engineering Society. ANSI/IES LS-7-20, Lighting Science:
+ *  Vision – Eye and Brain. New York: IES; 2020." → "LS-7-20"
+ *
+ * Used to find the place in a citing standard's BODY that names the work
+ * (client DO064) when its reference number cannot be resolved to a marker page.
+ */
+export function citedStandardDesignation(text: string): string | null {
+  const m = /\b(?:ANSI\/|BSR\/)?IES(?:\/NALMCO)?\s+((?:RP|TM|LM|LP|LS|DG|HB|G|LEM)-\d+(?:\.\d+)?)(-\d{2})?(\+E\d+)?/i
+    .exec(String(text || ''));
+  if (!m) return null;
+  return `${m[1]}${m[2] || ''}`.toUpperCase();
+}
+
+/**
+ * The earliest page of `standardId` that this search already retrieved which
+ * NAMES the cited work (client DO064).
+ *
+ * Free: it scans the chunk metadata retrieval has already produced, so it costs
+ * no extra Vectorize query and no embedding. Coverage is therefore partial — it
+ * can only see the pages this query happened to reach — which is exactly why it
+ * is the FALLBACK behind the in-body marker map rather than a replacement for
+ * it. The alternative, a designation-scoped probe per citing standard, would
+ * add an embedding and a vector query per chip.
+ */
+export function findCitingPageInExcerpts(
+  excerptIndex: ExcerptIndex | undefined, standardId: string, designation: string | null,
+): number | null {
+  if (!excerptIndex || !designation) return null;
+  const chunks = excerptIndex[standardId];
+  if (!chunks || chunks.length === 0) return null;
+  // "LS-7-20" also matches a body citation that drops the edition ("IES LS-7").
+  // The family needs a boundary: without one, "RP-4" matches inside "RP-43-25"
+  // and the chip would claim a page that cites a different standard.
+  const family = designation.replace(/-\d{2}(?:\+E\d+)?$/, '');
+  const familyRe = new RegExp(`${family.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![0-9])`);
+  let page: number | null = null;
+  for (const c of chunks) {
+    if (c.chunk_type === 'reference') continue;          // that IS the bibliography
+    const text = String(c.excerpt_text || '').toUpperCase();
+    if (!text.includes(designation) && !familyRe.test(text)) continue;
+    if (c.page_number == null) continue;
+    if (page == null || c.page_number < page) page = c.page_number;
+  }
+  return page;
+}
+
+interface MarkerLookupContext {
+  /** The IES standard the reference entry cites, if it cites one. */
+  citedDesignation?: string | null;
+  /** Chunks this search already retrieved, keyed by standard. */
+  excerptIndex?: ExcerptIndex;
+}
+
+function lookupReferenceMarkers(
+  index: ReferenceMarkerIndex,
+  text: string,
+  standardsIndex: StandardsIndex,
+  ctx: MarkerLookupContext = {},
+): ReferenceMarker[] {
   const key = referenceCitationKey(text);
   if (!key) return [];
   const byStandard = index.get(key);
@@ -1882,12 +2191,25 @@ function lookupReferenceMarkers(index: ReferenceMarkerIndex, text: string, stand
 
     // Prefer the page in the BODY where this standard superscripts its own
     // reference number — the location the client asked the chip to open
-    // (DO31.4). Falls back to the References page for standards ingested before
-    // markers were captured, or that cite by author-date rather than by number.
+    // (DO31.4, restated in DO064: "should link to the place in the document
+    // where that superscripted endnote # is first referenced (usually the body
+    // of the document) instead of to the front cover or to the list of
+    // references at the back").
+    //
+    // Three sources, in descending confidence:
+    //   1. the in-body marker map, joined on this standard's own entry number
+    //   2. a page this search already retrieved that names the cited work —
+    //      which covers the case the client hit, where the entry number could
+    //      not be read off the bibliography line
+    //   3. the bibliography page itself (flagged 'references', so the UI says so)
     const markerPage = (info.entryNumber != null && entry?.referenceMarkers)
       ? entry.referenceMarkers[String(info.entryNumber)] ?? null
       : null;
-    const targetPage = markerPage ?? info.page;
+    const bodyPage = markerPage == null
+      ? findCitingPageInExcerpts(ctx.excerptIndex, std, ctx.citedDesignation ?? null)
+      : null;
+    const citationPage = markerPage ?? bodyPage;
+    const targetPage = citationPage ?? info.page;
 
     out.push({
       standard: std,
@@ -1897,7 +2219,7 @@ function lookupReferenceMarkers(index: ReferenceMarkerIndex, text: string, stand
       referenceNumber: info.entryNumber,
       // 'citation' = the page in the body that cites the work; 'references' =
       // the bibliography page. The UI words its tooltip from this.
-      target: markerPage != null ? 'citation' : 'references',
+      target: citationPage != null ? 'citation' : 'references',
       url: webUrl ? (targetPage != null ? `${webUrl}#page=${targetPage}` : webUrl) : null,
     });
   }
@@ -2724,9 +3046,30 @@ export function buildResult(app: ApplicationRow, score: number, chunkMeta: Parti
   };
 }
 
+/**
+ * Take any formula out of a passage before it leaves the Worker (client DO072).
+ *
+ * Applied on the way OUT, at the one place every excerpt is built, so the SAME
+ * text reaches the result card, the AI Guide's prompt and a saved collection.
+ * The alternative — redacting in the browser — would need a second copy of the
+ * detector in the inline script, and would leave the mangled equation in the
+ * payload for anything else that reads it.
+ *
+ * `formulaOmitted` is what the card and the prompt key off: the card prints
+ * "open it in the Library", and the prompt tells the model a formula is there
+ * without showing it one to copy (DO072a).
+ */
+export function guardFormula(excerpt: Excerpt): Excerpt {
+  const { text, redacted, mostlyFormula } = redactFormulas(excerpt.text || '');
+  if (redacted === 0) return excerpt;
+  excerpt.text = mostlyFormula ? '' : text;
+  excerpt.formulaOmitted = true;
+  return excerpt;
+}
+
 /** Vector-chunk metadata → wire Excerpt, with a page-targeted Library link. */
 function toExcerpt(c: ExcerptChunk, standard: string | null | undefined, linkCtx: LinkCtx): Excerpt {
-  return {
+  return guardFormula({
     text: c.excerpt_text ?? '',
     pageNumber: c.page_number ?? null,
     section: c.section ?? null,
@@ -2738,7 +3081,7 @@ function toExcerpt(c: ExcerptChunk, standard: string | null | undefined, linkCtx
       { Standard: standard ?? null, Page_Number: c.page_number ?? null },
       linkCtx,
     ),
-  };
+  });
 }
 
 /**
@@ -3128,13 +3471,15 @@ export function buildChunkResults(chunkMatches: VMatch[], linkCtx: LinkCtx = {},
     const fullName = composeStandardName(designation, stdInfo?.title || null);
     const pageNum = match.metadata?.page_number || null;
 
-    const excerpt: Excerpt = {
+    // Formulae are stripped here too (client DO072) — a Document card's passage
+    // comes through this path, not toExcerpt.
+    const excerpt: Excerpt = guardFormula({
       text: match.metadata?.excerpt_text || '',
       pageNumber: pageNum,
       section: match.metadata?.section || null,
       chunkType: match.metadata?.chunk_type || 'text',
       vitriumLink: buildVitriumLink({ Standard: stdId, Page_Number: pageNum }, linkCtx),
-    };
+    });
 
     return {
       resultType: match.metadata?.chunk_type === 'reference' ? 'reference' : 'excerpt',
@@ -3229,6 +3574,27 @@ export function parseDesignationQuery(raw: string): { id: string | null; family:
   if (!edition) return { id: null, family };
   const yy = edition.length === 4 ? edition.slice(2) : edition;
   return { id: `${family}-${yy}${errata ? `+E${errata}` : ''}`, family };
+}
+
+/**
+ * A standard id reduced to the EDITION it is a printing of.
+ *
+ * Strips the errata suffix ("RP-3-20+E1" → "RP-3-20") and the reaffirmation
+ * marker ("LM-63-19R25" → "LM-63-19", "LS-2-20(R2023)" → "LS-2-20").
+ *
+ * The reaffirmation half is client DO083: "if the designation includes (R###) or
+ * (R##), then it is a 'reaffirmation' which means there are NO differences
+ * between, for example, TM-31-20 and TM-31-20(R26). In that case, comparison
+ * would need to be between TM-31-20(R26) and TM-31-17 instead." Two ids with the
+ * same base are the same edition, so comparing them would report changes between
+ * a document and itself.
+ */
+export function baseEdition(id: string | null | undefined): string {
+  return String(id || '')
+    .toUpperCase()
+    .replace(/\+\s*E\s*\d+$/, '')
+    .replace(/\(?\s*R\s*\d{2,4}\s*\)?$/, '')
+    .trim();
 }
 
 /** A standard id with its errata suffix removed: "RP-3-20+E1" → "RP-3-20". */
@@ -3402,18 +3768,74 @@ export function sectionAncestors(section: string): string[] {
   return out;
 }
 
-/** The printed title of one section number, tolerating annex/`.0` spellings. */
+/**
+ * The printed title of one section number, tolerating annex/`.0` spellings.
+ *
+ * Every hit passes through sanitizeSectionTitle (client DO071): the corpus was
+ * indexed before the heading rules were tightened, so `sections_json` still
+ * holds titles carrying a second heading, a run-in sentence or a neighbouring
+ * column's prose. Re-checking here retires those without waiting for a
+ * re-ingest — and a title we cannot vouch for is dropped, not printed.
+ */
 function lookupSectionTitle(index: Record<string, string>, number: string): string | null {
-  const direct = index[number];
-  if (direct) return direct;
+  const keys = [number];
   if (/^[A-Z]$/i.test(number)) {
-    const annex = index[`Annex ${number.toUpperCase()}`] || index[`Appendix ${number.toUpperCase()}`];
-    if (annex) return annex;
+    keys.push(`Annex ${number.toUpperCase()}`, `Appendix ${number.toUpperCase()}`);
   }
   const trimmed = number.replace(/\.0$/, '');
-  if (trimmed !== number && index[trimmed]) return index[trimmed];
-  if (index[`${number}.0`]) return index[`${number}.0`];
-  return null;
+  if (trimmed !== number) keys.push(trimmed);
+  keys.push(`${number}.0`);
+
+  // A chapter is often recorded under BOTH spellings, and they are not equally
+  // trustworthy. A key printed WITH its separator ("13.0", "Annex A") is a real
+  // heading; a BARE integer ("13") is just as often a numbered list item, a
+  // table cell or a bibliography line that happened to start with that number —
+  // measured on the corpus, LP-1-24 holds `1` => "Install lighting equipment in
+  // accordance" from its specification appendix alongside `1.0` => "Light +
+  // Quality".
+  let dotted: string | null = null;
+  let bare: string | null = null;
+  for (const key of keys) {
+    const clean = sanitizeSectionTitle(index[key]);
+    if (!clean) continue;
+    if (/^\d{1,2}$/.test(key)) {
+      if (!bare || clean.length > bare.length) bare = clean;
+    } else if (!dotted || clean.length > dotted.length) {
+      dotted = clean;
+    }
+  }
+  if (!dotted) return bare;
+  if (!bare) return dotted;
+
+  // Same heading read twice, one of them cut at a line break? Then the longer
+  // reading is the better one — LP-1-24 records chapter 21 as both "The Phases"
+  // (cut) and "The Phases of the Lighting Design Process" (whole). Otherwise
+  // they are different headings, and the separator decides.
+  const a = dotted.toLowerCase();
+  const b = bare.toLowerCase();
+  if (a.startsWith(b) || b.startsWith(a)) return bare.length > dotted.length ? bare : dotted;
+  return dotted;
+}
+
+/**
+ * Is this section label one a card may print?
+ *
+ * A number-shaped label that the document cannot have printed ("131", "1810" —
+ * the artefacts of a font that dropped its separators, see
+ * src/lib/section-titles.js) is suppressed: the client's DO071 example was a
+ * card headed "131 - PATTERNS OF LIGHT WITHIN THE OCCUPANTS' FIELD OF VIEW",
+ * naming a section LP-1-24 does not have. Non-numeric labels the chunker
+ * assigns ("References") pass through untouched.
+ */
+export function trustedSectionLabel(section: string | null | undefined): string | null {
+  const raw = String(section || '').trim();
+  if (!raw) return null;
+  if (isPlausibleSectionNumber(raw)) return raw;
+  // Anything carrying a digit is a number, and it did not pass.
+  if (/\d/.test(raw)) return null;
+  // A bare single letter is a stray capital, not a section.
+  if (/^[A-Za-z]$/.test(raw)) return null;
+  return raw;
 }
 
 /**
@@ -3453,15 +3875,32 @@ export function resolveSectionPath(
  * which is safe because `excerpt` and `excerpts[0]` are the same object.
  */
 export async function attachSectionTitles(env: Env, results: SearchResult[]): Promise<void> {
+  // ── Phase 1: what every excerpt gets from its own number, with no D1 read ──
+  // The untrustworthy numbers are dropped here (client DO071) and the chapter is
+  // attached here (client DO073), so both hold for a standard indexed before
+  // sections_json existed — its cards then read "Ch. 8" with no chapter title.
   const ids = new Set<string>();
   for (const r of results) {
     const std = r.application?.standard;
-    if (!std) continue;
-    const sectioned = (r.excerpt?.section) || (r.excerpts || []).some(e => e?.section);
-    if (sectioned) ids.add(std);
+    for (const excerpt of excerptsOf(r)) {
+      if (!excerpt.section) continue;
+      const trusted = trustedSectionLabel(excerpt.section);
+      if (!trusted) {
+        excerpt.section = null;
+        excerpt.sectionTitle = null;
+        excerpt.sectionPath = undefined;
+        excerpt.chapter = undefined;
+        continue;
+      }
+      excerpt.section = trusted;
+      const chapter = chapterOf(trusted);
+      if (chapter) excerpt.chapter = { number: chapter, title: null };
+      if (std) ids.add(std);
+    }
   }
   if (ids.size === 0) return;
 
+  // ── Phase 2: the printed titles, for the standards actually present ────────
   const list = [...ids].slice(0, SECTION_TITLE_MAX_STANDARDS);
   const rows = await env.DB.prepare(
     `SELECT id, sections_json FROM standards WHERE id IN (${list.map(() => '?').join(',')})`
@@ -3477,14 +3916,134 @@ export async function attachSectionTitles(env: Env, results: SearchResult[]): Pr
   for (const r of results) {
     const index = byStandard.get(r.application?.standard || '');
     if (!index) continue;
-    for (const excerpt of [r.excerpt, ...(r.excerpts || [])]) {
-      if (!excerpt || !excerpt.section || excerpt.sectionTitle) continue;
+    for (const excerpt of excerptsOf(r)) {
+      if (!excerpt.section) continue;
+      // The chapter's own printed title, for the card's banner (DO073).
+      if (excerpt.chapter && !excerpt.chapter.title) {
+        excerpt.chapter.title = lookupSectionTitle(index, excerpt.chapter.number);
+      }
+      if (excerpt.sectionTitle) continue;
       const resolved = resolveSectionPath(index, excerpt.section);
       if (!resolved) continue;
       excerpt.sectionTitle = resolved.title;
       excerpt.sectionPath = resolved.path;
     }
   }
+}
+
+// ─── Tables and figures as locators (client DO086) ───────────────────────────
+
+const ASSET_MAX_STANDARDS = 12;
+const ASSETS_PER_RESULT = 3;
+
+/** standards.assets_json → the caption list, or []. */
+function parseAssets(raw: string | null | undefined): DocumentAsset[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((a): a is DocumentAsset =>
+      !!a && typeof a === 'object' && (a.kind === 'table' || a.kind === 'figure')
+      && typeof a.label === 'string' && typeof a.caption === 'string' && typeof a.page === 'number');
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Table and figure captions found in the passages this search already
+ * retrieved.
+ *
+ * The fallback for a standard indexed before migration 0015: a caption is a line
+ * of the chunk text, so it can be read straight out of the excerpt without any
+ * new data. Coverage is only the pages retrieval reached, which is why it is the
+ * fallback and not the mechanism.
+ */
+export function assetsFromExcerpts(r: SearchResult): DocumentAsset[] {
+  const out: DocumentAsset[] = [];
+  const seen = new Set<string>();
+  for (const excerpt of excerptsOf(r)) {
+    if (!excerpt.text) continue;
+    for (const line of excerpt.text.split('\n')) {
+      const parsed = parseCaptionLine(line);
+      if (!parsed) continue;
+      if (seen.has(parsed.label)) continue;
+      seen.add(parsed.label);
+      out.push({
+        kind: parsed.kind === 'figure' ? 'figure' : 'table',
+        label: parsed.label,
+        caption: parsed.caption,
+        page: excerpt.pageNumber ?? 0,
+      });
+    }
+  }
+  return out.filter(a => a.page > 0);
+}
+
+/**
+ * Attach the tables and figures a query is asking for (client DO086).
+ *
+ * "Allow users to find images, tables, and the content within them via effective
+ *  search card results." The cells of a rasterized table cannot be read by a
+ *  text-only pipeline; its CAPTION can, and it carries the number and the page —
+ *  which is what the client's examples actually needed ("Results direct user
+ *  correctly to RP-1-24 Annex C, but do not cite Table C-1 … on page 62").
+ *
+ * One D1 read for the standards present, then a word-overlap match per result.
+ */
+export async function attachDocumentAssets(
+  env: Env, results: SearchResult[], query: string,
+): Promise<void> {
+  if (results.length === 0) return;
+  const terms = assetQueryTerms(query);
+  if (terms.length === 0) return;
+
+  const ids = [...new Set(
+    results.map(r => r.application?.standard).filter((id): id is string => !!id)
+  )].slice(0, ASSET_MAX_STANDARDS);
+  if (ids.length === 0) return;
+
+  const byStandard = new Map<string, DocumentAsset[]>();
+  try {
+    const rows = await env.DB.prepare(
+      `SELECT id, assets_json FROM standards WHERE id IN (${ids.map(() => '?').join(',')})`
+    ).bind(...ids).all<{ id: string; assets_json: string | null }>();
+    for (const row of rows.results || []) {
+      const assets = parseAssets(row.assets_json);
+      if (assets.length > 0) byStandard.set(row.id, assets);
+    }
+  } catch (err) {
+    // Includes "no such column" until migration 0015 is applied — the excerpt
+    // fallback below still works.
+    console.error('assets_json read failed (non-fatal):', errMsg(err));
+  }
+
+  for (const r of results) {
+    const std = r.application?.standard;
+    if (!std) continue;
+    const indexed = byStandard.get(std) || [];
+    const pool = indexed.length > 0 ? indexed : assetsFromExcerpts(r);
+    const matched = matchAssets(pool, query, ASSETS_PER_RESULT);
+    if (matched.length === 0) continue;
+    // The page link is built from the card's own front-cover URL, which is
+    // already the branded Library host (src/lib/library-url.js) — no second
+    // standards-index read for something the result carries.
+    r.assets = matched.map(a => ({
+      ...a,
+      url: r.standardLink ? `${r.standardLink}#page=${a.page}` : null,
+    }));
+  }
+}
+
+/** Every excerpt object hanging off one result, without duplicates.
+ *  `excerpt` and `excerpts[0]` are usually the same object, so identity — not
+ *  position — is what de-duplicates them. */
+function excerptsOf(r: SearchResult): Excerpt[] {
+  const out: Excerpt[] = [];
+  for (const e of [r.excerpt, ...(r.excerpts || [])]) {
+    if (e && !out.includes(e)) out.push(e);
+  }
+  return out;
 }
 
 // ─── Utility Helpers ──────────────────────────────────────────────────────────

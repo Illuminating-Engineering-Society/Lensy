@@ -4,6 +4,9 @@
  *
  * Endpoints:
  *   POST /api/search
+ *   POST /api/events
+ *   GET  /api/preferences
+ *   PUT  /api/preferences
  *   GET  /api/applications/:code
  *   GET  /api/standards
  *
@@ -23,7 +26,9 @@
 
 import { handleSearch } from './search';
 import { handleIngest } from './ingest';
-import { handleAdminScanOrphans, handleAdminEnumerateIds, handleAdminDeleteOrphans, handleAdminFlushCache, handleAdminSearchLog, handleAdminR2Multipart, handleAdminIndexStatus } from './admin';
+import { handleAdminScanOrphans, handleAdminEnumerateIds, handleAdminDeleteOrphans, handleAdminFlushCache, handleAdminSearchLog, handleAdminSearchEvents, handleAdminR2Multipart, handleAdminIndexStatus } from './admin';
+import { handleEvent } from './events';
+import { handlePreferences } from './preferences';
 import { handleAdminUsers } from './users';
 import { handleAuthMe, handleDevLogin, requireReadAccess, requireCorpusAccess } from './session';
 import { buildLoginUrl, buildLogoutUrl } from '../lib/sso';
@@ -31,6 +36,8 @@ import {
   normalizeSavedItem, savedItemCodes, newShareToken, CSV_COLUMNS, csvCell, csvRowFor,
 } from '../lib/collections.js';
 import { resolveCommittee } from '../lib/committees.js';
+import { outlineFromSectionMap } from '../lib/section-titles.js';
+import type { OutlineEntry } from '../types';
 import { toLibraryUrlOrNull } from '../lib/library-url.js';
 import { sendCollectionShareEmail, isEmailAddress, resolveAppUrl } from '../lib/email';
 
@@ -82,6 +89,22 @@ export default {
         return withCors(await handleSearch(request, env, ctx));
       }
 
+      // ── Per-account UI preferences (client DO080) ─────────────────────────
+      // The AI Guide toggle is saved to the account, not the browser. Same
+      // session gate as search; fails soft when there is no session.
+      if (path === '/api/preferences' && (request.method === 'GET' || request.method === 'PUT')) {
+        const denied = await requireReadAccess(request, env);
+        if (denied) return withCors(denied);
+        return withCors(await handlePreferences(request, env));
+      }
+
+      // ── Anonymous interaction log (client DO078) ──────────────────────────
+      // Which card a reader opened first, and what they narrowed to afterwards.
+      // Carries no user identity by design — see migrations/0013.
+      if (path === '/api/events' && request.method === 'POST') {
+        return withCors(await handleEvent(request, env));
+      }
+
       // ── Ingest (internal/admin only) ─────────────────────────────────────
       if (path.startsWith('/api/ingest') && request.method === 'POST') {
         return withCors(await handleIngest(request, env));
@@ -103,6 +126,9 @@ export default {
       }
       if (path === '/api/admin/search-log.csv' && request.method === 'GET') {
         return withCors(await handleAdminSearchLog(request, env));
+      }
+      if (path === '/api/admin/search-events.csv' && request.method === 'GET') {
+        return withCors(await handleAdminSearchEvents(request, env));
       }
       if (path === '/api/admin/index-status' && request.method === 'GET') {
         return withCors(await handleAdminIndexStatus(request, env));
@@ -245,6 +271,36 @@ function parseElearning(raw: unknown): Array<{ title: string; url: string }> {
   }
 }
 
+/** standards.outline_json → the table of contents, or [] (client DO082). */
+function parseOutline(raw: string | null | undefined): OutlineEntry[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter((e): e is OutlineEntry => !!e && typeof e === 'object'
+        && typeof e.number === 'string' && typeof e.title === 'string')
+      .map(e => ({
+        number: e.number,
+        title: e.title,
+        page: typeof e.page === 'number' ? e.page : null,
+      }));
+  } catch {
+    return [];
+  }
+}
+
+/** A JSON column that should hold an object, or {}. */
+function parseJsonObject(raw: string | null | undefined): Record<string, string> {
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw);
+    return (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
 async function handleStandards(request: Request, env: Env, url: URL): Promise<Response> {
   const parts = url.pathname.split('/').filter(Boolean);
   // url.pathname is percent-ENCODED. Standard ids carry errata suffixes with a
@@ -290,6 +346,39 @@ async function handleStandards(request: Request, env: Env, url: URL): Promise<Re
   ).bind(id).first<Record<string, any>>();
 
   if (!standard) return json({ error: 'Standard not found' }, 404);
+
+  // ── GET /api/standards/:id/outline — the table of contents (client DO082) ──
+  // "Provide easy access to TOC for each document … even if the user is on
+  //  LensyLite (non-subscriber)." So it is gated on a SESSION (requireReadAccess,
+  //  applied by the router) but not on a corpus tier: a table of contents is
+  //  metadata about a document, not the document.
+  //
+  // Two sources, in order: the indexed outline, which carries page numbers and
+  // therefore links; and — for a standard ingested before migration 0015 — the
+  // section-title map, which gives the same headings without pages. Saying WHICH
+  // is what lets the page explain why the links are missing.
+  if (decodePathSegment(parts[3]) === 'outline') {
+    const indexed = parseOutline(standard.outline_json);
+    const outline = indexed.length > 0
+      ? indexed
+      : outlineFromSectionMap(parseJsonObject(standard.sections_json));
+    const libraryUrl = toLibraryUrlOrNull(standard.vitrium_web_url);
+    return json({
+      standard: {
+        id: standard.id,
+        designation: standard.full_designation || `ANSI/IES ${standard.id}`,
+        title: standard.title && standard.title !== standard.id ? standard.title : null,
+        page_count: standard.page_count ?? null,
+        library_url: libraryUrl,
+      },
+      source: indexed.length > 0 ? 'index' : (outline.length > 0 ? 'sections' : 'none'),
+      outline: outline.map(e => ({
+        ...e,
+        // A page-targeted link, so a TOC entry opens where it points.
+        url: (libraryUrl && e.page != null) ? `${libraryUrl}#page=${e.page}` : null,
+      })),
+    });
+  }
   return json({
     standard: { ...standard, vitrium_web_url: toLibraryUrlOrNull(standard.vitrium_web_url) },
   });

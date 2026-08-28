@@ -416,6 +416,8 @@ async function ingestParsedPDF(request: Request, env: Env): Promise<Response> {
     applications = [],  // extracted application records from PDF tables
     referenceMarkers = null, // { "<marker#>": firstBodyPage } — client DO31.4
     sections = null,         // { "3.3.4": "Circulation Areas" } — client DO40
+    outline = null,          // [{number,title,page}] in document order — DO082
+    assets = null,           // [{kind,label,caption,page}] captions — DO086
     r2Key = null,
   } = body;
 
@@ -581,12 +583,21 @@ async function ingestParsedPDF(request: Request, env: Env): Promise<Response> {
     ? JSON.stringify(sections)
     : null;
 
+  // The document's table of contents (client DO082) and its table/figure
+  // captions (DO086) — arrays, in document order, from the same page walk.
+  // Same replace-on-document-ingest rule: a new edition renumbers everything.
+  const arrayJson = (value: unknown): string | null =>
+    (Array.isArray(value) && value.length > 0) ? JSON.stringify(value) : null;
+  const outlineJson = arrayJson(outline);
+  const assetsJson = arrayJson(assets);
+
   if (chunks.length > 0 || tables.length > 0 || metadata.title) await env.DB.prepare(`
     INSERT INTO standards
       (id, title, description, author, year, full_designation, r2_key,
        tables_json, status, superseded_by, chunk_count, page_count,
-       coverage_json, reference_markers_json, sections_json, indexed_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+       coverage_json, reference_markers_json, sections_json, outline_json, assets_json,
+       indexed_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
     ON CONFLICT(id) DO UPDATE SET
       -- A real title only. The ingest sends the id as its last-resort fallback,
       -- and letting that overwrite the stored title is how "RP-1-24" ended up as
@@ -624,6 +635,12 @@ async function ingestParsedPDF(request: Request, env: Env): Promise<Response> {
       sections_json = CASE
         WHEN excluded.chunk_count IS NOT NULL THEN excluded.sections_json
         ELSE standards.sections_json END,
+      outline_json = CASE
+        WHEN excluded.chunk_count IS NOT NULL THEN excluded.outline_json
+        ELSE standards.outline_json END,
+      assets_json = CASE
+        WHEN excluded.chunk_count IS NOT NULL THEN excluded.assets_json
+        ELSE standards.assets_json END,
       indexed_at   = CURRENT_TIMESTAMP,
       updated_at   = CURRENT_TIMESTAMP
   `).bind(
@@ -649,6 +666,8 @@ async function ingestParsedPDF(request: Request, env: Env): Promise<Response> {
     chunks.length > 0 ? JSON.stringify(coverage) : null,
     markersJson,
     sectionsJson,
+    outlineJson,
+    assetsJson,
   ).run();
 
   // ── 5. Upsert extracted application records into D1 ──────────────────────

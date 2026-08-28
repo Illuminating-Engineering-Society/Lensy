@@ -71,7 +71,8 @@ import { resolve, basename, extname, join, relative } from 'path';
 import { execSync } from 'child_process';
 import { parsePDFNode } from '../src/lib/pdf-parser.js';
 import { extractIESTables, extractGeneralNotes } from '../src/lib/table-extractor.js';
-import { chunkIESDocument, extractSectionTitles } from '../src/lib/chunker.js';
+import { chunkIESDocument, extractOutline } from '../src/lib/chunker.js';
+import { extractDocumentAssets } from '../src/lib/document-assets.js';
 import { extractCoverMetadata, extractCoverCommittee } from '../src/lib/cover-title.js';
 import { extractReferenceMarkers } from '../src/lib/reference-markers.js';
 import {
@@ -477,12 +478,26 @@ async function ingestFile(filePath, standardId, status = 'current') {
   // only their own section NUMBER, so the titles and the parent chain above them
   // ("3 Design Guide" › "3.3 Transition Spaces…" › "3.3.4 Circulation Areas")
   // come from this per-document map, stored on the standards row.
-  const sections = extractSectionTitles(pages);
-  const sectionCount = Object.keys(sections).length;
+  // Step 5c/5d: ONE heading walk, two products (client DO40 + DO82). The
+  // outline is every heading in document ORDER with its PAGE — the table of
+  // contents the List Standards page offers — and the section-title map is
+  // derived from it, so the two can never disagree.
+  const outline = extractOutline(pages);
+  const sections = {};
+  for (const entry of outline) if (!sections[entry.number]) sections[entry.number] = entry.title;
+  const sectionCount = outline.length;
   console.log(`  Section titles: ${sectionCount}`);
   if (sectionCount === 0 && pages.length > 5) {
     console.warn('  ⚠ No section headings were recognised — body excerpts from this standard will show a section number without its title.');
   }
+
+  // Step 5e: table and figure CAPTIONS (client DO86). The embedding model is
+  // text-only and a rasterized table yields no text, but its caption always
+  // does — so "where is the table that shows sound coefficients?" can be
+  // answered with the table's number and page even when its cells are an image.
+  const assets = extractDocumentAssets(pages);
+  const tableCaptions = assets.filter(a => a.kind === 'table').length;
+  console.log(`  Table/figure captions: ${assets.length} (${tableCaptions} tables, ${assets.length - tableCaptions} figures)`);
 
   if (CONFIG.verbose) {
     for (const [i, chunk] of chunks.entries()) {
@@ -516,6 +531,8 @@ async function ingestFile(filePath, standardId, status = 'current') {
     applications: [],  // sent separately below to avoid request size limits
     referenceMarkers,
     sections,
+    outline,
+    assets,
     r2Key,
   });
 

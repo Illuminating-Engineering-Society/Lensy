@@ -1397,6 +1397,284 @@ The UI label for each kind matches the filter label exactly — "Documents" filt
 
 A fifth `resultType`, **`standard`**, is not a filter value: it is the whole-document card a designation or title search returns (see below). It is a Document, so it borrows the `excerpt` label, line style and palette rather than owning a fifth one.
 
+### The 260820 feedback round, part two: restraint (DO080–DO088)
+
+The second half of the same annotated document. Where part one was about not
+printing what we cannot vouch for, this half is about not printing what nobody
+asked for — an answer shaped to a template, a chip that repeats the banner beside
+it, fifty cards for a question about zebras.
+
+- **The AI Guide toggle belongs to the ACCOUNT (DO080).** `user_preferences`
+  (migration 0014) keyed on the email from the `ies_auth` cookie, read through
+  `GET /api/preferences` and written by `PUT`. localStorage is a MIRROR applied
+  before the first paint so the toggle does not flash the default and flip a
+  round-trip later; the server's copy wins. Only an explicit press saves — a demo
+  search or a reset changes the state without the reader having chosen it — and
+  `applyGuidePreference` refuses to switch it on for LensyLite, which has it
+  locked off. Everything fails soft: no session (the staff bearer) answers `{}`
+  and accepts a write as a no-op, and a missing table does the same.
+- **Cards lost their duplicated furniture (DO081).** A Document or Reference card
+  now reads document → chapter → passages: the designation and title come first,
+  in bold, with the committee under them, then the chapter band. The page beside
+  the title is gone — it is printed at the end of every passage — and inside a
+  joined card (DO59) only the FIRST panel names the document; the rest open on
+  their band with a designation chip. The Definition card lost its "DEFINITION"
+  banner ("self-evident") and its "FROM THE STANDARD" heading with the repeated
+  term ("it is clear that the text … is the definition"). An Illuminance Table
+  card is untouched: its hierarchy is the application, and its page is the printed
+  row's own, which nothing else on the card says.
+- **A Table of Contents for every standard, free (DO082).** `outline_json`
+  (migration 0015) is every heading in document order with its page, produced by
+  the SAME page walk that finds the section titles — `extractOutline` is now the
+  primary product and `extractSectionTitles` is derived from it, so the two cannot
+  disagree. Served by `GET /api/standards/:id/outline`, gated on a session but NOT
+  on a corpus tier ("even if the user is on LensyLite"), and rendered on the List
+  Standards page as a per-standard disclosure that fetches on first open, indents
+  by depth and links each entry to its page. Before a re-ingest it falls back to
+  the section map — same headings, no pages — and says so on screen.
+- **A comparison says how big the change is before saying what it is (DO083).**
+  A new leading section, "Extent of the changes", classifies the substantive
+  differences as Extensive / Moderate / Minimal, says why it matters, and GOVERNS
+  the length from there (800–1200 / 500–1000 / 100–300 words, with the client's
+  caps). "Substantive" is defined in the prompt in the client's own words, so
+  renumbering and new figures do not count. Plus the reaffirmation rule, which is
+  code rather than prompt: `baseEdition` strips `+E2` AND `(R2026)`, so
+  TM-31-20(R26) is compared against TM-31-17 and never against TM-31-20 — the same
+  edition reprinted. A family whose only prior edition is itself reaffirmed reports
+  no comparison rather than inventing changes.
+- **A regulated topic carries the AHJ disclaimer (DO084).** `needsAuthorityNotice`
+  matches the client's seven topic families against the query AND against what
+  retrieval returned — a "corridor lighting" question answered out of an egress
+  section needs it too — and the UI renders the client's exact wording above the
+  answer. Decided OUTSIDE the model on purpose: a disclaimer the model sometimes
+  forgets is worse than none. The model is told it is there and told not to repeat
+  it, it survives a degraded answer, and it is shown in its own banner when the
+  reader has the Guide switched off. It deliberately ignores excerpt BODIES — half
+  the corpus says "compliance" somewhere, and a notice on every search is a notice
+  on none.
+- **An out-of-scope question gets no citations, and a malevolent one gets nothing
+  (DO085).** Two mechanisms. A weaponization or deliberate-harm question is
+  refused by PATTERN before any retrieval, so it costs nothing and reaches neither
+  Vectorize nor the model — "How can I use lighting fixtures to build a bomb?" was
+  being answered with four paragraphs of IES citations and fifty cards. And a
+  search that came back below the strong-match threshold — the same ~1-in-4
+  population the refine prompt uses — gets one small-model question: could this be
+  answered from lighting standards at all? A "no" clears the cards and the Guide
+  and hands the reader the DO077 empty state with "restate the question". It runs
+  BEFORE the 70B Guide, so an out-of-scope question never pays for one, and it
+  fails OPEN in every direction: an error or an unreadable answer means in scope.
+- **Tables and figures are findable by their captions (DO086).** The honest answer
+  to "are they vectorized? is it multimodal?" is in `src/lib/document-assets.js`
+  and repeated here: the embedding model is TEXT-ONLY, a table extracted as text
+  IS indexed (as a `table` chunk the UI hides, because a raw grid dump repeats the
+  data the card already shows), and a table or figure that is a RASTER IMAGE
+  yields no text at all — no retrieval tuning will ever find its cells. What is
+  always text is the CAPTION, which names the thing and carries a page. So
+  `assets_json` (migration 0015) holds every "Table C-1 Sound Absorption
+  Coefficients for Various Materials" with its page; a query's words are matched
+  against captions on stemmed WORDS with a relevance floor; matches become chips
+  on the card and lines in the AI prompt ("cite it by label and page; you cannot
+  see its contents"). Measured on RP-1-24: Table C-1 is now the top match for both
+  of the client's sound-coefficient phrasings, and "table of light loss factors" —
+  a table that document does not have — correctly matches nothing. Until a
+  re-ingest, captions are read out of the passages a search already retrieved.
+- **The markers came off the top right (DO087).** No TM-24 chip ("a holdover from
+  an old table format"), no Indoor/Outdoor chip ("already communicated by INTERIOR
+  and EXTERIOR on the top left"). The eligibility still travels in the payload and
+  the AI Guide still reads it; only the chip is gone.
+- **The first sentence carries information (DO088).** The prompt forbids restating
+  the question and names the two openings the client flagged as examples, and
+  `stripOpeningFluff` removes one that slips through — a first sentence that
+  matches a filler pattern AND cites nothing. The example the client marked GOOD
+  ("Egress lighting refers to the illumination provided…") is a definition and
+  stays; a sentence naming a standard is never removed.
+
+**Two limits worth naming, because they will be noticed.**
+
+1. **Page numbers are PDF indices, not printed folios.** RP-1-24's Table C-1 is on
+   PDF page 71 and prints the folio "62" — the number the client cited. Every page
+   in Lensy (excerpts, citations, asset chips, outline entries) is the PDF index,
+   because that is what the Library viewer's `#page=N` needs to land on the right
+   page. So the links are right and the numbers read low by the length of the front
+   matter (9 pages for RP-1-24). Fixing it properly means extracting the printed
+   folio per page at ingest and showing folio-plus-link — a new column and a change
+   to every citation surface, deliberately not smuggled into this round.
+2. **A caption that is a raster yields nothing.** Measured on RP-1-24: five table
+   captions extract cleanly, but Table 2-1 (the ceiling-gradient table the client
+   pointed at, "the table on page 18") and Table 4-1 (cited eight times in the
+   document's own prose as its central glare table) produce no caption text at
+   all. Neither can be found by caption, because there is no text to find. That is
+   the multimodal boundary above, and the only fix is OCR or a vision model over
+   the page images at ingest.
+3. **A caption cut by a two-column page cannot always be rejoined.** The
+   continuation join fixed the clean cases (Table 4-2 now reads "UGR Values and
+   Corresponding Descriptive Glare Criteria" rather than stopping at
+   "Descriptive"), but about two figure captions in three on RP-1-24 are cut
+   mid-phrase — sometimes mid-word — because the next line on the page belongs to
+   the OTHER column, not to the caption. The join refuses those on purpose rather
+   than splicing two columns together. A truncated caption is still a usable
+   locator; it is just a shorter match target.
+
+### The 260820 feedback round: accuracy over completeness (DO062–DO079)
+
+The client's third annotated round. Its organizing principle, stated by them for
+formulae and applied here to locators as well: **when the extraction cannot be
+trusted, say where to look instead of showing a wrong reconstruction.**
+
+- **A locator we cannot vouch for is not printed (DO071).** `src/lib/section-titles.js`
+  is the single set of rules for reading a heading, used at BOTH ends: the ingest
+  writes clean numbers and titles, and `attachSectionTitles` re-checks whatever is
+  already in `sections_json` so the corpus indexed before the rules existed stops
+  printing the bad ones. Three reproduced causes, each with a measured fix:
+  - LP-1-24 p. 77 prints "13.4 Light Distribution on Task Plane (Uniformity)"; its
+    subsetted font drops the period, so the parser reads "13 4 …" — which
+    `SECTION_RE` could not match at all, leaving every chunk on the page under the
+    PREVIOUS section's number. `normalizeSectionNumber` restores the separator, and
+    a `chapter` context disambiguates the one case the line cannot: inside chapter
+    1, "11 4" is 1.1.4; inside chapter 13, "13 4" is 13.4.
+  - LP-9-25 p. 68 is a two-column annex whose two headings share a baseline, so the
+    line arrives as two headings plus body text under one number.
+    `sanitizeSectionTitle` cuts at the second number, at a run-in sentence, and
+    where Title Case gives way to the next column's prose; a heading printed over
+    two lines is rejoined (display font at the same margin, or the run-in word
+    before the body's first full stop).
+  - A number the document cannot have printed ("131", "1810", "2025") is refused
+    outright — `trustedSectionLabel` in the Worker clears it from the excerpt, so
+    the card prints designation + citation with no locator rather than "§131".
+  The space-separated reading is gated twice, because a table row looks exactly
+  like a heading whose periods were eaten: it is not read on a page dense with
+  numeric rows, and never when the "title" itself carries numbers ("10 20 Task
+  Area 300 0.76" would otherwise stamp §10.20 onto the rest of the page — DO071
+  recreated from the other side). A two-line heading likewise joins only when the
+  first line reads UNFINISHED (it ends on a joining word or an adjective) and the
+  next line does not open with a sentence word — without both, "4.2 Task Plane
+  Lighting" followed by "Fig. 4 shows…" became "Task Plane Lighting Fig".
+  Measured on the shipped PDFs: LP-1-24 `13.4` → "Light Distribution on Task Plane
+  (Uniformity)", `1.1.4` → "Visual Comfort"; LP-9-25 `A.1.1.3` → "Regular Area With
+  Single Row of Individual Luminaires", `Annex A` → "Field Measurements" — all four
+  exactly as the client wrote them. Suspicious titles: LP-9-25 6 → 2, RP-43-25's
+  bibliography artefact (`8` → "PMID: 16494083") gone. **The residue is LP-1-24's
+  specification-outline appendix and the public-review comment form**, whose
+  numbered cells are indistinguishable from headings without page-level layout.
+- **A formula is named, never reproduced (DO072 / DO072a).** A PDF equation is a
+  LAYOUT: pdfjs returns the fraction bar as a run of underscores and the numerator
+  beside its denominator, so any text reconstruction is wrong.
+  `src/lib/formula.js` detects one and `guardFormula` removes it from every excerpt
+  as it leaves the Worker — one definition, so the same text reaches the card, the
+  prompt and a saved collection.
+  **The detector is deliberately narrow, and that is the whole design.** The only
+  evidence it accepts is a fraction bar, or an assignment (`X =`, or `≡` beside a
+  Greek symbol) together with a symbol. An earlier version also counted operators
+  and Greek letters, which flagged ordinary IES sentences — "values are within
+  ±10% of target, and ratios of ≥0.7 apply", "the luminous flux Φ, the wavelength
+  λ … are defined in LS-1" — and the stripper then deleted the OPERATOR and kept
+  the NUMBER, turning a criterion into a different criterion inside quotation
+  marks attributed to the standard. An over-eager formula detector is worse than
+  none. For the same reason the stripper is run-ANCHORED: a token is removed only
+  as part of a run containing an anchor, and an ordinary word (three or more
+  letters, nothing else) ends the run — which is what keeps "is used to
+  approximate…" intact. The card prints "Formula not shown — open the
+  standard in the Library to see it." beside whatever prose survived, and the
+  passage stays in the list precisely because the reader needs the link to that
+  page. The Guide is told a formula is there (`formulaOmitted`) but never shown
+  one; `stripFormulasFromAnswer` removes any it writes anyway, keeping the
+  sentence: "This formula, Φ… = …, is used to approximate" → "This formula is used
+  to approximate", which is the client's own suggested wording.
+- **One Document card per CHAPTER (DO073).** `groupSiblingResults` groups body
+  excerpts by `chapter|<standard>|<chapter>` instead of by section, the blue band
+  prints "Ch. 8 – Outdoor Lighting Design Process" (`chapterBannerLabel`), and each
+  passage inside keeps its own section heading, page and Library link. The chapter
+  and its printed title come from the server (`excerpt.chapter`), so a standard
+  with no `sections_json` still groups and reads "Ch. 8". Order inside the card is
+  RELEVANCE, not page — "shift highest-quality results to top while retaining
+  visual relationship within a document/chapter" — which supersedes DO40's page
+  sort. The card takes the position of its best member, so the best chapter leads.
+- **"FROM THE STANDARD" is open, and looks pressable (DO070).** Readers did not
+  recognize it as a drop-down: it now starts expanded, the caret is two static
+  glyphs (down closed, up open) rather than one rotating one — "lose the animation"
+  — and the summary is a bordered strip with a filled caret tile and a Show/Hide
+  label. Nothing about what it contains changed.
+- **A comparison is a chapter-grouped, bolded list (DO062).** The prompt's three
+  fixed sections stay; inside each, findings are bullets grouped under their
+  chapter, ordered by number, each opening with its section number AND printed
+  title in bold plus the page in brackets. `max_tokens` 4000 → **6000**. The UI
+  renders the nesting as one `<ul>` with indented hollow markers (one block, so the
+  "Continue Reading" fold can never cut inside a list), and `boldLeadingLocator`
+  bolds a locator the model left plain. `LOCATOR_SCAN_RE` now also links a section
+  named at the END of a sentence ("see Section 6.2.") — the lookahead was refusing
+  exactly the common case.
+- **A reference chip prints the reference NUMBER (DO064).** The badge fell back to
+  the match COUNT when the number could not be read, so a work LS-2-20 numbers 5
+  was chipped "LS-2-20 1" — which reads as a reference number and made the link
+  look wrong. It is now "#5", a count is marked "×N" and only when > 1, and the
+  chip's page resolution gained a middle step: in-body marker map →
+  **a page this search already retrieved that names the cited work**
+  (`findCitingPageInExcerpts`, free — it scans chunk metadata retrieval already
+  produced) → the bibliography page. The family match carries a digit boundary:
+  without one, "RP-4" matches inside "RP-43-25" and the chip would claim a page
+  that cites a different standard. A Reference card's primary button now says
+  "Open cited standard", because "Open in Library" read as the CITING document —
+  that link is the per-entry "p. 79 · Open in Library ↗", which is what the client
+  asked to keep.
+- **A search that IS a standard gets no Guide (DO075).** `findStandardLookupResults`
+  answering at all *is* the test for "searches for a specific standard without any
+  additional question" — it only fires on a whole-query designation or title — so
+  it is awaited before the Guide is launched and clears `includeAISummary`. The
+  response says `aiGuideSuppressed: 'standard_lookup'` and the UI stays silent
+  instead of printing "the AI Guide could not generate a response". Suppressing
+  AFTER the cache key is built is safe: the decision is a pure function of the
+  query and the corpus, and the corpus is in the key via `dataVersion`.
+- **An empty result set offers ways out (DO077).** `src/lib/no-results.ts` builds
+  the guidance from the query and the filters that were actually applied — the
+  client's example ("only Illuminance Tables selected" → "search document bodies
+  too") is its first rule — plus a location reset, a one-word spelling correction
+  against the LS-1 vocabulary (read from D1 only on this path), a rephrase hint
+  and a way to reach a human. Each is a BUTTON that does the thing. Note the one
+  suggestion that could NOT be a filter reset: a standard/zone scope is inferred
+  from the QUERY (`inferFiltersFromQuery`), never sent by the UI, so resetting the
+  filters would re-run the identical search — the button instead re-runs the query
+  with the narrowing words removed (`stripScopeFromQuery`).
+- **Compare Versions is one-shot (DO079).** `disarmCompare` clears it after the
+  comparison it was armed for and re-stamps `lastSearchFiltersKey`, so closing the
+  sidebar does not silently re-run the search as a non-comparison. It fires on
+  `wasComparing || filterState.compare` — the second half is the path that
+  actually caused the reported stickiness: "what's new in RP-8?" arms nothing up
+  front, the WORKER recognizes the phrasing, and `renderResults` then arms the
+  pill from `isVersionComparison`.
+- **The Guide sizes its answer to the question (the round's opening Note).** The
+  prompt no longer prescribes 3–5 paragraphs and a Further Reading section: it asks
+  the model to decide first, explicitly permits ONE paragraph citing ONE standard,
+  and permits a two-sentence "the standards do not cover this" (with
+  Standards@ies.org) as a complete answer. `answerStyle` (`auto` | `brief` | `full`)
+  is in the request and the cache key for a caller that wants to pin it; `brief`
+  caps `max_tokens` at 700 as well as asking, because a cap is the one instruction
+  a model cannot talk itself out of. No UI control yet.
+- **The portal embed (DO076).** `src/frontend/embed.html` previews and hands over a
+  **JavaScript-free** GET form (`docs/VITRIUM_EMBED.md`): submitting it opens
+  `lensy.ies.org/?q=…` in a new tab, which the existing `?q=` deep link already
+  runs. No JS and inline styles so it survives a header field that strips scripts;
+  not an iframe, because `frame-ancestors 'none'` forbids one by design. The
+  sign-in bounce preserves the query (`auth-gate.js` returns to path + search).
+- **Clicks are recorded, not yet learned from (DO078).** Nothing could be learned
+  because nothing was measured. `POST /api/events` → `search_events`
+  (migration 0013) records which card was opened, from what position, whether it
+  was the FIRST of that search, and which filters were engaged afterwards; the same
+  privacy contract as `search_log` (no user id, no IP, no session). Exported at
+  `GET /api/admin/search-events.csv`. Only a link that actually opens the Library
+  is instrumented — a DOI or publisher link on a Reference card is not, or the row
+  would credit the citing standard's page to a reader who left for doi.org. **`search.ts` does not read this table** —
+  turning it into a click-through prior that breaks ties inside the existing score
+  epsilon is the next step, and it needs weeks of rows before it is evidence rather
+  than a guess.
+
+**What each fix needs to take effect.** The Worker changes are live on deploy, but
+three of them only reach their full value with more:
+`SEARCH_CACHE_SCHEMA` is bumped to **v11** (prompts and result shape both changed),
+migration **0013** must be applied before `/api/events` can store anything, and the
+section-number fixes are *two-sided*: the Worker suppresses a bad number
+immediately, but correct numbers and titles for LP-1-24-style documents come from
+`extractSectionTitles`, so they appear only after `npm run ingest` re-runs.
+
 ### Cover images and descriptions come from the PORTAL, not from Vitrium (2026-08-24)
 
 The Lighting Library portal serves every cover publicly:

@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Embed Lensy — IES Lighting Library</title>
+  <!-- NO auth gate: this page hands staff a snippet to paste into the Vitrium
+       portal. It contains no standards content, so gating it would only make it
+       harder to reach from wherever the portal is being configured. -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: { extend: { colors: {
+        'brand-primary': '#D95D2B', 'brand-primary-dark': '#B84A20',
+        'brand-secondary': '#3A5068', 'brand-accent': '#EFA723',
+        'surface': '#F7F7F7', 'ink': '#2C2C2C',
+      }, fontFamily: {
+        display: ['Nohemi', 'Inter', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'sans-serif'],
+        sans: ['Inter', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'sans-serif'],
+      } } }
+    }
+  </script>
+  <style>
+    @font-face { font-family: 'Nohemi'; font-style: normal; font-weight: 400 700; font-display: swap; src: url('/fonts/Nohemi-Variable.woff2') format('woff2'); }
+    @font-face { font-family: 'Inter'; font-style: normal; font-weight: 100 900; font-display: swap; src: url('/fonts/Inter-Variable.woff2') format('woff2'); }
+    body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; color: #2C2C2C; }
+    h1, h2, h3 { font-family: 'Nohemi', 'Inter', -apple-system, sans-serif; }
+    pre { tab-size: 2; }
+  </style>
+</head>
+<body class="bg-surface min-h-screen text-ink">
+
+  <header class="text-white shadow-md" style="background-color: #EFA723;">
+    <div class="max-w-3xl mx-auto px-4 py-2.5 flex items-center justify-between">
+      <a href="/" class="flex items-center gap-2.5" title="Lensy — IES Assistant">
+        <div class="w-10 h-10 rounded bg-white/25 flex items-center justify-center">
+          <span class="font-display font-extrabold text-lg tracking-tight">IES</span>
+        </div>
+        <span class="font-display text-lg font-bold tracking-tight">Lensy</span>
+      </a>
+      <a href="/" class="text-sm px-3 py-1.5 rounded-md text-white/90 hover:text-white hover:bg-white/15 transition">← Back to search</a>
+    </div>
+  </header>
+
+  <main class="max-w-3xl mx-auto px-4 py-8">
+    <h1 class="font-display text-2xl font-bold mb-1">Embed Lensy in the Vitrium portal</h1>
+    <p class="text-sm text-gray-600 mb-6">
+      Client request DO076. Paste the snippet below into
+      <span class="font-medium">Portal Settings → Portal Header</span> in Vitrium Security.
+      Typing a question and pressing Search opens Lensy in a new tab with that query
+      already run.
+    </p>
+
+    <!-- ── Live preview: this IS the snippet, running ────────────────────────── -->
+    <section class="bg-white rounded-xl border border-gray-200 p-5 mb-6">
+      <h2 class="text-sm font-bold uppercase tracking-wider text-gray-500 mb-3">Preview</h2>
+
+      <form action="https://lensy.ies.org/" method="get" target="_blank" rel="noopener"
+            style="display:flex;gap:8px;align-items:center;max-width:520px;margin:0 auto;font-family:inherit;">
+        <input type="text" name="q" placeholder="Type a topic or ask a question"
+               aria-label="Search the IES Lighting Library with Lensy"
+               style="flex:1 1 auto;min-width:0;padding:10px 14px;border:1px solid #D1D5DB;border-radius:10px;font-size:14px;color:#2C2C2C;background:#fff;">
+        <button type="submit"
+                style="flex:none;display:inline-flex;align-items:center;gap:6px;padding:10px 18px;border:0;border-radius:10px;background:#D8930F;color:#fff;font-size:14px;font-weight:700;cursor:pointer;">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+          </svg>
+          Search
+        </button>
+      </form>
+
+      <p class="text-xs text-gray-400 text-center mt-3">
+        Opens <span class="font-mono">lensy.ies.org/?q=…</span> in a new tab.
+      </p>
+    </section>
+
+    <!-- ── The snippet ──────────────────────────────────────────────────────── -->
+    <section class="bg-white rounded-xl border border-gray-200 p-5 mb-6">
+      <div class="flex items-center justify-between mb-3">
+        <h2 class="text-sm font-bold uppercase tracking-wider text-gray-500">HTML to paste</h2>
+        <button id="copy-btn" onclick="copySnippet()"
+                class="text-xs px-3 py-1.5 rounded-lg bg-brand-primary text-white font-medium hover:bg-brand-primary-dark transition">
+          Copy
+        </button>
+      </div>
+      <pre id="snippet" class="text-[11px] leading-relaxed bg-gray-50 border border-gray-100 rounded-lg p-3 overflow-x-auto whitespace-pre">&lt;!-- Lensy — IES Standards Assistant. Opens lensy.ies.org in a new tab. --&gt;
+&lt;form action="https://lensy.ies.org/" method="get" target="_blank" rel="noopener"
+      style="display:flex;gap:8px;align-items:center;max-width:520px;margin:0 auto;font-family:inherit;"&gt;
+  &lt;input type="text" name="q" placeholder="Type a topic or ask a question"
+         aria-label="Search the IES Lighting Library with Lensy"
+         style="flex:1 1 auto;min-width:0;padding:10px 14px;border:1px solid #D1D5DB;border-radius:10px;font-size:14px;color:#2C2C2C;background:#fff;"&gt;
+  &lt;button type="submit"
+          style="flex:none;display:inline-flex;align-items:center;gap:6px;padding:10px 18px;border:0;border-radius:10px;background:#D8930F;color:#fff;font-size:14px;font-weight:700;cursor:pointer;"&gt;
+    &lt;svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"&gt;
+      &lt;path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/&gt;
+    &lt;/svg&gt;
+    Search
+  &lt;/button&gt;
+&lt;/form&gt;</pre>
+    </section>
+
+    <!-- ── Why it is built this way ──────────────────────────────────────────── -->
+    <section class="bg-white rounded-xl border border-gray-200 p-5 text-sm text-gray-600 space-y-3">
+      <h2 class="text-sm font-bold uppercase tracking-wider text-gray-500">Notes</h2>
+      <p>
+        <span class="font-semibold text-ink">No JavaScript.</span> It is a plain GET form, so
+        pressing Enter or the button both work, and it survives a CMS that strips
+        <span class="font-mono text-xs">&lt;script&gt;</span> tags or event-handler attributes from a
+        header field. Every style is inline for the same reason.
+      </p>
+      <p>
+        <span class="font-semibold text-ink">No iframe.</span> Lensy sends
+        <span class="font-mono text-xs">frame-ancestors 'none'</span>, so it cannot be framed —
+        embedding the search UI itself inside the portal is not possible, and would in any case
+        put a second session boundary between the reader and their Library.
+      </p>
+      <p>
+        <span class="font-semibold text-ink">Sign-in is preserved.</span> The query travels in the
+        URL, and Lensy's sign-in gate carries the whole path and query through the round trip —
+        so a reader who is not yet signed in lands on their results, not on an empty search box.
+      </p>
+      <p>
+        <span class="font-semibold text-ink">Staging.</span> To point the widget at
+        <span class="font-mono text-xs">lensy-staging.ies.org</span>, change the form's
+        <span class="font-mono text-xs">action</span>; nothing else depends on the host.
+      </p>
+    </section>
+  </main>
+
+  <footer class="max-w-3xl mx-auto px-4 py-8 text-center text-xs text-gray-400">
+    Lensy — IES Assistant
+  </footer>
+
+  <script>
+    function copySnippet() {
+      const text = document.getElementById('snippet').textContent;
+      const btn = document.getElementById('copy-btn');
+      const done = (ok) => { btn.textContent = ok ? 'Copied' : 'Select and copy'; setTimeout(() => { btn.textContent = 'Copy'; }, 2000); };
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(() => done(true)).catch(() => done(false));
+        return;
+      }
+      done(false);
+    }
+  </script>
+</body>
+</html>

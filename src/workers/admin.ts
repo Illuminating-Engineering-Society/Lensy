@@ -251,6 +251,66 @@ export async function handleAdminSearchLog(request: Request, env: Env): Promise<
 }
 
 /**
+ * Staff-only CSV export of the anonymous interaction log (client DO078).
+ *
+ *   GET /api/admin/search-events.csv?from=2026-08-01&to=2026-08-31&event=open_in_library&limit=10000
+ *
+ * The companion to search-log.csv: that one says what was asked, this one says
+ * what was opened. Joining them on `query` is what turns "which cards people
+ * click on first" into a measurement — and, once there is enough of it, into a
+ * ranking prior. Same privacy contract: the table holds nothing personal.
+ */
+export async function handleAdminSearchEvents(request: Request, env: Env): Promise<Response> {
+  const denied = await requireAuth(request, env);
+  if (denied) return denied;
+
+  const url = new URL(request.url);
+  const from = url.searchParams.get('from');
+  const to = url.searchParams.get('to');
+  const event = url.searchParams.get('event');
+  const limit = Math.min(50000, Math.max(1, parseInt(url.searchParams.get('limit') || '10000', 10) || 10000));
+
+  let sql = `
+    SELECT created_at, event, query, standard_id, result_type, position, section,
+           page_number, content_types, extra
+    FROM search_events WHERE 1=1
+  `;
+  const bindings: (string | number)[] = [];
+  if (from) { sql += ' AND created_at >= ?'; bindings.push(from); }
+  if (to) { sql += ' AND created_at <= ?'; bindings.push(to); }
+  if (event) { sql += ' AND event = ?'; bindings.push(event); }
+  sql += ' ORDER BY created_at DESC LIMIT ?';
+  bindings.push(limit);
+
+  let rows: Record<string, unknown>[] = [];
+  try {
+    const result = await env.DB.prepare(sql).bind(...bindings).all<Record<string, unknown>>();
+    rows = result.results || [];
+  } catch (err) {
+    // The table only exists once migration 0013 has been applied; an empty
+    // export is a truer answer than a 500.
+    console.error('search event export failed (non-fatal):', err instanceof Error ? err.message : String(err));
+  }
+
+  const columns = [
+    'created_at', 'event', 'query', 'standard_id', 'result_type', 'position',
+    'section', 'page_number', 'content_types', 'extra',
+  ];
+  const csv = [
+    columns.join(','),
+    ...rows.map(r => columns.map(c => csvCell(r[c])).join(',')),
+  ].join('\r\n');
+
+  return new Response(csv, {
+    status: 200,
+    headers: {
+      'Content-Type': 'text/csv; charset=utf-8',
+      'Content-Disposition': 'attachment; filename="lensy-search-events.csv"',
+    },
+  });
+}
+
+/**
  * CSV-escape one cell. Also neutralizes spreadsheet formula injection —
  * queries are user-supplied free text, and staff open this file in Excel.
  */

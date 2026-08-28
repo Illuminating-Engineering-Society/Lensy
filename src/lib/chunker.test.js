@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { chunkIESDocument } from './chunker.js';
+import { chunkIESDocument, extractSectionTitles } from './chunker.js';
 
 function page(number, lines) {
   return { number, text: lines.map(l => l.text).join('\n'), lines };
@@ -122,5 +122,71 @@ describe('chunkIESDocument — References section', () => {
     const body = chunks.find(c => c.type === 'text');
     expect(body).toBeDefined();
     expect(body.pageNumber).toBe(7); // not page 5 (the references heading)
+  });
+});
+
+// ─── DO071 regressions found in review ───────────────────────────────────────
+
+describe('chunkIESDocument — a table row is not a heading', () => {
+  const TABLE_LINES = [
+    l('Table A-1 Recommended Illuminance'),
+    l('10 20 Task Area 300 0.76 A'),
+    l('30 40 Corridor Floor 100 0.00 A'),
+    l('50 60 Stairs and Ramps 150 0.00 A'),
+  ];
+
+  it('keeps the section it was given instead of reading "10 20" as §10.20', () => {
+    const chunks = chunkIESDocument([
+      page(1, [l('4.3 Task Lighting Criteria'), l(PROSE_40)]),
+      page(2, TABLE_LINES.concat([l(PROSE_40)])),
+    ], { minWords: 10 });
+    const sections = [...new Set(chunks.map(c => c.section))];
+    expect(sections).not.toContain('10.20');
+    expect(sections).not.toContain('30.40');
+    expect(sections).toContain('4.3');
+  });
+
+  it('still reads the spaced form on an ordinary page (LP-1-24 "13 4")', () => {
+    const chunks = chunkIESDocument([
+      page(1, [l('13 4 Light Distribution on Task Plane'), l(PROSE_40)]),
+    ], { minWords: 10 });
+    expect(chunks[0].section).toBe('13.4');
+  });
+});
+
+describe('extractSectionTitles — a two-line heading joins only when unfinished', () => {
+  const p = (number, lines) => ({
+    number,
+    text: lines.map(t => t.text).join('\n'),
+    lines,
+  });
+  const line = (text, fontSize = 10, x = 50) => ({ text, fontSize, x });
+
+  it('completes a title that ends on an adjective (LP-9-25 A.1.1.3)', () => {
+    const titles = extractSectionTitles([p(68, [
+      line('A.1.1.3 Regular Area With Single Row of Individual'),
+      line('Luminaires. The average illuminance, Eavg, in such a space can be determined from the expression.'),
+    ])]);
+    expect(titles['A.1.1.3']).toBe('Regular Area With Single Row of Individual Luminaires');
+  });
+
+  it('does NOT absorb the first word of the next paragraph', () => {
+    const titles = extractSectionTitles([p(20, [
+      line('4.2 Task Plane Lighting'),
+      line('Fig. 4 shows the layout of the measurement stations used in this survey.'),
+    ])]);
+    expect(titles['4.2']).toBe('Task Plane Lighting');
+
+    const more = extractSectionTitles([p(21, [
+      line('5.1 Outdoor Pedestrian Areas'),
+      line('Note. Values are maintained illuminances measured at grade level.'),
+    ])]);
+    expect(more['5.1']).toBe('Outdoor Pedestrian Areas');
+
+    const complete = extractSectionTitles([p(22, [
+      line('3.3.4 Interior Circulation Areas'),
+      line('Lighting. The average illuminance in a corridor is measured at the floor.'),
+    ])]);
+    expect(complete['3.3.4']).toBe('Interior Circulation Areas');
   });
 });

@@ -54,7 +54,24 @@ const DATA_VERSION_KEY = 'cache:data-version';
 //     v9 answer keeps sending readers to the host that rejects the session and
 //     drops #page. Observed after the fix shipped: the Table of Contents
 //     (uncached) linked correctly while "Open in Library" on a result did not.
-const SEARCH_CACHE_SCHEMA = 'v10';
+// v11: client feedback DO062–DO079. The prompts changed (the AI Guide now sizes
+//     its answer to the question and may answer in one paragraph; the comparison
+//     answers as a chapter-grouped bulleted list with bold section numbers and
+//     titles; both are forbidden to write formulae, and any formula that slips
+//     through is stripped from the text). The RESULTS changed too: an
+//     untrustworthy section number is now suppressed rather than printed,
+//     excerpts carry their chapter, a designation search returns no Guide at
+//     all, and an empty result set carries its guidance. Every stored v10
+//     response predates all of it.
+// v12: client feedback DO080–DO088. The prompts changed again (a comparison now
+//     opens with "Extent of the changes" and takes its length from that
+//     classification; the Guide is forbidden to restate the question and is told
+//     when the AHJ notice is displayed above it; tables and figures are described
+//     to it by caption). The RESULTS changed too: excerpts carry matched table and
+//     figure locators, a regulated search carries the AHJ notice, and a question
+//     that is not about lighting returns no cards at all. Every stored v11
+//     response predates all of it.
+const SEARCH_CACHE_SCHEMA = 'v12';
 
 function errMsg(err: unknown): string {
   return err instanceof Error ? err.message : String(err);

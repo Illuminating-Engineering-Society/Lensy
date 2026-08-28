@@ -170,6 +170,16 @@
     .side-count { font-size: 0.6875rem; color: #9CA3AF; font-variant-numeric: tabular-nums; }
     .chevron { transition: transform .15s; }
     details[open] > summary .chevron { transform: rotate(180deg); }
+    /* ── Result-card disclosures ("FROM THE STANDARD") ────────────────────────
+       Client DO70: readers did not recognize the label as a drop-down, and asked
+       for "the carrot facing down instead of facing right (i.e. lose the
+       animation)". So the caret is two static glyphs swapped by [open] — no
+       rotation, no transition — and the summary is drawn as a control. Safari
+       and older Chrome still paint their own triangle unless it is suppressed
+       here as well as by `list-none`. */
+    .disclosure > summary { list-style: none; }
+    .disclosure > summary::-webkit-details-marker { display: none; }
+    .disclosure > summary::marker { content: ''; }
     /* ── Docked sidebar (wide screens, client wireframes 2026-08-20) ──────────
        "If wide screen: filter sidebar begins open (don't gray out screen)."
        So on a wide screen the panel is part of the page rather than a modal:
@@ -781,6 +791,11 @@
             <!-- Version-comparison advisory (client DO25): both editions
                  hyperlinked, with the deprecation stated plainly. -->
             <div id="ai-comparison-notice" class="hidden text-xs text-gray-700 bg-white/70 border border-amber-200 rounded-lg px-3 py-2 mb-3 leading-relaxed"></div>
+            <!-- AHJ compliance notice (client DO084). Rendered from a server
+                 flag rather than written by the model, so it is present on every
+                 life-safety / egress / healthcare / energy-code search and
+                 identical every time. -->
+            <div id="ai-authority-notice" class="hidden text-xs text-red-900 bg-red-50 border border-red-200 rounded-lg px-3 py-2 mb-3 leading-relaxed font-medium"></div>
             <!-- copy-guard + print-withhold: the AI answer paraphrases
                  copyrighted material, so it is the last thing that should leave
                  via a reflex copy or a print (client DO36). -->
@@ -836,6 +851,16 @@
         <p id="no-strong-match-text" class="text-sm text-amber-900 leading-relaxed"></p>
       </div>
 
+      <!-- AHJ compliance notice for a search with no AI Guide (client DO084).
+           The Guide card carries its own copy; this is the one a reader sees
+           when they have the Guide switched off. -->
+      <div id="authority-banner" class="hidden mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 flex gap-3 no-print" role="status">
+        <svg class="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/>
+        </svg>
+        <p id="authority-banner-text" class="text-sm text-red-900 leading-relaxed"></p>
+      </div>
+
       <!-- Result cards list -->
       <div id="results-list" class="space-y-3"></div>
 
@@ -847,10 +872,10 @@
           </svg>
         </div>
         <p class="text-gray-600 font-medium">No results found</p>
-        <p class="text-sm text-gray-400 mt-1">
-          Try different keywords or contact
-          <a href="mailto:Standards@ies.org" class="text-ies-blue hover:underline">Standards@ies.org</a>
-        </p>
+        <!-- Guided alternatives, built by the Worker from the query and the
+             filters that were actually applied (client DO77). Each button acts
+             — it does not merely describe what the reader could try. -->
+        <div id="no-results-guidance" class="hidden max-w-xl mx-auto mt-4 text-center no-print"></div>
       </div>
     </section>
   </main>
@@ -1108,6 +1133,10 @@
     // "From the Standard" drop-down. At the cap the label reads "Top N passages"
     // rather than "N passages" (client DO29).
     const MAX_EXCERPTS_SHOWN = 10;
+    // Mirrors FORMULA_NOTICE in src/lib/formula.js — the Worker decides WHICH
+    // passages lost a formula (excerpt.formulaOmitted), this is only how the
+    // card says so (client DO72).
+    const FORMULA_NOTICE = 'Formula not shown — open the standard in the Library to see it.';
     let allResults = [];
     let currentPage = 1;
 
@@ -1197,6 +1226,9 @@
       // The sidebar's Documents lists and the name auto-suggest read the
       // standards index; fetched once the session is confirmed.
       loadStandardsIndex();
+      // The AI Guide state saved to this account (client DO80). After
+      // applyTier, so a LensyLite account cannot have it switched on.
+      loadPreferences();
     });
 
     // Every control that reflects a filter carries data-filter, whichever chrome
@@ -1323,6 +1355,52 @@
       if (name === 'tables') { setContentKind('tables', !filterState.tables); return; }
       filterState[name] = !filterState[name];
       renderFilterPills();
+      // The AI Guide toggle is a property of the ACCOUNT (client DO80), so an
+      // explicit press is saved. Only this path saves: a demo search or a reset
+      // changes the state without the reader having chosen it.
+      if (name === 'guide') saveGuidePreference(filterState.guide);
+    }
+
+    // ── The AI Guide state follows the account (client DO80) ─────────────────
+    // "Every time the user returns to the tool, it should be in the same state
+    //  it was last set."
+    //
+    // The record is server-side (/api/preferences); localStorage is a MIRROR,
+    // applied before the first paint so the toggle does not flash the default
+    // and then flip when the server answers. A browser with no mirror and a slow
+    // network shows the default for one round trip, which is the honest cost of
+    // storing it per account rather than per browser.
+    const GUIDE_PREF_KEY = 'lensy.pref.aiGuide';
+
+    function applyGuidePreference(value) {
+      if (typeof value !== 'boolean') return;
+      if (lockedForTier('guide')) return;   // LensyLite has it off, full stop
+      filterState.guide = value;
+      renderFilterPills();
+    }
+
+    function readGuideMirror() {
+      try {
+        const raw = localStorage.getItem(GUIDE_PREF_KEY);
+        return raw === null ? null : raw === 'true';
+      } catch { return null; }
+    }
+
+    function saveGuidePreference(value) {
+      try { localStorage.setItem(GUIDE_PREF_KEY, String(!!value)); } catch { /* private mode */ }
+      // Not awaited: the toggle has already moved, and a failed save must not
+      // undo it. The mirror keeps this browser correct either way.
+      LensyAPI.savePreferences({ ai_guide: !!value });
+    }
+
+    async function loadPreferences() {
+      try {
+        const prefs = await LensyAPI.getPreferences();
+        if (typeof prefs.ai_guide === 'boolean') {
+          applyGuidePreference(prefs.ai_guide);
+          try { localStorage.setItem(GUIDE_PREF_KEY, String(prefs.ai_guide)); } catch { /* ignore */ }
+        }
+      } catch { /* the default state stands */ }
     }
 
     /**
@@ -1901,7 +1979,17 @@
         showToast('Choose at least one content type to search', 'error');
         return;
       }
-      if (JSON.stringify(collectFilters()) !== lastSearchFiltersKey) {
+      const filters = collectFilters();
+      if (JSON.stringify(filters) !== lastSearchFiltersKey) {
+        // "Which filters are engaged post-search" — the second signal the client
+        // asked to measure (DO078). Only a change that actually re-runs the
+        // search is recorded; a local re-sort is not a statement about content.
+        LensyAPI.logEvent({
+          event: 'filter_applied',
+          query: lastQuery,
+          content_types: filters.content_types || null,
+          extra: filters.indoor_outdoor ? { indoor_outdoor: filters.indoor_outdoor } : null,
+        });
         document.getElementById('search-input').value = lastQuery;
         performSearch();
         return;
@@ -2346,6 +2434,14 @@
       lastSearchFiltersKey = JSON.stringify(filters);
       const includeAI = !!filterState.guide;
 
+      // ── Compare Versions is a one-shot tool (client DO79) ──────────────────
+      // "'Compare Versions' tool stayed 'locked on' after intentionally using it
+      //  the first time, but intending to search without it the second time.
+      //  After a single search utilizing 'Compare Versions' deselect the tool."
+      // Remembered here and cleared after the response renders, so THIS search
+      // still runs as a comparison and the next one does not.
+      const wasComparing = !!filterState.compare;
+
       try {
         const data = await LensyAPI.search(query, { filters, includeAISummary: includeAI, limit: POOL_SIZE });
         renderResults(data);
@@ -2353,7 +2449,28 @@
         renderError(err.message);
       } finally {
         showLoading(false);
+        // Either way it was armed: the reader armed it before the search, OR the
+        // Worker recognized "what's new in RP-8?" and renderResults armed the
+        // pill from `isVersionComparison`. That second path is the one that
+        // actually left the tool locked on — the next ordinary search would then
+        // send `compare` and be answered as a comparison.
+        if (wasComparing || filterState.compare) disarmCompare();
       }
+    }
+
+    /**
+     * Turn Compare Versions off after the comparison it was armed for (DO79).
+     *
+     * `lastSearchFiltersKey` is re-stamped with the disarmed state on purpose:
+     * without that, closing the Sort/Filter panel would see "the filters
+     * changed" and silently re-run the search as a NON-comparison, wiping the
+     * comparison the reader just asked for.
+     */
+    function disarmCompare() {
+      if (!filterState.compare) return;
+      filterState.compare = false;
+      renderFilterPills();
+      lastSearchFiltersKey = JSON.stringify(collectFilters());
     }
 
     // ── Rendering ────────────────────────────────────────────────────────────
@@ -2425,11 +2542,28 @@
         bannerText.textContent = '';
       }
 
+      // The AHJ notice stands on its own when there is no Guide card to carry it
+      // (client DO084): a reader with the Guide switched off must still see it.
+      const authorityBanner = document.getElementById('authority-banner');
+      if (authorityBanner) {
+        // Gated on whether the GUIDE CARD is actually printing it, not on whether
+        // there is a Guide: a summary served from the KV cache can predate the
+        // notice, and the disclaimer must never end up in neither place.
+        const show = !!data.authorityNotice && !(data.aiSummary && data.aiSummary.authorityNotice);
+        document.getElementById('authority-banner-text').textContent = data.authorityNotice || '';
+        authorityBanner.classList.toggle('hidden', !show);
+      }
+
       if (data.aiSummary) {
         renderAISummary(data.aiSummary);
-      } else if (filterState.guide && allResults.length > 0) {
+      } else if (filterState.guide && allResults.length > 0 && !data.aiGuideSuppressed) {
         // AI Guide was requested but nothing came back (feedback DO9): say so
         // instead of silently omitting the card.
+        //
+        // `aiGuideSuppressed` is the one case where silence is right: the search
+        // was just a standard's designation or title, so the answer is the
+        // document card itself (client DO75). Printing "could not generate"
+        // there would report a fault where there was a decision.
         renderAISummary({
           text: 'The AI Guide could not generate a response for this search. The results below are unaffected — please try again in a moment.',
           disclaimer: 'AI Guide temporarily unavailable.',
@@ -2440,6 +2574,7 @@
       if (!allResults.length) {
         document.getElementById('results-heading').textContent = 'Results';
         document.getElementById('results-list').innerHTML = '';
+        renderNoResultsGuidance(data.noResultsGuidance);
         document.getElementById('no-results').classList.remove('hidden');
         return;
       }
@@ -2467,6 +2602,106 @@
       // that is already answering.
       maybeOfferRefine(data);
     }
+
+    // ── "No results found" is not an answer (client DO77) ────────────────────
+    // "If no results found, provide alternative paths. Offer guided
+    //  recommendations for improving search experience … depending on the nature
+    //  of the query."
+    //
+    // The recommendations come from the Worker, which knows which content kinds
+    // and filters were actually applied (src/lib/no-results.ts). Each one is a
+    // button that DOES the thing rather than describing it — the client's own
+    // example ("try enabling the 'Document Body' filter and repeating your
+    // search") is two steps the reader should not have to take by hand.
+    function renderNoResultsGuidance(guidance) {
+      const box = document.getElementById('no-results-guidance');
+      if (!box) return;
+      if (!guidance || !Array.isArray(guidance.suggestions) || guidance.suggestions.length === 0) {
+        box.innerHTML = '';
+        box.classList.add('hidden');
+        return;
+      }
+
+      const message = guidance.message
+        ? `<p class="text-sm text-gray-600 mb-3">${escapeHtml(guidance.message)}</p>` : '';
+
+      const button = (s, i) => {
+        if (s.action === 'contact') {
+          return `<a href="mailto:Standards@ies.org"
+                     class="text-sm px-3 py-1.5 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 transition">
+                    ${escapeHtml(s.label)}
+                  </a>`;
+        }
+        const primary = i === 0;
+        return `<button data-guidance="${i}"
+                  class="no-results-action text-sm px-3 py-1.5 rounded-lg transition font-medium ${primary
+                    ? 'text-white hover:brightness-95'
+                    : 'border border-gray-200 text-gray-600 hover:bg-gray-50'}"
+                  ${primary ? 'style="background-color: var(--brand-primary, #1E4F73);"' : ''}>
+                  ${escapeHtml(s.label)}
+                </button>`;
+      };
+
+      noResultsSuggestions = guidance.suggestions;
+      box.innerHTML = `${message}
+        <div class="flex flex-wrap items-center justify-center gap-2">
+          ${guidance.suggestions.map(button).join('')}
+        </div>`;
+      box.classList.remove('hidden');
+    }
+
+    /** The suggestions currently on screen, so a click can act on one. */
+    let noResultsSuggestions = [];
+
+    /** Do what a guidance button says (client DO77). */
+    function applyNoResultsSuggestion(index) {
+      const s = noResultsSuggestions[Number(index)];
+      if (!s) return;
+      // Which alternative path a reader takes out of a dead end is exactly the
+      // kind of thing DO078 wants to learn from.
+      LensyAPI.logEvent({
+        event: 'guidance',
+        query: lastQuery,
+        content_types: collectFilters().content_types || null,
+        extra: { action: s.action, value: s.value || '' },
+      });
+      switch (s.action) {
+        case 'enable_content_type':
+          // `tables` carries its Interior/Exterior multi-select with it (DO57).
+          if (s.value === 'tables') filterState = alignTablesSelection(filterState, true);
+          else if (s.value && s.value in filterState) filterState[s.value] = true;
+          renderFilterPills();
+          if (lastQuery) { document.getElementById('search-input').value = lastQuery; performSearch(); }
+          break;
+        case 'clear_location':
+          filterState.interior = true;
+          filterState.exterior = true;
+          renderFilterPills();
+          if (lastQuery) { document.getElementById('search-input').value = lastQuery; performSearch(); }
+          break;
+        case 'clear_filters':
+          resetFilters();
+          if (lastQuery) { document.getElementById('search-input').value = lastQuery; performSearch(); }
+          break;
+        case 'search':
+          if (s.value) { document.getElementById('search-input').value = s.value; performSearch(); }
+          break;
+        case 'rephrase': {
+          // Put the reader back in the box with their words, ready to edit.
+          const input = document.getElementById('search-input');
+          document.getElementById('hero-section').scrollIntoView({ behavior: 'smooth', block: 'start' });
+          if (input && input.focus) input.focus();
+          break;
+        }
+        default:
+          break;
+      }
+    }
+
+    document.getElementById('no-results').addEventListener('click', e => {
+      const btn = e.target.closest ? e.target.closest('.no-results-action') : null;
+      if (btn) applyNoResultsSuggestion(btn.dataset.guidance);
+    });
 
     // The "Narrow to:" chip row is gone (client wireframes, 2026-08-20: "we can
     // remove these dynamic filters now that we have the dynamic sidebar") — the
@@ -2605,7 +2840,7 @@
         <article class="result-card copy-guard bg-gray-50 rounded-xl border border-gray-100 shadow-sm p-2 relative overflow-hidden space-y-2"
                  style="animation-delay: ${index * 40}ms; border-left: 3px ${style.line} ${style.banner};"
                  data-joined-standard="${escapeHtml(bundle.standard)}">
-          ${bundle.sections.map(g => renderResultCard(g, index, { nested: true })).join('')}
+          ${bundle.sections.map((g, i) => renderResultCard(g, index, { nested: true, first: i === 0 })).join('')}
         </article>
       `;
     }
@@ -2614,11 +2849,17 @@
     // of the same standard. Only true application rows group (chunk-only
     // results carry no rowRef and always render as standalone cards).
     //
-    // Document excerpts group too, but by SECTION (client DO40: "if multiple
-    // search results are from the same section, group them together with the
-    // solid left border line"). Those are passages of one chapter, so they are
-    // one card — and unlike table rows they group wherever they land in the
-    // ranking, not only when adjacent.
+    // Document excerpts group too, but by CHAPTER (client DO73: "'Document'
+    // result cards (only): let's restructure results to 1 card per chapter (e.g.
+    // 4.3.3.1 and 4.2.4 both equal chapter 4)"). That supersedes DO40's
+    // per-SECTION grouping — the sections themselves still head each passage
+    // inside the card, which is what DO40 asked for and what DO73 keeps ("in
+    // 'From the Standard' the bolded text remains the section title").
+    //
+    // Like the section grouping before it, a chapter group forms wherever its
+    // members land in the ranking rather than only when adjacent, so the card
+    // takes the position of its BEST member: "highest quality chapter results
+    // first, even if that differs from printed order".
     function groupSiblingResults(results) {
       const keyOf = (r) => {
         const a = r.application || {};
@@ -2628,8 +2869,15 @@
       const sectionKeyOf = (r) => {
         if (r.resultType !== 'excerpt') return null;
         const std = r.application && r.application.standard;
-        const section = r.excerpt && r.excerpt.section;
-        return (std && section) ? `section|${std}|${section}` : null;
+        if (!std) return null;
+        const e = r.excerpt || {};
+        // The standard id is part of the key, so two editions of one document
+        // never share a card on a version comparison (DO27/DO42).
+        const chapter = e.chapter && e.chapter.number;
+        if (chapter) return `chapter|${std}|${chapter}`;
+        // A response cached before excerpts carried their chapter, or a section
+        // number too damaged to yield one: group by section, exactly as before.
+        return e.section ? `section|${std}|${e.section}` : null;
       };
 
       const groups = [];
@@ -2656,9 +2904,15 @@
       return groups;
     }
 
-    // Several passages from one section become ONE Document card whose "From the
-    // Standard" list holds them all, in page order (client DO40). Nothing is
-    // lost: each passage keeps its own page and its own Library link.
+    // Every passage of one CHAPTER becomes ONE Document card whose "From the
+    // Standard" list holds them all (client DO40, restructured by DO73).
+    // Nothing is lost: each passage keeps its own section heading, its own page
+    // and its own Library link.
+    //
+    // The order inside the card is the RELEVANCE order the results arrived in —
+    // "shift highest-quality results to top of results, while retaining visual
+    // relationship within a document/chapter" (DO73). It used to be page order,
+    // which buried the best passage of a long chapter at the bottom.
     function mergeDocumentGroup(members) {
       const seen = new Set();
       const excerpts = [];
@@ -2667,14 +2921,16 @@
           ? m.excerpts
           : (m.excerpt ? [m.excerpt] : []);
         for (const e of list) {
-          if (!e || !e.text) continue;
-          const key = `${e.pageNumber == null ? '?' : e.pageNumber}|${e.text.slice(0, 80)}`;
+          if (!e) continue;
+          // A passage whose whole content was a formula still belongs here: the
+          // card prints the "see it in the Library" line for it (DO72).
+          if (!e.text && !e.formulaOmitted) continue;
+          const key = `${e.pageNumber == null ? '?' : e.pageNumber}|${(e.text || '').slice(0, 80)}`;
           if (seen.has(key)) continue;
           seen.add(key);
           excerpts.push(e);
         }
       }
-      excerpts.sort((a, b) => (a.pageNumber ?? 1e9) - (b.pageNumber ?? 1e9));
       return { ...members[0], excerpts, excerpt: excerpts[0] || members[0].excerpt };
     }
 
@@ -2699,6 +2955,25 @@
       const path = Array.isArray(excerpt.sectionPath) ? excerpt.sectionPath.filter(p => p && p.title) : [];
       const leaf = path.length ? path[path.length - 1].title : (excerpt.sectionTitle || '');
       return `${excerpt.section}${leaf ? ` · ${leaf}` : ''}`;
+    }
+
+    /**
+     * The blue band at the top of a Document card (client DO73: "print chapter
+     * name in the blue band at the top of the card") —
+     * "Ch. 8 – Outdoor Lighting Design Process", or "Annex A – Field
+     * Measurements". Mirrors chapterLabel() in src/lib/section-titles.js.
+     *
+     * Falls back to the section locator for a response cached before excerpts
+     * carried their chapter, and to nothing at all when the section number could
+     * not be trusted (the server drops those — client DO71).
+     */
+    function chapterBannerLabel(excerpt) {
+      const ch = excerpt && excerpt.chapter;
+      if (!ch || !ch.number) {
+        return (excerpt && excerpt.section) ? sectionBannerLabel(excerpt) : '';
+      }
+      const head = /^(?:annex|appendix)\b/i.test(ch.number) ? ch.number : `Ch. ${ch.number}`;
+      return ch.title ? `${head} – ${ch.title}` : head;
     }
 
     function renderPaginationControls(totalPages, fromN, toN, total) {
@@ -2772,6 +3047,14 @@
       notice.innerHTML = noticeHtml;
       notice.classList.toggle('hidden', !noticeHtml);
 
+      // The AHJ notice (client DO084) — plain text from the server, never the
+      // model's words, so it reads identically on every regulated topic.
+      const authority = document.getElementById('ai-authority-notice');
+      if (authority) {
+        authority.textContent = summary.authorityNotice || '';
+        authority.classList.toggle('hidden', !summary.authorityNotice);
+      }
+
       // Structured rendering (headings, bullets) with the standards the AI
       // names hyperlinked to the Lighting Library (client DO24).
       const textEl = document.getElementById('ai-summary-text');
@@ -2794,6 +3077,17 @@
       const deprecated = Array.isArray(comparison.deprecated) ? comparison.deprecated : [];
       const older = Array.isArray(comparison.alsoDeprecated) ? comparison.alsoDeprecated : [];
       if (!current && deprecated.length === 0) return '';
+
+      // Every other printing is this same edition reaffirmed (client DO083):
+      // listing it as an "earlier deprecated edition" would name one document as
+      // both the current and a previous version of itself.
+      if (comparison.reaffirmedOnly && current) {
+        const name = current.url
+          ? `<a href="${escapeHtml(current.url)}" target="_blank" rel="noopener" class="text-ies-blue hover:underline"><strong>${escapeHtml(current.name || current.id)}</strong></a>`
+          : `<strong>${escapeHtml(current.name || current.id)}</strong>`;
+        return `${name} is the current edition, and the library holds no earlier edition of it to compare — `
+          + 'the other printings in these results are the same edition reaffirmed, which republishes a standard unchanged.';
+      }
 
       const link = (ed, strong) => {
         const label = escapeHtml(ed.name || ed.id || '');
@@ -2823,7 +3117,7 @@
     // the inside of existing anchors so nothing nests.
     function renderAIText(raw) {
       const lines = String(raw || '').split('\n');
-      const COMPARE_HEADINGS = /^(what appears to be new|likely technical updates|possible deletions|further reading)\b/i;
+      const COMPARE_HEADINGS = /^(extent of the changes|what appears to be new|likely technical updates|possible deletions|further reading)\b/i;
 
       // Blocks are collected rather than concatenated, so the "Continue
       // Reading" fold below can cut on a block boundary instead of guessing
@@ -2835,6 +3129,9 @@
       for (const line of lines) {
         const t = line.trim();
         if (!t) { closeList(); continue; }
+        // Indentation is read BEFORE trimming: it is what tells a chapter bullet
+        // from the findings nested under it (client DO62).
+        const indent = line.length - line.replace(/^\s+/, '').length;
 
         const md = /^#{1,4}\s*(.+)$/.exec(t);
         const bare = t.replace(/^\*\*|\*\*$/g, '').replace(/:$/, '').trim();
@@ -2848,7 +3145,12 @@
         const li = /^(?:[-*•]|\d{1,2}[.)])\s+(.*)$/.exec(t);
         if (li) {
           if (!list) list = '<ul class="list-disc pl-5 space-y-1 my-1.5">';
-          list += `<li>${inlineAI(li[1])}</li>`;
+          // Nested findings are indented and given a hollow marker rather than a
+          // real nested <ul>: the list is accumulated as ONE block so the
+          // "Continue Reading" fold can only ever cut between blocks, and a
+          // second level of real <ul> would risk an unbalanced tag at that cut.
+          const nested = indent >= 2;
+          list += `<li class="${nested ? 'ml-4 list-[circle] text-[0.95em]' : ''}">${inlineAI(boldLeadingLocator(li[1]))}</li>`;
           continue;
         }
 
@@ -2890,6 +3192,35 @@
             <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/>
           </svg>
         </button>`;
+    }
+
+    /**
+     * Bold the locator a comparison finding opens with (client DO62: "when
+     * available, present the section title adjacent to section number, and make
+     * all section numbers & titles bold font … format so each reference to a
+     * section begins with the section number & name for easy scanning, like a
+     * table of contents").
+     *
+     * The prompt asks the model for the bold markers; this is what holds when it
+     * does not write them. Only ever applied to the head of a list item, and
+     * never to one that is already bold — so it cannot nest emphasis.
+     *
+     *   "6.2 Outdoor Lighting Requirements (p. 34): mentions the Five…"
+     *   → "**6.2 Outdoor Lighting Requirements** (p. 34): mentions the Five…"
+     */
+    function boldLeadingLocator(text) {
+      const t = String(text || '');
+      if (/^\s*\*\*/.test(t)) return t;   // the model already bolded it
+      const m = /^((?:Chapter\s+|Annex\s+|Appendix\s+)?(?:\d+(?:\.\d+)*|[A-Z](?:\.\d+)+|[A-Z])\b[^:*]{0,70}?)(\s*\((?:p{1,2}\.|page)[^)]*\))?\s*:\s*(.+)$/.exec(t);
+      if (!m) return t;
+      const head = m[1].replace(/[\s–-]+$/, '');
+      // Only a real locator: a MULTI-PART number ("6.2", "A.1.1.3") or a named
+      // chapter/annex. A bare number is more likely a quantity — "12 lux minimum
+      // in corridors: verify after install" is a note, not a section.
+      const locator = /^(?:Chapter|Annex|Appendix)\s/i.test(head)
+        || /^(?:\d+|[A-Z])(?:\.\d+)+\b/.test(head);
+      if (!locator) return t;
+      return `**${head}**${m[2] || ''}: ${m[3]}`;
     }
 
     function expandAIGuide() {
@@ -2935,9 +3266,15 @@
     // corpus actually uses — "RP-8-25+E2", "LM-63-19R25" — while stopping short
     // of the sentence punctuation that follows them, hence the "must end on a
     // word character or +" ending.
+    // The section group's lookahead rejects a longer number ("6.2" inside
+    // "6.2.4") but must NOT reject a sentence's full stop: "see Section 6.2."
+    // is where a locator most often appears, and `(?![\d.])` was refusing to
+    // link exactly those (client DO62 asks for every mentioned section to be
+    // hyperlinked). The number group is greedy, so the lookahead only has to
+    // exclude a following digit, or a dot that a digit follows.
     const LOCATOR_SCAN_RE = new RegExp(
       '(?<![\\w-])((?:ANSI|BSR|IES)?(?:\\/[A-Z]+)*\\s*(?:RP|LP|LS|LEM|LM|TM|DG|HB|WP|G)-\\d+(?:[\\w.+-]*[\\w+])?)(?![\\w-])'
-      + '|(§\\s*|Section\\s+)(\\d+(?:\\.\\d+)*)(?![\\d.])'
+      + '|(§\\s*|Section\\s+)(\\d+(?:\\.\\d+)*)(?!\\d|\\.\\d)'
       + '|(p\\.\\s*|pp\\.\\s*|page\\s+)(\\d{1,4})(?!\\d)',
       'gi',
     );
@@ -3170,13 +3507,16 @@
           ${crumbHtml(app, { text: app.subCategory, col: 'Sub_Category' }, true)}
         </span>` : '';
 
-      // A Document card is headed by the SECTION it came from, in the same
+      // A Document card is headed by the CHAPTER it came from, in the same
       // banner slot an Illuminance Table card gives its Sub_Category — the
-      // client asked these cards to mirror that formatting (DO40).
-      const sectionBanner = (primary.resultType === 'excerpt' && primary.excerpt && primary.excerpt.section) ? `
+      // client asked these cards to mirror that formatting (DO40), and DO73
+      // named the chapter as what the band should say.
+      const chapterLabelText = (primary.resultType === 'excerpt' && primary.excerpt)
+        ? chapterBannerLabel(primary.excerpt) : '';
+      const sectionBanner = chapterLabelText ? `
         <span class="inline-block text-[11px] font-bold tracking-wider uppercase px-2.5 py-1 rounded"
               style="background-color: ${bannerHex}; color: #fff;">
-          ${escapeHtml(sectionBannerLabel(primary.excerpt))}
+          ${escapeHtml(chapterLabelText)}
         </span>` : '';
       const headerBanner = subCategoryBanner || sectionBanner;
 
@@ -3213,13 +3553,10 @@
         ? sharedCrumbs.map(c => crumbHtml(app, c)).join(crumbSep)
         : '';
 
-      // Indoor/outdoor badge — uses the banner color for stronger branding
-      const locationBadge = app.indoorOutdoor ? `
-        <span class="text-xs px-2 py-0.5 rounded-full font-medium border"
-              style="background-color: ${bannerHex}15; color: ${bannerHex}; border-color: ${bannerHex}33;">
-          ${escapeHtml(app.indoorOutdoor)}
-        </span>
-      ` : '';
+      // The Indoor/Outdoor chip is gone (client DO87): "'indoor' and 'outdoor' is
+      // already communicated by 'INTERIOR' and 'EXTERIOR' on the top left" — the
+      // Sub_Category banner, which is also colour-coded for it (DO38).
+      const locationBadge = '';
 
       // Excerpt texts already printed in this card — adjacent rows of the
       // same standard usually share one excerpt; show it once, not per row.
@@ -3297,6 +3634,54 @@
         `);
       }
 
+      // ── Document / Reference card (client DO81) ────────────────────────────
+      // "Move Document/title above chapter/section to clarify hierarchy. For
+      //  'joined cards' don't repeat Document/title, nor committee name. The page
+      //  number appears at end of each 'From the Standard' so we can delete the
+      //  redundant instance beside the full title."
+      //
+      // So the card reads document → chapter → passages, and inside a joined
+      // card (DO59) only the FIRST panel names the document; the others open on
+      // their chapter band with the designation chip for orientation. An
+      // Illuminance Table card is untouched — its hierarchy is the application,
+      // not the document, and its page is the printed row's own.
+      if (primary.resultType === 'excerpt' || primary.resultType === 'reference') {
+        const first = opts.nested !== true || opts.first !== false;
+        const documentHeader = first ? `
+          <div class="flex items-start justify-between gap-2 mb-0.5">
+            <p class="text-sm font-semibold text-gray-900 min-w-0">${citationHtml(primary, { page: false })}</p>
+            <div class="flex items-center gap-1.5 shrink-0 flex-wrap justify-end">
+              ${citedBadge(guideCited)}${typeChip}
+            </div>
+          </div>
+          ${committeeHtml(primary).replace('pl-[26px]', '')}
+        ` : '';
+
+        // Without the document line, the badges have to ride with the band.
+        const bandBadges = first ? '' : `
+          <div class="flex items-center gap-1.5 shrink-0 flex-wrap justify-end">
+            ${citedBadge(guideCited)}${typeChip}
+          </div>`;
+        // The bare designation chip is redundant beside the full citation, and
+        // the only orientation a later panel has without it.
+        const designationChip = first ? '' : `
+          <span class="inline-block text-xs font-bold text-white px-2 py-0.5 rounded align-middle"
+                style="background-color: ${appBadgeHex};">${escapeHtml(app.standard || app.category || '')}</span>`;
+
+        return cardShell(`
+          ${documentHeader}
+          <div class="flex items-center justify-between gap-2 flex-wrap mt-1 mb-1">
+            <div class="flex items-baseline flex-wrap gap-x-2 gap-y-1 min-w-0">
+              ${headerBanner}${designationChip}
+            </div>
+            <div class="flex items-center gap-2 shrink-0 flex-wrap justify-end">
+              ${bandBadges}${actionsCluster(primary, appName)}
+            </div>
+          </div>
+          ${renderDataBlocks(primary, seenExcerpts, { showAssets: first })}
+        `);
+      }
+
       // Single-row card: same layout as before, with the actions (Add to
       // Project / Open in Library / Match) moved off to the side of the title
       // row — client feedback: condense vertical white space.
@@ -3366,17 +3751,18 @@
       return `
         <article class="result-card copy-guard bg-white rounded-xl border border-gray-100 shadow-sm p-3 relative overflow-hidden"
                  style="animation-delay: ${index * 40}ms; border-left: 3px ${style.line} ${style.banner};">
-          <div class="flex items-start justify-between gap-2 mb-1.5">
-            <span class="inline-block text-[11px] font-bold tracking-wider uppercase px-2.5 py-1 rounded"
-                  style="background-color: ${style.banner}; color: #fff;">Definition</span>
-            <div class="flex items-center gap-1.5 shrink-0 flex-wrap justify-end">
-              ${citedBadge(result.citedByGuide)}${def.clause ? `<span class="text-xs px-2 py-0.5 rounded-full font-medium border ${style.chip}">§${escapeHtml(def.clause)}</span>` : ''}
-            </div>
-          </div>
-
+          <!-- The "DEFINITION" banner is gone (client DO81: "it is self-evident") —
+               the card is a term followed by its definition. The teal left stripe
+               and chip palette still carry the kind (DO32). -->
           <div class="flex items-center justify-between gap-2 flex-wrap mb-1">
             <span class="inline-block text-sm font-bold text-white px-2.5 py-1 rounded align-middle"
                   style="background-color: ${style.banner};">${escapeHtml(def.term || '')}</span>
+            <div class="flex items-center gap-2.5 shrink-0">
+              <!-- The clause is a LOCATOR, so it prints: a printed page is a
+                   reference list (DO36). Everything after it is a control. -->
+              ${citedBadge(result.citedByGuide)}
+              ${def.clause ? `<span class="text-xs px-2 py-0.5 rounded-full font-medium border ${style.chip}">§${escapeHtml(def.clause)}</span>` : ''}
+            </div>
             <div class="flex items-center gap-2.5 shrink-0 no-print">
               ${score > 0 ? `<span class="text-xs text-gray-300 tabular-nums">Match: ${Math.round(score * 100)}%</span>` : ''}
               ${openBtn}
@@ -3388,10 +3774,10 @@
           ${committeeHtml(result).replace('pl-[26px]', '')}
 
           <div class="mt-2 pt-2 border-t border-gray-100">
-            <!-- Bold black, exactly as on every other card (client DO60). -->
-            <span class="text-[11px] font-bold text-gray-900 uppercase tracking-wider">From the Standard</span>
-            <div class="mt-1.5 pl-3 border-l-2 border-gray-200 text-xs text-gray-700 leading-relaxed definition-body">
-              <p class="mb-1"><strong class="allow-copy">${escapeHtml(def.term || '')}</strong></p>
+            <!-- "FROM THE STANDARD" and the repeated term are gone (client DO81:
+                 "it is clear that the text … is the definition of the term").
+                 The term is the badge above; this is its definition. -->
+            <div class="pl-3 border-l-2 border-gray-200 text-xs text-gray-700 leading-relaxed definition-body">
               <div class="print-withhold">${bodyHtml}</div>
               <p class="print-notice text-[11px] text-gray-500 italic">
                 Definition text is omitted from printed pages — see ${escapeHtml(def.sourceUrl || 'ies.org/standards/definitions')}.
@@ -3501,7 +3887,7 @@
           </div>
           <p class="text-xs text-gray-400 mt-0.5 pl-[26px]">${citationHtml(result)}</p>
           <div class="pl-[26px]">
-            ${renderDataBlocks(result, seenExcerpts, { suppressNotes: true })}
+            ${renderDataBlocks(result, seenExcerpts, { suppressNotes: true, showAssets: i === 0 })}
           </div>
         </div>
       `;
@@ -3518,7 +3904,7 @@
     //
     // Falls back to the old single-link behaviour when a cached response
     // predates citationName / citationPage.
-    function citationHtml(result) {
+    function citationHtml(result, opts = {}) {
       const name = result.citationName || result.citation || '';
       if (!name) return '';
 
@@ -3531,7 +3917,12 @@
              title="Open this standard from its front cover in the IES Lighting Library">${escapeHtml(name)}</a>`
         : `<span class="allow-copy copy-citation">${escapeHtml(name)}</span>`;
 
-      const page = result.citationPage;
+      // Client DO81: on a Document or Reference card the page is printed at the
+      // end of every passage inside "From the Standard", so the copy beside the
+      // full title is redundant and comes off. An Illuminance Table card keeps
+      // it: there it is the page of the printed table row, and nothing else on
+      // the card says it.
+      const page = opts.page === false ? null : result.citationPage;
       if (page == null) return nameHtml;
 
       const pageLabel = `p.&nbsp;${escapeHtml(String(page))}`;
@@ -3574,9 +3965,10 @@
         <span class="text-xs px-2 py-0.5 rounded-full bg-gray-50 text-gray-500 border border-gray-100">${escapeHtml(app.areaOrTask)}</span>
       ` : '';
 
-      const tm24Badge = app.tm24Eligible ? `
-        <span class="text-xs px-2 py-0.5 rounded-full bg-green-50 text-green-700 border border-green-200">TM-24</span>
-      ` : '';
+      // The "TM-24" badge is gone (client DO87: "a holdover from an old table
+      // format and is no longer needed on the result cards"). The eligibility
+      // itself still travels in the payload (`application.tm24Eligible`) and the
+      // AI Guide still reads it — this removed the chip, not the fact.
 
       const veilingPalette = {
         L: { bg: '#ECFDF5', text: '#065F46', border: '#A7F3D0' },
@@ -3613,7 +4005,7 @@
         </span>
       ` : '';
 
-      return `${areaTaskBadge}${tm24Badge}${veilingBadge}${classOfPlayBadge}${zoneBadge}`;
+      return `${areaTaskBadge}${veilingBadge}${classOfPlayBadge}${zoneBadge}`;
     }
 
     // Compact action cluster shown off to the side of a result row:
@@ -3631,10 +4023,22 @@
       const linkSvg = `<svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
             <path stroke-linecap="round" stroke-linejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/>
           </svg>`;
-      const filledLink = (href, label, title) => `
+      // data-track marks the link the client asked to measure (DO078: "which
+      // cards people click on first to 'open in library'"). The position is
+      // counted at click time from the card's place in the list.
+      const track = `data-track="open_in_library"
+           data-std="${escapeHtml(app.standard || '')}"
+           data-rtype="${escapeHtml(result.resultType || 'application')}"
+           data-page="${escapeHtml(String(result.citationPage ?? result.excerpt?.pageNumber ?? ''))}"
+           data-section="${escapeHtml(String(result.excerpt?.section || ''))}"`;
+      // `tracked` is false for a link that does NOT open the Lighting Library —
+      // a DOI or a publisher's site on a Reference card. Logging those as
+      // "open_in_library" would attribute the citing standard's page to a reader
+      // who left for doi.org, which is exactly the signal DO078 needs clean.
+      const filledLink = (href, label, title, tracked = true) => `
         <a href="${escapeHtml(href)}" target="_blank" rel="noopener"
            class="text-xs px-2.5 py-1 bg-brand-primary text-white rounded-lg hover:bg-brand-primary-dark transition font-medium flex items-center gap-1"
-           title="${escapeHtml(title)}">
+           title="${escapeHtml(title)}" ${tracked ? track : ''}>
           ${linkSvg}
           ${escapeHtml(label)}
         </a>
@@ -3642,12 +4046,20 @@
 
       // Reference entries link per the priority order resolved server-side:
       // Lighting Library → DOI → source URL → no link (never fabricated).
+      //
+      // The label names WHICH document it opens: on a Reference card that is the
+      // CITED work, not the standard whose bibliography listed it. They used to
+      // share the words "Open in Library", and the client read the button as the
+      // citing document ("'Open in Library' should still link to G-1-22 page 79
+      // where that reference was printed" — DO64). That link is the per-entry
+      // "p. 79 · Open in Library ↗" inside REFERENCE ENTRY; this one is the
+      // cited document, and now says so.
       let primaryLink = '';
       if (result.resultType === 'reference') {
         const ref = result.referenceLink;
         if (ref?.url) {
-          const label = ref.type === 'library' ? 'Open in Library' : ref.type === 'doi' ? 'View via DOI' : 'View Source';
-          primaryLink = filledLink(ref.url, label, 'Open the referenced document');
+          const label = ref.type === 'library' ? 'Open cited standard' : ref.type === 'doi' ? 'View via DOI' : 'View Source';
+          primaryLink = filledLink(ref.url, label, 'Open the document this entry cites', ref.type === 'library');
         }
       } else if (result.vitriumLink) {
         primaryLink = filledLink(result.vitriumLink, 'Open in Library', 'Open in the IES Lighting Library');
@@ -3948,12 +4360,15 @@
       // Reference entries bypass the table-dump heuristic: bibliography lines
       // are legitimately digit-heavy (years, page ranges, DOIs) but are the
       // whole point of a reference result.
+      // A passage whose entire content was a formula arrives with empty text and
+      // formulaOmitted set: it stays, because the reader needs to know a formula
+      // is on that page and needs the link to it (client DO72).
       const proseExcerpts = excerpts.filter(e =>
-        e && e.text && e.chunkType !== 'table'
-          && (e.chunkType === 'reference' || !looksLikeTableDump(e.text))
-          && !(seenExcerpts && seenExcerpts.has(e.text))
+        e && (e.text || e.formulaOmitted) && e.chunkType !== 'table'
+          && (e.chunkType === 'reference' || !e.text || !looksLikeTableDump(e.text))
+          && !(seenExcerpts && e.text && seenExcerpts.has(e.text))
       );
-      if (seenExcerpts) proseExcerpts.forEach(e => seenExcerpts.add(e.text));
+      if (seenExcerpts) proseExcerpts.forEach(e => { if (e.text) seenExcerpts.add(e.text); });
 
       const isReference = result.resultType === 'reference';
       const excerptHeading = isReference ? 'Reference Entry' : 'From the Standard';
@@ -3972,6 +4387,16 @@
         const raw = e.text || '';
         const cap = isReference ? Infinity : 400;
         const clipped = raw.length > cap ? `${raw.substring(0, cap)}…` : raw;
+        // Client DO72: "Formulae do not display properly … it would be better to
+        // return 'Open in Library to see formula' than to display them
+        // inaccurately." The Worker removed the equation (guardFormula) and left
+        // this flag; the quote below holds whatever prose survived, and this line
+        // accounts for what did not. When the passage was NOTHING but the
+        // equation, the notice stands alone — there is no empty quote.
+        const formulaNote = e.formulaOmitted ? `
+          <p class="text-[11px] text-amber-800 bg-amber-50 border border-amber-100 rounded px-2 py-1 my-1">
+            ${escapeHtml(FORMULA_NOTICE)}
+          </p>` : '';
         // Client DO40: the section number and title head each passage, in bold.
         // A reference entry has no section to contextualize.
         const heading = isReference ? '' : sectionPathHtml(e);
@@ -3984,6 +4409,11 @@
         const link = e.vitriumLink ? `
           <a href="${escapeHtml(e.vitriumLink)}" target="_blank" rel="noopener"
              class="text-[11px] text-ies-blue hover:underline font-medium shrink-0"
+             data-track="open_in_library"
+             data-std="${escapeHtml((result.application && result.application.standard) || '')}"
+             data-rtype="${escapeHtml(result.resultType || 'excerpt')}"
+             data-page="${escapeHtml(String(e.pageNumber ?? ''))}"
+             data-section="${escapeHtml(String(e.section || ''))}"
              title="Open this passage in the IES Lighting Library">Open in Library ↗</a>` : '';
         // print-withhold on the quoted text only: the locator (§ / page) and the
         // Library link still print, so a printed page is a reference list rather
@@ -3991,7 +4421,8 @@
         return `
           <div class="text-xs text-gray-600 leading-relaxed pl-3 border-l-2 border-gray-200">
             ${heading}
-            <p class="print-withhold">"${linkifyText(clipped)}"</p>
+            ${clipped.trim() ? `<p class="print-withhold">"${linkifyText(clipped)}"</p>` : ''}
+            ${formulaNote}
             ${(locator || link) ? `
               <div class="mt-0.5 flex items-center gap-2 flex-wrap">
                 ${locator ? `<span class="text-[11px] text-gray-400">${locator}</span>` : ''}
@@ -4004,28 +4435,94 @@
         ? escapeHtml((shown[0].text || '').substring(0, 150)) + ((shown[0].text || '').length > 150 ? '…' : '')
         : '';
 
-      // The disclosure heading is set in bold black (client DO60: "Make 'FROM THE
-      // STANDARD' drop-down more prominent … Format: bold, black font"). It is the
-      // control that reveals the standard's own words, so it should not read like
-      // the quietest thing on the card — the passage count is part of the label
-      // and carries the same weight.
+      // ── The disclosure (client DO60, reshaped by DO70 and DO73) ─────────────
+      //
+      // DO60 set the heading in bold black. DO70: "We've had a few users not
+      // understand that 'From the Standard' is a drop-down. Can you try a
+      // different format? … One thought: begin with the carrot facing down
+      // instead of facing right (i.e. lose the animation)" — and the mock-up
+      // changes the DEFAULT to expanded. DO73 asks for the same thing from the
+      // other direction: "'From the Standard' defaults to expanded instead of
+      // collapsed".
+      //
+      // So: open by default; the caret is TWO static glyphs (down when closed,
+      // up when open) rather than one rotating one, which is what "lose the
+      // animation" means; and the summary is drawn as a control — a bordered
+      // strip with the caret in a filled tile — because a bare bold label is
+      // exactly what readers did not recognize as pressable.
+      const caret = (d) => `<svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3">
+                <path stroke-linecap="round" stroke-linejoin="round" d="${d}"/>
+              </svg>`;
       const excerptBlock = shown.length > 0 ? `
-        <details class="mt-2 pt-2 border-t border-gray-100 group" ${shown.length === 1 ? 'open' : ''}>
-          <summary class="cursor-pointer list-none select-none">
-            <div class="flex items-center gap-1.5">
-              <svg class="w-3.5 h-3.5 text-gray-700 transition-transform group-open:rotate-90 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/>
-              </svg>
+        <details class="disclosure mt-2 group" open>
+          <summary class="cursor-pointer list-none select-none rounded-lg border border-gray-200 bg-gray-50 hover:bg-gray-100 hover:border-gray-300 transition px-2 py-1.5">
+            <div class="flex items-center gap-2">
+              <span class="shrink-0 w-5 h-5 rounded flex items-center justify-center text-white"
+                    style="background-color: var(--brand-secondary);" aria-hidden="true">
+                <span class="group-open:hidden">${caret('M19 9l-7 7-7-7')}</span>
+                <span class="hidden group-open:inline">${caret('M5 15l7-7 7 7')}</span>
+              </span>
               <span class="text-[11px] font-bold text-gray-900 uppercase tracking-wider">${excerptHeading}</span>
               ${shown.length > 1 ? `<span class="text-[11px] font-bold text-gray-900">— ${passageLabel}</span>` : ''}
+              <span class="ml-auto text-[10px] font-semibold uppercase tracking-wide text-gray-400 no-print">
+                <span class="group-open:hidden">Show</span><span class="hidden group-open:inline">Hide</span>
+              </span>
             </div>
-            ${shown.length > 1 ? `<p class="mt-1 pl-[20px] text-xs text-gray-400 italic truncate group-open:hidden">"${preview}"</p>` : ''}
+            ${shown.length > 1 ? `<p class="mt-1 pl-[28px] text-xs text-gray-400 italic truncate group-open:hidden">"${preview}"</p>` : ''}
           </summary>
-          <div class="mt-1.5 pl-[20px] space-y-2">${shown.map(excerptEntry).join('')}</div>
+          <div class="mt-2 pl-[28px] space-y-2">${shown.map(excerptEntry).join('')}</div>
         </details>
       ` : '';
 
-      return `${luxBlock}${outdoorBlock}${notesBlock}${excerptBlock}${referenceMarkersBlock(result)}`;
+      return `${luxBlock}${outdoorBlock}${notesBlock}${excerptBlock}${assetsBlock(result, opts)}${referenceMarkersBlock(result)}`;
+    }
+
+    // ── Tables and figures in this standard (client DO086) ───────────────────
+    // "Allow users to find images, tables, and the content within them via
+    //  effective search card results."
+    //
+    // A table or figure whose CAPTION matches the question, with its printed
+    // label and its page. The cells of a rasterized table cannot be read by a
+    // text-only pipeline — see src/lib/document-assets.js — so the card does the
+    // one thing that always works: names the thing and opens the page it is on.
+    function assetsBlock(result, opts = {}) {
+      // The same assets hang off EVERY result of a standard, and a joined card
+      // (DO59) or a grouped table block renders several panels — print them once
+      // per card, on the first panel only.
+      if (opts.showAssets === false) return '';
+      const assets = Array.isArray(result.assets) ? result.assets : [];
+      if (assets.length === 0) return '';
+
+      const chip = (a) => {
+        const label = `${escapeHtml(a.label)}${a.page != null ? ` · p. ${escapeHtml(String(a.page))}` : ''}`;
+        const inner = `<span class="font-semibold">${label}</span>
+          <span class="text-gray-500">${escapeHtml(a.caption || '')}</span>`;
+        const cls = 'text-[11px] px-2 py-1 rounded-lg border border-sky-200 bg-sky-50 text-sky-900 inline-flex items-baseline gap-1.5 max-w-full';
+        return a.url
+          ? `<a href="${escapeHtml(a.url)}" target="_blank" rel="noopener"
+               class="${cls} hover:bg-sky-100 transition"
+               data-track="open_in_library"
+               data-std="${escapeHtml((result.application && result.application.standard) || '')}"
+               data-rtype="asset"
+               data-page="${escapeHtml(String(a.page ?? ''))}"
+               data-section=""
+               title="Open ${escapeHtml(a.label)} in the IES Lighting Library">${inner} ↗</a>`
+          : `<span class="${cls}">${inner}</span>`;
+      };
+
+      const kinds = [...new Set(assets.map(a => a.kind))];
+      const heading = kinds.length === 1
+        ? (kinds[0] === 'figure' ? 'Figures in this standard' : 'Tables in this standard')
+        : 'Tables and figures in this standard';
+
+      return `
+        <div class="mt-2 pt-2 border-t border-gray-100">
+          <p class="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-1">${heading}</p>
+          <div class="flex flex-col items-start gap-1">${assets.map(chip).join('')}</div>
+          <p class="text-[10px] text-gray-400 mt-1">
+            Matched on the printed caption — open the page to read the contents.
+          </p>
+        </div>`;
     }
 
     // ── Reference markers (client DO26.4 / DO31.4) ───────────────────────────
@@ -4042,13 +4539,21 @@
 
       const chipClass = 'text-[11px] px-2 py-0.5 rounded-full border border-purple-200 bg-purple-50 text-purple-700';
       const chip = (m) => {
-        const badge = m.referenceNumber != null ? m.referenceNumber : m.count;
-        const inner = `${escapeHtml(m.standard)} <span class="text-purple-400 tabular-nums">${escapeHtml(String(badge))}</span>`;
+        // The number on a chip is the REFERENCE NUMBER — the numeral the citing
+        // standard superscripts, so it matches the page the chip opens (client
+        // DO44). It used to fall back to the match COUNT when the number could
+        // not be read, which printed "LS-2-20 1" for a work that standard
+        // numbers 5 and made the chip look like it linked to the wrong place
+        // (client DO64). A count is now marked as one, and only when it is > 1.
+        const badge = m.referenceNumber != null
+          ? `<span class="text-purple-400 tabular-nums">#${escapeHtml(String(m.referenceNumber))}</span>`
+          : (m.count > 1 ? `<span class="text-purple-300 tabular-nums">×${escapeHtml(String(m.count))}</span>` : '');
+        const inner = `${escapeHtml(m.standard)}${badge ? ` ${badge}` : ''}`;
         const where = m.pageNumber != null ? ` p. ${escapeHtml(String(m.pageNumber))}` : '';
         // "first printed" (client DO44): the chip opens the FIRST page that
         // carries the marker, not every page that cites the work.
         const title = m.target === 'citation'
-          ? `${escapeHtml(m.standardFull || m.standard)} first cites this reference${m.referenceNumber != null ? ` as ${escapeHtml(String(m.referenceNumber))}` : ''} —${where || ' opens the standard'}`
+          ? `${escapeHtml(m.standardFull || m.standard)} cites this reference${m.referenceNumber != null ? ` as ${escapeHtml(String(m.referenceNumber))}` : ''} in its body —${where || ' opens the standard'}`
           : `${escapeHtml(m.standardFull || m.standard)} lists this reference in its References section${where}`;
         return m.url
           ? `<a href="${escapeHtml(m.url)}" target="_blank" rel="noopener"
@@ -4397,6 +4902,8 @@
       allResults = [];
       currentPage = 1;
       showLowConfidence = false;
+      // "First click" is per search (DO078).
+      libraryClickLogged = false;
       // Re-asked per search (DO61), so a result removed from a collection between
       // two searches stops claiming it is saved.
       savedResultKeys = new Set();
@@ -4453,8 +4960,42 @@
         .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
     }
 
+    // ── Which card was opened, and whether it was the first (client DO078) ───
+    // Reset per search, so "first" means first for THIS result set.
+    let libraryClickLogged = false;
+
+    /**
+     * Record a followed Library link. The POSITION is counted here rather than
+     * baked into the markup: a card's rank changes with the sort, the doc
+     * filters and the low-confidence fold, and what matters is where the reader
+     * actually saw it.
+     */
+    function trackLibraryOpen(link) {
+      try {
+        const cards = Array.from(document.querySelectorAll('#results-list .result-card'));
+        const card = link.closest('.result-card');
+        const position = card ? cards.indexOf(card) + 1 : null;
+        const page = Number(link.dataset.page);
+        LensyAPI.logEvent({
+          event: 'open_in_library',
+          query: lastQuery,
+          standard_id: link.dataset.std || null,
+          result_type: link.dataset.rtype || null,
+          position: position > 0 ? position : null,
+          section: link.dataset.section || null,
+          page_number: Number.isFinite(page) && page > 0 ? page : null,
+          content_types: (collectFilters().content_types || null),
+          extra: { first: !libraryClickLogged },
+        });
+        libraryClickLogged = true;
+      } catch { /* telemetry never breaks a click */ }
+    }
+
     // Event delegation for dynamically-generated result cards
     document.getElementById('results-list').addEventListener('click', e => {
+      const tracked = e.target.closest ? e.target.closest('a[data-track="open_in_library"]') : null;
+      if (tracked) trackLibraryOpen(tracked);   // then let the navigation happen
+
       // A footnote superscript opens that card's notes disclosure, so the
       // reader can see what the marker refers to (client DO19).
       const mark = e.target.closest('.footnote-mark');
@@ -4566,19 +5107,33 @@
       const navCompare = document.getElementById('nav-compare');
       if (navCompare) navCompare.style.display = 'flex';
     }
+    // The account's AI Guide state, from this browser's mirror, BEFORE the first
+    // paint (client DO80) — the server's copy arrives with the auth event and
+    // wins if they disagree.
+    applyGuidePreference(readGuideMirror());
     renderFilterPills();
     renderDocFilterLists();
     // If the session was confirmed before this script ran, the auth event has
-    // already fired — fetch the standards index now instead of never.
-    if (window.lensyUser) loadStandardsIndex();
+    // already fired — fetch the standards index and the preferences now instead
+    // of never.
+    if (window.lensyUser) { loadStandardsIndex(); loadPreferences(); }
 
     // Deep link: /?q=RP-2-20+E1 runs that search on load. The List Standards
     // page's "Search in Lensy" buttons use it (DO32).
     (function runQueryFromUrl() {
       const q = new URLSearchParams(location.search).get('q');
       if (!q || !q.trim()) return;
-      document.getElementById('search-input').value = q.trim();
-      performSearch();
+      const start = () => {
+        document.getElementById('search-input').value = q.trim();
+        performSearch();
+      };
+      // On a device with no local mirror of the AI Guide preference — a new
+      // browser, a private window, cleared storage — wait for the account's copy
+      // before searching (client DO80). Otherwise the deep link runs with the
+      // default ON and spends a 70B generation for a reader who turned it off.
+      // Everywhere else the mirror has already been applied and this is instant.
+      if (readGuideMirror() === null) loadPreferences().then(start, start);
+      else start();
     })();
   </script>
 </body>

@@ -31,6 +31,67 @@ const LensyAPI = {
   },
 
   /**
+   * Record one anonymous interaction (client DO078).
+   *
+   * Fire-and-forget, and deliberately not awaited by any caller: it must never
+   * delay a navigation or surface an error to the reader. `sendBeacon` is used
+   * where available precisely because the most valuable event — following a
+   * result's Library link — happens as the page is being left, and a normal
+   * fetch would be cancelled by that navigation.
+   *
+   * @param {object} payload see migrations/0013_search_events.sql for the shape
+   */
+  logEvent(payload) {
+    try {
+      const body = JSON.stringify(payload || {});
+      if (typeof navigator !== 'undefined' && navigator.sendBeacon) {
+        // Same-origin, so the session cookie rides along.
+        const blob = new Blob([body], { type: 'application/json' });
+        if (navigator.sendBeacon(`${BASE_URL}/events`, blob)) return;
+      }
+      fetch(`${BASE_URL}/events`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body,
+        keepalive: true,
+      }).catch(() => { /* telemetry is never worth an error */ });
+    } catch { /* private mode, blocked beacon, anything: ignore */ }
+  },
+
+  /**
+   * The signed-in account's UI preferences (client DO080).
+   *
+   * Answers `{}` rather than failing when there is no session or the table is
+   * not there yet, so the caller never has to special-case it.
+   */
+  async getPreferences() {
+    const response = await fetch(`${BASE_URL}/preferences`);
+    if (!response.ok) return {};
+    const data = await response.json().catch(() => ({}));
+    return (data && data.preferences) || {};
+  },
+
+  /**
+   * Save one or more preferences to the account (client DO080).
+   * Resolves with what was stored; never throws — a preference that fails to
+   * persist must not break the control that set it.
+   */
+  async savePreferences(preferences) {
+    try {
+      const response = await fetch(`${BASE_URL}/preferences`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(preferences || {}),
+      });
+      if (!response.ok) return {};
+      const data = await response.json().catch(() => ({}));
+      return (data && data.preferences) || {};
+    } catch {
+      return {};
+    }
+  },
+
+  /**
    * Get a single application by code.
    * @param {string} code
    */

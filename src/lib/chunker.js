@@ -23,12 +23,21 @@
  */
 
 import { looksLikeFormalReference } from './references.js';
+import {
+  readSectionNumber, sanitizeSectionTitle, parseHeading, hasPrintedSeparators, chapterOf,
+} from './section-titles.js';
 
 const SECTION_RE = /^(?:(?:\d+(?:\.\d+)*)|(?:[A-Z](?:\.\d+)*))\s+[A-Z].{3,}/;
+// The same heading with its periods eaten by a subsetted font: LP-1-24 p. 77
+// prints "13.4 Light Distribution on Task Plane" and the parser reads
+// "13 4 Light Distribution on Task Plane". SECTION_RE cannot match that (it
+// wants a capital straight after the number), so before this the heading was
+// invisible and every chunk on the page kept the PREVIOUS section's number —
+// the "card labelled 13.1 whose text is 13.4" the client reported (DO071).
+const SPACED_SECTION_RE = /^\d{1,2}(?:\s\d{1,2}){1,5}\s+[A-Z(]/;
 const ANNEX_RE = /^(?:Annex|Appendix)\s+[A-Z]/i;
 // Same shape as ANNEX_RE, with the letter captured: [1] = "Annex"|"Appendix",
 // [2] = the letter, [3] = whatever title follows it.
-const ANNEX_MATCH_RE = /^(Annex|Appendix)\s+([A-Z])\b[\s.:—–-]*(.*)$/i;
 const TABLE_PAGE_RE = /^Table\s+[A-Z0-9]-?\d*/im;
 
 // A heading that starts (or ends) a References section. IES standards title
@@ -67,6 +76,11 @@ export function chunkIESDocument(pages, options = {}) {
 
   const chunks = [];
   let currentSection = null;
+  // The chapter we are reading, tracked from the headings whose numbering the
+  // font printed intact. It is what tells "11 4 Visual Comfort" (inside chapter
+  // 1 → 1.1.4) from "13 4 Light Distribution" (inside chapter 13 → 13.4) —
+  // see normalizeSectionNumber.
+  let chapterHint = null;
   let inReferences = false;
   let buffer = [];
   let bufferPage = null;
@@ -129,15 +143,26 @@ export function chunkIESDocument(pages, options = {}) {
       ? page.lines.map(l => ({ text: l.text, fontSize: l.fontSize || 10, x: l.x ?? null }))
       : page.text.split('\n').map(t => ({ text: t, fontSize: 10, x: null }));
 
-    const isTablePage = TABLE_PAGE_RE.test(page.text) ||
-      lines.filter(l => /\d+\s+\d+/.test(l.text)).length > lines.length * 0.25;
+    const numericRows = lines.filter(l => /\d+\s+\d+/.test(l.text)).length;
+    const isTablePage = TABLE_PAGE_RE.test(page.text) || numericRows > lines.length * 0.25;
+    // Whether a "13 4"-style heading may be read here. Stricter than
+    // isTablePage, which a two-line page can satisfy on the strength of the
+    // heading itself: a real criteria grid carries SEVERAL numeric rows.
+    const tableish = TABLE_PAGE_RE.test(page.text)
+      || (numericRows >= 4 && numericRows > lines.length * 0.25);
 
     for (const line of lines) {
       const lineText = line.text.trim();
       if (!lineText) continue;
 
       const isReferencesHeading = REFERENCES_HEADING_RE.test(lineText);
-      let isSectionHeading = SECTION_RE.test(lineText) || ANNEX_RE.test(lineText) || isReferencesHeading;
+      // The space-separated form is only read on a page that is NOT a table:
+      // "10 20 Task Area" is an illuminance row, and admitting it as a heading
+      // would stamp §10.20 onto the rest of the page — the very failure DO071
+      // reported, arrived at from the other side.
+      const spacedHeading = !tableish && SPACED_SECTION_RE.test(lineText);
+      let isSectionHeading = SECTION_RE.test(lineText) || spacedHeading
+        || ANNEX_RE.test(lineText) || isReferencesHeading;
 
       // Inside a References section, a citation can masquerade as a section
       // heading ("10 CFR Part 430, Energy Conservation Program…"). Headings
@@ -158,16 +183,22 @@ export function chunkIESDocument(pages, options = {}) {
         }
 
         flushBuffer(isTablePage ? 'table' : 'text');
-        // Annex first: the numeric matcher below is not anchored to a word
-        // boundary, so "Annex A Supplemental Guidance" used to yield section "A"
-        // — the leading letter of the word "Annex". Section numbers have to
-        // match sections_json (see extractSectionTitles) for the printed
-        // "§ number + title" line to resolve (client DO40).
-        const annexMatch = ANNEX_MATCH_RE.exec(lineText);
-        const secMatch = annexMatch ? null : lineText.match(/^(\d+(?:\.\d+)*|[A-Z](?:\.\d+)*)/);
-        currentSection = annexMatch
-          ? `Annex ${annexMatch[2].toUpperCase()}`
-          : (secMatch ? secMatch[1] : null);
+        // The number is read by src/lib/section-titles.js, which spells an annex
+        // "Annex A" (so it matches sections_json — client DO40), restores the
+        // separator a subsetted font dropped ("13 4" → "13.4"), and returns NULL
+        // for a number the document cannot have printed.
+        //
+        // A null here deliberately CLEARS the section rather than keeping the
+        // previous one: "131 Patterns of Light within the occupants' field of
+        // view—such as walls and" is two columns' worth of text under a number
+        // that does not exist, and a card headed "§131" is worse than a card
+        // with no locator at all (the rule the client set for formulae in
+        // DO072, applied to locators).
+        const read = readSectionNumber(lineText, { chapter: chapterHint });
+        currentSection = read ? read.number : null;
+        if (read && hasPrintedSeparators(read.raw)) {
+          chapterHint = chapterOf(read.number) || chapterHint;
+        }
         if (isReferencesHeading) {
           inReferences = true;
           currentSection = currentSection || 'References';
@@ -245,71 +276,240 @@ export function chunkIESDocument(pages, options = {}) {
 const TOC_LINE_RE = /(?:\.\s*){4,}|\s{2,}\d{1,4}\s*$|\t\d{1,4}\s*$/;
 const TOC_PAGE_MIN_LEADER_LINES = 4;
 
-// A numbered heading: "3.3.4 Circulation Areas", "A.2 Calculation Method".
-// The title must open with a CAPITAL, matching SECTION_RE above — that is what
-// separates a heading from a data row ("300 lux at 0.76 m") or a sentence that
-// happens to start with a numeral.
-const NUMBERED_HEADING_RE = /^(\d+(?:\.\d+)*|[A-Z](?:\.\d+)+)[\s.:—–-]+([A-Z][^\n]{2,})$/;
+/** Words a title may legitimately end on when it continues over a line break. */
+const CONTINUATION_TAIL_RE = /\b(?:of|and|for|with|in|on|to|by|per|from|the|a|an|or|at)$/i;
+/**
+ * An adjective-shaped last word — the other way a title reads unfinished.
+ * LP-9-25 prints "A.1.1.3 Regular Area With Single Row of Individual" and
+ * completes it with "Luminaires." on the next line.
+ */
+const ADJECTIVE_TAIL_RE = /(?:al|ive|ous|ent|ant|ary|ic|ual|ble|ing)$/i;
+/**
+ * Words that open a SENTENCE, not the tail of a heading. Without this the
+ * run-in join absorbed the first word of the following paragraph: "4.2 Task
+ * Plane Lighting" + "Fig. 4 shows…" became "Task Plane Lighting Fig".
+ */
+const SENTENCE_OPENERS = new Set([
+  'fig', 'figure', 'note', 'table', 'see', 'refer', 'eq', 'no', 'sec', 'section',
+  'ch', 'chapter', 'ex', 'example', 'vol', 'app', 'annex', 'ref', 'nb', 'ie', 'eg', 'this', 'these',
+]);
 
 /**
  * Build the section-number → section-title map for one parsed document.
+ *
+ * Reads the line METADATA when the parser supplied it (font size, x position),
+ * because two of the client's reported failures are only solvable there: a
+ * heading that runs over two lines is one heading, and the second line is
+ * recognizable by carrying the heading's own font at the heading's own margin.
  *
  * @param {Array<{number, text, lines?}>} pages - from parsePDFNode()
  * @returns {Record<string, string>} e.g. { "3.3.4": "Circulation Areas" }
  */
 export function extractSectionTitles(pages) {
   const titles = {};
-  for (const page of pages) {
-    const rawLines = page.lines
-      ? page.lines.map(l => l.text)
-      : String(page.text || '').split('\n');
-    const lines = rawLines.map(t => String(t || '').trim()).filter(Boolean);
-
-    // Skip the table of contents wholesale: its entries are headings verbatim,
-    // but a page-number tail survives on lines whose leaders the parser dropped.
-    const leaderLines = lines.filter(l => /(?:\.\s*){4,}/.test(l)).length;
-    if (leaderLines >= TOC_PAGE_MIN_LEADER_LINES) continue;
-
-    for (const line of lines) {
-      if (line.length < 4 || line.length > 160) continue;
-      if (TOC_LINE_RE.test(line)) continue;
-      const heading = parseHeadingLine(line);
-      if (!heading || !heading.title) continue;
-      // First occurrence wins: the body heading is the authoritative print, and
-      // a later cross-reference ("see 3.3.4 Circulation Areas, above") should
-      // never overwrite it.
-      if (!titles[heading.number]) titles[heading.number] = heading.title;
-    }
+  for (const entry of extractOutline(pages)) {
+    if (!titles[entry.number]) titles[entry.number] = entry.title;
   }
   return titles;
 }
 
-/** One line → { number, title }, or null when it is not a heading. */
-export function parseHeadingLine(line) {
-  const text = String(line || '').trim();
+/**
+ * The document's TABLE OF CONTENTS: every heading in document order, with the
+ * page it was printed on (client DO082).
+ *
+ * "Provide a 'View Table of Contents' option for each standard on the List
+ *  Standards page. This could either be generated by indexing or could be pulled
+ *  from the 'preview' files … Goal: provide easy access to TOC for each
+ *  document."
+ *
+ * Generated by indexing, which is the option that needs nothing new hosted: the
+ * ingest already finds every heading for the section titles (DO040/DO071), so
+ * the only thing missing was keeping their ORDER and their PAGE. An object map
+ * cannot carry order, hence this array — `extractSectionTitles` is now derived
+ * from it, so there is exactly one heading walk and the two can never disagree.
+ */
+export function extractOutline(pages) {
+  const outline = [];
+  const seen = new Set();
+  // See chunkIESDocument: the chapter currently being read disambiguates a
+  // number whose separators the font dropped.
+  let chapterHint = null;
+  for (const page of pages) {
+    const lines = headingLines(page);
 
-  const annex = ANNEX_MATCH_RE.exec(text);
-  if (annex) {
-    return { number: `Annex ${annex[2].toUpperCase()}`, title: cleanHeadingTitle(annex[3]) };
+    // Skip the table of contents wholesale: its entries are headings verbatim,
+    // but a page-number tail survives on lines whose leaders the parser dropped.
+    const leaderLines = lines.filter(l => /(?:\.\s*){4,}/.test(l.text)).length;
+    if (leaderLines >= TOC_PAGE_MIN_LEADER_LINES) continue;
+
+    const bodySize = dominantFontSize(lines);
+    // Same guard as the chunker's: a numeric row on a table page must not be
+    // read as a heading whose separators the font dropped.
+    const numericLines = lines.filter(l => /\d+\s+\d+/.test(l.text)).length;
+    const tablePage = TABLE_PAGE_RE.test(page.text || '')
+      || (numericLines >= 4 && numericLines > lines.length * 0.25);
+
+    const found = [];
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      if (line.text.length < 4 || line.text.length > 200) continue;
+      if (TOC_LINE_RE.test(line.text)) continue;
+      if (tablePage && SPACED_SECTION_RE.test(line.text)) continue;
+      // A bibliography entry has a heading's shape — "6. Illuminating
+      // Engineering Society. ANSI/IES LS-7-20…" reads as number 6 titled
+      // "Illuminating Engineering Society" — so the References pages are the
+      // single biggest source of invented section titles. Same test the chunker
+      // uses to decide what is a reference (client DO26.1).
+      if (looksLikeFormalReference(line.text)) continue;
+      const read = readSectionNumber(line.text, { chapter: chapterHint });
+      if (!read) continue;
+      // The number is structural evidence even when the title beside it is not
+      // usable, so the chapter context updates first.
+      if (hasPrintedSeparators(read.raw)) {
+        chapterHint = chapterOf(read.number) || chapterHint;
+      }
+      // A display heading may print its number and its title on separate lines:
+      // LP-9-25 opens its annex with "Annex A" over "Field Measurements", both
+      // in 15pt bold. Without this the annex has no title at all.
+      const title = sanitizeSectionTitle(read.rest) || titleFromNextLine(lines, i, bodySize);
+      if (!title) continue;
+      found.push({
+        number: read.number,
+        title: joinHeadingContinuation(title, lines, i, bodySize),
+        page: page.number,
+      });
+    }
+
+    // A page carrying a RUN of bare integers is a numbered list, not a set of
+    // chapter headings: LP-1-24's specification appendix numbers its clauses
+    // "1. Provide submittals in accordance with Division 26…", which would
+    // otherwise become the title of chapter 1 and head every chapter-1 card.
+    // Dotted numbers on the same page are unaffected — they are unambiguous.
+    const bareIntegers = found.filter(f => /^\d{1,2}$/.test(f.number));
+    const listPage = bareIntegers.length >= 3;
+
+    for (const f of found) {
+      if (listPage && /^\d{1,2}$/.test(f.number)) continue;
+      // First occurrence wins: the body heading is the authoritative print, and
+      // a later cross-reference ("see 3.3.4 Circulation Areas, above") should
+      // never overwrite it.
+      if (seen.has(f.number)) continue;
+      seen.add(f.number);
+      outline.push(f);
+    }
   }
-
-  const numbered = NUMBERED_HEADING_RE.exec(text);
-  if (!numbered) return null;
-  const title = cleanHeadingTitle(numbered[2]);
-  // Reject sentence fragments that merely begin with a numeral ("2.1 times the
-  // maintained value…"): a heading is a NAME, so it stays short and carries no
-  // sentence punctuation.
-  if (!title || title.length > 120 || /[.;]\s/.test(title)) return null;
-  return { number: numbered[1], title };
+  return outline;
 }
 
-function cleanHeadingTitle(raw) {
-  return String(raw || '')
-    .replace(/(?:\.\s*){3,}.*$/, '')     // dot leaders + page number
-    .replace(/\s{2,}\d{1,4}$/, '')       // column-aligned page number
-    .replace(/[\s.:;,–—-]+$/, '')
-    .replace(/\s+/g, ' ')
-    .trim();
+/** Page → trimmed, non-empty lines with whatever metadata the parser gave us. */
+function headingLines(page) {
+  const raw = page.lines
+    ? page.lines.map(l => ({
+        text: String(l.text || '').trim(),
+        fontSize: typeof l.fontSize === 'number' ? l.fontSize : 10,
+        x: typeof l.x === 'number' ? l.x : null,
+      }))
+    : String(page.text || '').split('\n').map(t => ({ text: String(t || '').trim(), fontSize: 10, x: null }));
+  return raw.filter(l => l.text);
+}
+
+/** The font size covering the most characters on the page — its body text. */
+function dominantFontSize(lines) {
+  const charsBySize = new Map();
+  for (const l of lines) {
+    const size = Math.round(l.fontSize * 2) / 2;
+    charsBySize.set(size, (charsBySize.get(size) || 0) + l.text.length);
+  }
+  let best = 10;
+  let bestChars = -1;
+  for (const [size, chars] of charsBySize) {
+    if (chars > bestChars) { bestChars = chars; best = size; }
+  }
+  return best;
+}
+
+/**
+ * A heading printed over two lines is one heading (client DO071).
+ *
+ * Two shapes, both observed in the corpus:
+ *
+ *  • A DISPLAY heading, set larger than the body text, whose remainder sits on
+ *    the next line in the same font at the same margin. LP-1-24 p. 77 prints
+ *    "13.4 Light Distribution on Task Plane" / "(Uniformity)" — and the client
+ *    asked for exactly "13.4 Light Distribution on Task Plane (Uniformity)".
+ *
+ *  • A RUN-IN heading, set in the body font, whose last word is on the next line
+ *    followed by the sentence it introduces. LP-9-25 p. 68 prints
+ *    "A.1.1.3 Regular Area With Single Row of Individual" /
+ *    "Luminaires. The average illuminance…" — the client asked for
+ *    "A.1.1.3 Regular Area With Single Row of Individual Luminaires".
+ *
+ * Conservative in both cases: a title that already reads as complete (it closes
+ * a bracket, or ends on a colon) is left alone, and the joined result must still
+ * pass the title sanitizer.
+ */
+/**
+ * The title of a heading that printed its number alone on one line, taken from
+ * the next line — only when that line is set in the heading's own display font
+ * at the heading's own margin, and is not itself a heading.
+ */
+function titleFromNextLine(lines, index, bodySize) {
+  const line = lines[index];
+  const next = lines[index + 1];
+  if (!next) return null;
+  if (line.fontSize <= bodySize + 0.4) return null;             // not a display heading
+  if (Math.abs(next.fontSize - line.fontSize) > 0.4) return null;
+  if (line.x != null && next.x != null && Math.abs(next.x - line.x) > 4) return null;
+  if (parseHeading(next.text)) return null;
+  if (next.text.split(/\s+/).length > 10) return null;
+  return sanitizeSectionTitle(next.text);
+}
+
+function joinHeadingContinuation(title, lines, index, bodySize) {
+  const next = lines[index + 1];
+  if (!next) return title;
+  const line = lines[index];
+  if (/[)\]:.]$/.test(title)) return title;
+  if (parseHeading(next.text)) return title;      // the next line is its own heading
+
+  const isDisplay = line.fontSize > bodySize + 0.4;
+  if (isDisplay
+      && Math.abs(next.fontSize - line.fontSize) <= 0.4
+      && (line.x == null || next.x == null || Math.abs(next.x - line.x) <= 4)
+      && next.text.split(/\s+/).length <= 8) {
+    return sanitizeSectionTitle(`${title} ${next.text}`) || title;
+  }
+
+  // Run-in: the next line opens with the tail of the title, then a full stop and
+  // the body sentence. Two conditions, and BOTH are load-bearing:
+  //
+  //  • the title must read UNFINISHED — it ends on a joining word ("of", "and")
+  //    or on an adjective ("…Row of Individual"). "Interior Circulation Areas"
+  //    is a complete noun phrase and takes nothing.
+  //  • the candidate must not be a word that opens a sentence. "4.2 Task Plane
+  //    Lighting" followed by "Fig. 4 shows…" used to become "…Lighting Fig".
+  const words = title.split(/\s+/);
+  if (words.length < 3) return title;
+  const runIn = /^([A-Z][A-Za-z'’-]*(?:\s+[A-Za-z'’-]+)?)\.(?:\s|$)/.exec(next.text);
+  if (!runIn) return title;
+  const last = words[words.length - 1];
+  const looksUnfinished = CONTINUATION_TAIL_RE.test(last) || ADJECTIVE_TAIL_RE.test(last);
+  if (!looksUnfinished) return title;
+  const candidate = runIn[1];
+  const firstWord = candidate.split(/\s+/)[0].replace(/[^A-Za-z]/g, '').toLowerCase();
+  if (SENTENCE_OPENERS.has(firstWord)) return title;
+  return sanitizeSectionTitle(`${title} ${candidate}`) || title;
+}
+
+/**
+ * One line → { number, title }, or null when it is not a heading.
+ *
+ * Kept as the module's public name (the DO40 tests and any future caller use
+ * it); the rules now live in src/lib/section-titles.js so the search worker can
+ * apply the SAME judgement to the titles already in D1 without a re-ingest.
+ */
+export function parseHeadingLine(line) {
+  return parseHeading(line);
 }
 
 /**

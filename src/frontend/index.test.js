@@ -25,6 +25,8 @@ let ctx;          // the evaluated app script's context
 let elements;     // id → stub element
 let pills;        // filter name → stub element
 let run;          // (expr) => value, evaluated inside the app scope
+const sentEvents = [];   // what LensyAPI.logEvent would have posted (DO078)
+const savedPreferences = {};   // what LensyAPI.savePreferences would have stored (DO080)
 
 function stubElement(id) {
   const el = {
@@ -113,7 +115,9 @@ beforeAll(() => {
         return [];
       },
       addEventListener() {},
-      body: { style: {} },
+      // `body` needs a classList as well as a style: renderResults docks the
+      // Sort/Filter sidebar on a wide screen, which toggles a body class.
+      body: { style: {}, classList: stubElement('body').classList },
     },
     window: { scrollTo() {}, addEventListener() {}, innerWidth: 1440, location: { search: '' } },
     location: { search: '' },
@@ -124,7 +128,18 @@ beforeAll(() => {
     },
     URLSearchParams, encodeURIComponent, console, setTimeout, clearTimeout,
     fetch: async () => { throw new Error('no network in tests'); },
-    LensyAPI: { search: async () => ({ results: [] }) },
+    LensyAPI: {
+      search: async () => ({ results: [] }),
+      savedStatus: async () => [],
+      // Per-account preferences (client DO080). The tests record the writes so
+      // they can assert the toggle is persisted without a network.
+      getPreferences: async () => savedPreferences,
+      savePreferences(prefs) { Object.assign(savedPreferences, prefs); return Promise.resolve(savedPreferences); },
+      // Telemetry is fire-and-forget (client DO078); the tests record the calls
+      // so they can assert WHAT would be sent without a network. The array lives
+      // in THIS scope, not the sandbox's — the sandbox has its own globalThis.
+      logEvent(payload) { sentEvents.push(payload); },
+    },
   };
   sandbox.globalThis = sandbox;
 
@@ -502,30 +517,100 @@ describe('section heading on a Document excerpt', () => {
   });
 });
 
-describe('same-section Document results are one card (DO40)', () => {
-  const doc = (section, page) => `{
+describe('same-chapter Document results are one card (DO40, restructured by DO73)', () => {
+  const doc = (section, page, chapter) => `{
     resultType: 'excerpt', relevanceScore: 0.5,
     application: { standard: 'RP-28-25', code: 'RP-28-25-p${page}' },
     excerpt: { text: 'Passage ${page} of the section, long enough to survive the prose filter on a card.',
-               chunkType: 'text', pageNumber: ${page}, section: '${section}' }
+               chunkType: 'text', pageNumber: ${page}, section: '${section}',
+               chapter: ${chapter ? `{ number: '${chapter}', title: 'Design Guide' }` : 'undefined'} }
   }`;
 
-  it('groups passages of one section, and keeps other sections apart', () => {
+  it('groups every section of one chapter, and keeps other chapters apart', () => {
+    const groups = JSON.parse(run(`JSON.stringify(groupSiblingResults([
+      ${doc('3.3.4', 39, '3')}, ${doc('4.1', 55, '4')}, ${doc('3.2', 40, '3')}
+    ]).map(g => g.members.length))`));
+    expect(groups).toEqual([2, 1]);
+  });
+
+  it('still groups by section for a response cached before chapters existed', () => {
     const groups = JSON.parse(run(`JSON.stringify(groupSiblingResults([
       ${doc('3.3.4', 39)}, ${doc('4.1', 55)}, ${doc('3.3.4', 40)}
     ]).map(g => g.members.length))`));
     expect(groups).toEqual([2, 1]);
   });
 
-  it('merges their passages into one list, in page order', () => {
-    const merged = JSON.parse(run(`JSON.stringify(mergeDocumentGroup([${doc('3.3.4', 41)}, ${doc('3.3.4', 39)}]))`));
-    expect(merged.excerpts.map(e => e.pageNumber)).toEqual([39, 41]);
+  it('merges their passages in RELEVANCE order (DO73 — best first, not page order)', () => {
+    const merged = JSON.parse(run(`JSON.stringify(mergeDocumentGroup([${doc('3.3.4', 41, '3')}, ${doc('3.2', 39, '3')}]))`));
+    expect(merged.excerpts.map(e => e.pageNumber)).toEqual([41, 39]);
   });
 
-  it('heads the card with the section it came from', () => {
-    const card = run(`renderResultCard({ key: 'k', members: [${doc('3.3.4', 39)}, ${doc('3.3.4', 40)}] }, 0)`);
-    expect(card).toContain('3.3.4');
+  it('heads the card with the CHAPTER, named as the client drew it', () => {
+    const card = run(`renderResultCard({ key: 'k', members: [${doc('3.3.4', 39, '3')}, ${doc('3.2', 40, '3')}] }, 0)`);
+    expect(card).toContain('Ch. 3 – Design Guide');
     expect(card).toContain('border-left: 3px solid');   // solid = the whole document
+    // The sections themselves still head each passage inside the drop-down.
+    expect(card).toContain('3.3.4');
+  });
+
+  it('falls back to the section locator when no chapter was resolved', () => {
+    const card = run(`renderResultCard({ key: 'k', members: [${doc('3.3.4', 39)}] }, 0)`);
+    expect(card).toContain('3.3.4');
+    expect(card).not.toContain('Ch. ');
+  });
+});
+
+// ─── DO70 / DO73: "From the Standard" reads as a drop-down, and starts open ────
+
+describe('"From the Standard" disclosure', () => {
+  const passages = (n) => JSON.stringify(Array.from({ length: n }, (_, i) => ({
+    text: `Lighting guidance passage number ${i} describing an application in prose for the reader.`,
+    chunkType: 'text', pageNumber: 10 + i,
+  })));
+
+  it('is expanded by default, however many passages it holds', () => {
+    for (const n of [1, 2, 6]) {
+      const out = run(`renderDataBlocks({ application: {}, excerpts: ${passages(n)} }, new Set())`);
+      expect(out).toMatch(/<details class="disclosure[^"]*" open>/);
+    }
+  });
+
+  it('swaps two static carets instead of rotating one (DO70: "lose the animation")', () => {
+    const out = run(`renderDataBlocks({ application: {}, excerpts: ${passages(2)} }, new Set())`);
+    expect(out).not.toContain('group-open:rotate-90');
+    expect(out).toContain('M19 9l-7 7-7-7');   // caret down, closed
+    expect(out).toContain('M5 15l7-7 7 7');    // caret up, open
+  });
+
+  it('is drawn as a control, not a bare label', () => {
+    const out = run(`renderDataBlocks({ application: {}, excerpts: ${passages(2)} }, new Set())`);
+    expect(out).toMatch(/<summary[^>]*border/);
+    expect(out).toContain('>Show<');
+    expect(out).toContain('>Hide<');
+  });
+});
+
+// ─── DO72: a formula is named, never reproduced ────────────────────────────────
+
+describe('formula passages', () => {
+  it('prints the notice beside whatever prose survived', () => {
+    const out = run(`renderDataBlocks({ application: {}, excerpts: [
+      { text: 'A.1.1.3 Regular Area With Single Row of Individual Luminaires. The average illuminance in such a space can be determined from:',
+        chunkType: 'text', pageNumber: 68, formulaOmitted: true, vitriumLink: 'https://lighting.ies.org/x#page=68' }
+    ] }, new Set())`);
+    expect(out).toContain('Formula not shown');
+    expect(out).toContain('Regular Area With Single Row of Individual Luminaires');
+    expect(out).toContain('Open in Library');
+  });
+
+  it('keeps a passage that was NOTHING but a formula, as the notice alone', () => {
+    const out = run(`renderDataBlocks({ application: {}, excerpts: [
+      { text: '', chunkType: 'text', pageNumber: 68, formulaOmitted: true,
+        vitriumLink: 'https://lighting.ies.org/x#page=68' }
+    ] }, new Set())`);
+    expect(out).toContain('Formula not shown');
+    expect(out).toContain('p. 68');
+    expect(out).not.toMatch(/print-withhold">""/);   // never an empty quote
   });
 });
 
@@ -542,16 +627,46 @@ describe('pasted label', () => {
   });
 });
 
-// ─── DO44: reference markers open the FIRST printed marker ────────────────────
+// ─── DO44 / DO64: reference-marker chips ──────────────────────────────────────
 
-describe('reference marker footnote', () => {
-  it('says the link opens where the marker is FIRST printed', () => {
+describe('reference marker chips', () => {
+  it('says the link opens where the marker is printed in the body', () => {
     const html = run(`referenceMarkersBlock({ referenceMarkers: [
       { standard: 'G-1-22', standardFull: 'ANSI/IES G-1-22', count: 6, pageNumber: 12,
         referenceNumber: 6, target: 'citation', url: 'https://view.protectedpdf.com/g1#page=12' }
     ] })`);
     expect(html).toContain('first printed');
-    expect(html).toContain('first cites this reference');
+    expect(html).toContain('cites this reference as 6 in its body');
+  });
+
+  it('prints the REFERENCE NUMBER, marked as one (DO64)', () => {
+    const html = run(`referenceMarkersBlock({ referenceMarkers: [
+      { standard: 'LS-2-20', standardFull: 'ANSI/IES LS-2-20', count: 1, pageNumber: 10,
+        referenceNumber: 5, target: 'citation', url: 'https://lighting.ies.org/x#page=10' }
+    ] })`);
+    expect(html).toContain('#5');
+    expect(html).toContain('#page=10');
+  });
+
+  it('never prints a match COUNT where a reference number belongs (DO64)', () => {
+    // The client saw "LS-2-20 1" for a work that standard numbers 5: the "1" was
+    // the number of matching chunks, which reads as the reference number and
+    // made the chip look like it linked to the wrong place.
+    const html = run(`referenceMarkersBlock({ referenceMarkers: [
+      { standard: 'LS-2-20', standardFull: 'ANSI/IES LS-2-20', count: 1, pageNumber: 27,
+        referenceNumber: null, target: 'references', url: 'https://lighting.ies.org/x#page=27' }
+    ] })`);
+    expect(html).toContain('LS-2-20');
+    expect(html).not.toMatch(/LS-2-20\s*<span[^>]*>1</);
+    expect(html).toContain('lists this reference in its References section');
+  });
+
+  it('marks a count as a count when there is more than one', () => {
+    const html = run(`referenceMarkersBlock({ referenceMarkers: [
+      { standard: 'RP-8-25', standardFull: 'ANSI/IES RP-8-25', count: 3, pageNumber: 40,
+        referenceNumber: null, target: 'references', url: 'https://lighting.ies.org/x#page=40' }
+    ] })`);
+    expect(html).toContain('×3');
   });
 });
 
@@ -761,17 +876,32 @@ describe('joined Document cards', () => {
       ].map(g => ({ single: true })));
   });
 
-  it('renders one shell with one panel per section, each keeping its own citation', () => {
+  it('names the document ONCE and gives every panel its own section (DO81)', () => {
     const html = run(`renderJoinedDocumentCard({ joined: true, standard: 'RP-47-23', sections: [
       { key: 'a', members: [${doc('RP-47-23', '7.5', 30)}] },
       { key: 'b', members: [${doc('RP-47-23', '2.1', 13)}] }
     ] }, 0)`);
     expect((html.match(/<article/g) || []).length).toBe(3);       // shell + 2 sections
     expect((html.match(/border-left: 3px solid/g) || []).length).toBe(1); // stripe on the shell only
+    // "For 'joined cards' don't repeat Document/title, nor committee name."
+    // Counted on the header element, not on the raw string: the save button
+    // carries the citation inside a data attribute on every panel.
+    expect((html.match(/text-sm font-semibold text-gray-900 min-w-0/g) || []).length).toBe(1);
+    // Each panel still says which section it is.
     expect(html).toContain('7.5');
     expect(html).toContain('2.1');
-    expect((html.match(/p\.&nbsp;30/g) || []).length).toBe(1);
-    expect((html.match(/p\.&nbsp;13/g) || []).length).toBe(1);
+    // The page is printed with the passage, not beside the title (DO81).
+    expect(html).not.toContain('p.&nbsp;30');
+    expect(html).toContain('p. 30');
+    expect(html).toContain('p. 13');
+  });
+
+  it('gives a later panel the designation chip, since it has no title line', () => {
+    const html = run(`renderJoinedDocumentCard({ joined: true, standard: 'RP-47-23', sections: [
+      { key: 'a', members: [${doc('RP-47-23', '7.5', 30)}] },
+      { key: 'b', members: [${doc('RP-47-23', '2.1', 13)}] }
+    ] }, 0)`);
+    expect((html.match(/>RP-47-23</g) || []).length).toBe(1);
   });
 
   it('leaves a deprecated edition as its own card, so editions never share a box', () => {
@@ -1196,5 +1326,456 @@ describe('standard-name auto-suggest', () => {
     expect(JSON.parse(run(`JSON.stringify(standardsMatching('rp'))`))).toEqual([]);
     expect(JSON.parse(run(`JSON.stringify(standardsMatching('skating rink brightness'))`))).toEqual([]);
     run(`standardsIndex = []`);
+  });
+});
+
+// ─── DO062: a comparison reads as a chapter-grouped, bolded list ──────────────
+
+describe('AI comparison rendering (DO062)', () => {
+  it('nests the findings under their chapter bullet', () => {
+    const html = run(`renderAIText([
+      'What appears to be new',
+      '- **Chapter 6.0 Community Planning**',
+      '  - **6.2 Outdoor Lighting Requirements** (p. 34): mentions the Five Principles.',
+      '- **Chapter 8.0 Outdoor Lighting Design Process**',
+      '  - **8.7.2.4 Color – Hue and Saturation** (p. 61): discusses considerations.'
+    ].join('\\n'))`);
+    expect(html).toContain('What appears to be new');
+    expect(html).toContain('<strong>Chapter 6.0 Community Planning</strong>');
+    // The nested findings are indented and given their own marker.
+    expect((html.match(/list-\[circle\]/g) || []).length).toBe(2);
+    // ONE list, so the "Continue Reading" fold can only ever cut between blocks.
+    expect((html.match(/<ul/g) || []).length).toBe(1);
+    expect((html.match(/<\/ul>/g) || []).length).toBe(1);
+  });
+
+  it('bolds a locator the model left plain, number and title together', () => {
+    expect(run(`boldLeadingLocator('6.2 Outdoor Lighting Requirements (p. 34): mentions the Five Principles.')`))
+      .toBe('**6.2 Outdoor Lighting Requirements** (p. 34): mentions the Five Principles.');
+    expect(run(`boldLeadingLocator('8.7.2.4 Color – Hue and Saturation: discusses considerations.')`))
+      .toBe('**8.7.2.4 Color – Hue and Saturation**: discusses considerations.');
+    expect(run(`boldLeadingLocator('Annex A Field Measurements: describes the survey method.')`))
+      .toBe('**Annex A Field Measurements**: describes the survey method.');
+  });
+
+  it('leaves alone what the model already bolded, and what is not a locator', () => {
+    expect(run(`boldLeadingLocator('**6.2 Outdoor Lighting Requirements**: mentions the Five Principles.')`))
+      .toBe('**6.2 Outdoor Lighting Requirements**: mentions the Five Principles.');
+    expect(run(`boldLeadingLocator('Note: the retrieved passages do not show changes of that kind.')`))
+      .toBe('Note: the retrieved passages do not show changes of that kind.');
+    // A bare number is a quantity, not a section.
+    expect(run(`boldLeadingLocator('12 lux minimum in corridors: verify after install')`))
+      .toBe('12 lux minimum in corridors: verify after install');
+  });
+
+  it('still hyperlinks the locator it bolded (DO062: "hyperlink to the page")', () => {
+    run(`setSectionLinks({ 'RP-43-25': { sections: { '6.2': 'https://lighting.ies.org/x#page=34' }, pages: {} } })`);
+    const html = run(`renderAIText('ANSI/IES RP-43-25 changed.\\n\\n- 6.2 Outdoor Lighting Requirements: new in this edition, see Section 6.2.')`);
+    expect(html).toContain('<strong>6.2 Outdoor Lighting Requirements</strong>');
+    expect(html).toContain('#page=34');
+    run(`setSectionLinks(null)`);
+  });
+});
+
+// ─── DO075: a designation search gets the document, not an essay ──────────────
+
+describe('AI Guide suppression (DO075)', () => {
+  const stdResult = `{
+    resultType: 'standard', relevanceScore: 1,
+    citation: 'ANSI/IES RP-3-20+E1 Recommended Practice: Lighting Educational Facilities',
+    citationName: 'ANSI/IES RP-3-20+E1 Recommended Practice: Lighting Educational Facilities',
+    application: { standard: 'RP-3-20+E1', code: 'standard:RP-3-20+E1' },
+    document: { id: 'RP-3-20+E1', designation: 'ANSI/IES RP-3-20+E1', title: 'Recommended Practice: Lighting Educational Facilities' },
+    excerpt: null, excerpts: []
+  }`;
+
+  const clearGuide = `document.getElementById('ai-summary-text').innerHTML = '';
+                      document.getElementById('ai-summary-card').classList.add('hidden');`;
+
+  it('says nothing at all when the Worker suppressed the Guide', () => {
+    run(`${clearGuide} renderResults({ query: 'RP-3-20', results: [${stdResult}], aiSummary: null,
+      aiGuideSuppressed: 'standard_lookup', contentTypes: ['tables','body','references','definitions'] })`);
+    expect(elements.get('ai-summary-card').classList.contains('hidden')).toBe(true);
+    expect(elements.get('ai-summary-text').innerHTML).toBe('');
+  });
+
+  it('still reports a genuine AI Guide failure (DO9)', () => {
+    run(`${clearGuide} renderResults({ query: 'parking garages', results: [${stdResult}], aiSummary: null,
+      contentTypes: ['tables','body','references','definitions'] })`);
+    expect(elements.get('ai-summary-card').classList.contains('hidden')).toBe(false);
+    expect(elements.get('ai-summary-text').innerHTML).toContain('could not generate');
+  });
+});
+
+// ─── DO077: no results is a set of alternatives, not a dead end ───────────────
+
+describe('guided empty state (DO077)', () => {
+  const guidance = `{
+    message: 'This search only looked inside the Illuminance Tables.',
+    suggestions: [
+      { label: 'Search document bodies too', action: 'enable_content_type', value: 'body' },
+      { label: 'Did you mean “illuminance”?', action: 'search', value: 'ceiling illuminance uniformity' },
+      { label: 'Try rephrasing', action: 'rephrase' },
+      { label: 'Ask Standards@ies.org', action: 'contact' }
+    ]
+  }`;
+
+  it('prints the reason and one button per alternative', () => {
+    run(`renderNoResultsGuidance(${guidance})`);
+    const html = elements.get('no-results-guidance').innerHTML;
+    expect(html).toContain('only looked inside the Illuminance Tables');
+    expect((html.match(/no-results-action/g) || []).length).toBe(3);   // 'contact' is a mailto
+    expect(html).toContain('mailto:Standards@ies.org');
+    expect(elements.get('no-results-guidance').classList.contains('hidden')).toBe(false);
+  });
+
+  it('is shown by renderResults when the search came back empty', () => {
+    run(`renderResults({ query: 'what is the difference between luminance and illuminance?',
+      results: [], aiSummary: null, noResultsGuidance: ${guidance}, contentTypes: ['tables'] })`);
+    expect(elements.get('no-results').classList.contains('hidden')).toBe(false);
+    expect(elements.get('no-results-guidance').innerHTML).toContain('Search document bodies too');
+  });
+
+  it('hides itself when the Worker sent no guidance', () => {
+    run(`renderNoResultsGuidance(null)`);
+    expect(elements.get('no-results-guidance').classList.contains('hidden')).toBe(true);
+    expect(elements.get('no-results-guidance').innerHTML).toBe('');
+  });
+
+  it('turns "enable Document Body" into the filter change AND the re-run', () => {
+    run(`resetFilters(); filterState.body = false; lastQuery = 'what is veiling reflection';
+         renderNoResultsGuidance(${guidance}); applyNoResultsSuggestion(0)`);
+    expect(JSON.parse(run('JSON.stringify(filterState.body)'))).toBe(true);
+    expect(elements.get('search-input').value).toBe('what is veiling reflection');
+    run('resetFilters()');
+  });
+
+  it('runs a spelling correction as its own search', () => {
+    run(`lastQuery = 'ceiling iluminance uniformity'; renderNoResultsGuidance(${guidance}); applyNoResultsSuggestion(1)`);
+    expect(elements.get('search-input').value).toBe('ceiling illuminance uniformity');
+  });
+
+  it('records which way out the reader took (DO078)', () => {
+    sentEvents.length = 0;
+    run(`lastQuery = 'x'; renderNoResultsGuidance(${guidance}); applyNoResultsSuggestion(0)`);
+    expect(sentEvents[0].event).toBe('guidance');
+    expect(sentEvents[0].extra.action).toBe('enable_content_type');
+    run('resetFilters()');
+  });
+});
+
+// ─── DO079: Compare Versions is a one-shot tool ───────────────────────────────
+
+describe('Compare Versions disarms itself (DO079)', () => {
+  it('clears the flag after the comparison it was armed for', () => {
+    run(`filterState.compare = true; renderFilterPills(); disarmCompare()`);
+    expect(JSON.parse(run('JSON.stringify(filterState.compare)'))).toBe(false);
+    expect(pills.get('compare').getAttribute('aria-pressed')).toBe('false');
+  });
+
+  it('re-stamps the filter key, so closing the sidebar does not silently re-run', () => {
+    run(`filterState.compare = true; lastSearchFiltersKey = JSON.stringify(collectFilters()); disarmCompare()`);
+    expect(run('lastSearchFiltersKey')).toBe(run('JSON.stringify(collectFilters())'));
+  });
+
+  it('is a no-op when the tool was never armed', () => {
+    run(`filterState.compare = false; disarmCompare()`);
+    expect(JSON.parse(run('JSON.stringify(filterState.compare)'))).toBe(false);
+  });
+
+  it('also clears the tool the RESPONSE armed — the path that locked it on', () => {
+    // "what's new in RP-8?" arms nothing up front: the Worker recognizes the
+    // phrasing, renderResults arms the pill from `isVersionComparison`, and the
+    // next ordinary search would then be answered as a comparison.
+    run(`resetFilters(); lastQuery = "what's new in RP-8?";
+         renderResults({ query: "what's new in RP-8?", results: [], aiSummary: null,
+           isVersionComparison: true, contentTypes: ['body','compare'] })`);
+    expect(JSON.parse(run('JSON.stringify(filterState.compare)'))).toBe(true);
+    // performSearch's finally does this once the response has rendered.
+    run(`if (filterState.compare) disarmCompare()`);
+    expect(JSON.parse(run('JSON.stringify(filterState.compare)'))).toBe(false);
+    expect(run('lastSearchFiltersKey')).toBe(run('JSON.stringify(collectFilters())'));
+    run('resetFilters()');
+  });
+});
+
+// ─── DO081: the card structure loses its redundancy ──────────────────────────
+
+describe('Document card structure (DO081)', () => {
+  const doc = (section, page, chapter) => `{
+    resultType: 'excerpt', relevanceScore: 0.5,
+    citationName: 'ANSI/IES RP-47-23 Recommended Practice: Landscape Lighting',
+    citationPage: ${page},
+    committee: { name: 'IES Landscape Lighting Committee', url: 'https://ies.org/x', exact: true },
+    application: { standard: 'RP-47-23' },
+    excerpt: { text: 'Path lights are used to illuminate beds or areas of low plantings in prose long enough to survive.',
+               chunkType: 'text', pageNumber: ${page}, section: '${section}',
+               chapter: { number: '${chapter}', title: 'Landscape Lighting Equipment' } }
+  }`;
+
+  it('puts the document title ABOVE the chapter band', () => {
+    const card = run(`renderResultCard({ key: 'k', members: [${doc('8.2.4', 84, '8')}] }, 0)`);
+    const titleAt = card.indexOf('Recommended Practice: Landscape Lighting');
+    const bandAt = card.indexOf('Ch. 8 – Landscape Lighting Equipment');
+    expect(titleAt).toBeGreaterThan(-1);
+    expect(bandAt).toBeGreaterThan(-1);
+    expect(titleAt).toBeLessThan(bandAt);
+  });
+
+  it('drops the page beside the title — it is printed with each passage', () => {
+    const card = run(`renderResultCard({ key: 'k', members: [${doc('8.2.4', 84, '8')}] }, 0)`);
+    expect(card).not.toContain('p.&nbsp;84');   // the citation's own page tail
+    expect(card).toContain('p. 84');            // the passage's page, inside the drop-down
+  });
+
+  it('keeps the page on an Illuminance Table card, where nothing else says it', () => {
+    const row = `{
+      resultType: 'application', relevanceScore: 0.9,
+      citationName: 'ANSI/IES RP-6-24 Recommended Practice: Lighting Sports',
+      citationPage: 83,
+      application: { standard: 'RP-6-24', code: 'RP-6-24_1', category: 'Pickleball', rowRef: 1,
+                     subCategory: 'Exterior - Sports', horizontal: { lux: 500, category: 'R' } }
+    }`;
+    const card = run(`renderResultCard({ key: 'k', members: [${row}] }, 0)`);
+    expect(card).toContain('p.&nbsp;83');
+  });
+});
+
+describe('Definition card structure (DO081)', () => {
+  const definition = `{
+    resultType: 'definition', relevanceScore: 1,
+    citation: 'ANSI/IES LS-1-25 Lighting Science: Nomenclature and Definitions',
+    citationName: 'ANSI/IES LS-1-25 Lighting Science: Nomenclature and Definitions',
+    application: { standard: 'LS-1-25' },
+    definition: { slug: 'color', term: 'color', clause: '4.1',
+                  html: '<p>[4.1] The characteristic of light by which a human observer may distinguish objects.</p>',
+                  sourceUrl: 'https://ies.org/definitions/color/' }
+  }`;
+
+  it('drops the self-evident "DEFINITION" banner', () => {
+    const card = run(`renderDefinitionCard(${definition}, 0)`);
+    expect(card).not.toMatch(/>Definition</);
+    expect(card).toContain('>color<');           // the term is still the headline
+  });
+
+  it('drops "FROM THE STANDARD" and the repeated term', () => {
+    const card = run(`renderDefinitionCard(${definition}, 0)`);
+    expect(card).not.toContain('From the Standard');
+    // The term appears as the badge and inside the definition HTML, never as a
+    // bold line of its own above the text.
+    expect(card).not.toContain('<strong class="allow-copy">color</strong>');
+    expect(card).toContain('The characteristic of light');
+  });
+});
+
+// ─── DO087: the top-right markers are gone ───────────────────────────────────
+
+describe('card badges (DO087)', () => {
+  const row = (over = '') => `{
+    resultType: 'application', relevanceScore: 0.9,
+    citationName: 'ANSI/IES RP-6-24 Recommended Practice: Lighting Sports',
+    citationPage: 83,
+    application: { standard: 'RP-6-24', code: 'RP-6-24_1', category: 'Pickleball', rowRef: 1,
+                   subCategory: 'Exterior - Sports', indoorOutdoor: 'Outdoor', tm24Eligible: true,
+                   areaOrTask: 'Area', classOfPlay: 'III', horizontal: { lux: 500 } ${over} }
+  }`;
+
+  it('prints neither the TM-24 chip nor the Indoor/Outdoor chip', () => {
+    const card = run(`renderResultCard({ key: 'k', members: [${row()}] }, 0)`);
+    expect(card).not.toContain('>TM-24<');
+    expect(card).not.toMatch(/>\s*Outdoor\s*</);
+    // The banner still says which it is, on the top LEFT (uppercased by CSS).
+    expect(card).toContain('Exterior - Sports');
+    expect(card).toContain('uppercase');
+  });
+
+  it('keeps the badges that carry information (Area, Class of Play)', () => {
+    const card = run(`renderResultCard({ key: 'k', members: [${row()}] }, 0)`);
+    expect(card).toContain('>Area<');
+    expect(card).toContain('Class III');
+  });
+});
+
+// ─── DO080: the AI Guide state follows the account ───────────────────────────
+
+describe('AI Guide preference (DO080)', () => {
+  it('applies a stored "off" to the toggle', () => {
+    run(`resetFilters(); applyGuidePreference(false)`);
+    expect(JSON.parse(run('JSON.stringify(filterState.guide)'))).toBe(false);
+    expect(pills.get('guide').getAttribute('aria-pressed')).toBe('false');
+    run('resetFilters()');
+  });
+
+  it('ignores anything that is not a boolean', () => {
+    run(`resetFilters(); applyGuidePreference(undefined); applyGuidePreference('off')`);
+    expect(JSON.parse(run('JSON.stringify(filterState.guide)'))).toBe(true);
+  });
+
+  it('never switches it on for a LensyLite account', () => {
+    run(`applyTier('lite'); resetFilters(); applyGuidePreference(true)`);
+    expect(JSON.parse(run('JSON.stringify(filterState.guide)'))).toBe(false);
+    run(`applyTier('full'); resetFilters()`);
+  });
+
+  it('saves an explicit press, and only that', () => {
+    run(`resetFilters(); toggleFilter('guide')`);
+    expect(savedPreferences.ai_guide).toBe(false);
+    run(`toggleFilter('guide')`);
+    expect(savedPreferences.ai_guide).toBe(true);
+    // A demo search replaces the whole state without the reader choosing it.
+    delete savedPreferences.ai_guide;
+    run(`applyFilterState({ body: true, guide: false })`);
+    expect(savedPreferences.ai_guide).toBeUndefined();
+    run('resetFilters()');
+  });
+
+  it('mirrors the value in localStorage so the first paint does not flash', () => {
+    run(`resetFilters(); toggleFilter('guide')`);
+    expect(run(`localStorage.getItem('lensy.pref.aiGuide')`)).toBe('false');
+    expect(JSON.parse(run('JSON.stringify(readGuideMirror())'))).toBe(false);
+    run('resetFilters()');
+  });
+});
+
+// ─── DO084: the AHJ notice is shown, with or without a Guide ─────────────────
+
+describe('AHJ compliance notice (DO084)', () => {
+  const NOTICE = 'IES standards and guidance do not supersede applicable laws, codes, regulations, or project-specific requirements.';
+
+  it('prints it inside the Guide card', () => {
+    run(`renderAISummary({ text: 'Egress lighting is covered by ANSI/IES RP-4-20.', disclaimer: 'd', watermark: 'w', authorityNotice: ${JSON.stringify(NOTICE)} })`);
+    expect(elements.get('ai-authority-notice').textContent).toBe(NOTICE);
+    expect(elements.get('ai-authority-notice').classList.contains('hidden')).toBe(false);
+  });
+
+  it('hides it again on a search that does not need it', () => {
+    run(`renderAISummary({ text: 'Retail lighting.', disclaimer: 'd', watermark: 'w' })`);
+    expect(elements.get('ai-authority-notice').classList.contains('hidden')).toBe(true);
+  });
+
+  it('stands on its own when there is no Guide card', () => {
+    run(`renderResults({ query: 'egress lighting', results: [], aiSummary: null,
+      authorityNotice: ${JSON.stringify(NOTICE)}, contentTypes: ['body'] })`);
+    expect(elements.get('authority-banner').classList.contains('hidden')).toBe(false);
+    expect(elements.get('authority-banner-text').textContent).toBe(NOTICE);
+  });
+
+  it('stands on its own when a CACHED summary predates the notice', () => {
+    // The AI summary cache key does not include the notice, so an answer stored
+    // before the topic was detected comes back without it. Gating the banner on
+    // "is there a Guide" rather than "is the Guide printing it" left the
+    // disclaimer in neither place.
+    run(`clearResults(); renderResults({ query: 'corridor lighting at night',
+      results: [], aiSummary: { text: 'An answer.', disclaimer: 'd', watermark: 'w' },
+      authorityNotice: ${JSON.stringify(NOTICE)}, contentTypes: ['body'] })`);
+    expect(elements.get('authority-banner').classList.contains('hidden')).toBe(false);
+  });
+
+  it('does not double up when the Guide card carries it', () => {
+    run(`clearResults(); renderResults({ query: 'egress lighting',
+      results: [], aiSummary: { text: 'An answer.', disclaimer: 'd', watermark: 'w',
+        authorityNotice: ${JSON.stringify(NOTICE)} },
+      authorityNotice: ${JSON.stringify(NOTICE)}, contentTypes: ['body'] })`);
+    expect(elements.get('authority-banner').classList.contains('hidden')).toBe(true);
+    expect(elements.get('ai-authority-notice').classList.contains('hidden')).toBe(false);
+  });
+});
+
+describe('a refused question leaves the app usable (DO085)', () => {
+  it('does not clear the content filters', () => {
+    // The refusal payload used to send contentTypes: [], which the pill sync
+    // treats as authoritative — every Contents box cleared, and the next search
+    // was refused by the UI itself with "Choose at least one content type".
+    run(`resetFilters(); clearResults(); renderResults({
+      query: 'how to build a bomb', results: [], aiSummary: null, refused: true,
+      outOfScope: true, aiGuideSuppressed: 'out_of_scope',
+      contentTypes: ['tables','body','references','definitions'],
+      noResultsGuidance: { message: 'Lensy answers questions about IES lighting standards.',
+        suggestions: [{ label: 'Restate the question', action: 'rephrase' }] } })`);
+    expect(JSON.parse(run('JSON.stringify(anyContentSelected())'))).toBe(true);
+    expect(JSON.parse(run('JSON.stringify(filterState.body)'))).toBe(true);
+    run('resetFilters()');
+  });
+});
+
+// ─── DO086: tables and figures as locators ───────────────────────────────────
+
+describe('table and figure chips (DO086)', () => {
+  const withAssets = `{
+    resultType: 'excerpt', relevanceScore: 0.5,
+    citationName: 'ANSI/IES RP-1-24 Recommended Practice: Lighting Office Spaces',
+    application: { standard: 'RP-1-24' },
+    excerpt: { text: 'Annex C covers acoustics in prose long enough to survive the filter on a card.',
+               chunkType: 'text', pageNumber: 71, section: 'Annex C',
+               chapter: { number: 'Annex C', title: 'Acoustics' } },
+    assets: [
+      { kind: 'table', label: 'Table C-1', caption: 'Sound Absorption Coefficients for Various Materials',
+        page: 71, url: 'https://lighting.ies.org/x#page=71' }
+    ]
+  }`;
+
+  it('names the table, its page, and links to it', () => {
+    const card = run(`renderResultCard({ key: 'k', members: [${withAssets}] }, 0)`);
+    expect(card).toContain('Table C-1');
+    expect(card).toContain('Sound Absorption Coefficients for Various Materials');
+    expect(card).toContain('#page=71');
+    expect(card).toContain('Tables in this standard');
+  });
+
+  it('says the match was on the caption, not the contents', () => {
+    const card = run(`renderResultCard({ key: 'k', members: [${withAssets}] }, 0)`);
+    expect(card).toContain('Matched on the printed caption');
+  });
+
+  it('prints nothing when the query matched no table or figure', () => {
+    const plain = `{ ...${withAssets}, assets: [] }`;
+    const card = run(`renderResultCard({ key: 'k', members: [${plain}] }, 0)`);
+    expect(card).not.toContain('in this standard</p>');
+  });
+});
+
+// ─── DO085: out of scope, and refused ────────────────────────────────────────
+
+describe('out-of-scope searches (DO085)', () => {
+  it('shows no cards and no Guide, and invites a restatement', () => {
+    // clearResults() is what performSearch calls before every render; without it
+    // the card keeps whatever an earlier test left in it.
+    run(`clearResults(); renderResults({ query: 'what color are zebras?', results: [], aiSummary: null,
+      outOfScope: true, aiGuideSuppressed: 'out_of_scope', contentTypes: ['body','tables'],
+      noResultsGuidance: { message: 'No relevant results were found — this question does not appear to be answerable from the IES lighting standards.',
+        suggestions: [{ label: 'Restate the question', action: 'rephrase' }, { label: 'Ask Standards@ies.org', action: 'contact' }] } })`);
+    expect(elements.get('no-results').classList.contains('hidden')).toBe(false);
+    expect(elements.get('no-results-guidance').innerHTML).toContain('No relevant results were found');
+    expect(elements.get('no-results-guidance').innerHTML).toContain('Restate the question');
+    // No "the AI Guide could not generate a response" — it was not asked to.
+    expect(elements.get('ai-summary-card').classList.contains('hidden')).toBe(true);
+  });
+});
+
+// ─── DO078: which card was opened, and whether it was first ──────────────────
+
+describe('open-in-library telemetry (DO078)', () => {
+  const link = `{ dataset: { std: 'RP-8-25+E1', rtype: 'excerpt', page: '389', section: '17.5.2.1' }, closest: () => null }`;
+
+  it('marks the first click of a search as first, and later ones as not', () => {
+    sentEvents.length = 0;
+    run(`lastQuery = 'parking garages'; libraryClickLogged = false;
+         trackLibraryOpen(${link}); trackLibraryOpen(${link})`);
+    expect(sentEvents).toHaveLength(2);
+    expect(sentEvents[0]).toMatchObject({
+      event: 'open_in_library', query: 'parking garages',
+      standard_id: 'RP-8-25+E1', page_number: 389, section: '17.5.2.1',
+    });
+    expect(sentEvents[0].extra.first).toBe(true);
+    expect(sentEvents[1].extra.first).toBe(false);
+  });
+
+  it('carries no identity — only what was searched and what was opened', () => {
+    sentEvents.length = 0;
+    run(`libraryClickLogged = false;
+         trackLibraryOpen({ dataset: { std: 'RP-8-25+E1', rtype: 'excerpt', page: '', section: '' }, closest: () => null })`);
+    expect(Object.keys(sentEvents[0]).sort()).toEqual([
+      'content_types', 'event', 'extra', 'page_number', 'position', 'query', 'result_type', 'section', 'standard_id',
+    ]);
   });
 });
