@@ -783,7 +783,10 @@ Rules for that structure:
   above. Use them verbatim. Where an excerpt gives a number with no title, print
   the number alone — never invent a title.
 - Bold the chapter bullet the same way, and name the chapter by its own number
-  and title when the excerpts give them.
+  and title when the excerpts give them. Where no chapter title is given, write
+  the number alone ("Chapter 5") — the same rule as for sections. A chapter
+  title you supply yourself is a description of the standard's subject matter
+  drawn from prior knowledge, which the rule below forbids outright.
 - Do not write a prose paragraph inside these three sections. The bulleted,
   chapter-grouped list IS the format.
 

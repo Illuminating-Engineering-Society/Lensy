@@ -336,6 +336,60 @@ const excerptHaystack = (results) => (results || [])
   .replace(/\s+/g, ' ')
   .toLowerCase();
 
+/**
+ * The haystack a LOCATOR is grounded against — wider than the excerpt text.
+ *
+ * An excerpt does not travel as bare prose: it carries its section number, its
+ * section title and the chapter it belongs to (DO40 / DO073), and the comparison
+ * prompt REQUIRES the answer to group its findings under those chapters (DO062).
+ * A grouping header is therefore not an invented locator. But a standard never
+ * prints the word "Chapter" in front of its number, so matching against text
+ * alone reported every legitimate grouping header as fabricated — which is what
+ * this check did to "Chapter 1.0" and "Chapter 5.0" on the RP-8 comparison,
+ * whose findings (1.8, 5.3, 5.4.3) were all real and all retrieved.
+ *
+ * So the structured locators are spelled out in the forms an answer may write.
+ */
+const locatorHaystack = (results) => {
+  const excerpts = (results || []).flatMap(r => [r.excerpt, ...(r.excerpts || [])]).filter(Boolean);
+  const spelled = [];
+  for (const e of excerpts) {
+    const section = String(e.section || '').trim();
+    if (section) spelled.push(section, `Section ${section}`, `Clause ${section}`);
+    const chapter = String(e.chapter?.number || '').trim();
+    if (chapter) spelled.push(`Chapter ${chapter}`, `Chapter ${chapter}.0`, `Section ${chapter}`);
+  }
+  return [excerptHaystack(results), ...spelled].join(' ').replace(/\s+/g, ' ').toLowerCase();
+};
+
+/**
+ * Chapter headers the answer printed WITH a title, paired with the title the
+ * Worker actually supplied for that chapter (null when it supplied none).
+ *
+ * This is the half of DO28 that matching locators cannot see. RP-8-25 handed the
+ * model "MH LRL1.0" as the title of chapter 1 — a table cell — and the model
+ * silently replaced it with "Introduction", a chapter name out of its own
+ * knowledge of what an IES standard contains. The locator was fine; the subject
+ * matter was invented, which is the rule DO28 exists to enforce.
+ */
+const chapterTitleClaims = (text, results) => {
+  const supplied = new Map();
+  for (const r of results || []) {
+    for (const e of [r.excerpt, ...(r.excerpts || [])].filter(Boolean)) {
+      const n = String(e.chapter?.number || '').trim();
+      if (n && !supplied.has(n)) supplied.set(n, e.chapter.title || null);
+    }
+  }
+  const claims = [];
+  // The bold form the comparison prompt asks for: "**Chapter 1.0 Introduction**".
+  for (const m of String(text || '').matchAll(/\*\*Chapter\s+(\d+)(?:\.0)?\s+([^*]{2,60}?)\s*\*\*/g)) {
+    const [, number, title] = m;
+    if (!supplied.has(number)) continue;   // not a chapter this search retrieved
+    claims.push({ number, claimed: title.trim(), supplied: supplied.get(number) });
+  }
+  return claims;
+};
+
 // ─── Checks ───────────────────────────────────────────────────────────────────
 //
 // One entry per feedback item, in the client's numbering. `run` returns a
@@ -477,8 +531,9 @@ const CHECKS = [
       if (!text) return blocked('the comparison produced no text', 'AI Guide must be reachable');
       if (data.aiSummary?.degraded) return blocked('every AI model attempt failed (degraded fallback)', 'retry when Workers AI recovers');
 
-      // (a) every locator the prose names must appear verbatim in a retrieved excerpt
-      const haystack = excerptHaystack(data.results);
+      // (a) every locator the prose names must appear in a retrieved excerpt —
+      // in its text, or among the section/chapter labels that travelled with it
+      const haystack = locatorHaystack(data.results);
       const locators = [...new Set(
         (text.match(/\b(?:Section|Annex|Table|Figure|Chapter|Clause)\s+[A-Z]?-?\d+(?:\.\d+)*[a-z]?\b|\bAnnex\s+[A-Z]\b/g) || [])
           .map(s => s.replace(/\s+/g, ' ').trim()),
@@ -493,7 +548,12 @@ const CHECKS = [
           .filter(f => !f.startsWith(family)),
       )];
 
-      if (invented.length === 0 && otherFamilies.length === 0) {
+      // (c) a chapter title the answer prints must be the one it was given
+      const badTitles = chapterTitleClaims(text, data.results).filter(
+        c => !c.supplied || c.supplied.toLowerCase() !== c.claimed.toLowerCase(),
+      );
+
+      if (invented.length === 0 && otherFamilies.length === 0 && badTitles.length === 0) {
         // Zero locators is a pass on the rule but weak evidence FOR it: nothing
         // was there to be invented. Say which of the two happened, so a reader
         // does not mistake an empty answer for a verified one.
@@ -509,6 +569,11 @@ const CHECKS = [
         [
           invented.length ? `locators absent from every excerpt: ${invented.join(', ')}` : null,
           otherFamilies.length ? `talks about ${otherFamilies.join(', ')} on a ${family} query` : null,
+          badTitles.length
+            ? `chapter title not the one supplied: ${badTitles.map(c =>
+                `Ch. ${c.number} called "${c.claimed}", given ${c.supplied ? `"${c.supplied}"` : 'none'}`,
+              ).join('; ')}`
+            : null,
         ].filter(Boolean).join(' | '),
         'the grounding rules live in the comparison prompt (src/lib/ai-summary.ts) — a model can still stray; re-run before treating one violation as a regression',
       );

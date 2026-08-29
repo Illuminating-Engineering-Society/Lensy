@@ -10,8 +10,44 @@ import { describe, it, expect } from 'vitest';
 import {
   isPlausibleSectionNumber, normalizeSectionNumber, readSectionNumber,
   sanitizeSectionTitle, parseHeading, chapterOf, chapterLabel, hasPrintedSeparators,
-  compareSectionNumbers, outlineFromSectionMap,
+  compareSectionNumbers, outlineFromSectionMap, looksLikeChapterHeading,
 } from './section-titles.js';
+
+describe('looksLikeChapterHeading', () => {
+  // Every string below is a real sections_json value, read off production D1 on
+  // 2026-08-29 — the 69 chapter keys across 45 standards that exist ONLY as a
+  // bare integer, which is the key this predicate guards.
+  it('keeps a heading that reads like one', () => {
+    for (const t of [
+      'Design Guide',                                 // LP-1-24 ch. 3 — the DO40 breadcrumb
+      'Methods of Characterizing Illuminance Meters', // LM-73-04 ch. 7
+      'The Phases of the Lighting Design Process',    // LP-1-24 ch. 21
+      'Introduction',
+    ]) expect(looksLikeChapterHeading(t)).toBe(true);
+  });
+
+  it('rejects the debris a bare-integer key actually holds', () => {
+    for (const t of [
+      'Proposed change',                                     // LP-7-20 — public-review comment form
+      'Measure the luminaire',                               // LM-10-20 — numbered instruction
+      'Process the luminous intensity data',                 // LM-10-20
+      'Is there at least one lighting control zone for each', // DG-29-11 — checklist question
+      'The fenestration surfaces must be properly ori',      // LM-83-12 — truncated sentence
+      'The maximum airflow past the luminaire shall be',     // LM-98-24
+      'CPUs, servers, switches',                             // RP-10-20+E2 — table cell
+      'Vertical poster boards, tack surfaces',               // RP-10-20+E2
+      'Sketch showing luminaire shape, dimensions',          // LM-46-20
+      '(B) Type I - 4-Way',                                  // RP-8-25 — roadway distribution type
+      'MH LRL1.0',                                           // RP-8-25 — the one that broke DO28
+      'Far_UV-C luminaire',                                  // LM-93-22
+      'Lamp cost',                                           // DG-10-12 — table cell
+    ]) expect(looksLikeChapterHeading(t)).toBe(false);
+  });
+
+  it('has nothing to say about an empty value', () => {
+    for (const t of ['', null, undefined, '   ']) expect(looksLikeChapterHeading(t)).toBe(false);
+  });
+});
 
 describe('isPlausibleSectionNumber', () => {
   it('accepts the numbering IES standards actually print', () => {

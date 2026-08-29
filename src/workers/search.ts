@@ -82,7 +82,7 @@ import { formatCitation, composeStandardName } from '../lib/citations';
 import { looksLikeFormalReference, referenceCitationKey } from '../lib/references.js';
 import { referenceEntryNumber } from '../lib/reference-markers.js';
 import {
-  sanitizeSectionTitle, isPlausibleSectionNumber, chapterOf,
+  sanitizeSectionTitle, isPlausibleSectionNumber, chapterOf, looksLikeChapterHeading,
 } from '../lib/section-titles.js';
 import { redactFormulas } from '../lib/formula.js';
 import {
@@ -3777,6 +3777,29 @@ export function sectionAncestors(section: string): string[] {
  * column's prose. Re-checking here retires those without waiting for a
  * re-ingest — and a title we cannot vouch for is dropped, not printed.
  */
+/**
+ * Is this title a RUNNING HEADER rather than a chapter's own name?
+ *
+ * The tell is repetition: a value that answers several bare-integer keys in the
+ * same document is printed on every page, not at the top of one chapter.
+ * DG-18-08 records "LIGHT+ DESIGN" as the title of chapters 4, 6 AND 8 — it is
+ * the cover branding, sitting where a heading would be on three different pages.
+ *
+ * Compared on the RAW values, because that is what the index holds; sanitizing
+ * every entry to compare would cost a pass over the whole map per excerpt.
+ */
+function isRunningHeader(index: Record<string, string>, title: string | null): boolean {
+  if (!title) return false;
+  const wanted = title.toLowerCase();
+  let seen = 0;
+  for (const [key, value] of Object.entries(index)) {
+    if (!/^\d{1,2}$/.test(key)) continue;
+    if (String(value || '').trim().toLowerCase() !== wanted) continue;
+    if (++seen > 1) return true;
+  }
+  return false;
+}
+
 function lookupSectionTitle(index: Record<string, string>, number: string): string | null {
   const keys = [number];
   if (/^[A-Z]$/i.test(number)) {
@@ -3795,16 +3818,44 @@ function lookupSectionTitle(index: Record<string, string>, number: string): stri
   // Quality".
   let dotted: string | null = null;
   let bare: string | null = null;
+  let bareRaw: string | null = null;
   for (const key of keys) {
     const clean = sanitizeSectionTitle(index[key]);
     if (!clean) continue;
     if (/^\d{1,2}$/.test(key)) {
-      if (!bare || clean.length > bare.length) bare = clean;
+      if (!bare || clean.length > bare.length) {
+        bare = clean;
+        bareRaw = String(index[key] || '').trim();
+      }
     } else if (!dotted || clean.length > dotted.length) {
       dotted = clean;
     }
   }
-  if (!dotted) return bare;
+  // An UNCORROBORATED bare integer is refused outright. The comment above says
+  // such a key is as often a table cell as a heading; measured on the corpus it
+  // is worse than that — 45 standards carry 69 chapter keys that exist ONLY as a
+  // bare integer, and the values are overwhelmingly debris: "Proposed change"
+  // (the public-review comment form), "Illuminating Engineering Society" (a
+  // running header), "Measure the luminaire" (a numbered list item), "CPUs,
+  // servers, switches" (a table cell). RP-8-25 offered "MH LRL1.0" as the title
+  // of chapter 1, and the comparison model quietly replaced it with a chapter
+  // name out of its own knowledge — which is the DO28 grounding rule broken by
+  // way of a bad input rather than a bad prompt.
+  //
+  // So the card prints "Ch. 5" with no title, which is the degradation a
+  // standard with no sections_json at all already gets. That loses the minority
+  // of bare keys that WERE real headings; it is the DO071 trade the client set —
+  // say where to look rather than show a reading we cannot vouch for.
+  //
+  // A bare key CORROBORATED by a dotted one keeps its privileges below: there
+  // the two readings are the same heading, and the bare one is often the whole
+  // of it where the dotted one was cut at a line break.
+  if (!dotted) {
+    if (!bare) return null;
+    if (!looksLikeChapterHeading(bare)) return null;
+    if (isRunningHeader(index, bareRaw)) return null;
+    return bare;
+  }
   if (!bare) return dotted;
 
   // Same heading read twice, one of them cut at a line break? Then the longer

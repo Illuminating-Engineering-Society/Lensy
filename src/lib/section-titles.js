@@ -223,6 +223,45 @@ function looksLikeSentence(title) {
 }
 
 /**
+ * Is this string safe to print as the title of a CHAPTER that was read from an
+ * UNCORROBORATED bare-integer key?
+ *
+ * A key like `5` — carrying no separator — is as often a numbered list item, a
+ * table cell or a running header as it is a heading (see lookupSectionTitle in
+ * src/workers/search.ts). Measured on the corpus: 45 standards hold 69 such
+ * keys, and most of the values are debris — "Proposed change" (the public-review
+ * comment form), "Measure the luminaire" (a numbered instruction), "CPUs,
+ * servers, switches" (a table cell), "(B) Type I - 4-Way" (a roadway
+ * distribution type), "MH LRL1.0" (abbreviations out of a table header). RP-8-25
+ * offered the last of those as the title of chapter 1, and the comparison model
+ * replaced it with a chapter name from its own prior knowledge.
+ *
+ * So for that key alone the bar is raised to what an IES chapter heading looks
+ * like: Title Case, opening on a letter, no comma, no token mixing letters with
+ * digits. It keeps "Design Guide" and "Methods of Characterizing Illuminance
+ * Meters"; it rejects every example above.
+ *
+ * Deliberately stricter than sanitizeSectionTitle, which serves keys that carry
+ * their own separator and are trustworthy on that basis. looksLikeSentence
+ * cannot do this job: it needs six words, and "Proposed change" is two.
+ */
+export function looksLikeChapterHeading(title) {
+  const t = String(title || '').trim();
+  if (!t) return false;
+  if (!/^[A-Za-z]/.test(t)) return false;   // "(B) Type I - 4-Way"
+  if (t.includes(',')) return false;        // "CPUs, servers, switches"
+  const words = t.split(/\s+/);
+  if (words.length > 9) return false;
+  for (const word of words) {
+    // "LRL1.0", "Far_UV-C" — a heading's words are words.
+    if (/[A-Za-z]/.test(word) && /[\d_]/.test(word)) return false;
+    if (FUNCTION_WORDS.has(bareWord(word))) continue;
+    if (!/^[A-Z]/.test(word)) return false;  // sentence case → an instruction, not a heading
+  }
+  return true;
+}
+
+/**
  * Cut a Title Case heading where it stops being a heading and becomes the body
  * prose of the NEXT column (client DO071).
  *

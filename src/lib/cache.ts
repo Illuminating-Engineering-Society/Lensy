@@ -71,7 +71,12 @@ const DATA_VERSION_KEY = 'cache:data-version';
 //     figure locators, a regulated search carries the AHJ notice, and a question
 //     that is not about lighting returns no cards at all. Every stored v11
 //     response predates all of it.
-const SEARCH_CACHE_SCHEMA = 'v12';
+// v13: chapter titles read from an uncorroborated bare-integer key are no longer
+//     printed (45 standards held 69 such keys, mostly table cells and running
+//     headers), so an excerpt's chapter.title changes; and the comparison prompt
+//     now says explicitly that a chapter with no supplied title is written as its
+//     number alone. Every stored v12 response was built from the old titles.
+const SEARCH_CACHE_SCHEMA = 'v13';
 
 function errMsg(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
