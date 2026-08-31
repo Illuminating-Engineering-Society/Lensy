@@ -563,6 +563,27 @@ describe('stripOpeningFluff (DO088)', () => {
     expect(stripOpeningFluff(withHeading)).toBe(withHeading);
   });
 
+  // The shape every other case here misses: the model does not always put the
+  // filler in front of the substance on ONE line. When it writes the opener as
+  // its own short paragraph, the block holds nothing after the sentence — and
+  // the "never leave the answer empty" guard used to refuse on that alone, so
+  // the fluff reached the reader. Found against production, 2026-08-31.
+  it('drops a filler opener that is its own paragraph', () => {
+    const para = 'Luminance plays a crucial role in lighting design as it affects the visibility of objects and scenes.'
+      + '\n\nAccording to ANSI/IES RP-1-24, Section 4.2, luminance is a measurable quantity.';
+    expect(stripOpeningFluff(para)).toBe('According to ANSI/IES RP-1-24, Section 4.2, luminance is a measurable quantity.');
+  });
+
+  it('keeps a filler-shaped paragraph when it is the whole answer', () => {
+    const only = 'Uniformity is a crucial aspect of lighting design.\n\n';
+    expect(stripOpeningFluff(only)).toBe(only);
+  });
+
+  it('keeps a standalone opening paragraph that cites something', () => {
+    const cited = 'ANSI/IES RP-8-25 is a crucial aspect of roadway design.\n\nIt also covers parking.';
+    expect(stripOpeningFluff(cited)).toBe(cited);
+  });
+
   it('is applied by generateResponse', async () => {
     const ai = { run: async () => ({
       response: 'For a LZ2 roadway, the illuminance target is a crucial aspect of lighting design. '

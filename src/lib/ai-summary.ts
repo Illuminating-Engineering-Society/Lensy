@@ -448,13 +448,34 @@ export function stripOpeningFluff(text: string): string {
   // A heading is not a sentence.
   if (/^\s*(?:#{1,4}\s|[-*•]\s|\*\*)/.test(block)) return raw;
 
-  const m = /^\s*([^.!?]{20,400}[.!?])\s+(\S[\s\S]*)$/.exec(block);
-  if (!m) return raw;
-  const [, firstSentence, rest] = m;
-  if (!OPENING_FLUFF_RE.test(firstSentence)) return raw;
-  if (CITES_SOMETHING_RE.test(firstSentence)) return raw;
+  const isFluff = (sentence: string) =>
+    OPENING_FLUFF_RE.test(sentence) && !CITES_SOMETHING_RE.test(sentence);
 
-  blocks[firstIdx] = rest;
+  const m = /^\s*([^.!?]{20,400}[.!?])\s+(\S[\s\S]*)$/.exec(block);
+  if (m) {
+    const [, firstSentence, rest] = m;
+    if (!isFluff(firstSentence)) return raw;
+    blocks[firstIdx] = rest;
+    return blocks.join('\n');
+  }
+
+  // The filler is not always followed by the substance on the SAME line: the
+  // model often writes the opener as a short paragraph of its own, and then the
+  // block holds nothing after the sentence. That used to fall through to `raw`,
+  // because the "never leave the answer empty" guard was implemented as "never
+  // remove a whole block" — much broader than intended, and the reason a
+  // flagged opening still reached production. Found 2026-08-31.
+  const whole = /^\s*([^.!?]{20,400}[.!?])\s*$/.exec(block);
+  if (!whole || !isFluff(whole[1])) return raw;
+
+  // The guard, applied as it was meant: something has to survive.
+  const rest = blocks.slice(firstIdx + 1);
+  if (!rest.some(b => b.trim())) return raw;
+
+  // Drop the paragraph, then the blank line it leaves behind — or the answer
+  // would open on whitespace.
+  blocks.splice(firstIdx, 1);
+  while (firstIdx < blocks.length && !blocks[firstIdx].trim()) blocks.splice(firstIdx, 1);
   return blocks.join('\n');
 }
 
