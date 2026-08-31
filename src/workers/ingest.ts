@@ -432,6 +432,30 @@ async function ingestParsedPDF(request: Request, env: Env): Promise<Response> {
 
   const isDeprecated = status === 'deprecated';
 
+  /**
+   * A higher errata of the SAME edition that is Active in D1, if there is one.
+   *
+   * "_+E# indicates an 'errata' and the highest +E# is therefore the current
+   * version of a standard" (client DO096). An edition with no marker is errata
+   * 0, so RP-8-25 is superseded by RP-8-25+E1. Different YEARS are different
+   * base editions and never match — RP-8-22 is a prior edition by the ordinary
+   * rule, not by this one.
+   */
+  async function findActiveSupersedingErrata(db: D1Database, id: string): Promise<string | null> {
+    const m = /^(.+?)\s*\+\s*E(\d+)$/i.exec(id);
+    const base = m ? m[1].trim() : id;
+    const level = m ? parseInt(m[2], 10) : 0;
+    const rows = await db.prepare(
+      "SELECT id FROM standards WHERE status = 'Active' AND (id = ? OR id LIKE ?)"
+    ).bind(base, `${base}+E%`).all<{ id: string }>();
+    for (const row of rows.results || []) {
+      if (row.id === id) continue;
+      const rm = /\+\s*E(\d+)$/i.exec(row.id);
+      if ((rm ? parseInt(rm[1], 10) : 0) > level) return row.id;
+    }
+    return null;
+  }
+
   // Previous ingest state — used both for the deprecated-downgrade guard and
   // for stale-vector cleanup when a re-ingest produces FEWER chunks.
   const existing = await env.DB.prepare(
@@ -448,7 +472,15 @@ async function ingestParsedPDF(request: Request, env: Env): Promise<Response> {
     // Same id already Active in D1 → this file is a reaffirmed printing of
     // the current edition, not a prior edition. Refuse rather than silently
     // downgrading an active standard.
-    if (existing && existing.status !== 'Deprecated') {
+    //
+    // Unless a HIGHER errata of the same edition is itself Active (client
+    // DO096: "the highest +E# is therefore the current version of a standard").
+    // RP-8-25+E1 and RP-8-25+E2 both ship in the current folder and both were
+    // Active, which is not the reaffirmed-printing case this guard is for — it
+    // is a demotion, and it is only permitted because the edition that
+    // supersedes it demonstrably exists.
+    const supersedingErrata = await findActiveSupersedingErrata(env.DB, standardId);
+    if (existing && existing.status !== 'Deprecated' && !supersedingErrata) {
       return jsonResponse({
         error: `"${standardId}" is already indexed as a CURRENT standard — refusing to re-ingest it as deprecated. ` +
                'If this really is a prior edition, give it a distinct id (e.g. include the edition year).',

@@ -391,7 +391,7 @@
       </div>
 
       <div class="relative text-left">
-        <div class="border-2 border-gray-300 rounded-2xl bg-white p-1.5 flex items-center gap-2 search-glow transition">
+        <div id="hero-search-box" class="border-2 border-gray-300 rounded-2xl bg-white p-1.5 flex items-center gap-2 search-glow transition">
           <input
             type="text"
             id="search-input"
@@ -741,19 +741,30 @@
   </aside>
 
   <!-- ── Compact search bar (shown after first search) ──────────────────────── -->
-  <div id="compact-search" class="hidden no-print bg-white border-b border-gray-200 sticky top-[61px] z-30 shadow-sm">
-    <div class="max-w-5xl mx-auto px-4 py-3 flex gap-2">
-      <input
-        type="text"
-        id="compact-search-input"
-        class="flex-1 px-4 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-ies-blue focus:border-transparent"
-        placeholder="Search IES Standards..."
-        onkeydown="if(event.key==='Enter') performSearchFromCompact()"
-      />
-      <button onclick="performSearchFromCompact()"
-        class="px-4 py-2 bg-ies-blue text-white rounded-lg hover:bg-ies-blue-dark transition text-sm font-medium">
-        Search
-      </button>
+  <!-- The floating search bar (client DO097). Shown ONLY while the hero's own
+       box is off screen — two bars carrying the same text read as a bug — and
+       drawn in the hero bar's style (same border, radius, gold button and icon)
+       so it reads as that bar following the reader down, not as a second one. -->
+  <div id="compact-search" class="hidden no-print bg-white/95 backdrop-blur border-b border-gray-100 sticky top-[61px] z-30 shadow-sm">
+    <div class="max-w-3xl mx-auto px-4 py-2.5">
+      <div class="border-2 border-gray-300 rounded-2xl bg-white p-1 flex items-center gap-2 search-glow transition">
+        <input
+          type="text"
+          id="compact-search-input"
+          autocomplete="off"
+          class="flex-1 min-w-0 px-4 py-2 text-gray-900 text-base placeholder-gray-400 bg-transparent outline-none"
+          placeholder="Type a topic or ask a question"
+          onkeydown="if(event.key==='Enter') performSearchFromCompact()"
+        />
+        <button onclick="performSearchFromCompact()"
+          class="px-5 py-2 text-white rounded-xl transition font-bold flex items-center gap-2 shrink-0 hover:brightness-95"
+          style="background-color: var(--brand-accent-dark, #D8930F);">
+          <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+          </svg>
+          Search
+        </button>
+      </div>
     </div>
   </div>
 
@@ -1127,6 +1138,36 @@
     // 2026-08-20: "instead of limiting to 50, let's display all results") —
     // asking for 50 while the API was willing to return 200 would have left the
     // low-confidence bar folding away a pool that had already been truncated.
+    // ── One search bar at a time (client DO097) ──────────────────────────────
+    // "Only display 1 search bar at a time (users found it confusing to see 2,
+    // with the same text)." The floating bar needs BOTH conditions: a search has
+    // run, and the hero's own box has left the viewport. Scrolling back to the
+    // top hides it again, which is the third case the client drew.
+    let compactSearchArmed = false;
+    let heroSearchVisible = true;
+
+    function syncCompactSearchBar() {
+      const compact = document.getElementById('compact-search');
+      if (!compact) return;
+      compact.classList.toggle('hidden', heroSearchVisible || !compactSearchArmed);
+    }
+
+    // Observed rather than measured on scroll: the hero shrinks after the first
+    // search, so any fixed pixel threshold would be wrong in one of the states.
+    (function watchHeroSearchBox() {
+      const hero = document.getElementById('hero-search-box');
+      if (!hero || typeof IntersectionObserver !== 'function') {
+        // No observer: fall back to the previous behaviour — the bar simply
+        // appears after the first search.
+        heroSearchVisible = false;
+        return;
+      }
+      new IntersectionObserver((entries) => {
+        heroSearchVisible = entries[entries.length - 1].isIntersecting;
+        syncCompactSearchBar();
+      }, { threshold: 0 }).observe(hero);
+    })();
+
     const POOL_SIZE = 200;
     const PAGE_SIZE = 25;  // results shown per page (client request)
     // Mirrors EXCERPTS_PER_RESULT in src/workers/search.ts — the cap on the
@@ -2406,7 +2447,10 @@
       document.getElementById('advanced-search-wrap').classList.add('hidden');
       document.getElementById('hero-inner').style.paddingTop = '1.25rem';
       document.getElementById('hero-inner').style.paddingBottom = '1.25rem';
-      document.getElementById('compact-search').classList.remove('hidden');
+      // Armed, not shown: whether it is actually visible is the scroll's call
+      // (client DO097).
+      compactSearchArmed = true;
+      syncCompactSearchBar();
       updateSortFilterTrigger();   // "don't display until after search"
 
       // The compact bar is sticky and paints OVER the fixed trigger wherever
@@ -3126,6 +3170,49 @@
       let list = null;
       const closeList = () => { if (list) { blocks.push(`${list}</ul>`); list = null; } };
 
+      // "Introduce a 'continue reading' element after approximately the first 50
+      // words of the AI Guide" (client DO089). The fold still cuts on a BLOCK
+      // boundary, so an opening paragraph longer than the budget is split in two
+      // HERE — while it is still plain text. Splitting the rendered HTML instead
+      // would risk cutting inside a link or a <strong>, which is the reason the
+      // fold was block-granular in the first place.
+      const LEAD_WORD_BUDGET = 50;
+      const countWords = (s) => (String(s).match(/\S+/g) || []).length;
+      let leadWords = 0;
+      let foldAfter = -1;
+
+      /** The whole sentences at the start of `text` that reach `budget` words. */
+      const leadSentences = (text, budget) => {
+        const re = /[^.!?]+(?:[.!?]+["')\]]*|$)/g;
+        let used = 0;
+        let end = 0;
+        let m;
+        while ((m = re.exec(text)) !== null) {
+          used += countWords(m[0]);
+          end = re.lastIndex;
+          if (used >= budget) break;
+        }
+        return text.slice(0, end).trim();
+      };
+
+      // A sentence is never cut in half: a first sentence longer than the whole
+      // budget is kept entire, which is what "approximately" buys us.
+      const pushParagraph = (text) => {
+        if (foldAfter === -1 && leadWords < LEAD_WORD_BUDGET) {
+          const head = leadSentences(text, LEAD_WORD_BUDGET - leadWords);
+          const tail = head ? text.slice(head.length).trim() : '';
+          if (head && tail) {
+            blocks.push(`<p class="mb-2">${inlineAI(head)}</p>`);
+            foldAfter = blocks.length - 1;
+            blocks.push(`<p class="mb-2">${inlineAI(tail)}</p>`);
+            return;
+          }
+        }
+        blocks.push(`<p class="mb-2">${inlineAI(text)}</p>`);
+        leadWords += countWords(text);
+        if (foldAfter === -1 && leadWords >= LEAD_WORD_BUDGET) foldAfter = blocks.length - 1;
+      };
+
       for (const line of lines) {
         const t = line.trim();
         if (!t) { closeList(); continue; }
@@ -3138,6 +3225,26 @@
         if (md || COMPARE_HEADINGS.test(bare)) {
           closeList();
           const label = (md ? md[1] : bare).replace(/^\*\*|\*\*$/g, '').replace(/:$/, '');
+
+          // "Keep 'Further Reading' bolded, but don't need to bold the rest of
+          // the paragraph … slightly less prominent than all the highly-relevant
+          // entries above" (client DO096). The model writes the whole
+          // recommendation on ONE line — "Further reading: ANSI/IES RP-43-25 …,
+          // which provides guidance on …" — and the heading branch then set the
+          // entire thing in bold display type, making the least important block
+          // on the card the loudest thing in it.
+          //
+          // Only Further Reading is treated this way: the comparison headings
+          // (DO083's "Extent of the changes" and its siblings) stand alone on
+          // their line and ARE headings.
+          const inline = /^([^:]{3,40}):\s*(\S.*)$/.exec(label);
+          if (inline && /^further\s+reading$/i.test(inline[1].trim())) {
+            blocks.push(`<p class="mb-2 mt-3 text-[0.95em] text-gray-600">`
+              + `<strong class="font-semibold text-gray-900">${inlineAI(inline[1].trim())}:</strong> `
+              + `${inlineAI(inline[2])}</p>`);
+            continue;
+          }
+
           blocks.push(`<h4 class="font-display text-sm font-bold text-gray-900 mt-3 mb-1 first:mt-0">${inlineAI(label)}</h4>`);
           continue;
         }
@@ -3155,27 +3262,33 @@
         }
 
         closeList();
-        blocks.push(`<p class="mb-2">${inlineAI(t)}</p>`);
+        pushParagraph(t);
       }
       closeList();
-      return foldAIBlocks(blocks);
+      return foldAIBlocks(blocks, foldAfter);
     }
 
     /**
-     * "Display approximately 1st 'paragraph' then 'Continue Reading' element to
-     * expand" (client wireframes, 2026-08-20).
+     * The fold after approximately the first 50 words (client DO089; it was
+     * "the first paragraph" in the 2026-08-20 wireframes).
      *
-     * The lead is everything up to and including the first PARAGRAPH — a fold
-     * that opened on a bare heading ("What appears to be new") would show the
-     * reader a label and no answer. Everything after it is in the DOM from the
-     * start, just hidden, so expanding costs no round-trip and printing still
-     * withholds the whole thing (the copy guard is on the container).
+     * `foldAfter` is where the word budget ran out. It is only ever honoured on
+     * a PARAGRAPH — a fold that opened on a bare heading ("What appears to be
+     * new") would show the reader a label and no answer — and falls back to the
+     * first paragraph, which is exactly the previous rule. Everything after the
+     * cut is in the DOM from the start, just hidden, so expanding costs no
+     * round-trip and printing still withholds the whole thing (the copy guard is
+     * on the container).
+     *
+     * The button is a PILL rather than a text link (client DO095): as a bare
+     * blue label it "blends in to the appearance of all other hyperlinked
+     * standards", of which the Guide's prose is full.
      */
-    function foldAIBlocks(blocks) {
+    function foldAIBlocks(blocks, foldAfter = -1) {
       if (!blocks.length) return '';
-      let cut = -1;
-      for (let i = 0; i < blocks.length; i++) {
-        if (blocks[i].startsWith('<p')) { cut = i; break; }
+      let cut = foldAfter;
+      if (cut < 0 || !blocks[cut] || !blocks[cut].startsWith('<p')) {
+        cut = blocks.findIndex(b => b.startsWith('<p'));
       }
       // No paragraph at all (a pure bullet list), or nothing after the lead:
       // there is nothing worth folding.
@@ -3186,7 +3299,9 @@
       return `${lead}
         <div id="ai-summary-more" class="hidden">${rest}</div>
         <button id="ai-summary-more-btn" onclick="expandAIGuide()"
-                class="no-print mt-1 inline-flex items-center gap-1 text-xs font-semibold text-ies-blue hover:underline">
+                class="no-print mt-2 inline-flex items-center gap-1.5 rounded-full border border-ies-blue/40
+                       bg-white px-3.5 py-1 text-sm font-semibold text-ies-blue shadow-sm transition
+                       hover:bg-ies-blue hover:text-white hover:border-ies-blue">
           Continue Reading
           <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
             <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/>
@@ -4372,6 +4487,13 @@
 
       const isReference = result.resultType === 'reference';
       const excerptHeading = isReference ? 'Reference Entry' : 'From the Standard';
+      // On an Illuminance Table card ONLY, the disclosure says what is behind it
+      // (client DO093) — "encourage users to explore more than the quantitative
+      // recommendations in the tables". Kept as its own span so it stays in
+      // sentence case beside the uppercased heading, as the client wrote it.
+      const excerptHint = result.resultType === 'application'
+        ? 'browse relevant design considerations'
+        : '';
       const shown = proseExcerpts.slice(0, MAX_EXCERPTS_SHOWN);
       // At the cap the list is a ranked subset, not the whole set — say "Top 10"
       // so the count never implies the standard holds exactly 10 passages
@@ -4463,6 +4585,7 @@
                 <span class="hidden group-open:inline">${caret('M5 15l7-7 7 7')}</span>
               </span>
               <span class="text-[11px] font-bold text-gray-900 uppercase tracking-wider">${excerptHeading}</span>
+              ${excerptHint ? `<span class="text-[11px] font-normal text-gray-600">(${excerptHint})</span>` : ''}
               ${shown.length > 1 ? `<span class="text-[11px] font-bold text-gray-900">— ${passageLabel}</span>` : ''}
               <span class="ml-auto text-[10px] font-semibold uppercase tracking-wide text-gray-400 no-print">
                 <span class="group-open:hidden">Show</span><span class="hidden group-open:inline">Hide</span>

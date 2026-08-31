@@ -1397,6 +1397,107 @@ The UI label for each kind matches the filter label exactly — "Documents" filt
 
 A fifth `resultType`, **`standard`**, is not a filter value: it is the whole-document card a designation or title search returns (see below). It is a Document, so it borrows the `excerpt` label, line style and palette rather than owning a fifth one.
 
+### The DO089–DO097 round: a column that was never filled, and an edition that was live twice
+
+The client's fourth round. Four UI items are small on their own; the three that
+are not are all cases where the DATA was wrong in a way no amount of prompt or
+CSS could reach — a schema column that had never held a value, a table's notes
+attached to nothing, and two editions of one standard both flagged current.
+
+- **The AI Guide folds after ~50 words, not after the first paragraph (DO089), on a pill (DO095).**
+  `LEAD_WORD_BUDGET = 50`. The cut still lands on a BLOCK boundary, so an opening
+  paragraph longer than the budget is split **while it is still plain text**:
+  splitting the rendered HTML would risk cutting inside a link or a `<strong>`,
+  which is why the fold was block-granular to begin with. `leadSentences` never
+  halves a sentence — a first sentence longer than the whole budget is kept
+  entire, which is what "approximately" buys. `foldAfter` is honoured only on a
+  paragraph and otherwise falls back to the first one, i.e. exactly the previous
+  rule. "Continue Reading" is now a bordered pill: as a bare blue label it "blends
+  in to the appearance of all other hyperlinked standards", of which the Guide's
+  prose is full.
+- **`Class_of_Play` had been NULL in all 2,498 rows since the column existed (DO090).**
+  The record was built from `parsed.classOfPlay`, which nothing ever produced —
+  the schema's own comment ("I | II | III | IV (RP-6)") made it look as though
+  RP-6 printed a per-row column. It does not: it prints a grouping LINE ("Tennis
+  / Class I / Area of play …") that the hierarchy already captures, so the class
+  is now read off the snapshot exactly the way the Lighting Zone is
+  (`extractClassOfPlay`, deepest level first). The same numeral was also landing
+  at the END of the leaf label, because `parsePrefixMarkers` only peels `[AT]` and
+  `[LMH]` — production cards read "Target @ 18.3 m (60 ft) III" and "Shooting line
+  IV". `stripTrailingClassNumeral` removes it **only when it matches the class the
+  hierarchy already established**, so a label that legitimately ends in a numeral
+  keeps it.
+- **RP-43's "See Notes" is a column heading, not a cell (DO092).** "The 'See
+  Notes' comment in RP-43 tables should be treated the same as a table footnote."
+  The words appear nowhere in the data — 0 of RP-43-25's 226 rows store them.
+  They head two of the Environmental and Visual columns, and the note numbers sit
+  on their own line above: `5 6 7, 8, 9 10` → Glare 5, Uplight 6, Controls 7·8·9,
+  Spectrum 10. **A comma binds within a column; a space opens the next** — that is
+  the whole grouping rule, and why "7, 8, 9" is one column's three notes rather
+  than three columns. `detectColumnNoteRefs` is anchored on the `APPLICATION
+  TASK/AREA` line directly below it and refuses to read anything that does not
+  yield exactly one group per column, because a partial reading would shift every
+  note onto the wrong column silently. The numbers then join every row's refs,
+  which is what pulls their TEXT into the notes disclosure — where the client
+  asked for them to be defined. `FootnoteMarks.columns` records the mapping as
+  provenance; nothing renders that key yet.
+- **The highest `+E#` is the current edition (DO096).** RP-8-25+E1 and RP-8-25+E2
+  are one edition printed twice, but both PDFs ship in the current folder, so both
+  were ingested Active — and the AI Guide was citing two live standards where
+  there is one. An edition carrying no marker is errata 0, so RP-8-25 is
+  superseded by RP-8-25+E1; different YEARS are different base editions and are
+  untouched (RP-8-22 is a prior edition by the ordinary folder rule, not by this
+  one). Enforced at both ends: `findSupersededErrata` reclassifies the file before
+  the ingest loop, and `findActiveSupersedingErrata` in the Worker relaxes the
+  reaffirmed-printing guard **only because the superseding edition demonstrably
+  exists** in D1. Measured on production: RP-8-25 is the only family in the corpus
+  with two Active erratas, so this changes exactly one document today and prevents
+  the next one silently.
+- **"Further Reading" stops shouting (DO096).** The model writes the whole
+  recommendation on ONE line — "Further reading: ANSI/IES RP-43-25 …, which
+  provides guidance on …" — and the heading branch set the entire thing in bold
+  display type, making the least important block on the card the loudest thing in
+  it. Only the label stays bold now, on a smaller grey paragraph. Restricted to
+  Further Reading on purpose: DO083's comparison headings stand alone on their
+  line and genuinely ARE headings.
+- **The table card invites the reader past the numbers (DO093).** An Illuminance
+  Table card's disclosure reads "FROM THE STANDARD (browse relevant design
+  considerations)". Table cards only — on a Document or Reference card the
+  disclosure already holds prose, so the hint would say nothing.
+- **One search bar at a time (DO097).** "Users found it confusing to see 2, with
+  the same text." The floating bar now needs BOTH conditions — a search has run,
+  AND the hero's own box has left the viewport — so scrolling back to the top
+  hides it again. Watched with an `IntersectionObserver` rather than a scroll
+  threshold, because the hero SHRINKS after the first search and any fixed pixel
+  value would be wrong in one of the two states. No observer → the previous
+  behaviour (appears after the first search). It is also drawn in the hero bar's
+  own style, so it reads as that bar following the reader down rather than as a
+  second one.
+
+**Three Vectorize limits, measured 2026-08-29, that had made the orphan tool
+unusable since it shipped.** `returnMetadata: 'all'` caps `topK` at **20** and the
+scan cannot drop the metadata — `standard_id` is the only thing it reads — so at
+100 every query threw and `/api/admin/scan-orphans` answered 500 **for its own
+default**. `getByIds` caps at **20** IDs per call (25 throws) and `deleteByIds` at
+**100** (200 throws): three different limits, so they cannot share a constant.
+`enumerate-ids` now refuses a range needing more than 400 Vectorize calls up
+front, naming the arithmetic, rather than half-answering into the subrequest
+budget.
+
+And the exclusion that matters more than any of them: **`LS-1-DEF-*` vectors have
+no `standards` row by design** (DO33 — the definitions come from the ies.org
+glossary REST collection, not from a PDF), so they matched the orphan test
+exactly. The tool's happy path ends in a delete, and the one thing it pointed at
+was the entire Definitions content type — 1,311 vectors. Recognised by BOTH the id
+shape and `chunk_type === 'definition'`, because either alone is one rename away
+from offering the glossary up for deletion again.
+
+**What this round needs to take effect.** The UI items are live on deploy. The
+three data items are not: `Class_of_Play`, the RP-43 column notes and the RP-8-25+E1
+demotion are all written by the INGEST, so they appear only after `npm run ingest`
+re-runs. The demotion is a deliberate production data change — one Active standard
+becomes Deprecated — and should be run watching, not unattended.
+
 ### The 260820 feedback round, part two: restraint (DO080–DO088)
 
 The second half of the same annotated document. Where part one was about not

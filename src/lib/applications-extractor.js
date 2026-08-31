@@ -291,6 +291,11 @@ function extractFromPages(tablePages, standardId, fullDesignation) {
   // overwritten.
   const headerRefs = new Array(8).fill(null);
 
+  // Column-level footnote refs (client DO092). Printed once per table page, in
+  // the header; carried across pages so a page whose header did not parse still
+  // gets the mapping the table established.
+  let columnRefs = null;
+
   for (const page of tablePages) {
     const ref = detectTableRef(page.text);
     if (ref) tableRef = ref;
@@ -307,6 +312,8 @@ function extractFromPages(tablePages, standardId, fullDesignation) {
     const pageLines = page.lines || [];
     const { refsByTarget, refLineIdxs } = bindFootnoteRefLines(pageLines, bodyFont);
     const noteMap = collectPageNotes(page, bodyFont);
+    const pageColumnRefs = detectColumnNoteRefs(pageLines);
+    if (pageColumnRefs) columnRefs = pageColumnRefs;
     const pageRecords = [];
 
     for (let li = 0; li < pageLines.length; li++) {
@@ -368,7 +375,10 @@ function extractFromPages(tablePages, standardId, fullDesignation) {
       // Data row — snapshot hierarchy with leaf, build record
       const { name: leafRaw, link: leafLink } = splitNameAndLink(parsed.label);
       const { name: leafStripped, refs: leafGluedRefs } = stripGluedSuperscripts(leafRaw);
-      const leafName = cleanAppName(leafStripped);
+      // Read the class off the ANCESTORS (not the snapshot) so the leaf label
+      // can be cleaned of the numeral the row repeats before it is recorded.
+      const classOfPlay = extractClassOfPlay(hierarchy);
+      const leafName = stripTrailingClassNumeral(cleanAppName(leafStripped), classOfPlay);
       const rowLink = leafLink || pendingLink;
       pendingLink = null;
       const snapshot = snapshotHierarchyWithLeaf(hierarchy, depth, leafName);
@@ -378,9 +388,14 @@ function extractFromPages(tablePages, standardId, fullDesignation) {
       // the data row itself.
       const headerLevels = collectHeaderMarks(snapshot, headerRefs);
       const rowMarks = dedupeNums([...(refsByTarget.get(li) || []), ...leafGluedRefs]);
+      // Column notes apply to EVERY row of the table, so they join the row's
+      // refs: that is what pulls their text into the Application Task/Area Notes
+      // disclosure, which is where the client asked for them to be defined.
+      const colRefs = hasEnvConsiderationColumns(standardId) ? columnRefs : null;
       const allRefNums = dedupeNums([
         ...Object.values(headerLevels).flat(),
         ...rowMarks,
+        ...(colRefs ? Object.values(colRefs).flat() : []),
       ]);
 
       const tm24 = isTM24EligibleCat(parsed.horCat) || isTM24EligibleCat(parsed.verCat);
@@ -408,7 +423,7 @@ function extractFromPages(tablePages, standardId, fullDesignation) {
         Indoor_Outdoor: currentSection,
         App_Type:       null,
         Veiling_Risk:   parsed.veilingRisk,
-        Class_of_Play:  parsed.classOfPlay,
+        Class_of_Play:  classOfPlay,
         // Horizontal
         Hor_Cat:         parsed.horCat,
         Hor_Lux:         parsed.horLux,
@@ -451,8 +466,12 @@ function extractFromPages(tablePages, standardId, fullDesignation) {
         Spectrum_Guidance: envColumns ? parsed.spectrum : null,
         Controls_Required: envColumns ? parsed.controls : null,
         Footnotes:     null,
-        Footnote_Marks: (Object.keys(headerLevels).length > 0 || rowMarks.length > 0)
-          ? JSON.stringify({ levels: headerLevels, row: rowMarks })
+        Footnote_Marks: (Object.keys(headerLevels).length > 0 || rowMarks.length > 0 || colRefs)
+          ? JSON.stringify({
+              levels: headerLevels,
+              row: rowMarks,
+              ...(colRefs ? { columns: colRefs } : {}),
+            })
           : null,
         General_Notes: null,
         App_Notes:     null,
@@ -493,6 +512,60 @@ function extractFromPages(tablePages, standardId, fullDesignation) {
 // by bindFootnoteRefLines to keep footnote refs off lines that never become
 // hierarchy or data nodes.
 const SKIP_RE = /^(?:ANSI\/IES|Recommended Practice|Recommended Illuminance|APPLICATION|Target E[hv]|Horizontal Illuminance|Vertical Illuminance|Environmental and Visual|Uniformity|TaskRatio|Lux\s*@|Fc\s*@|@\s*Height|See Notes|TS\s*=|Class of Play|Veiling Risk|Sub Category|Hierarchy|App_s)/i;
+
+// ─── Column-level footnotes (client DO092) ────────────────────────────────────
+
+/** The Environmental and Visual Considerations columns, in printed order. */
+const ENV_NOTE_COLUMNS = ['glare', 'uplight', 'controls', 'spectrum'];
+
+/**
+ * The note numbers a table attaches to its COLUMNS rather than to a row.
+ *
+ * "The 'See Notes' comment in RP-43 tables should be treated the same as a table
+ * footnote." Reproduced on RP-43-25 p. 73: the words "See Notes" appear nowhere
+ * in the data — 0 of its 226 rows store them. They are the HEADING of two
+ * columns, and the note numbers sit on their own line directly above:
+ *
+ *   Task Ratio Ratio
+ *   5 6 7, 8, 9 10
+ *   APPLICATION TASK/AREA Area Lux @ m (Fc @ ft) … (max) (max) See Notes See Notes
+ *
+ * Read in printed order against the four Environmental and Visual columns:
+ * Glare 5, Uplight 6, Controls 7·8·9, Spectrum 10. A COMMA binds within one
+ * column; a SPACE opens the next one — which is the whole of the grouping rule,
+ * and why "7, 8, 9" is one column's three notes rather than three columns.
+ *
+ * Anchored on the APPLICATION TASK/AREA line immediately below, so a page
+ * number, a lone marker line or a numeric data fragment cannot be mistaken for
+ * this row, and refused outright unless it yields exactly one group per column —
+ * a partial reading would silently shift every note onto the wrong column.
+ *
+ * @returns {Record<string, number[]>|null}
+ */
+function detectColumnNoteRefs(pageLines) {
+  const GROUPS_RE = /^\d{1,2}(?:\s*,\s*\d{1,2})*(?:\s+\d{1,2}(?:\s*,\s*\d{1,2})*)+$/;
+  for (let i = 0; i < pageLines.length - 1; i++) {
+    const text = String(pageLines[i].text || '').trim();
+    if (!GROUPS_RE.test(text)) continue;
+    if (!/^APPLICATION\s+TASK\/AREA/i.test(String(pageLines[i + 1].text || '').trim())) continue;
+
+    const groups = [];
+    let current = [];
+    for (const token of text.split(/\s+/)) {
+      const n = parseInt(token, 10);
+      if (Number.isNaN(n)) continue;
+      current.push(n);
+      if (!token.endsWith(',')) { groups.push(current); current = []; }
+    }
+    if (current.length > 0) groups.push(current);
+    if (groups.length !== ENV_NOTE_COLUMNS.length) continue;
+
+    const out = {};
+    ENV_NOTE_COLUMNS.forEach((col, idx) => { out[col] = groups[idx]; });
+    return out;
+  }
+  return null;
+}
 
 // ─── Footnotes ────────────────────────────────────────────────────────────────
 
@@ -1005,6 +1078,55 @@ function extractLightingZone(snapshot) {
     if (parsed) return { zone: parsed.code, curfew: parsed.curfew };
   }
   return { zone: null, curfew: null };
+}
+
+/** A "Class I".."Class IV" grouping level, exactly as RP-6 prints it. */
+const CLASS_OF_PLAY_RE = /^Class\s+(I{1,3}|IV)$/i;
+
+/**
+ * The Class of Play a row sits under (client DO090; RP-6 only).
+ *
+ * RP-6 does NOT print the class as a per-row column, and the schema's own
+ * comment ("I | II | III | IV (RP-6)") made it look as though it did — the
+ * record was built from `parsed.classOfPlay`, which nothing ever produced, so
+ * the column was NULL in all 2,498 rows for as long as it has existed.
+ *
+ * What the table actually prints (p. 75) is a grouping LINE:
+ *
+ *   Tennis
+ *   Class I
+ *   Area of play I U 1500 lx @ 0.91 m …
+ *
+ * which the hierarchy already captures — an Archery row stores App_s1 =
+ * "Class III". So the class is read the way the Lighting Zone is: off the
+ * hierarchy snapshot, deepest level first.
+ *
+ * @returns {string|null} the roman numeral alone ("III"), for filtering
+ */
+function extractClassOfPlay(snapshot) {
+  const levels = [snapshot.s6, snapshot.s5, snapshot.s4, snapshot.s3, snapshot.s2, snapshot.s1, snapshot.app];
+  for (const v of levels) {
+    const m = CLASS_OF_PLAY_RE.exec(String(v || '').trim());
+    if (m) return m[1].toUpperCase();
+  }
+  return null;
+}
+
+/**
+ * Strip the Class-of-Play numeral the data row repeats after its own label.
+ *
+ * The row prints the class twice — once as the grouping line above it, once as
+ * its own column — and the column token lands at the end of the leaf label
+ * because parsePrefixMarkers only peels [AT] and [LMH]. Production shows the
+ * damage on the card: "Target @ 18.3 m (60 ft) III", "Shooting line IV".
+ *
+ * Only stripped when it MATCHES the class the hierarchy already established, so
+ * a label that legitimately ends in a numeral keeps it.
+ */
+function stripTrailingClassNumeral(label, classOfPlay) {
+  if (!label || !classOfPlay) return label;
+  const stripped = label.replace(new RegExp(`\\s+${classOfPlay}$`, 'i'), '').trim();
+  return stripped || label;
 }
 
 // ─── Indentation Grid (hierarchy depth) ───────────────────────────────────────

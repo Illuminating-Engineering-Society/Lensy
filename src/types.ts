@@ -228,6 +228,13 @@ export interface FootnoteMarks {
   levels?: Record<string, number[]>;
   /** markers printed on the data row itself */
   row?: number[];
+  /**
+   * Notes the table attaches to a COLUMN rather than to a row (client DO092;
+   * RP-43's "See Notes" headings). Provenance only — the numbers themselves are
+   * already merged into every row's refs at extraction, which is what pulls
+   * their text into the notes disclosure. Nothing renders this key yet.
+   */
+  columns?: Record<string, number[]>;
 }
 
 /**

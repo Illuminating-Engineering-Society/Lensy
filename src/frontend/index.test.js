@@ -1779,3 +1779,106 @@ describe('open-in-library telemetry (DO078)', () => {
     ]);
   });
 });
+
+// ─── The 260820 feedback round, pages 26–38 ───────────────────────────────────
+
+describe('the AI Guide fold (DO089, DO095)', () => {
+  // ONE paragraph of three 30-word sentences. The budget runs out inside it, so
+  // the old "cut after the first paragraph" rule would show all 90 words and
+  // this fixture is what separates the two rules: the fold has to land INSIDE a
+  // paragraph, which is why the split happens on plain text before rendering.
+  const sentence = (tag) => Array.from({ length: 30 }, (_, i) => `${tag}${i}`).join(' ') + '.';
+  const long = `${sentence('one')} ${sentence('two')} ${sentence('three')}`;
+
+  it('cuts after approximately fifty words, not after the whole paragraph', () => {
+    const html = run(`renderAIText(${JSON.stringify(long)})`);
+    const lead = html.slice(0, html.indexOf('ai-summary-more'));
+    const words = (lead.replace(/<[^>]+>/g, ' ').match(/\S+/g) || []).length;
+    expect(words).toBeLessThan(75);      // 90 under the old rule
+    expect(lead).toContain('two29');     // the sentence that crossed the budget is whole
+    expect(lead).not.toContain('three0');
+    // The remainder is present but hidden, so expanding costs no round-trip.
+    expect(html).toContain('id="ai-summary-more"');
+    expect(html).toContain('three29');
+  });
+
+  it('keeps a single over-long sentence whole rather than cutting it', () => {
+    const huge = Array.from({ length: 120 }, (_, i) => `w${i}`).join(' ') + '.';
+    const html = run(`renderAIText(${JSON.stringify(huge + '\n\nA second paragraph.')})`);
+    const lead = html.slice(0, html.indexOf('ai-summary-more'));
+    expect(lead).toContain('w119.');
+  });
+
+  it('still refuses to open the fold on a bare heading', () => {
+    const html = run(`renderAIText(${JSON.stringify('## Extent of the changes\n\nOnly a little changed.\n\nThen more prose.')})`);
+    const lead = html.slice(0, html.indexOf('ai-summary-more'));
+    expect(lead).toContain('Only a little changed');
+  });
+
+  it('presents Continue Reading as a pill, not as another blue link', () => {
+    const html = run(`renderAIText(${JSON.stringify(long + '\n\nMore.')})`);
+    expect(html).toMatch(/id="ai-summary-more-btn"[\s\S]*?rounded-full/);
+  });
+});
+
+describe('Further Reading is not all bold (DO096)', () => {
+  const line = 'Further reading: ANSI/IES RP-43-25 Recommended Practice, which provides guidance on public spaces.';
+
+  it('bolds the label and leaves the recommendation in plain text', () => {
+    const html = run(`renderAIText(${JSON.stringify(line)})`);
+    expect(html).toContain('<strong class="font-semibold text-gray-900">Further reading:</strong>');
+    expect(html).not.toMatch(/<h4[^>]*>[^<]*which provides guidance/);
+  });
+
+  it('leaves a standalone comparison heading as a heading', () => {
+    const html = run(`renderAIText(${JSON.stringify('Extent of the changes')})`);
+    expect(html).toMatch(/<h4[^>]*>Extent of the changes<\/h4>/);
+  });
+});
+
+describe('the table card invites the reader past the numbers (DO093)', () => {
+  const card = (type) => `{
+    resultType: '${type}', relevanceScore: 0.9,
+    citationName: 'ANSI/IES RP-6-24 Recommended Practice: Lighting Sports',
+    citationPage: 75,
+    application: { standard: 'RP-6-24', code: 'c1', category: 'Tennis', rowRef: 95,
+                   subCategory: 'Exterior - Sports', horizontal: { lux: 1500, category: 'U' } },
+    excerpt: { text: 'Reason and substantiation for handball, racquetball and squash lighting levels.',
+               chunkType: 'text', pageNumber: 75, section: '6.13' }
+  }`;
+
+  it('adds the hint on an Illuminance Table card', () => {
+    const html = run(`renderResultCard({ key: 'k', members: [${card('application')}] }, 0)`);
+    expect(html).toContain('browse relevant design considerations');
+  });
+
+  it('leaves the heading on a Document card alone', () => {
+    const html = run(`renderResultCard({ key: 'k', members: [${card('excerpt')}] }, 0)`);
+    expect(html).not.toContain('browse relevant design considerations');
+  });
+});
+
+describe('one search bar at a time (DO097)', () => {
+  const hidden = () => run(`document.getElementById('compact-search').classList.contains('hidden')`);
+
+  it('stays hidden before any search, however far the reader scrolls', () => {
+    run(`compactSearchArmed = false; heroSearchVisible = false; syncCompactSearchBar()`);
+    expect(hidden()).toBe(true);
+  });
+
+  it('stays hidden after a search while the hero box is still on screen', () => {
+    run(`compactSearchArmed = true; heroSearchVisible = true; syncCompactSearchBar()`);
+    expect(hidden()).toBe(true);
+  });
+
+  it('appears once the hero box has scrolled away', () => {
+    run(`compactSearchArmed = true; heroSearchVisible = false; syncCompactSearchBar()`);
+    expect(hidden()).toBe(false);
+  });
+
+  it('hides again when the reader scrolls back to the top', () => {
+    run(`compactSearchArmed = true; heroSearchVisible = false; syncCompactSearchBar();
+         heroSearchVisible = true; syncCompactSearchBar()`);
+    expect(hidden()).toBe(true);
+  });
+});

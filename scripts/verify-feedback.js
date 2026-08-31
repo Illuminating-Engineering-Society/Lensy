@@ -2262,6 +2262,216 @@ const CHECKS = [
   },
 
   {
+    id: 'DO89',
+    title: 'The AI Guide folds after ~50 words, on a sentence boundary',
+    async run() {
+      const html = await loadIndexHtml();
+      const required = [
+        ['the word budget', /LEAD_WORD_BUDGET\s*=\s*50/],
+        // The split happens on PLAIN TEXT, before inlineAI runs — splitting the
+        // rendered HTML could cut inside a link or a <strong>.
+        ['the sentence-boundary split', /function leadSentences|const leadSentences\s*=/],
+        ['the fold honouring it', /function foldAIBlocks\(blocks, foldAfter/],
+      ];
+      const missing = required.filter(([, re]) => !re.test(html.text)).map(([n]) => n);
+      if (missing.length > 0) return fail(`missing ${missing.join(', ')} [${html.source}]`);
+      // The fallback must survive: a Guide that is one long paragraph, or pure
+      // bullets, still has to fold the way it did before.
+      if (!/cut = blocks\.findIndex\(b => b\.startsWith\('<p'\)\)/.test(html.text)) {
+        return fail(`the fallback to the first paragraph is gone — a Guide whose lead exceeds the budget would not fold [${html.source}]`);
+      }
+      return pass(`the lead is cut at ~50 words on a whole sentence, falling back to the first paragraph [${html.source}]`);
+    },
+  },
+
+  {
+    id: 'DO95',
+    title: '"Continue Reading" is a pill, not another blue link',
+    async run() {
+      const html = await loadIndexHtml();
+      const btn = /id="ai-summary-more-btn"[\s\S]{0,400}?>/.exec(html.text);
+      if (!btn) return fail(`the Continue Reading button is not rendered [${html.source}]`);
+      // The complaint was that it "blends in to the appearance of all other
+      // hyperlinked standards" — so the test is that it no longer looks like one.
+      if (!/rounded-full/.test(btn[0]) || !/border/.test(btn[0])) {
+        return fail(`the button is still styled as a text link [${html.source}]`,
+          'src/frontend/index.html foldAIBlocks — it needs the bordered pill classes');
+      }
+      return pass(`bordered pill with a hover fill, distinct from the Guide's inline citation links [${html.source}]`);
+    },
+  },
+
+  {
+    id: 'DO90',
+    title: 'RP-6 rows carry their Class of Play, and the label does not repeat it',
+    async run() {
+      await loadStandards();
+      const rp6 = (ctx.active || []).find(s => /^RP-6\b/.test(s.id));
+      if (!rp6) return blocked('no RP-6 edition is indexed', 'RP-6 in pdfs/ and npm run ingest');
+
+      const data = await search('tennis area of play class of play illuminance', {
+        contentTypes: ['tables'], limit: 40,
+      });
+      const rows = (data.results || [])
+        .map(r => r.application)
+        .filter(a => a && /^RP-6\b/.test(String(a.standard || '')));
+      if (rows.length === 0) {
+        return blocked(`the search returned no ${rp6.id} application rows`, 'RP-6 application rows in D1 (npm run ingest)');
+      }
+
+      // The row's own label is the DEEPEST hierarchy level it filled — there is
+      // no separate leaf field in the payload.
+      const leafOf = (a) => String(a.sub6 || a.sub5 || a.sub4 || a.sub3 || a.sub2 || a.sub1 || a.category || '');
+
+      const withClass = rows.filter(a => a.classOfPlay);
+      // The numeral the row used to repeat after its own label — "Shooting line
+      // IV". Checked on every returned row, not only the classed ones, and only
+      // where the hierarchy itself declares a class: a label legitimately ending
+      // in a numeral must not be reported.
+      const repeats = rows.filter(a => a.classOfPlay
+        && new RegExp(`\\s+${a.classOfPlay}$`, 'i').test(leafOf(a)));
+      if (withClass.length === 0) {
+        return blocked(
+          `${rows.length} ${rp6.id} row(s) returned, none carrying a Class of Play`,
+          'npm run ingest — extractClassOfPlay reads the hierarchy at extraction time; the column was NULL in every row before it',
+        );
+      }
+      if (repeats.length > 0) {
+        return fail(
+          `Class of Play is populated (${withClass.length}/${rows.length}) but ${repeats.length} label(s) still repeat it, e.g. "${leafOf(repeats[0])}"`,
+          'src/lib/applications-extractor.js stripTrailingClassNumeral — it only strips a numeral matching the hierarchy class',
+        );
+      }
+      return pass(`${withClass.length}/${rows.length} ${rp6.id} row(s) classed (e.g. "${leafOf(withClass[0])}" → Class ${withClass[0].classOfPlay}), no label repeating the numeral`);
+    },
+  },
+
+  {
+    id: 'DO92',
+    title: "RP-43's column notes are attached to its rows",
+    async run() {
+      await loadStandards();
+      const rp43 = (ctx.active || []).find(s => /^RP-43\b/.test(s.id));
+      if (!rp43) return blocked('no RP-43 edition is indexed', 'RP-43 in pdfs/ and npm run ingest');
+
+      const data = await search('outdoor pedestrian walkway glare uplight controls', {
+        contentTypes: ['tables'], limit: 40,
+      });
+      const rows = (data.results || [])
+        .map(r => r.application)
+        .filter(a => a && /^RP-43\b/.test(String(a.standard || '')));
+      if (rows.length === 0) {
+        return blocked(`the search returned no ${rp43.id} application rows`, 'RP-43 application rows in D1 (npm run ingest)');
+      }
+
+      const withColumns = rows.filter(a => a.footnoteMarks && a.footnoteMarks.columns);
+      if (withColumns.length === 0) {
+        return blocked(
+          `${rows.length} ${rp43.id} row(s) returned, none carrying column notes`,
+          'npm run ingest — detectColumnNoteRefs reads the note line above APPLICATION TASK/AREA at extraction time',
+        );
+      }
+      // One group per Environmental and Visual column, or the mapping has
+      // shifted every note onto the wrong column.
+      const cols = withColumns[0].footnoteMarks.columns;
+      const expected = ['glare', 'uplight', 'controls', 'spectrum'];
+      const got = expected.filter(c => Array.isArray(cols[c]) && cols[c].length > 0);
+      if (got.length !== expected.length) {
+        return fail(
+          `column notes were read but only cover ${got.join(', ') || 'nothing'} — a partial reading shifts notes onto the wrong column`,
+          'src/lib/applications-extractor.js detectColumnNoteRefs refuses a partial group set; this row predates that',
+        );
+      }
+      return pass(`${withColumns.length}/${rows.length} ${rp43.id} row(s) carry all four columns' notes (${expected.map(c => `${c} ${cols[c].join('·')}`).join(', ')})`);
+    },
+  },
+
+  {
+    id: 'DO93',
+    title: 'The Illuminance Table card invites the reader past the numbers',
+    async run() {
+      const html = await loadIndexHtml();
+      if (!/browse relevant design considerations/.test(html.text)) {
+        return fail(`the hint is not rendered [${html.source}]`);
+      }
+      // Table cards only — a Document card's disclosure already holds prose, so
+      // the hint would be saying nothing there.
+      if (!/result\.resultType === 'application'\s*\n?\s*\?\s*'browse relevant design considerations'/.test(html.text)
+          && !/excerptHint\s*=\s*result\.resultType === 'application'/.test(html.text)) {
+        return fail(`the hint is not restricted to Illuminance Table cards [${html.source}]`);
+      }
+      return pass(`shown on application cards only, in sentence case beside the uppercased heading [${html.source}]`);
+    },
+  },
+
+  {
+    id: 'DO96',
+    title: 'The highest +E# is the current edition, and Further Reading is not all bold',
+    async run() {
+      const html = await loadIndexHtml();
+      // Half one — the styling, which is live on deploy.
+      if (!/further\\s\+reading/i.test(html.text) && !/further\s*\\s\+\s*reading/i.test(html.text)) {
+        return fail(`the AI-Guide renderer has no Further Reading branch — the whole line is still set as a heading [${html.source}]`,
+          'src/frontend/index.html — the inline-label branch before the <h4> push');
+      }
+
+      // Half two — the corpus, which needs the re-ingest. Find every family in
+      // D1 with more than one edition of the same base still Active.
+      await loadStandards();
+      if (!ctx.active) {
+        return blocked(`the standards list is unavailable (${ctx.standardsError})`, 'the migration behind the deployed Worker');
+      }
+      const byBase = new Map();
+      for (const s of ctx.active) {
+        const m = /^(.+?)\s*\+\s*E(\d+)$/i.exec(s.id);
+        const base = m ? m[1].trim() : s.id;
+        const level = m ? parseInt(m[2], 10) : 0;
+        if (!byBase.has(base)) byBase.set(base, []);
+        byBase.get(base).push({ id: s.id, level });
+      }
+      const doubled = [...byBase.entries()].filter(([, v]) => v.length > 1);
+      if (doubled.length > 0) {
+        const worst = doubled[0];
+        const live = worst[1].sort((a, b) => b.level - a.level);
+        return blocked(
+          `${doubled.length} edition(s) are Active twice — ${live.map(v => v.id).join(' and ')} are one edition printed twice, ` +
+          `and the AI Guide will cite both as current`,
+          'npm run ingest — findSupersededErrata demotes the lower errata; the guard in ingest.ts permits it only because the higher one exists',
+        );
+      }
+      return pass(`Further Reading renders as a labelled paragraph, and no family has two Active erratas [${html.source}]`);
+    },
+  },
+
+  {
+    id: 'DO97',
+    title: 'Only one search bar is visible at a time',
+    async run() {
+      const html = await loadIndexHtml();
+      const required = [
+        ['the hero box is identifiable', /id="hero-search-box"/],
+        ['the armed flag', /compactSearchArmed/],
+        ['the visibility sync', /function syncCompactSearchBar/],
+        ['the observer', /new IntersectionObserver/],
+      ];
+      const missing = required.filter(([, re]) => !re.test(html.text)).map(([n]) => n);
+      if (missing.length > 0) return fail(`missing ${missing.join(', ')} [${html.source}]`);
+      // The old behaviour was an unconditional reveal after the first search.
+      // If that line survives, both bars show again regardless of the observer.
+      if (/getElementById\('compact-search'\)\.classList\.remove\('hidden'\)/.test(html.text)) {
+        return fail(`the compact bar is still unconditionally revealed after the first search [${html.source}]`,
+          "src/frontend/index.html — that line should set compactSearchArmed and call syncCompactSearchBar()");
+      }
+      // No observer must degrade to the previous behaviour, not to a bar that
+      // never appears.
+      if (!/heroSearchVisible = false;/.test(html.text)) {
+        return fail(`without IntersectionObserver the floating bar would never appear at all [${html.source}]`);
+      }
+      return pass(`the floating bar needs both a search and the hero box off screen; no observer degrades to the old behaviour [${html.source}]`);
+    },
+  },
+
+  {
     id: 'DO79',
     title: 'Compare Versions turns itself off after one comparison',
     async run() {

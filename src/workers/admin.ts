@@ -49,8 +49,30 @@ interface IndexStatusRow {
 
 const EMBED_MODEL = '@cf/baai/bge-base-en-v1.5';
 const SCAN_DEFAULT_PASSES = 8;
-const SCAN_TOPK = 100;
-const DELETE_BATCH = 200;
+// Vectorize caps topK at 20 when returnMetadata is 'all', and the scan CANNOT
+// drop the metadata — standard_id is the only thing it reads. At 100 every
+// query threw, so this endpoint answered 500 for its own default and the orphan
+// tool has never run as shipped. Measured 2026-08-29.
+const SCAN_TOPK = 20;
+// getByIds caps at 20 IDs per call — measured the same way: 20 returns, 25
+// throws. The old 100 meant enumerate-ids also 500'd for every input.
+const PROBE_BATCH = 20;
+// deleteByIds caps at 100 per call — a different limit from getByIds' 20, so the
+// two cannot share a constant. Measured 2026-08-29: 100 deletes, 200 throws, and
+// at the old 200 this endpoint 500'd for any list longer than that.
+const DELETE_BATCH = 100;
+
+/**
+ * Vector IDs that have no `standards` row BY DESIGN, and must never be reported
+ * as orphans — still less deleted.
+ *
+ * ANSI/IES LS-1 is the definitions source (client DO33): it is ingested from the
+ * ies.org glossary REST collection, not from a PDF, so it has no standards row
+ * and its 1,311 `LS-1-DEF-*` vectors match the orphan test exactly. The tool's
+ * happy path ends in a delete, and the one thing it pointed at was the whole
+ * Definitions content type.
+ */
+const NON_STANDARD_VECTOR_RE = /^LS-1-DEF-/i;
 
 /**
  * Gate for every admin endpoint: SSO admin session or staff bearer. Returns a
@@ -77,7 +99,9 @@ export async function handleAdminScanOrphans(request: Request, env: Env): Promis
 
   const body = await safeJson(request);
   const passes = Math.min(32, Math.max(1, body?.passes || SCAN_DEFAULT_PASSES));
-  const topK = Math.min(100, Math.max(10, body?.topK || SCAN_TOPK));
+  // Clamped to the metadata limit, not to what the caller asked for: a larger
+  // topK does not return more, it throws.
+  const topK = Math.min(SCAN_TOPK, Math.max(10, body?.topK || SCAN_TOPK));
 
   const validStandards = await fetchValidStandardIds(env.DB);
 
@@ -107,6 +131,11 @@ export async function handleAdminScanOrphans(request: Request, env: Env): Promis
     for (const match of result.matches || []) {
       const stdId = (match.metadata?.standard_id || match.metadata?.standard_code) as string | undefined;
       if (!stdId) continue;
+      // A definition vector has no standards row and never will (see
+      // NON_STANDARD_VECTOR_RE). Recognised by BOTH its id shape and its
+      // chunk_type, because either alone would be one rename away from
+      // reporting the glossary as deletable.
+      if (NON_STANDARD_VECTOR_RE.test(match.id) || match.metadata?.chunk_type === 'definition') continue;
       let entry = seenStandards.get(stdId);
       if (!entry) {
         entry = { count: 0, sampleIds: new Set() };
@@ -153,7 +182,17 @@ export async function handleAdminEnumerateIds(request: Request, env: Env): Promi
   const maxIndex = Math.min(2000, Math.max(0, body?.maxIndex ?? 600));
   if (prefixes.length === 0) return jsonResponse({ error: 'prefixes[] required' }, 400);
 
-  const PROBE_BATCH = 100; // getByIds accepts arrays; cap for safety
+  // At 20 IDs per call a wide range becomes a lot of subrequests, and a Worker
+  // that trips that limit fails with the same opaque 500 this endpoint used to
+  // give. Refuse up front, naming the arithmetic, rather than half-answering.
+  const batches = prefixes.length * Math.ceil((maxIndex + 1) / PROBE_BATCH);
+  if (batches > 400) {
+    return jsonResponse({
+      error: `That range needs ${batches} Vectorize calls (${PROBE_BATCH} IDs each), which will exceed the Worker's `
+           + 'subrequest budget. Narrow maxIndex, or send fewer prefixes per request.',
+    }, 400);
+  }
+
   const found: Record<string, string[]> = {};
 
   for (const prefix of prefixes) {

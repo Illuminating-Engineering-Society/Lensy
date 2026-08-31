@@ -208,13 +208,27 @@ async function ingestDirectory(dirPath) {
   );
   const ingestedDeprecated = new Set();
 
+  // A lower errata of an edition that also ships a higher one is a PRIOR
+  // edition, whichever folder it sits in (client DO096).
+  const supersededErrata = findSupersededErrata(currentIds);
+  if (supersededErrata.size > 0) {
+    console.log(`Superseded by a higher errata, ingesting as deprecated: ${[...supersededErrata].join(', ')}\n`);
+    // They are no longer CURRENT ids, or the reaffirmed-printing guard below
+    // would see each one as "the same edition as a current standard" — which is
+    // its own id — and skip the very file this rule just reclassified.
+    for (const id of supersededErrata) currentIds.delete(id);
+  }
+
   let success = 0;
   let failed = 0;
   const byStructure = { new_table: 0, standard: 0, skipped: 0 };
 
   for (const filePath of files) {
     const standardId = deriveStandardId(basename(filePath));
-    const status = statusForPath(filePath);
+    let status = statusForPath(filePath);
+    if (!CONFIG.forceStatus && status === 'current' && supersededErrata.has(standardId)) {
+      status = 'deprecated';
+    }
     const label = relative(dirPath, filePath);
 
     if (status === 'deprecated') {
@@ -279,6 +293,41 @@ async function ingestDirectory(dirPath) {
     }
   }
   console.log('');
+}
+
+/**
+ * Which of these standard IDs a HIGHER errata of the same edition supersedes
+ * (client DO096).
+ *
+ * "_+E# indicates an 'errata' and the highest +E# is therefore the current
+ * version of a standard." RP-8-25+E1 and RP-8-25+E2 are one edition printed
+ * twice, but both PDFs ship in the current folder, so both were ingested Active
+ * — and the AI Guide was then citing two live standards where there is one.
+ * Measured on production: RP-8-25 was the only family in the corpus with two
+ * Active erratas, so this rule changes exactly one document today, and prevents
+ * the next one silently.
+ *
+ * A base edition carrying no marker is errata 0, so "RP-8-25" is superseded by
+ * "RP-8-25+E1". Different YEARS are different bases and are untouched here —
+ * RP-8-22 is a prior edition by the ordinary folder rule, not by this one.
+ */
+function findSupersededErrata(ids) {
+  const best = new Map();   // base edition → highest errata seen
+  const parsed = [];
+  for (const id of ids) {
+    const m = /^(.+?)\s*\+\s*E(\d+)$/i.exec(id);
+    const base = m ? m[1].trim() : id;
+    const level = m ? parseInt(m[2], 10) : 0;
+    parsed.push({ id, base, level });
+    const top = best.get(base);
+    if (!top || level > top.level) best.set(base, { level, id });
+  }
+  const superseded = new Set();
+  for (const p of parsed) {
+    const top = best.get(p.base);
+    if (top && top.id !== p.id) superseded.add(p.id);
+  }
+  return superseded;
 }
 
 /**
