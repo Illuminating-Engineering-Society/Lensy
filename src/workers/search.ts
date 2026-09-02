@@ -92,6 +92,7 @@ import { buildNoResultsGuidance } from '../lib/no-results';
 import {
   AUTHORITY_NOTICE, needsAuthorityNotice, isRefusedQuery, isOutOfScope, REFUSAL_MESSAGE,
 } from '../lib/guardrails';
+import { resolveQueryLanguage, localizeSummary } from '../lib/language';
 import { hasEnvConsiderationColumns, parseLightingZoneLabel } from '../lib/illuminance-fields.js';
 import {
   getDataVersion,
@@ -368,9 +369,14 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
   // worse than refusing. Decided by pattern before ANY retrieval, so it costs
   // nothing and reaches neither Vectorize nor the model; logged like any other
   // search so staff can see it happened.
-  if (isRefusedQuery(rawQuery)) {
+  // Used twice: on the raw query here, and again on its English interpretation
+  // below — the refusal patterns are English, so a harmful question typed in
+  // another language only becomes visible to them once translated.
+  const refuse = async (queryLanguage: string | null = null, queryEnglish: string | null = null) => {
     const refusedPayload = {
       query: rawQuery,
+      queryLanguage,
+      queryEnglish,
       isMultiQuery: false,
       isVersionComparison: false,
       // The caller's OWN content types, not an empty list: the UI syncs its
@@ -404,7 +410,8 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
     const logWrite = logSearch(env, refusedPayload, false);
     if (ctx?.waitUntil) ctx.waitUntil(logWrite); else await logWrite;
     return jsonResponse({ ...refusedPayload, cached: false });
-  }
+  };
+  if (isRefusedQuery(rawQuery)) return refuse();
 
   // ── Response cache ───────────────────────────────────────────────────────────
   // Identical searches skip the entire pipeline (Workers AI embedding,
@@ -441,27 +448,45 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
     return jsonResponse({ ...cachedPayload, cached: true });
   }
 
+  // ── Query language (client note, 2026-09-01) ─────────────────────────────────
+  // "(1) translate to English (2) provide response and card curation
+  //  (3) translate the AI Guide response back to their native language."
+  //
+  // Everything downstream of this line reads `searchQuery` — the English
+  // interpretation — because the embedding model is English-only and every
+  // intent pattern (comparison phrasing, definition-seeking, the AHJ topics,
+  // the refusal list) is English. `rawQuery` remains what the payload echoes
+  // and what the cache key was built from (above, so a cache hit never pays
+  // for detection). Fail-open: anything short of a confident detection means
+  // `searchQuery === rawQuery`, the exact pipeline that shipped before.
+  const queryLang = await resolveQueryLanguage(env.AI, rawQuery);
+  const searchQuery = queryLang.english;
+  // The refusal patterns could not read the original — they can read this.
+  if (queryLang.translated && isRefusedQuery(searchQuery)) {
+    return refuse(queryLang.language, queryLang.english);
+  }
+
   // ── Multi-query detection ────────────────────────────────────────────────────
-  const subQueries = splitMultiQuery(rawQuery);
+  const subQueries = splitMultiQuery(searchQuery);
   const isMultiQuery = subQueries.length > 1;
 
   // ── Content types (filter overhaul) ──────────────────────────────────────────
   // Which result kinds this search returns: illuminance-table rows ('tables'),
   // document-body excerpts ('body'), References-section entries ('references').
   const contentTypes = isLite
-    ? liteContentTypes(normalizeContentTypes(filters, rawQuery))
-    : normalizeContentTypes(filters, rawQuery);
+    ? liteContentTypes(normalizeContentTypes(filters, searchQuery))
+    : normalizeContentTypes(filters, searchQuery);
 
   // ── Version-comparison intent ("what's new", "what changed") ─────────────────
   // Signals to the UI that ADDED/REVISED should be auto-shown and REMOVED gated.
   // The "Compare Versions" filter checkbox forces the same handling.
   const isVersionComparison = !isLite
-    && (isVersionComparisonQuery(rawQuery) || contentTypes.has('compare'));
+    && (isVersionComparisonQuery(searchQuery) || contentTypes.has('compare'));
 
   // ── Structural filter inference from query ───────────────────────────────────
   // A bare "LZ1 walkways" in the query string should narrow results to that
   // lighting zone even when the caller didn't pass an explicit filter.
-  const inferred = inferFiltersFromQuery(rawQuery, isVersionComparison);
+  const inferred = inferFiltersFromQuery(searchQuery, isVersionComparison);
   const mergedFilters = { ...inferred, ...filters };
 
   // ── Whole-document lookup, started early (client DO047 + DO075) ─────────────
@@ -475,7 +500,7 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
   //
   // Started in parallel with retrieval so it costs no wall-clock time.
   const documentLookupPromise = (!isVersionComparison && !isMultiQuery && contentTypes.has('body'))
-    ? findStandardLookupResults(env, rawQuery)
+    ? findStandardLookupResults(env, searchQuery)
     : Promise.resolve([] as SearchResult[]);
 
   let allResults;
@@ -484,7 +509,7 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
     // Fan out to individual searches, merge and deduplicate
     allResults = await runMultiSearch(subQueries, mergedFilters, cleanLimit, env, contentTypes);
   } else {
-    allResults = await runSingleSearch(rawQuery, mergedFilters, cleanLimit, env, contentTypes);
+    allResults = await runSingleSearch(searchQuery, mergedFilters, cleanLimit, env, contentTypes);
   }
 
   // ── LensyLite corpus scope (client DO53) ─────────────────────────────────────
@@ -531,7 +556,7 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
   let currentEdition: FamilyEdition | null = null;
   if (isVersionComparison) {
     depDbg = body.debug ? {} : null;
-    const family = comparisonFamily(mergedFilters, rawQuery);
+    const family = comparisonFamily(mergedFilters, searchQuery);
     const editions = family ? await loadFamilyEditions(env, family) : [];
     currentEdition = editions.find(e => e.status !== 'Deprecated') || null;
     if (depDbg) {
@@ -559,7 +584,7 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
     // current excerpts from DIFFERENT pages so the prior edition is sampled
     // across the document.
     const topicHints = collectTopicHints(allResults.results);
-    const deprecatedResults = await searchDeprecatedForComparison(rawQuery, mergedFilters, env, topicHints, depDbg);
+    const deprecatedResults = await searchDeprecatedForComparison(searchQuery, mergedFilters, env, topicHints, depDbg);
     allResults.results.push(...deprecatedResults);
     // Every edition of the family gets a card, whether or not retrieval reached
     // its pages: "return cards for the current standard (first) followed by all
@@ -586,7 +611,7 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
   // cite "Table C-1, p. 62" — the client's own failing example — and the card can
   // link to it. Fail-open: no assets simply means no chips.
   try {
-    await attachDocumentAssets(env, allResults.results, rawQuery);
+    await attachDocumentAssets(env, allResults.results, searchQuery);
   } catch (err) {
     console.error('document asset lookup failed (non-fatal):', errMsg(err));
   }
@@ -621,10 +646,10 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
     // A search that resolved to a DOCUMENT — by designation or by title — is not
     // a question, so it is neither out of scope nor in need of refinement.
     && documentCards.length === 0
-    && !parseDesignationQuery(rawQuery) && allResults.results.length > 0;
+    && !parseDesignationQuery(searchQuery) && allResults.results.length > 0;
   let outOfScope = false;
   if (weakSearch) {
-    outOfScope = await isOutOfScope(env.AI, rawQuery, allResults.results);
+    outOfScope = await isOutOfScope(env.AI, searchQuery, allResults.results);
     if (outOfScope) {
       // No cards, no Guide. The client's example returned fifty cards and four
       // paragraphs of citations for "what color are zebras?".
@@ -641,7 +666,7 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
   //  rendered by the UI rather than asked of the model, so it cannot be
   //  forgotten. Computed after attachSectionTitles: the section TITLES are part
   //  of the evidence.
-  const authorityNotice = !outOfScope && needsAuthorityNotice(rawQuery, allResults.results)
+  const authorityNotice = !outOfScope && needsAuthorityNotice(searchQuery, allResults.results)
     ? AUTHORITY_NOTICE
     : null;
 
@@ -670,7 +695,7 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
   const comparisonContext = aiMode === 'comparison'
     ? buildComparisonContext(
         allResults.results,
-        requestedDeprecatedEdition(rawQuery, currentIdForComparison),
+        requestedDeprecatedEdition(searchQuery, currentIdForComparison),
         currentEdition,
       )
     : undefined;
@@ -683,24 +708,38 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
           // guide OR a comparison, and they must not share a cache entry.
           // The style is part of the key: the same question answered briefly and
           // answered in full are different answers.
+          // The LANGUAGE is part of the key: detection is a model's judgement,
+          // so the same raw query can resolve differently across runs, and an
+          // answer stored under one verdict must not be served under another.
           const aiKey = await buildAISummaryCacheKey(
-            dataVersion, `${aiMode}:${answerStyle}`, rawQuery, resultCodes,
+            dataVersion, `${aiMode}:${answerStyle}:${queryLang.language}`, rawQuery, resultCodes,
           );
           const cached = body.debug ? null : await getCachedAISummary(kv, aiKey);
           if (cached) return cached;
-          const generated = await generateResponse(env.AI, rawQuery, allResults.results, {
+          // Generated from the ENGLISH interpretation — the client measured that
+          // citations are best in English — then translated back into the
+          // query's language (client note, 2026-09-01). The English original
+          // stays on the summary as textEnglish for the citation extraction
+          // below. localizeSummary no-ops for English queries and degraded
+          // answers, and fails open to the English text.
+          const generated = await generateResponse(env.AI, searchQuery, allResults.results, {
             mode: aiMode,
             comparison: comparisonContext,
             answerStyle,
             authorityNotice,
           });
+          const localized = await localizeSummary(env.AI, generated, queryLang) ?? generated;
           // Degraded summaries (every model errored) are never cached — the
           // next identical search retries the models instead of pinning the
-          // fallback text for the cache TTL (client bug DO9).
-          const cacheable = !body.debug && !generated.degraded;
-          if (cacheable && ctx?.waitUntil) ctx.waitUntil(putCachedAISummary(kv, aiKey, generated));
-          else if (cacheable) await putCachedAISummary(kv, aiKey, generated);
-          return generated;
+          // fallback text for the cache TTL (client bug DO9). A translation
+          // that FAILED (requested but not applied — no `language` on the
+          // summary) is treated the same way: caching it would pin an English
+          // answer under this language's key for the TTL.
+          const cacheable = !body.debug && !localized.degraded
+            && (!queryLang.translated || localized.language === queryLang.language);
+          if (cacheable && ctx?.waitUntil) ctx.waitUntil(putCachedAISummary(kv, aiKey, localized));
+          else if (cacheable) await putCachedAISummary(kv, aiKey, localized);
+          return localized;
         } catch (err) {
           // generateResponse degrades internally; this only catches plumbing
           // failures (KV, prompt building). Still return SOMETHING — an AI
@@ -726,7 +765,7 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
   // Fail-open: null keeps the vector order. Not separately KV-cached — the
   // response cache absorbs repeats of the same search wholesale.
   const rerankPromise = (includeAISummary && !isVersionComparison && allResults.results.length > 1)
-    ? rerankResults(env.AI, rawQuery, allResults.results).catch((err) => {
+    ? rerankResults(env.AI, searchQuery, allResults.results).catch((err) => {
         console.error('AI rerank failed (non-fatal):', errMsg(err));
         return null;
       })
@@ -748,7 +787,7 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
   // "restate the question" invitation is the empty state's own (DO077).
   const wantsRefine = weakSearch && !outOfScope;
   const refinePromise = wantsRefine
-    ? generateRefinePrompt(env.AI, rawQuery, allResults.results).catch((err) => {
+    ? generateRefinePrompt(env.AI, searchQuery, allResults.results).catch((err) => {
         console.error('refine prompt failed (non-fatal):', errMsg(err));
         return null;
       })
@@ -769,9 +808,12 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
   // whole-document cards below, so a named standard still lands on top.
   let curation: CurationInfo | null = null;
   if (includeAISummary && !isVersionComparison && allResults.results.length > 1) {
-    const summary = aiSummary as { text?: string; degraded?: boolean } | null;
+    const summary = aiSummary as { text?: string; textEnglish?: string; degraded?: boolean } | null;
+    // Citations are extracted from the ENGLISH answer — the locator phrasing
+    // this matches ("Section 4.2", "p. 21") is English, and on a translated
+    // summary that text lives in textEnglish (client note, 2026-09-01).
     const cited = (summary && !summary.degraded)
-      ? extractGuideCitations(summary.text || '', allResults.results)
+      ? extractGuideCitations(summary.textEnglish || summary.text || '', allResults.results)
       : new Set<number>();
     const curated = curateResults(allResults.results, { order: rerankOrder, cited });
     allResults.results = curated.results;
@@ -863,7 +905,10 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
   let noResultsGuidance: NoResultsGuidance | null = null;
   if (allResults.results.length === 0) {
     noResultsGuidance = buildNoResultsGuidance({
-      query: rawQuery,
+      // The English interpretation: the guidance's spell-check runs against the
+      // LS-1 vocabulary and its scope-stripping reads English narrowing words,
+      // and its re-run buttons should re-run the search that actually happened.
+      query: searchQuery,
       contentTypes,
       filters: mergedFilters,
       tier,
@@ -876,6 +921,11 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
 
   const payload = {
     query: rawQuery,
+    // The query's language and the English interpretation the search actually
+    // ran (client note, 2026-09-01) — shown to the user, so a bad translation
+    // is visible instead of silent. Both null for an English query.
+    queryLanguage: queryLang.translated ? queryLang.language : null,
+    queryEnglish: queryLang.translated ? queryLang.english : null,
     expandedQuery: allResults.expandedQuery,
     isMultiQuery,
     subQueries: isMultiQuery ? subQueries : undefined,
@@ -932,7 +982,11 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
   // the standards cannot answer this — on a real lighting question for 24 hours,
   // with no way for the reader to clear it by retrying.
   const skipCache = body.debug || outOfScope
-    || (includeAISummary && (aiSummary as { degraded?: boolean } | null)?.degraded === true);
+    || (includeAISummary && (aiSummary as { degraded?: boolean } | null)?.degraded === true)
+    // A requested translation that fell back to English (transient model
+    // failure) must be retried, not pinned for 24h under this query's key.
+    || (includeAISummary && queryLang.translated && aiSummary != null
+        && (aiSummary as { language?: string }).language !== queryLang.language);
   const cacheWrite = skipCache ? Promise.resolve() : putCachedSearch(kv, cacheKey, payload);
   const logWrite = logSearch(env, payload, false);
   if (ctx?.waitUntil) {

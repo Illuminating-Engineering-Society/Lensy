@@ -2537,8 +2537,12 @@
       // the count is, and let the Relevance sort own the fact — with the Guide
       // off, the server returns the plain vector ranking and neither appears.
       const curated = !!(data.curation && data.curation.applied);
+      // A non-English query is interpreted in English before searching (client
+      // note, 2026-09-01); print the interpretation so a bad translation is
+      // visible to the reader instead of silently shaping the results.
+      const interpreted = data.queryEnglish ? ` · interpreted in English as "${data.queryEnglish}"` : '';
       document.getElementById('results-meta').textContent =
-        `for "${data.query}"${curated ? ' · ordered by the AI Guide' : ''}`;
+        `for "${data.query}"${interpreted}${curated ? ' · ordered by the AI Guide' : ''}`;
       const relevanceLabel = document.getElementById('sort-relevance-label');
       if (relevanceLabel) {
         relevanceLabel.textContent = curated ? 'Relevance — AI curated (Default)' : 'Relevance (Default)';
@@ -3105,6 +3109,9 @@
       aiCurrentStandard = null;   // the running locator context starts fresh
       textEl.innerHTML = renderAIText(summary.text || '');
       textEl.classList.remove('whitespace-pre-line');
+      // A translated answer (client note, 2026-09-01) declares its language so
+      // screen readers pronounce it correctly; everything else is English.
+      textEl.setAttribute('lang', summary.language || 'en');
 
       document.getElementById('ai-watermark').textContent = summary.watermark || '';
       document.getElementById('ai-summary-card').classList.remove('hidden');

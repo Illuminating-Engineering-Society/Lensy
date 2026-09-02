@@ -76,7 +76,14 @@ const DATA_VERSION_KEY = 'cache:data-version';
 //     headers), so an excerpt's chapter.title changes; and the comparison prompt
 //     now says explicitly that a chapter with no supplied title is written as its
 //     number alone. Every stored v12 response was built from the old titles.
-const SEARCH_CACHE_SCHEMA = 'v13';
+// v14: query language (client note, 2026-09-01). A non-English query is now
+//     interpreted in English (retrieval, intent detection, curation and the
+//     Guide prompt all read the translation) and the AI Guide's answer is
+//     translated back into the query's language; the payload gains
+//     queryLanguage/queryEnglish and the summary gains language/textEnglish.
+//     A stored v13 response for a non-English query was produced by the
+//     English-only pipeline and must not be served as if it had been interpreted.
+const SEARCH_CACHE_SCHEMA = 'v14';
 
 function errMsg(err: unknown): string {
   return err instanceof Error ? err.message : String(err);

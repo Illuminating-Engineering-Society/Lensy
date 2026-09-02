@@ -532,6 +532,20 @@ export interface AISummary {
    * next identical search retries the models.
    */
   degraded?: boolean;
+  /**
+   * The query's language when `text` is a translation of the English answer
+   * (client note, 2026-09-01: interpret in English, answer in the user's
+   * language). Absent on an English answer — including one that SHOULD have
+   * been translated but could not be, which is what keeps such a response out
+   * of the caches.
+   */
+  language?: string;
+  /**
+   * The English answer the translation was made from. Card curation extracts
+   * the Guide's citations from THIS text — the locator phrasing it matches is
+   * English — and it is what any audit of a translated answer checks against.
+   */
+  textEnglish?: string;
 }
 
 export type ContentType = 'tables' | 'body' | 'references' | 'definitions' | 'compare';
@@ -590,6 +604,18 @@ export interface NoResultsGuidance {
 
 export interface SearchResponse {
   query: string;
+  /**
+   * The query's detected language when it was not English (client note,
+   * 2026-09-01: the pipeline interprets the query in English and answers in
+   * the user's language). null/absent for an English query.
+   */
+  queryLanguage?: string | null;
+  /**
+   * The English interpretation the search actually ran, shown to the user so a
+   * bad translation is visible instead of silent. null/absent when the query
+   * was English.
+   */
+  queryEnglish?: string | null;
   expandedQuery?: string;
   isMultiQuery: boolean;
   subQueries?: string[];

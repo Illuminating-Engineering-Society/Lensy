@@ -1397,6 +1397,67 @@ The UI label for each kind matches the filter label exactly — "Documents" filt
 
 A fifth `resultType`, **`standard`**, is not a filter value: it is the whole-document card a designation or title search returns (see below). It is a Document, so it borrows the `excerpt` label, line style and palette rather than owning a fifth one.
 
+### Query language: interpret in English, answer in the user's language (client, 2026-09-01)
+
+"Provide the AI Guide response in the same language the query was typed, but
+'interpret it in English' for its response (and for the result card curation)
+… (1) translate to English (2) provide response and card curation (3) translate
+the AI Guide response back to their native language. Our standards will always
+remain in English for accuracy." Implemented in `src/lib/language.ts`, wired in
+`handleSearch`; `SEARCH_CACHE_SCHEMA` bumped to **v14**.
+
+- **The whole pipeline runs on the English interpretation** (`searchQuery`),
+  not just the Guide prompt: the embedding model is English-only, and every
+  intent pattern — comparison phrasing, definition/reference auto-scoping,
+  filter inference, the AHJ topics, the refusal list, the rerank, the refine
+  prompt, the out-of-scope check, the no-results guidance — is English. That is
+  what "interpret it in English" buys beyond citation quality: a Spanish
+  "¿qué hay de nuevo en RP-8?" now IS a version comparison.
+- **English queries pay nothing.** `looksNonEnglish` (non-Latin scripts, Latin
+  diacritics, a compact non-English word list with English homographs like
+  "pour"/"bureau"/"dove" deliberately absent) decides whether to spend the one
+  small-model call that detects the language and translates the query in the
+  same breath. Cache hits pay nothing either — the response cache is keyed on
+  the RAW query and checked before detection runs.
+- **Fail-open everywhere, to exactly the pipeline that shipped before.** An
+  unreadable detection, a bad language code, an empty translation, a
+  translation that dropped a standard designation, or a "translation" that
+  merely echoes the query all mean English. A translated ANSWER is likewise
+  discarded (English ships) if it is implausibly short/long or lost a
+  designation.
+- **Only the AI Guide's text is translated back** (`localizeSummary`, after all
+  the English sanitizers ran). Cards, excerpts, disclaimers, watermarks, the
+  AHJ notice, the refine question and every fixed UI string stay English — the
+  client's own rule is that the standards remain in English. Degraded fallbacks
+  are never translated (they are never cached, and they are a bare list).
+- **What must survive translation, because the UI links it:** designations
+  verbatim, direct quotes and printed section titles in English, every section
+  reference as "§N" and every page as "p. N" (the exact forms
+  `LOCATOR_SCAN_RE` matches — "Section" is never translated into the target
+  language), markdown structure line for line, the four comparison headings as
+  `### ` lines, "Further reading:" as a one-line `**label:** …`. The English
+  original travels on the summary as `textEnglish`, and **card curation
+  extracts the Guide's citations from THAT** — the locator phrasing
+  `extractGuideCitations` matches is English.
+- **Caching:** the AI-summary key gained the detected language
+  (`mode:style:lang`) because detection is a model's judgement and the same raw
+  query can resolve differently across runs. A summary whose requested
+  translation failed carries no `language` field, and that absence keeps both
+  the summary and the whole response payload out of their caches — a transient
+  translation failure is retried, never pinned for the TTL.
+- **Transparency:** the payload carries `queryLanguage` + `queryEnglish` and the
+  results meta line prints `· interpreted in English as "…"`, so a bad
+  translation is visible to the reader instead of silently shaping the results.
+  The Guide card sets `lang` on its text element for screen readers.
+- **The refusal list now reads translations too:** `isRefusedQuery` runs a
+  second time on the English interpretation, so a harmful question typed in
+  another language is refused like an English one (the early English-pattern
+  check still runs first, before any model call is spent).
+- Known limits, deliberate: the refine question and no-results guidance are
+  generated/written in English even for a non-English query (they act on the
+  English search that actually ran), and the comparison advisory banner is a
+  fixed English UI string.
+
 ### The DO089–DO097 round: a column that was never filled, and an edition that was live twice
 
 The client's fourth round. Four UI items are small on their own; the three that
