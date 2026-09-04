@@ -182,7 +182,7 @@ LENSY_SUBSCRIBER_ROLES = "lighting-library-full-access"
 # device_reset_requests (migration 0016) and exportable at
 # GET /api/admin/device-resets.csv — only the per-request notification email is
 # skipped. Uncomment and fill in once the client confirms the address:
-# DEVICE_RESET_NOTIFY_EMAIL = "…@ies.org"
+DEVICE_RESET_NOTIFY_EMAIL = "…@ies.org"
 
 # Secrets set via `wrangler secret put`:
 # VITRIUM_API_KEY
