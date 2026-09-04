@@ -83,7 +83,13 @@ const DATA_VERSION_KEY = 'cache:data-version';
 //     queryLanguage/queryEnglish and the summary gains language/textEnglish.
 //     A stored v13 response for a non-English query was produced by the
 //     English-only pipeline and must not be served as if it had been interpreted.
-const SEARCH_CACHE_SCHEMA = 'v14';
+// v15: the language pre-check now recognizes ENGLISH instead of enumerating
+//     non-English (the Swahili miss, 2026-09-04): a plain-ASCII query in a
+//     language the old word list did not know — Swahili, Indonesian, Tagalog —
+//     was treated as English and embedded raw, and that near-random response is
+//     what v14 cached under the raw query. Those entries must not be served now
+//     that such a query is interpreted in English.
+const SEARCH_CACHE_SCHEMA = 'v15';
 
 function errMsg(err: unknown): string {
   return err instanceof Error ? err.message : String(err);

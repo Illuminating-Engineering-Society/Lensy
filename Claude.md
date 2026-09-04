@@ -1419,6 +1419,19 @@ remain in English for accuracy." Implemented in `src/lib/language.ts`, wired in
   small-model call that detects the language and translates the query in the
   same breath. Cache hits pay nothing either — the response cache is keyed on
   the RAW query and checked before detection runs.
+- **The pre-check also recognizes ENGLISH, not just known non-English
+  (2026-09-04, the client's Swahili test; `SEARCH_CACHE_SCHEMA` → v15).**
+  "njia bora ya kuwasha mwangaza kwenye ofisi ni ipi?" is Latin script, has no
+  diacritic and no word on the list, so it sailed through as "confidently
+  English", was embedded raw by the English-only model, and retrieved LM-83 for
+  an office-lighting question — under an answer that READ fine, because the
+  Guide model understands Swahili even though the retriever does not (the tell:
+  no "interpreted in English as …" meta line). Rather than adding languages to
+  the list forever, `ENGLISH_WORDS` (function words + the domain's own
+  vocabulary) now backstops it: a query of 2+ words where a third or fewer read
+  as English spends the detection call. A false hit still costs only one
+  small-model call answering "en"; a single unknown word with no other signal
+  stays English (a lone word gives the detector nothing to judge a language by).
 - **Fail-open everywhere, to exactly the pipeline that shipped before.** An
   unreadable detection, a bad language code, an empty translation, a
   translation that dropped a standard designation, or a "translation" that

@@ -67,6 +67,28 @@ describe('looksNonEnglish', () => {
     expect(looksNonEnglish('eclairage pour bureau')).toBe(true);
     expect(looksNonEnglish('welke verlichting voor kantoor')).toBe(true);
   });
+
+  it('flags plain-ASCII languages the word list does not know (the Swahili miss, 2026-09-04)', () => {
+    // The client's exact query: Latin script, no diacritics, no listed word —
+    // it sailed through as English and was embedded raw, retrieving LM-83 for
+    // an office-lighting question. The inverse guard catches it: none of its
+    // words read as English.
+    expect(looksNonEnglish('njia bora ya kuwasha mwangaza kwenye ofisi ni ipi?')).toBe(true);
+    expect(looksNonEnglish('taa za ofisi')).toBe(true);                       // Swahili keywords
+    expect(looksNonEnglish('cara terbaik menerangi ruang kantor')).toBe(true); // Indonesian
+    expect(looksNonEnglish('paano ilawan ang opisina')).toBe(true);            // Tagalog
+    // An English loanword is not enough to read as English (1 of 5 words).
+    expect(looksNonEnglish('standard ya taa za ofisi')).toBe(true);
+  });
+
+  it('the inverse guard never taxes recognizable English', () => {
+    // Jargon-heavy but still majority-recognizable — stays free.
+    expect(looksNonEnglish('veiling luminance office computation')).toBe(false);
+    expect(looksNonEnglish('parking garage illuminance requirements')).toBe(false);
+    expect(looksNonEnglish('emergency egress lighting for stairwells')).toBe(false);
+    // A single unknown word gives the detector nothing to judge by.
+    expect(looksNonEnglish('natatorium')).toBe(false);
+  });
 });
 
 describe('keepsDesignations', () => {

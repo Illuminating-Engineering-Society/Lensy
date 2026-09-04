@@ -100,7 +100,8 @@ const DIACRITIC_RE = /[àâäãåæçèéêëìíîïñòóôöõøùúûüýÿ�
 // Standalone function/domain words that are strong non-English signals even in
 // plain ASCII ("iluminacion de oficinas" carries no diacritic at all). Every
 // entry must NOT be an English word, or an English query would pay a detection
-// call on every search.
+// call on every search. This list settles a query instantly; it is NOT the only
+// way a non-English query is caught — see ENGLISH_WORDS below.
 const NON_ENGLISH_WORDS = new Set([
   // Spanish
   'que', 'como', 'cual', 'cuales', 'cuanto', 'cuanta', 'donde', 'para', 'debe',
@@ -121,6 +122,95 @@ const NON_ENGLISH_WORDS = new Set([
   'jakie', 'ile', 'oswietlenie', 'biuro',
 ]);
 
+// The inverse guard (2026-09-04, the client's Swahili test). The three positive
+// signals above cannot enumerate every language: Swahili, Indonesian, Tagalog
+// and unaccented Turkish are all plain-ASCII Latin script with no entry in
+// NON_ENGLISH_WORDS, so "njia bora ya kuwasha mwangaza kwenye ofisi ni ipi?"
+// sailed through as "confidently English" and was embedded RAW by the
+// English-only embedding model — near-random retrieval (LM-83 for an
+// office-lighting question) under an answer that read fine, because the Guide
+// model understands Swahili even though the retriever does not. Rather than
+// growing the word list one language at a time, recognize ENGLISH: a query of
+// two or more words where a third or fewer are recognizably English spends the
+// detection call. The cost of a false hit is unchanged — one small-model call
+// that answers "en" — so this lexicon only has to cover MOST English queries
+// (function words plus the domain's own vocabulary), never all of English.
+const ENGLISH_WORDS = new Set([
+  // Function and question words.
+  'the', 'an', 'of', 'in', 'on', 'at', 'to', 'for', 'from', 'with', 'without',
+  'and', 'or', 'nor', 'not', 'no', 'is', 'are', 'am', 'be', 'been', 'was',
+  'were', 'do', 'does', 'did', 'have', 'has', 'had', 'can', 'could', 'should',
+  'would', 'will', 'shall', 'may', 'might', 'must', 'what', 'whats', 'when',
+  'where', 'which', 'who', 'whose', 'how', 'why', 'that', 'this', 'these',
+  'those', 'there', 'their', 'they', 'them', 'than', 'then', 'it', 'its', 'as',
+  'by', 'per', 'if', 'but', 'so', 'such', 'about', 'above', 'below', 'under',
+  'over', 'between', 'through', 'during', 'before', 'after', 'into', 'near',
+  'versus', 'vs', 'up', 'down', 'out', 'off', 'all', 'any', 'some', 'most',
+  'more', 'less', 'least', 'few', 'many', 'much', 'each', 'every', 'both',
+  'other', 'same', 'different', 'only', 'also', 'very', 'too', 'my', 'our',
+  'your', 'you', 'we', 'us', 'me', 'use', 'used', 'using', 'get', 'give',
+  'show', 'find', 'look', 'see', 'read', 'list', 'explain', 'define', 'tell',
+  'mean', 'means', 'meaning', 'example', 'examples',
+  // Asking for guidance.
+  'need', 'needs', 'needed', 'want', 'require', 'requires', 'required',
+  'requirement', 'requirements', 'recommend', 'recommends', 'recommended',
+  'recommendation', 'recommendations', 'suggest', 'suggested', 'apply',
+  'applies', 'applicable', 'allowed', 'permitted', 'best', 'better', 'good',
+  'right', 'correct', 'proper', 'appropriate', 'ideal', 'optimal', 'way',
+  'ways', 'method', 'methods', 'guide', 'guidance', 'guidelines', 'rule',
+  'rules', 'criteria', 'criterion', 'specification', 'specifications',
+  'practice', 'practices', 'procedure', 'procedures', 'standard', 'standards',
+  'code', 'codes', 'compliance', 'comply', 'regulation', 'regulations',
+  'definition', 'definitions', 'reference', 'references',
+  // The domain's own vocabulary.
+  'light', 'lights', 'lighting', 'lit', 'bright', 'brightness', 'illuminance',
+  'illumination', 'illuminate', 'illuminated', 'luminance', 'luminous',
+  'luminaire', 'luminaires', 'lux', 'lumen', 'lumens', 'footcandle',
+  'footcandles', 'candela', 'glare', 'ugr', 'cri', 'cct', 'kelvin', 'color',
+  'colour', 'colors', 'temperature', 'daylight', 'daylighting', 'sunlight',
+  'dim', 'dimming', 'dimmer', 'fixture', 'fixtures', 'lamp', 'lamps', 'bulb',
+  'bulbs', 'led', 'leds', 'fluorescent', 'incandescent', 'halogen', 'hid',
+  'ballast', 'photometric', 'photometry', 'photopic', 'scotopic', 'mesopic',
+  'uniformity', 'ratio', 'ratios', 'contrast', 'reflectance', 'reflections',
+  'flicker', 'watt', 'watts', 'wattage', 'power', 'energy', 'efficiency',
+  'efficient', 'efficacy', 'control', 'controls', 'sensor', 'sensors',
+  'occupancy', 'vacancy', 'switch', 'switches', 'emergency', 'egress', 'exit',
+  'task', 'ambient', 'accent', 'vertical', 'horizontal', 'mounting', 'mounted',
+  'mount', 'height', 'spacing', 'layout', 'pole', 'poles', 'beam', 'angle',
+  'distribution', 'optics', 'lens', 'shielding', 'cutoff', 'uplight',
+  'downlight', 'troffer', 'pendant', 'recessed', 'retrofit',
+  // Applications and places.
+  'office', 'offices', 'workplace', 'workspace', 'desk', 'computer', 'screen',
+  'classroom', 'classrooms', 'school', 'schools', 'education', 'educational',
+  'university', 'college', 'hospital', 'healthcare', 'patient', 'clinic',
+  'laboratory', 'lab', 'parking', 'garage', 'lot', 'roadway', 'road', 'roads',
+  'street', 'streets', 'highway', 'intersection', 'crosswalk', 'tunnel',
+  'bridge', 'sports', 'sport', 'field', 'fields', 'court', 'courts', 'rink',
+  'pool', 'pools', 'stadium', 'arena', 'gym', 'gymnasium', 'track', 'golf',
+  'tennis', 'baseball', 'football', 'soccer', 'basketball', 'skating',
+  'museum', 'gallery', 'retail', 'store', 'stores', 'shop', 'mall',
+  'warehouse', 'industrial', 'factory', 'manufacturing', 'plant',
+  'residential', 'home', 'house', 'apartment', 'hotel', 'hospitality',
+  'restaurant', 'dining', 'kitchen', 'bathroom', 'bedroom', 'hallway',
+  'corridor', 'stairs', 'stair', 'stairwell', 'lobby', 'entrance', 'entry',
+  'exterior', 'interior', 'outdoor', 'outdoors', 'indoor', 'indoors', 'area',
+  'areas', 'room', 'rooms', 'space', 'spaces', 'building', 'buildings',
+  'facility', 'facilities', 'site', 'sites', 'zone', 'zones', 'security',
+  'safety', 'pedestrian', 'pedestrians', 'bicycle', 'bike', 'walkway',
+  'sidewalk', 'path', 'pathway', 'sign', 'signs', 'signage', 'landscape',
+  'garden', 'facade', 'canopy', 'church', 'worship', 'theater', 'theatre',
+  'auditorium', 'library', 'airport', 'station', 'natatorium', 'meeting',
+  // Version-comparison and lookup phrasing.
+  'new', 'newest', 'current', 'latest', 'old', 'older', 'previous', 'version',
+  'versions', 'edition', 'editions', 'changed', 'change', 'changes',
+  'difference', 'differences', 'compare', 'comparison', 'added', 'removed',
+  'revised', 'update', 'updated', 'level', 'levels', 'value', 'values',
+  'minimum', 'maximum', 'min', 'max', 'average', 'target', 'range', 'table',
+  'tables', 'chart', 'figure', 'figures', 'section', 'sections', 'chapter',
+  'annex', 'appendix', 'page', 'pages', 'ies', 'ansi', 'open', 'plan', 'high',
+  'low', 'night', 'day', 'time', 'general', 'design',
+]);
+
 /**
  * Should this query spend a detection call at all?
  *
@@ -128,14 +218,25 @@ const NON_ENGLISH_WORDS = new Set([
  * zero added latency. A miss in either direction is safe — a non-English query
  * read as English gets today's behaviour, and an English query read as foreign
  * gets one small-model call that answers "en".
+ *
+ * Four signals, cheapest first: a non-Latin script, a Latin diacritic, or a
+ * known non-English word each settle it as non-English outright; failing those,
+ * a query of 2+ words where a third or fewer read as English words is worth a
+ * detection call — that is what catches plain-ASCII languages the word list
+ * does not know (Swahili, Indonesian, Tagalog). A single-word query with no
+ * other signal stays English: it is usually a technical term or a name, and a
+ * lone word gives the detector nothing to judge a language by.
  */
 export function looksNonEnglish(query: string): boolean {
   const q = String(query || '');
   if (!q.trim()) return false;
   if (NON_LATIN_RE.test(q)) return true;
   if (DIACRITIC_RE.test(q)) return true;
-  const words = q.toLowerCase().match(/[a-z]+/g) || [];
-  return words.some(w => NON_ENGLISH_WORDS.has(w));
+  const words = (q.toLowerCase().match(/[a-z]+/g) || []).filter(w => w.length >= 2);
+  if (words.some(w => NON_ENGLISH_WORDS.has(w))) return true;
+  if (words.length < 2) return false;
+  const recognized = words.reduce((n, w) => n + (ENGLISH_WORDS.has(w) ? 1 : 0), 0);
+  return recognized * 3 <= words.length;
 }
 
 // ─── Detection + query translation (one call) ─────────────────────────────────
