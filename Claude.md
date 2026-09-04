@@ -1471,6 +1471,59 @@ remain in English for accuracy." Implemented in `src/lib/language.ts`, wired in
   English search that actually ran), and the comparison advisory banner is a
   fixed English UI string.
 
+### The Lighting Library custom error page (client note, 2026-09-04)
+
+Vitrium's WebViewer redirects a refused reader to ONE page we host, passing
+`?username=&userid=&url=&message=&lang=` — the DRM error code rides inside
+`message` in trailing parentheses, and `url` is the refused document's viewer
+URL with a `/Forbidden` segment injected, whose short code is the same one
+`standards.vitrium_web_url` stores. That join is what turns "no permission"
+into a **Buy this document** button for that exact standard (the client's
+stated goal) instead of a generic store link. Full picture in
+`docs/VITRIUM_ERROR_PAGE.md`; the code vocabulary is Vitrium's published Error
+Code Reference Guide (24 codes), not guesswork.
+
+- **The page** (`src/frontend/library-error.html`, served at
+  `/library-error.html`) is deliberately self-contained — no auth gate (the
+  visitor is by definition someone the viewer refused), no Tailwind CDN, no
+  imports — so it survives being re-hosted off lensy.ies.org (`API_BASE` const).
+  Vitrium's own sample assigns query params with `innerHTML`; this page renders
+  every untrusted value with `textContent` only. One view per code family:
+  purchase funnel (w29/n4p/4k3), renewal (qe2/rqe2), the reset form (the
+  Clear-Use family), account states (3yq/g45/m47/7ud/bw5/7rp), start-date
+  (qs2), deactivated-with-successor (2p3 — names the superseding edition when
+  D1 knows it), region (rc7/rc8), technical (rc9/gf4/gf5), and a generic
+  fallback that prints Vitrium's own message rather than inventing one.
+- **Two PUBLIC endpoints** (`src/workers/library-support.ts`, routed in api.ts
+  before the session-gated blocks): `GET /api/library/document?code=` resolves
+  a short code to designation/title/buy_url/branded library URL (+
+  `supersededBy` for a deprecated edition) — it discloses only what the store
+  and ToC already publish; `POST /api/library/device-reset` is the client's
+  "form which goes to staff for approval": it accepts ONLY the Clear-Use error
+  family (vc3, dvc3, dovc3, dpvc3, vp3, ipvc3 — the codes whose documented fix
+  is Vitrium admin → Users → "Clear Use"), honeypot-drops bots, collapses
+  repeats into the open request, rate-limits per IP on the search limiter
+  (fail-open), and answers 500 rather than a false "received" when the row
+  cannot be stored.
+- **The queue** is `device_reset_requests` (migration 0016 — personal by
+  necessity, unlike search_log/search_events: staff cannot clear a limit
+  without knowing whose). Staff notification per row via
+  `DEVICE_RESET_NOTIFY_EMAIL` (unset until IES names the inbox; send outcome
+  recorded on the row, same fail-soft contract as invites). Export at
+  `GET /api/admin/device-resets.csv`, bookkeeping at
+  `POST /api/admin/device-resets {id, status}` — the reset itself happens in
+  Vitrium, so the queue records who asked and what happened.
+- **Shared parsers** live in `src/lib/vitrium-support.js`
+  (`shortCodeFromViewerUrl` refuses unknown hosts and anything not
+  code-shaped — a wrong join would name the wrong standard;
+  `errorCodeFromMessage` takes the LAST parenthesized token, as Vitrium's own
+  sample does). The page carries a copy by design.
+- **Not deployed by code alone:** migration 0016, the Vitrium admin setting
+  (Settings → Web Viewer Settings → "Custom URL for Error Page" →
+  `https://lensy.ies.org/library-error.html` — client's side), the staff inbox
+  var, and the reader-facing `SUPPORT_EMAIL` in the page (Standards@ies.org
+  until the client confirms the right address).
+
 ### The DO089–DO097 round: a column that was never filled, and an edition that was live twice
 
 The client's fourth round. Four UI items are small on their own; the three that

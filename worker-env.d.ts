@@ -32,5 +32,12 @@ declare global {
     // the entitlement is not in the cookie yet; when it is, set it here rather
     // than editing code.
     LENSY_SUBSCRIBER_ROLES?: string;
+    // ── Lighting Library error page (2026-09-04) ────────────────────────────
+    // Staff inbox for device-limit reset requests submitted from
+    // library-error.html. Unset → requests are still stored in
+    // device_reset_requests (and exportable via /api/admin/device-resets.csv);
+    // only the per-request notification email is skipped. IES has not named
+    // the inbox yet — set it in wrangler.toml [vars] once they do.
+    DEVICE_RESET_NOTIFY_EMAIL?: string;
   }
 }

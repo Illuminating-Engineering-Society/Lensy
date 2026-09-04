@@ -432,6 +432,109 @@ export async function sendCollectionShareEmail(
   }
 }
 
+// ─── Device-limit reset request → staff (Vitrium error page, 2026-09-04) ──────
+
+export interface DeviceResetEmailContext {
+  /** Staff inbox — env.DEVICE_RESET_NOTIFY_EMAIL. */
+  to: string;
+  requestId: number | null;
+  email: string;
+  name: string | null;
+  documentTitle: string | null;
+  documentCode: string | null;
+  /** vc3 | dvc3 | dovc3 | dpvc3 | vp3 | ipvc3 */
+  errorCode: string;
+  /** Human meaning of the code (CLEAR_USE_LABELS). */
+  errorLabel: string;
+  userNote: string | null;
+  rawMessage: string | null;
+}
+
+/**
+ * The staff notification for one device/usage-limit reset request.
+ *
+ * The reset itself happens in the Vitrium admin app — Users tab → "Clear Use"
+ * beside the user, which is Vitrium's documented fix for this whole error
+ * family — so the mail's job is to hand staff everything that action needs:
+ * who, which document, which limit, and the requester's own words. Vitrium's
+ * guide also says to clear usage only when fraud or unauthorized sharing is NOT
+ * suspected; the mail repeats that so the judgement stays with staff.
+ */
+export function buildDeviceResetEmail(ctx: DeviceResetEmailContext): InviteEmailContent {
+  const subject = `Device limit reset request: ${ctx.email}${ctx.documentTitle ? ` — ${ctx.documentTitle}` : ''}`;
+
+  const rows: Array<[string, string]> = [
+    ['Requested by', ctx.name ? `${ctx.name} <${ctx.email}>` : ctx.email],
+    ['Document', ctx.documentTitle || ctx.documentCode || 'Not identified'],
+    ...(ctx.documentTitle && ctx.documentCode ? [['Viewer code', ctx.documentCode] as [string, string]] : []),
+    ['Limit hit', `${ctx.errorLabel} (${ctx.errorCode})`],
+    ...(ctx.rawMessage ? [['Viewer message', ctx.rawMessage] as [string, string]] : []),
+    ...(ctx.requestId != null ? [['Request #', String(ctx.requestId)] as [string, string]] : []),
+  ];
+
+  const html = `<!doctype html><html><body style="margin:0;background:#f4f6f8;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif">
+  <div style="max-width:560px;margin:24px auto;background:#fff;border:1px solid #e2e6ea;border-radius:8px;overflow:hidden">
+    <div style="background:${BRAND_SECONDARY};color:#fff;padding:16px 20px;font-size:15px;font-weight:700">IES Lighting Library — staff notification</div>
+    <div style="padding:24px 20px">
+      <h1 style="margin:0 0 14px;font-size:19px;color:${BRAND_SECONDARY}">Device limit reset requested</h1>
+      ${paragraph('A reader hit a usage limit in the Lighting Library viewer and asked for it to be reset. Details below.')}
+      <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse;margin:0 0 16px">
+        ${rows.map(([k, v]) => `<tr>
+          <td style="padding:6px 12px 6px 0;font-size:13px;color:#7a8794;white-space:nowrap;vertical-align:top">${escapeHtml(k)}</td>
+          <td style="padding:6px 0;font-size:14px;color:#333">${escapeHtml(v)}</td>
+        </tr>`).join('\n        ')}
+      </table>
+      ${ctx.userNote ? `<div style="margin:0 0 16px;padding:12px 14px;background:#f8fafb;border-left:3px solid ${BRAND_PRIMARY};font-size:14px;color:#444;line-height:1.55">${escapeHtml(ctx.userNote)}</div>` : ''}
+      ${paragraph('To approve: sign in to the Vitrium admin app, open the Users tab, find this user, and click "Clear Use" beside their row. Per Vitrium’s guidance, clear usage only if you do not suspect fraud or unauthorized sharing.')}
+      <p style="margin:0;font-size:13px;color:#666">Reply to the requester: <a href="mailto:${escapeHtml(ctx.email)}" style="color:${BRAND_SECONDARY}">${escapeHtml(ctx.email)}</a></p>
+    </div>
+    <div style="padding:14px 20px;background:#f4f6f8;color:#888;font-size:12px">Sent by lensy.ies.org from the Lighting Library error page. The full request queue is available to administrators at /api/admin/device-resets.csv.</div>
+  </div>
+</body></html>`;
+
+  const text = [
+    'Device limit reset requested',
+    '',
+    'A reader hit a usage limit in the Lighting Library viewer and asked for it to be reset.',
+    '',
+    ...rows.map(([k, v]) => `${k}: ${v}`),
+    ...(ctx.userNote ? ['', `Requester's note: ${ctx.userNote}`] : []),
+    '',
+    'To approve: Vitrium admin app → Users tab → find this user → "Clear Use".',
+    'Per Vitrium’s guidance, clear usage only if you do not suspect fraud or unauthorized sharing.',
+    '',
+    `Reply to the requester: ${ctx.email}`,
+  ].join('\n');
+
+  return { subject, html, text };
+}
+
+/** Send one staff notification. Never throws — same contract as sendInviteEmail. */
+export async function sendDeviceResetEmail(
+  env: Env,
+  ctx: DeviceResetEmailContext,
+): Promise<SendOutcome> {
+  const binding = env.SEND_EMAIL;
+  if (!binding) {
+    return { sent: false, error: 'SEND_EMAIL binding is not configured on this deployment.' };
+  }
+  const { subject, html, text } = buildDeviceResetEmail(ctx);
+  try {
+    await binding.send({
+      to: ctx.to,
+      from: { email: FROM_ADDRESS, name: FROM_NAME },
+      subject,
+      html,
+      text,
+    });
+    return { sent: true };
+  } catch (err) {
+    const error = describeSendError(err);
+    console.error('device_reset_email_failed', { to: ctx.to, error });
+    return { sent: false, error };
+  }
+}
+
 /** Reject a malformed recipient before the binding does, with a usable message. */
 export function isEmailAddress(value: unknown): boolean {
   return typeof value === 'string' && /^[^\s@]+@[^\s@.]+(?:\.[^\s@.]+)+$/.test(value.trim());

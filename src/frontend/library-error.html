@@ -1,0 +1,528 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="robots" content="noindex">
+  <title>IES Lighting Library — Access</title>
+  <!--
+    Lighting Library custom error page (client note, 2026-09-04).
+
+    Vitrium's WebViewer redirects refused readers here — configured in the
+    Vitrium admin app under Settings → Web Viewer Settings → "Custom URL for
+    Error Page" — passing ?username=&userid=&url=&message=&lang= (the DRM error
+    code arrives inside `message`, in trailing parentheses). Contract per
+    Vitrium's Custom Error Page Configuration Manual (April 2023) and sample
+    project; error-code vocabulary per Vitrium's Error Code Reference Guide.
+
+    Deliberately self-contained — no auth gate (the visitor is by definition
+    someone the viewer refused), no Tailwind CDN, no imports — so it keeps
+    working if IES later hosts it somewhere other than lensy.ies.org. If it IS
+    re-hosted, set API_BASE in the script below to https://lensy.ies.org so the
+    document lookup and the device-reset form still reach their endpoints
+    (the API's CORS policy already allows it).
+
+    Rendering rule the Vitrium sample gets wrong and this page must never copy:
+    every query-string value is untrusted and is only ever assigned via
+    textContent / value — never innerHTML.
+  -->
+  <style>
+    :root {
+      --ies-gold: #EFA723; --ies-gold-dark: #D8930F;
+      --blue: #2E4A62; --blue-soft: #3A5068;
+      --orange: #D95D2B; --orange-dark: #B84A20;
+      --ink: #2C2C2C; --muted: #6b7280; --faint: #9ca3af;
+      --bg: #F7F7F7; --line: #e2e6ea;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; background: var(--bg); color: var(--ink);
+      font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      font-size: 15px; line-height: 1.55;
+    }
+    .banner {
+      background: var(--ies-gold); color: #3b2a05;
+      padding: 14px 20px; display: flex; align-items: center; gap: 12px;
+    }
+    .banner .mark {
+      width: 34px; height: 34px; border-radius: 9px; background: var(--blue);
+      display: flex; align-items: center; justify-content: center; flex: none;
+    }
+    .banner .mark svg { width: 20px; height: 20px; color: #fff; }
+    .banner .name { font-weight: 700; font-size: 15px; }
+    .banner .sub { font-size: 12.5px; opacity: .85; }
+    .wrap { max-width: 640px; margin: 32px auto 48px; padding: 0 16px; }
+    .card {
+      background: #fff; border: 1px solid var(--line); border-radius: 14px;
+      box-shadow: 0 4px 16px rgba(44,44,44,0.07); padding: 30px 28px;
+    }
+    .doc {
+      display: none; margin: 0 0 20px; padding: 12px 16px;
+      background: #f8fafb; border: 1px solid var(--line); border-radius: 8px;
+    }
+    .doc .k { font-size: 11px; letter-spacing: .05em; text-transform: uppercase; color: var(--faint); }
+    .doc .v { font-weight: 600; color: var(--blue); }
+    h1 { font-size: 21px; margin: 0 0 10px; letter-spacing: -0.01em; color: var(--ink); }
+    p.lead { margin: 0 0 18px; color: #444; }
+    .notice {
+      display: none; margin: 0 0 18px; padding: 12px 16px; border-radius: 8px;
+      background: #fef7e8; border: 1px solid #f2ddac; color: #7a5410; font-size: 14px;
+    }
+    .actions { display: flex; flex-wrap: wrap; gap: 10px; margin: 0 0 6px; }
+    .btn {
+      display: inline-block; padding: 11px 20px; border-radius: 9px; border: 0;
+      font-weight: 600; font-size: 14.5px; cursor: pointer; text-decoration: none;
+    }
+    .btn-primary { background: var(--orange); color: #fff; }
+    .btn-primary:hover { background: var(--orange-dark); }
+    .btn-secondary { background: var(--blue); color: #fff; }
+    .btn-ghost { background: #fff; color: var(--blue); border: 1px solid var(--line); }
+    .help { margin: 16px 0 0; padding: 0; list-style: none; }
+    .help li {
+      margin: 0 0 8px; padding-left: 18px; position: relative;
+      color: var(--muted); font-size: 13.5px;
+    }
+    .help li::before { content: "•"; position: absolute; left: 4px; color: var(--ies-gold-dark); }
+    .form-card { margin: 22px 0 0; padding: 18px; background: #f8fafb; border: 1px solid var(--line); border-radius: 10px; }
+    .form-card h2 { font-size: 15px; margin: 0 0 6px; color: var(--blue); }
+    .form-card p.intro { margin: 0 0 14px; font-size: 13.5px; color: var(--muted); }
+    label { display: block; font-size: 12.5px; font-weight: 600; color: var(--blue-soft); margin: 12px 0 4px; }
+    input[type="text"], input[type="email"], textarea {
+      width: 100%; padding: 10px 12px; border: 1px solid #cfd6dc; border-radius: 8px;
+      font: inherit; font-size: 14px; background: #fff;
+    }
+    textarea { min-height: 74px; resize: vertical; }
+    .hp { position: absolute; left: -9999px; top: -9999px; height: 1px; width: 1px; overflow: hidden; }
+    .form-note { font-size: 12px; color: var(--faint); margin: 10px 0 0; }
+    .form-error { display: none; margin: 12px 0 0; font-size: 13.5px; color: #b3261e; }
+    .form-done { display: none; margin: 4px 0 0; padding: 14px 16px; background: #eef7ee; border: 1px solid #cde3cd; border-radius: 8px; color: #2c5f2e; font-size: 14px; }
+    .support { margin: 22px 0 0; font-size: 13.5px; color: var(--muted); }
+    .support a { color: var(--blue); }
+    details { margin: 26px 0 0; border-top: 1px solid var(--line); padding-top: 14px; }
+    summary { cursor: pointer; font-size: 13px; color: var(--faint); user-select: none; }
+    .details-grid { margin: 12px 0 0; font-size: 12.5px; color: var(--muted); }
+    .details-grid div { margin: 0 0 5px; word-break: break-all; }
+    .details-grid b { color: var(--blue-soft); font-weight: 600; }
+    .foot { text-align: center; margin: 22px 0 0; font-size: 12px; color: var(--faint); }
+    .foot a { color: var(--blue); }
+  </style>
+</head>
+<body>
+  <header class="banner">
+    <div class="mark" aria-hidden="true">
+      <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M12 3v1m0 16v1M4.22 4.22l.707.707M18.364 18.364l.707.707M3 12H2m20 0h-1M4.927 19.073l.707-.707M18.364 5.636l.707-.707M12 8a4 4 0 100 8 4 4 0 000-8z"/>
+      </svg>
+    </div>
+    <div>
+      <div class="name">Illuminating Engineering Society</div>
+      <div class="sub">Lighting Library</div>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <div class="card">
+      <div class="doc" id="ve-doc">
+        <div class="k">Document</div>
+        <div class="v" id="ve-doc-name"></div>
+      </div>
+
+      <h1 id="ve-title">We couldn't open this document</h1>
+      <p class="lead" id="ve-lead">Something prevented the Lighting Library from opening this document for you.</p>
+
+      <div class="notice" id="ve-superseded"></div>
+
+      <div class="actions" id="ve-actions"></div>
+      <ul class="help" id="ve-help"></ul>
+
+      <section class="form-card" id="ve-form-card" hidden>
+        <h2>Request a reset from IES staff</h2>
+        <p class="intro" id="ve-form-intro">IES staff review each request and reset the limit on approval. You'll be contacted at the email below.</p>
+        <form id="ve-form">
+          <label for="ve-f-name">Your name (optional)</label>
+          <input type="text" id="ve-f-name" name="name" maxlength="120" autocomplete="name">
+          <label for="ve-f-email">Email on your IES account</label>
+          <input type="email" id="ve-f-email" name="email" maxlength="200" required autocomplete="email">
+          <label for="ve-f-note">Anything staff should know? (optional)</label>
+          <textarea id="ve-f-note" name="note" maxlength="1000" placeholder="e.g., I replaced my laptop last week."></textarea>
+          <div class="hp" aria-hidden="true">
+            <label for="ve-f-website">Website</label>
+            <input type="text" id="ve-f-website" name="website" tabindex="-1" autocomplete="off">
+          </div>
+          <p class="form-error" id="ve-form-error"></p>
+          <p style="margin:16px 0 0"><button type="submit" class="btn btn-primary" id="ve-form-submit">Send request to IES staff</button></p>
+          <p class="form-note">Only the details shown on this page and what you enter above are sent to IES.</p>
+        </form>
+        <div class="form-done" id="ve-form-done"></div>
+      </section>
+
+      <p class="support" id="ve-support"></p>
+
+      <details>
+        <summary>Technical details</summary>
+        <div class="details-grid">
+          <div><b>Message:</b> <span id="ve-d-message">—</span></div>
+          <div><b>Error code:</b> <span id="ve-d-code">—</span></div>
+          <div><b>Username:</b> <span id="ve-d-username">—</span></div>
+          <div><b>User ID:</b> <span id="ve-d-userid">—</span></div>
+          <div><b>Document URL:</b> <span id="ve-d-url">—</span></div>
+        </div>
+      </details>
+    </div>
+
+    <p class="foot">
+      <a href="https://lighting.ies.org/">Back to the IES Lighting Library</a>
+      &nbsp;·&nbsp;
+      <a href="https://store.ies.org/">IES Store</a>
+    </p>
+  </main>
+
+  <script>
+    'use strict';
+
+    // ── Configuration ─────────────────────────────────────────────────────────
+    // Same-origin when served from lensy.ies.org; set to 'https://lensy.ies.org'
+    // if this page is ever hosted elsewhere.
+    var API_BASE = '';
+    var STORE_URL = 'https://store.ies.org/';
+    var SUBSCRIBE_URL = 'https://store.ies.org/ies/subscriptions/';
+    var LIBRARY_URL = 'https://lighting.ies.org/';
+    // PENDING CLIENT CONFIRMATION: the right inbox for Library access questions.
+    var SUPPORT_EMAIL = 'Standards@ies.org';
+
+    // ── Parsers (mirrors src/lib/vitrium-support.js — this page must not import) ─
+    function errorCodeFromMessage(message) {
+      if (typeof message !== 'string') return null;
+      var matches = message.match(/\(([A-Za-z0-9]{2,8})\)/g);
+      if (!matches || matches.length === 0) return null;
+      var last = matches[matches.length - 1];
+      return last.slice(1, -1).toLowerCase();
+    }
+
+    function shortCodeFromViewerUrl(raw) {
+      if (typeof raw !== 'string' || !raw.trim()) return null;
+      var parsed;
+      try { parsed = new URL(raw.trim()); } catch (e) { return null; }
+      var host = parsed.hostname.toLowerCase().replace(/^www\./, '');
+      if (host !== 'view.protectedpdf.com' && host !== 'protectedpdf.com' && host !== 'lighting.ies.org') return null;
+      var segments = parsed.pathname.split('/').filter(Boolean).filter(function (s) {
+        return s.toLowerCase() !== 'forbidden';
+      });
+      if (segments.length !== 1) return null;
+      return /^[A-Za-z0-9]{4,16}$/.test(segments[0]) ? segments[0] : null;
+    }
+
+    // ── What each Vitrium error means for an IES reader ───────────────────────
+    // Codes per Vitrium's Error Code Reference Guide. `category` decides the
+    // actions; a code we've never seen falls through to the default view, which
+    // shows Vitrium's own message rather than guessing.
+    var CLEAR_USE_TITLES = {
+      vc3: 'You’ve reached your device limit',
+      dvc3: 'You’ve reached your account’s document limit',
+      dovc3: 'You’ve opened this document the maximum number of times',
+      dpvc3: 'You’ve reached your print limit',
+      vp3: 'You’ve reached your print limit',
+      ipvc3: 'This location isn’t covered by your license'
+    };
+    var CLEAR_USE_LEADS = {
+      vc3: 'The Lighting Library limits how many devices each account can read documents on, and you’ve reached that limit. This usually happens after switching to a new computer, browser, or phone.',
+      dvc3: 'Your account has opened the maximum number of documents allowed by its access plan.',
+      dovc3: 'Your account has opened this document the maximum number of times allowed by its access plan.',
+      dpvc3: 'Your account has printed this document the maximum number of times allowed by its access plan.',
+      vp3: 'Your account has printed this document the maximum number of times allowed by its access plan.',
+      ipvc3: 'Your access plan limits which network locations (IP addresses) documents can be read from, and this location isn’t one of them.'
+    };
+
+    function resolveView(params) {
+      var message = params.message || '';
+      var code = errorCodeFromMessage(message);
+      var view = {
+        code: code,
+        category: 'default',
+        title: 'We couldn’t open this document',
+        lead: 'Something prevented the Lighting Library from opening this document for you.' + (message ? ' The viewer reported: “' + message + '”' : ''),
+        actions: [],           // {label, href, kind} — 'buy' hrefs are filled after the document lookup
+        help: [],
+        showForm: false,
+        wantsBuy: false
+      };
+
+      if (!code) {
+        view.actions = [
+          { label: 'Back to the Lighting Library', href: LIBRARY_URL, kind: 'secondary' }
+        ];
+        return view;
+      }
+
+      if (code === 'w29' || code === 'n4p' || code === '4k3') {
+        view.category = 'purchase';
+        view.title = 'This document isn’t included in your current access';
+        view.lead = 'Your IES sign-in doesn’t currently include access to this document. You can purchase it individually, or subscribe to the IES Lighting Library for the full collection of current standards.';
+        view.wantsBuy = true;
+        view.actions = [
+          { label: 'Subscribe to the Lighting Library', href: SUBSCRIBE_URL, kind: 'secondary' },
+          { label: 'Browse the IES Store', href: STORE_URL, kind: 'ghost' }
+        ];
+        view.help = [
+          'Already purchased it or already a subscriber? Make sure you’re signed in with the same email address your purchase or subscription is under, then open the document again.',
+          'Access purchased through your organization can take until the next business day to appear.'
+        ];
+      } else if (code === 'qe2' || code === 'rqe2') {
+        view.category = 'expired';
+        view.title = 'Your access to this document has expired';
+        view.lead = 'The access period on your account for this document — a document loan or a subscription term — has ended. Renewing your subscription or purchasing the document restores access.';
+        view.wantsBuy = true;
+        view.actions = [
+          { label: 'Renew or subscribe', href: SUBSCRIBE_URL, kind: 'secondary' },
+          { label: 'Browse the IES Store', href: STORE_URL, kind: 'ghost' }
+        ];
+        view.help = [
+          'If you believe your access should still be active, contact IES with the technical details below.'
+        ];
+      } else if (CLEAR_USE_TITLES[code]) {
+        view.category = 'clearuse';
+        view.title = CLEAR_USE_TITLES[code];
+        view.lead = CLEAR_USE_LEADS[code];
+        view.showForm = true;
+      } else if (code === '3yq' || code === 'g45') {
+        view.category = 'account';
+        view.title = 'We couldn’t find your account';
+        view.lead = 'The sign-in you used isn’t recognized in the Lighting Library.';
+        view.actions = [
+          { label: 'Back to the Lighting Library', href: LIBRARY_URL, kind: 'secondary' }
+        ];
+        view.help = [
+          'Make sure you signed in with the email address on your IES account — a purchase made under a different email creates a separate account.',
+          'If you registered recently, your account may still need to be activated: look for a confirmation email and click the link in it.',
+          'Still stuck? Contact IES with the technical details below and staff can locate or activate your account.'
+        ];
+      } else if (code === 'm47') {
+        view.category = 'account';
+        view.title = 'Your account is inactive';
+        view.lead = 'Your Lighting Library account has been deactivated. IES staff can reactivate it if this shouldn’t be the case.';
+      } else if (code === '7ud') {
+        view.category = 'account';
+        view.title = 'Your account is temporarily locked';
+        view.lead = 'Too many unsuccessful sign-in attempts locked this account. Contact IES to unlock it — and if the attempts weren’t yours, say so.';
+      } else if (code === 'bw5') {
+        view.category = 'account';
+        view.title = 'That sign-in didn’t match';
+        view.lead = 'The password or credentials you entered don’t match this account.';
+        view.actions = [
+          { label: 'Try signing in again', href: LIBRARY_URL, kind: 'secondary' }
+        ];
+        view.help = [
+          'Check for typos, extra spaces, and Caps Lock.',
+          'Use “Forgot password” on the sign-in screen to reset it.'
+        ];
+      } else if (code === '7rp') {
+        view.category = 'account';
+        view.title = 'Please set a new password first';
+        view.lead = 'An administrator requires you to change your password before you can open documents. Reset it from the sign-in screen, then try again.';
+        view.actions = [
+          { label: 'Go to sign-in', href: LIBRARY_URL, kind: 'secondary' }
+        ];
+      } else if (code === 'qs2') {
+        view.category = 'notyet';
+        view.title = 'Your access hasn’t started yet';
+        view.lead = 'This document is assigned to you with a start date in the future. Please try again on or after your access start date.';
+        view.actions = [
+          { label: 'Back to the Lighting Library', href: LIBRARY_URL, kind: 'secondary' }
+        ];
+      } else if (code === '2p3') {
+        view.category = 'inactive';
+        view.title = 'This document is no longer available';
+        view.lead = 'This edition has been deactivated in the Lighting Library — usually because it has been replaced by a newer edition.';
+        view.wantsBuy = false;
+        view.actions = [
+          { label: 'Browse the IES Store', href: STORE_URL, kind: 'secondary' },
+          { label: 'Back to the Lighting Library', href: LIBRARY_URL, kind: 'ghost' }
+        ];
+      } else if (code === 'rc7' || code === 'rc8') {
+        view.category = 'country';
+        view.title = 'This content isn’t available in your region';
+        view.lead = 'The access plan on this document doesn’t cover the country you’re connecting from. If you’re travelling or using a VPN, that may be why.';
+      } else if (code === 'rc9' || code === 'gf4' || code === 'gf5') {
+        view.category = 'technical';
+        view.title = 'Something went wrong on our side';
+        view.lead = 'The Lighting Library hit a technical problem opening this document. Please try again in a few minutes; if it keeps happening, contact IES with the technical details below.';
+        view.actions = [
+          { label: 'Back to the Lighting Library', href: LIBRARY_URL, kind: 'secondary' }
+        ];
+      } else {
+        view.actions = [
+          { label: 'Back to the Lighting Library', href: LIBRARY_URL, kind: 'secondary' }
+        ];
+      }
+      return view;
+    }
+
+    // ── Rendering ─────────────────────────────────────────────────────────────
+    function readParams() {
+      var q = new URLSearchParams(window.location.search);
+      // Vitrium sends `message` with '+' for spaces; URLSearchParams decodes it.
+      return {
+        username: q.get('username') || '',
+        userid: q.get('userid') || '',
+        url: q.get('url') || '',
+        message: q.get('message') || '',
+        lang: q.get('lang') || 'en'
+      };
+    }
+
+    function makeButton(action) {
+      var a = document.createElement('a');
+      a.className = 'btn btn-' + (action.kind || 'ghost');
+      a.href = action.href;
+      a.target = '_blank';
+      a.rel = 'noopener';
+      a.textContent = action.label;
+      return a;
+    }
+
+    function render(params, view) {
+      document.getElementById('ve-title').textContent = view.title;
+      document.getElementById('ve-lead').textContent = view.lead;
+
+      var actionsEl = document.getElementById('ve-actions');
+      view.actions.forEach(function (action) { actionsEl.appendChild(makeButton(action)); });
+
+      var helpEl = document.getElementById('ve-help');
+      view.help.forEach(function (line) {
+        var li = document.createElement('li');
+        li.textContent = line;
+        helpEl.appendChild(li);
+      });
+
+      var supportEl = document.getElementById('ve-support');
+      supportEl.textContent = 'Need help? Contact ';
+      var mail = document.createElement('a');
+      mail.href = 'mailto:' + SUPPORT_EMAIL;
+      mail.textContent = SUPPORT_EMAIL;
+      supportEl.appendChild(mail);
+      supportEl.appendChild(document.createTextNode(' and include the technical details below.'));
+
+      // Technical details — untrusted values, textContent only.
+      document.getElementById('ve-d-message').textContent = params.message || '—';
+      document.getElementById('ve-d-code').textContent = view.code || '—';
+      document.getElementById('ve-d-username').textContent = params.username || '—';
+      document.getElementById('ve-d-userid').textContent = params.userid || '—';
+      document.getElementById('ve-d-url').textContent = params.url || '—';
+
+      if (view.showForm) setUpForm(params, view);
+    }
+
+    // The document lookup: names the document on the page, and turns "buy it"
+    // from a generic store link into THAT document's purchase page. Fail-soft —
+    // the page is complete without it.
+    function resolveDocument(params, view) {
+      var code = shortCodeFromViewerUrl(params.url);
+      if (!code) return;
+      fetch(API_BASE + '/api/library/document?code=' + encodeURIComponent(code))
+        .then(function (res) { return res.ok ? res.json() : null; })
+        .then(function (data) {
+          if (!data || !data.document) return;
+          var doc = data.document;
+          var name = doc.designation + (doc.title ? ' ' + doc.title : '');
+          document.getElementById('ve-doc-name').textContent = name;
+          document.getElementById('ve-doc').style.display = 'block';
+          var docTitleField = document.getElementById('ve-f-doc-title');
+          if (docTitleField) docTitleField.value = name;
+
+          if (view.wantsBuy && doc.buyUrl) {
+            var actionsEl = document.getElementById('ve-actions');
+            actionsEl.insertBefore(
+              makeButton({ label: 'Buy this document', href: doc.buyUrl, kind: 'primary' }),
+              actionsEl.firstChild
+            );
+          }
+
+          // A withdrawn edition names its replacement (2p3 and anywhere else
+          // the corpus knows a successor).
+          if (data.supersededBy) {
+            var s = data.supersededBy;
+            var noticeEl = document.getElementById('ve-superseded');
+            noticeEl.textContent = 'This edition has been replaced by ' + s.designation +
+              (s.title ? ' ' + s.title : '') + '. ';
+            if (s.buyUrl) {
+              var buy = document.createElement('a');
+              buy.href = s.buyUrl;
+              buy.target = '_blank';
+              buy.rel = 'noopener';
+              buy.textContent = 'Purchase the current edition →';
+              noticeEl.appendChild(buy);
+            }
+            noticeEl.style.display = 'block';
+          }
+        })
+        .catch(function () { /* page is complete without the lookup */ });
+    }
+
+    // ── Device-limit reset request form ───────────────────────────────────────
+    function setUpForm(params, view) {
+      var card = document.getElementById('ve-form-card');
+      card.hidden = false;
+
+      var emailInput = document.getElementById('ve-f-email');
+      // Vitrium usernames in the IES Library are the account email.
+      if (params.username && params.username.indexOf('@') > 0) emailInput.value = params.username;
+
+      // Hidden context the endpoint stores alongside the request.
+      var form = document.getElementById('ve-form');
+      var docTitle = document.createElement('input');
+      docTitle.type = 'hidden';
+      docTitle.id = 've-f-doc-title';
+      form.appendChild(docTitle);
+
+      form.addEventListener('submit', function (ev) {
+        ev.preventDefault();
+        var errorEl = document.getElementById('ve-form-error');
+        errorEl.style.display = 'none';
+        var submit = document.getElementById('ve-form-submit');
+        submit.disabled = true;
+        submit.textContent = 'Sending…';
+
+        fetch(API_BASE + '/api/library/device-reset', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            email: emailInput.value.trim(),
+            name: document.getElementById('ve-f-name').value.trim(),
+            note: document.getElementById('ve-f-note').value.trim(),
+            error_code: view.code,
+            document_url: params.url,
+            document_title: docTitle.value,
+            message: params.message,
+            website: document.getElementById('ve-f-website').value
+          })
+        })
+          .then(function (res) { return res.json().then(function (data) { return { ok: res.ok, data: data }; }); })
+          .then(function (r) {
+            if (!r.ok) throw new Error((r.data && r.data.error) || 'Request failed');
+            form.hidden = true;
+            var done = document.getElementById('ve-form-done');
+            done.textContent = r.data.alreadyPending
+              ? 'You already have an open request for this document — IES staff have it and will contact you at your email once it’s handled.'
+              : 'Request sent. IES staff review each request and will contact you at your email once the limit is reset.';
+            done.style.display = 'block';
+          })
+          .catch(function (err) {
+            submit.disabled = false;
+            submit.textContent = 'Send request to IES staff';
+            errorEl.textContent = (err && err.message ? err.message : 'Your request could not be sent.') +
+              ' You can also email ' + SUPPORT_EMAIL + ' directly.';
+            errorEl.style.display = 'block';
+          });
+      });
+    }
+
+    // ── Boot ──────────────────────────────────────────────────────────────────
+    if (typeof window !== 'undefined' && typeof document !== 'undefined' && document.getElementById('ve-title')) {
+      var params = readParams();
+      var view = resolveView(params);
+      render(params, view);
+      resolveDocument(params, view);
+    }
+  </script>
+</body>
+</html>

@@ -549,6 +549,97 @@ export async function handleAdminR2Multipart(request: Request, env: Env): Promis
   return jsonResponse({ error: 'action must be create | part | complete | abort' }, 400);
 }
 
+// ─── Device-limit reset queue (Vitrium error page, 2026-09-04) ────────────────
+
+/**
+ * GET /api/admin/device-resets.csv — the reset-request queue
+ * (?status=new|done|dismissed&from=&to=&limit=). Same shape as the other staff
+ * CSV exports; unlike them the rows are personal (staff cannot clear a device
+ * limit without knowing whose), which is why this stays behind the admin gate.
+ */
+export async function handleAdminDeviceResets(request: Request, env: Env): Promise<Response> {
+  const denied = await requireAuth(request, env);
+  if (denied) return denied;
+
+  const url = new URL(request.url);
+  const status = url.searchParams.get('status');
+  const from = url.searchParams.get('from');
+  const to = url.searchParams.get('to');
+  const limit = Math.min(50000, Math.max(1, parseInt(url.searchParams.get('limit') || '10000', 10) || 10000));
+
+  let sql = `
+    SELECT id, created_at, email, name, document_code, document_id, document_title,
+           error_code, raw_message, user_note, status, notify_sent, notify_error,
+           resolved_at, resolved_by
+    FROM device_reset_requests WHERE 1=1
+  `;
+  const bindings: (string | number)[] = [];
+  if (status) { sql += ' AND status = ?'; bindings.push(status); }
+  if (from) { sql += ' AND created_at >= ?'; bindings.push(from); }
+  if (to) { sql += ' AND created_at <= ?'; bindings.push(to); }
+  sql += ' ORDER BY created_at DESC LIMIT ?';
+  bindings.push(limit);
+
+  let rows: Record<string, unknown>[] = [];
+  try {
+    const result = await env.DB.prepare(sql).bind(...bindings).all<Record<string, unknown>>();
+    rows = result.results || [];
+  } catch (err) {
+    // The table only exists once migration 0016 has been applied; an empty
+    // export is a truer answer than a 500.
+    console.error('device reset export failed (non-fatal):', err instanceof Error ? err.message : String(err));
+  }
+
+  const columns = [
+    'id', 'created_at', 'email', 'name', 'document_code', 'document_id',
+    'document_title', 'error_code', 'raw_message', 'user_note', 'status',
+    'notify_sent', 'notify_error', 'resolved_at', 'resolved_by',
+  ];
+  const csv = [
+    columns.join(','),
+    ...rows.map(r => columns.map(c => csvCell(r[c])).join(',')),
+  ].join('\r\n');
+
+  return new Response(csv, {
+    status: 200,
+    headers: {
+      'Content-Type': 'text/csv; charset=utf-8',
+      'Content-Disposition': 'attachment; filename="library-device-resets.csv"',
+    },
+  });
+}
+
+/**
+ * POST /api/admin/device-resets — mark one request handled.
+ * Body: { id, status: 'done'|'dismissed'|'new', resolved_by? }
+ *
+ * Bookkeeping only: the actual reset is the "Clear Use" action in the Vitrium
+ * admin app. 'new' is accepted so a mis-click can be undone.
+ */
+export async function handleAdminDeviceResetUpdate(request: Request, env: Env): Promise<Response> {
+  const denied = await requireAuth(request, env);
+  if (denied) return denied;
+
+  const body = await safeJson(request);
+  const id = Number(body.id);
+  const status = typeof body.status === 'string' ? body.status : '';
+  if (!Number.isInteger(id) || id < 1 || !['done', 'dismissed', 'new'].includes(status)) {
+    return jsonResponse({ error: "id and status ('done' | 'dismissed' | 'new') are required" }, 400);
+  }
+  const resolvedBy = typeof body.resolved_by === 'string' ? body.resolved_by.trim().slice(0, 200) || null : null;
+
+  const result = await env.DB.prepare(`
+    UPDATE device_reset_requests
+    SET status = ?,
+        resolved_at = CASE WHEN ? = 'new' THEN NULL ELSE datetime('now') END,
+        resolved_by = CASE WHEN ? = 'new' THEN NULL ELSE ? END
+    WHERE id = ?
+  `).bind(status, status, status, resolvedBy, id).run();
+
+  if (!result.meta.changes) return jsonResponse({ error: 'Request not found' }, 404);
+  return jsonResponse({ updated: true, id, status });
+}
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 async function fetchValidStandardIds(db: D1Database): Promise<Set<string>> {

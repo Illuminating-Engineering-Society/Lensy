@@ -173,6 +173,16 @@ LENSY_LITE = "on"
 # "The Illuminance Selector" (205 people). See the note in src/lib/tiers.ts:
 # what those cohorts should get is an open product question.
 LENSY_SUBSCRIBER_ROLES = "lighting-library-full-access"
+# ── Lighting Library error page (2026-09-04) ──────────────────────────────────
+# Staff inbox for device-limit reset requests submitted from
+# /library-error.html (the page Vitrium's WebViewer redirects refused readers
+# to — configured in Vitrium admin → Settings → Web Viewer Settings → "Custom
+# URL for Error Page" as https://lensy.ies.org/library-error.html).
+# UNSET until IES names the inbox: requests are still stored in
+# device_reset_requests (migration 0016) and exportable at
+# GET /api/admin/device-resets.csv — only the per-request notification email is
+# skipped. Uncomment and fill in once the client confirms the address:
+# DEVICE_RESET_NOTIFY_EMAIL = "…@ies.org"
 
 # Secrets set via `wrangler secret put`:
 # VITRIUM_API_KEY

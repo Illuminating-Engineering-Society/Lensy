@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   buildInviteEmail,
   buildCollectionShareEmail,
+  buildDeviceResetEmail,
   isEmailAddress,
   formatExpiry,
   describeSendError,
@@ -281,5 +282,51 @@ describe('isEmailAddress', () => {
     for (const bad of ['', 'nope', 'a@b', 'a@@b.co', 'a b@c.co', null, undefined, 42]) {
       expect(isEmailAddress(bad)).toBe(false);
     }
+  });
+});
+
+describe('buildDeviceResetEmail (Vitrium error page, 2026-09-04)', () => {
+  const resetCtx = (overrides = {}) => ({
+    to: 'library-staff@ies.org',
+    requestId: 17,
+    email: 'reader@firm.com',
+    name: 'Sam Reader',
+    documentTitle: 'ANSI/IES RP-1-24 Recommended Practice: Lighting Office Spaces',
+    documentCode: '2H4QTw',
+    errorCode: 'vc3',
+    errorLabel: 'Exceeded device limit',
+    userNote: 'I replaced my laptop last week.',
+    rawMessage: 'You have exceeded your device limit (vc3)',
+    ...overrides,
+  });
+
+  it('hands staff everything the Clear Use action needs', () => {
+    const mail = buildDeviceResetEmail(resetCtx());
+    expect(mail.subject).toContain('reader@firm.com');
+    expect(mail.subject).toContain('RP-1-24');
+    // Who, which document, which limit, their words.
+    expect(mail.text).toContain('Sam Reader <reader@firm.com>');
+    expect(mail.text).toContain('Exceeded device limit (vc3)');
+    expect(mail.text).toContain('I replaced my laptop last week.');
+    // The Vitrium action, spelled out, with Vitrium's own fraud caveat.
+    expect(mail.text).toContain('Clear Use');
+    expect(mail.text).toContain('fraud or unauthorized sharing');
+    expect(mail.html).toContain('<!doctype html>');
+  });
+
+  it('stays grammatical with the optional fields absent', () => {
+    const mail = buildDeviceResetEmail(resetCtx({
+      name: null, documentTitle: null, documentCode: null,
+      userNote: null, rawMessage: null, requestId: null,
+    }));
+    expect(mail.text).toContain('Requested by: reader@firm.com');
+    expect(mail.text).toContain('Document: Not identified');
+    expect(mail.text).not.toContain('null');
+  });
+
+  it('escapes requester-controlled text in the HTML part', () => {
+    const mail = buildDeviceResetEmail(resetCtx({ userNote: '<script>alert(1)</script>' }));
+    expect(mail.html).not.toContain('<script>alert(1)');
+    expect(mail.html).toContain('&lt;script&gt;');
   });
 });

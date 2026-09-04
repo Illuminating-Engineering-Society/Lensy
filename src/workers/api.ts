@@ -26,7 +26,8 @@
 
 import { handleSearch } from './search';
 import { handleIngest } from './ingest';
-import { handleAdminScanOrphans, handleAdminEnumerateIds, handleAdminDeleteOrphans, handleAdminFlushCache, handleAdminSearchLog, handleAdminSearchEvents, handleAdminR2Multipart, handleAdminIndexStatus } from './admin';
+import { handleAdminScanOrphans, handleAdminEnumerateIds, handleAdminDeleteOrphans, handleAdminFlushCache, handleAdminSearchLog, handleAdminSearchEvents, handleAdminR2Multipart, handleAdminIndexStatus, handleAdminDeviceResets, handleAdminDeviceResetUpdate } from './admin';
+import { handleLibraryDocumentLookup, handleDeviceResetRequest } from './library-support';
 import { handleEvent } from './events';
 import { handlePreferences } from './preferences';
 import { handleAdminUsers } from './users';
@@ -105,6 +106,18 @@ export default {
         return withCors(await handleEvent(request, env));
       }
 
+      // ── Lighting Library error page (Vitrium redirect, 2026-09-04) ───────
+      // BOTH PUBLIC by design: the caller is a reader Vitrium just refused, who
+      // has no Lensy session to present. The lookup discloses only what the
+      // store already publishes; the reset request is narrow, capped and
+      // rate-limited (see workers/library-support.ts).
+      if (path === '/api/library/document' && request.method === 'GET') {
+        return withCors(await handleLibraryDocumentLookup(request, env, url));
+      }
+      if (path === '/api/library/device-reset' && request.method === 'POST') {
+        return withCors(await handleDeviceResetRequest(request, env));
+      }
+
       // ── Ingest (internal/admin only) ─────────────────────────────────────
       if (path.startsWith('/api/ingest') && request.method === 'POST') {
         return withCors(await handleIngest(request, env));
@@ -135,6 +148,12 @@ export default {
       }
       if (path === '/api/admin/r2-multipart' && request.method === 'POST') {
         return withCors(await handleAdminR2Multipart(request, env));
+      }
+      if (path === '/api/admin/device-resets.csv' && request.method === 'GET') {
+        return withCors(await handleAdminDeviceResets(request, env));
+      }
+      if (path === '/api/admin/device-resets' && request.method === 'POST') {
+        return withCors(await handleAdminDeviceResetUpdate(request, env));
       }
 
       // ── Admin: invited-users dashboard backend ───────────────────────────
