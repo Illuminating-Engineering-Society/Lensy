@@ -30,11 +30,13 @@ import {
   buildLoginUrl,
   buildLogoutUrl,
   buildAuthCookieValue,
+  isStagingRequest,
   AUTH_COOKIE_NAME,
   type AccessDecision,
   type SsoState,
   type SsoUser,
 } from '../lib/sso';
+import { sessionCapEnabled, enforceSessionCap } from '../lib/session-cap';
 import type { InvitedUserRow } from '../types';
 
 function allowMembersWithoutInvite(env: Env): boolean {
@@ -111,6 +113,23 @@ export async function handleAuthMe(request: Request, env: Env): Promise<Response
     }, 403);
   }
 
+  // The account's one Lensy seat (client, 2026-09-04). A session displaced by
+  // a newer sign-in is told so explicitly: the gate shows "signed in
+  // elsewhere" instead of the ordinary sign-in card, because bouncing this
+  // browser through /login would only hand back the SAME cookie (a live IdP
+  // session is reused, same sid and iat) — the takeover gesture is sign out,
+  // then sign in, which mints a new session with a newer iat.
+  if (await sessionSuperseded(request, env, user)) {
+    return json({
+      authenticated: true,
+      authorized: false,
+      reason: 'session_superseded',
+      email: user.email,
+      loginUrl: buildLoginUrl(env, request.url),
+      logoutUrl: buildLogoutUrl(env, request.url),
+    }, 401);
+  }
+
   if (row) await recordLogin(env, user, row, decision.firstLogin);
 
   return json({
@@ -179,6 +198,29 @@ type SessionGate =
   | { ok: false; response: Response };
 
 /**
+ * The 1-concurrent-session cap (client, 2026-09-04 — lib/session-cap.ts).
+ * True when this cookie's IdP session has been displaced by a NEWER sign-in on
+ * the same account. Applies only to cookie sessions — the bearer paths never
+ * reach it — and fails open on any KV trouble.
+ */
+async function sessionSuperseded(request: Request, env: Env, user: SsoUser): Promise<boolean> {
+  if (!sessionCapEnabled(env)) return false;
+  const scope = isStagingRequest(request.url) ? 'stg' : 'prod';
+  return (await enforceSessionCap(env, user, scope)) === 'superseded';
+}
+
+/** The 401 every gate answers a superseded session with. */
+function supersededResponse(request: Request, env: Env): Response {
+  return json({
+    error: 'session_superseded',
+    message:
+      'Your IES account signed in to Lensy on another device or browser, and Lensy allows one active session at a time. Sign out and back in to use Lensy here instead.',
+    loginUrl: buildLoginUrl(env, request.url),
+    logoutUrl: buildLogoutUrl(env, request.url),
+  }, 401);
+}
+
+/**
  * Cookie → access decision, with the 401/403/503 both gates answer with when
  * there is no usable session. Shared so the read gate and the admin gate can
  * never drift on what "signed in and allowed" means.
@@ -207,6 +249,11 @@ async function evaluateSession(request: Request, env: Env): Promise<SessionGate>
       ok: false,
       response: json({ error: 'access_denied', reason: decision.reason }, 403),
     };
+  }
+  // One Lensy seat per account (client, 2026-09-04): enforced AFTER the access
+  // decision so a denied session can never claim the slot.
+  if (await sessionSuperseded(request, env, sso.user)) {
+    return { ok: false, response: supersededResponse(request, env) };
   }
   return { ok: true, user: sso.user, decision };
 }

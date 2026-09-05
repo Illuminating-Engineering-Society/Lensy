@@ -183,6 +183,17 @@ LENSY_SUBSCRIBER_ROLES = "lighting-library-full-access"
 # GET /api/admin/device-resets.csv — only the per-request notification email is
 # skipped. Uncomment and fill in once the client confirms the address:
 DEVICE_RESET_NOTIFY_EMAIL = "…@ies.org"
+# ── 1-concurrent-session cap (client, 2026-09-04) ──────────────────────────────
+# "Out of the gate, Lensy should cap at (only) a 1-concurrent-session cap."
+# One Lensy seat per account: the most recent sign-in holds it, an older
+# session is answered 401 session_superseded (the gate explains and offers
+# sign-out → sign-in to take the seat back), and an idle seat frees itself
+# after LENSY_SESSION_CAP_IDLE_MINUTES (unset = 30). Lensy-side only — the IdP
+# and every other SP on the shared cookie are untouched; central IdP device
+# counts are explicitly deferred to post-rollout (client item 3).
+# "off" disables the cap entirely. Enforced in src/lib/session-cap.ts, fails
+# OPEN on KV trouble.
+LENSY_SESSION_CAP = "on"
 
 # Secrets set via `wrangler secret put`:
 # VITRIUM_API_KEY

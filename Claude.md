@@ -1524,6 +1524,48 @@ Code Reference Guide (24 codes), not guesswork.
   var, and the reader-facing `SUPPORT_EMAIL` in the page (Standards@ies.org
   until the client confirms the right address).
 
+### One Lensy session at a time (client, 2026-09-04)
+
+Dan's three-step directive: **(1) Lensy caps at one concurrent session out of the
+gate; (2) a monthly cron clears every Vitrium reader's device usage ("Clear
+Reader Usage" on the EIP/Authorization API, per Tom, Vitrium's rep); (3) daily
+limits / central IdP device counts only if post-rollout data demands them.**
+Item 1 lives here; item 2 lives in the AuthIES repo (it owns the Vitrium
+relationship and the reader population — see its CLAUDE.md); item 3 is
+deliberately NOT built.
+
+- **The cap is Lensy-side, not an IdP change** — item 3 explicitly defers IdP
+  device counting, and the other SPs on the shared cookie must not inherit it.
+  The ies_auth cookie carries `sid` (IdP session id) and `iat` (that session's
+  CREATION time — a re-mint repeats it, since AuthIES's /login reuses a live
+  session). `src/lib/session-cap.ts` keeps one KV "seat" per account
+  (`session-slot:<prod|stg>:<sub>`): the seat's own sid passes, a different sid
+  with a **newer iat takes the seat over** (most recent sign-in wins), an
+  older-or-equal one is answered **401 `session_superseded`** by both gates
+  (`evaluateSession` and `/api/auth/me` in `workers/session.ts`).
+- **Displacement UX:** the auth gate shows a "Signed in elsewhere" card whose
+  button is the LOGOUT url — signing out here and back in mints a new IdP
+  session with a fresh iat, which is what takes the seat back. Bouncing through
+  /login without signing out cannot reclaim it (same sid, same iat) — that is
+  the cap working, not a bug. Mid-session, a search from the displaced browser
+  fails with the server's `message` (api.js now prefers `err.message` over the
+  machine code). A share link stays readable to a superseded session (DO52
+  anonymous view).
+- **In practice the sign-out gesture is rare:** the cookie lives 8h, so the
+  desktop→home→desktop-next-morning flow always presents a FRESH session that
+  takes the seat silently. The gesture only matters when two devices fight
+  within one 8h window — exactly the credential-sharing case the cap exists for.
+- **An idle seat frees itself** after `LENSY_SESSION_CAP_IDLE_MINUTES` (unset =
+  30) — the KV TTL is an idle window, re-armed at most every 5 minutes
+  (`SLOT_REFRESH_SECONDS`), so an active session costs ~12 KV writes/hour and
+  every gate check costs one KV read.
+- **Fail-open, and not DRM:** any KV error admits the request (a cap must never
+  become an outage), and KV's ~60s edge propagation means two devices can
+  briefly overlap after a takeover. `LENSY_SESSION_CAP="off"` is the kill
+  switch. The staff bearer never touches the cap; staging and production seats
+  are scoped apart (same Worker, same KV, different IdPs). Tests:
+  `src/lib/session-cap.test.js`.
+
 ### The DO089–DO097 round: a column that was never filled, and an edition that was live twice
 
 The client's fourth round. Four UI items are small on their own; the three that

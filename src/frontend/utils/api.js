@@ -25,7 +25,10 @@ const LensyAPI = {
     });
     if (!response.ok) {
       const err = await response.json().catch(() => ({ error: response.statusText }));
-      throw new Error(err.error || 'Search failed');
+      // Prefer the server's human-readable message over its machine code —
+      // `session_superseded` and `subscription_required` both carry one, and
+      // renderError prints this text verbatim.
+      throw new Error(err.message || err.error || 'Search failed');
     }
     return response.json();
   },

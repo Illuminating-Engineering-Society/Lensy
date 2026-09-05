@@ -133,6 +133,24 @@
     );
   }
 
+  // One Lensy session at a time (client, 2026-09-04): this session was
+  // displaced by a newer sign-in on the same account. Re-running /login here
+  // would hand back the SAME cookie (the IdP reuses a live session), so the
+  // way to take the seat back is sign out, then sign in — the logout link IS
+  // the button, and the ordinary sign-in card appears right after it.
+  function showSuperseded(data) {
+    gateEl().innerHTML = card(
+      '<h1 style="font-size:20px;font-weight:700;margin:0 0 10px">Signed in elsewhere</h1>' +
+      '<p style="color:#6b7280;font-size:14px;margin:0">Your IES account is now using Lensy on ' +
+      'another device or browser, and Lensy allows one active session at a time.</p>' +
+      (data.email ? '<p style="color:#9ca3af;font-size:12px;margin:10px 0 0">Signed in as ' + esc(data.email) + '</p>' : '') +
+      '<div><a href="' + esc(data.logoutUrl || '/logout') + '" style="' + BTN + '">Use Lensy here instead</a></div>' +
+      '<p style="color:#9ca3af;font-size:12px;margin:14px 0 0;line-height:1.5">' +
+      'This signs you out on this device and asks you to sign back in &mdash; ' +
+      'the session on the other device will then be signed out of Lensy.</p>'
+    );
+  }
+
   var DENY_TEXT = {
     revoked: 'Your access to Lensy has been revoked.',
     expired: 'Your guest access to Lensy has expired.',
@@ -258,7 +276,13 @@
         // A share link is readable without an account (DO52) — for BOTH the
         // signed-out visitor and the signed-in one whose account has no Lensy
         // access, which is exactly the non-subscriber the client described.
-        if (r.status === 401) return onShareLink() ? revealAnonymous(r.data) : showLogin(r.data.loginUrl);
+        if (r.status === 401) {
+          // A shared collection stays readable either way (DO52): a superseded
+          // session can still open a share link as an anonymous reader.
+          if (onShareLink()) return revealAnonymous(r.data);
+          if (r.data && r.data.reason === 'session_superseded') return showSuperseded(r.data);
+          return showLogin(r.data.loginUrl);
+        }
         if (r.status === 403) return onShareLink() ? revealAnonymous(r.data) : showDenied(r.data);
         if (r.status === 503 && r.data.reason === 'sso_misconfigured') {
           return showMisconfigured(r.data);

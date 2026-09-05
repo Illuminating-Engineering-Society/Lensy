@@ -32,6 +32,12 @@ declare global {
     // the entitlement is not in the cookie yet; when it is, set it here rather
     // than editing code.
     LENSY_SUBSCRIBER_ROLES?: string;
+    // ── 1-concurrent-session cap (client, 2026-09-04) ───────────────────────
+    // "off" disables it; anything else (including unset) enforces one Lensy
+    // seat per account, newest sign-in wins (src/lib/session-cap.ts).
+    LENSY_SESSION_CAP?: string;
+    // Idle minutes before an unused seat frees itself. Unset → 30.
+    LENSY_SESSION_CAP_IDLE_MINUTES?: string;
     // ── Lighting Library error page (2026-09-04) ────────────────────────────
     // Staff inbox for device-limit reset requests submitted from
     // library-error.html. Unset → requests are still stored in
