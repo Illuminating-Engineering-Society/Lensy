@@ -1649,9 +1649,14 @@ Fourteen items (`260904_Lensey Feedback.docx`); `SEARCH_CACHE_SCHEMA` → **v16*
   in search.ts reads status from the standards index, so its main-index vectors
   stopped surfacing immediately — same shape as the DO096 RP-8 demotion). The
   family helpers already kept RP-27 ≠ RP-27.1 (dot ≠ dash in `standardFamily`,
-  `LIKE 'RP-27-%'`). Outstanding: RP-27-26 itself is not indexed yet (the 2026
-  PDF has not been ingested), and RP-27-20+E1's prose reaches comparison
-  retrieval only after a re-ingest into the deprecated index.
+  `LIKE 'RP-27-%'`). RP-27-20+E1 was re-ingested into the DEPRECATED index the
+  same day (407 chunks, R2 `deprecated/`, its PDF moved to
+  `pdfs/Deprecated Standards/` — the `Lighting Science/` copy was removed so a
+  batch re-ingest cannot re-Activate it; its stale main-index vectors remain
+  but `notDeprecated` filters them, same posture as the DO096 RP-8 demotion).
+  Outstanding: **RP-27-26 itself — the client has not supplied the 2026 PDF**;
+  when it arrives, drop it in `pdfs/Lighting Science/` and run
+  `node scripts/ingest-pdfs.js --file <path>`.
 - **Compare Versions suggests only what it can compare (DO107).** One lazy
   fetch of `/api/standards?status=all` on first overlay open builds
   `comparableFamilySet`: a family qualifies when a Deprecated edition's BASE
@@ -1668,8 +1673,8 @@ Fourteen items (`260904_Lensey Feedback.docx`); `SEARCH_CACHE_SCHEMA` → **v16*
   inside the checkbox's label). **DO104** the Reference card's markers block
   wears the same FROM THE STANDARD disclosure dress as the passage drop-down.
   **DO105** every AI Guide answer ends "Learn more at the IES eLearning
-  Portal" beside the watermark — URL is `ies.org/education/` PENDING the
-  client confirming the exact portal link. **DO108** the page loads with the
+  Portal" beside the watermark — `https://elearning.ies.org/` (confirmed
+  2026-09-10). **DO108** the page loads with the
   cursor in the search bar (re-focused on `lensy:auth`, since autofocus fires
   behind the gate) and the Recent/Try-searching drop-down opens on CLICK or
   typing, never on focus.
