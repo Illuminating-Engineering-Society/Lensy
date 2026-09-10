@@ -161,6 +161,11 @@
       border-radius: 6px;
     }
     .side-check:hover { background: #F9FAFB; }
+    /* "Only" appears on cursor-over, google-flights style (client DO103).
+       visibility (not display) so the row width never jumps on hover. */
+    .side-check .doc-only-btn { visibility: hidden; }
+    .side-check:hover .doc-only-btn,
+    .side-check:focus-within .doc-only-btn { visibility: visible; }
     .side-list {
       max-height: 13rem; overflow-y: auto; border: 1px solid #E5E7EB;
       border-radius: 8px; padding: 0.25rem;
@@ -400,9 +405,13 @@
             class="flex-1 min-w-0 px-4 py-3 text-gray-900 text-base placeholder-gray-400 bg-transparent outline-none"
             onkeydown="handleSearchKeydown(event)"
             oninput="renderSuggestions()"
-            onfocus="openSuggestions()"
+            onclick="openSuggestions()"
             autofocus
           />
+          <!-- onclick, not onfocus (client DO108): the page loads with the
+               cursor already in this box, and the Recent / Try-searching-for
+               drop-down must NOT pop with it — it opens on the first mouse
+               click in the bar, or as soon as typing begins (oninput). -->
           <button
             id="search-btn"
             onclick="performSearch()"
@@ -517,9 +526,10 @@
   </div>
 
   <!-- ── Sort / Filter sidebar ────────────────────────────────────────────────
-       The rest of the page greys out while it is open (wireframe). "View
-       Results" applies the selections: content-kind changes re-run the search,
-       sort and document narrowing re-render the current results locally. -->
+       The rest of the page greys out while it is open (wireframe). "Apply"
+       applies the selections LOCALLY, always (client DO106): the search
+       retrieved every content kind, so Contents, Interior/Exterior, sort and
+       the Documents narrowing all just re-filter the pool on screen. -->
   <div id="sidebar-backdrop" class="hidden fixed inset-0 bg-black/40 modal-backdrop z-[45] no-print" onclick="closeSidebar()"></div>
   <aside id="sortfilter-sidebar"
          class="hidden fixed left-0 top-0 bottom-0 w-[340px] max-w-[90vw] bg-white z-50 shadow-2xl flex flex-col no-print"
@@ -814,7 +824,17 @@
             <p class="print-notice text-xs text-gray-500 italic">
               The AI Guide response is omitted from printed pages. Refer to the cited standards in the IES Lighting Library.
             </p>
-            <p id="ai-watermark" class="text-xs text-gray-400 mt-3 italic"></p>
+            <!-- Education upsell on every AI Guide answer (client DO105: "Add a
+                 link to the IES eLearning Portal for all AI Guide results, 'to
+                 learn more'"). Beside the watermark, per the marked-up mock. -->
+            <div class="flex items-center justify-between gap-3 flex-wrap mt-3">
+              <p id="ai-watermark" class="text-xs text-gray-400 italic"></p>
+              <p class="text-xs no-print">
+                Learn more at the
+                <a href="https://www.ies.org/education/" target="_blank" rel="noopener"
+                   class="text-ies-blue hover:underline font-medium">IES eLearning Portal</a>.
+              </p>
+            </div>
           </div>
         </div>
       </div>
@@ -865,6 +885,21 @@
       <!-- AHJ compliance notice for a search with no AI Guide (client DO084).
            The Guide card carries its own copy; this is the one a reader sees
            when they have the Guide switched off. -->
+      <!-- Daily-search nudge (client permissions chart, 2026-09-04: "Nudge
+           after 10, cut after 20"). Shown once a metered reader has spent half
+           their daily window — the cut itself is the 429 the Worker answers. -->
+      <div id="search-cap-banner" class="hidden mb-4 rounded-lg border border-gray-200 bg-gray-50 px-4 py-2.5 flex gap-3 items-center no-print" role="status">
+        <svg class="w-4 h-4 text-gray-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="9"/><path stroke-linecap="round" d="M12 7v5l3 2"/>
+        </svg>
+        <p class="text-xs text-gray-600 leading-relaxed">
+          <span id="search-cap-text"></span>
+          <a href="https://store.ies.org/ies/subscriptions/" target="_blank" rel="noopener"
+             class="text-ies-blue hover:underline font-medium">Subscribe to the Lighting Library</a>
+          for unlimited searching.
+        </p>
+      </div>
+
       <div id="authority-banner" class="hidden mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 flex gap-3 no-print" role="status">
         <svg class="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
           <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/>
@@ -1270,6 +1305,14 @@
       // The AI Guide state saved to this account (client DO80). After
       // applyTier, so a LensyLite account cannot have it switched on.
       loadPreferences();
+      // "Begin with cursor in search bar" (client DO108). The autofocus
+      // attribute fires while the auth gate still hides the page, so the focus
+      // is re-applied once the page is actually visible. Programmatic focus
+      // opens no drop-down — that takes a click or typing (see the input).
+      const searchBox = document.getElementById('search-input');
+      if (searchBox && !lastQuery && searchBox.focus) {
+        try { searchBox.focus({ preventScroll: true }); } catch { /* older browsers */ }
+      }
     });
 
     // Every control that reflects a filter carries data-filter, whichever chrome
@@ -1525,6 +1568,18 @@
       if (doc) setDocFilterValue(doc.dataset.docFilter, doc.dataset.value, doc.checked);
     });
 
+    // "Only" on a Title / Technical Committee row (client DO103): narrow the
+    // group to exactly that entry. preventDefault, because the button sits
+    // inside the row's <label> and the label's default click would also toggle
+    // the checkbox the button is standing next to.
+    document.addEventListener('click', e => {
+      const only = e.target.closest ? e.target.closest('.doc-only-btn') : null;
+      if (!only) return;
+      e.preventDefault();
+      e.stopPropagation();
+      setOnlyDocFilter(only.dataset.docOnly, only.dataset.onlyValue);
+    });
+
     document.addEventListener('keydown', e => {
       if (e.key !== 'Escape') return;
       // A docked panel is part of the page, not a modal — Escape leaves it be.
@@ -1666,6 +1721,51 @@
         }
         seedDocFilterUniverse();
       } catch { /* the sidebar lists then fill from search results instead */ }
+    }
+
+    // ── Which families actually HAVE a prior edition to compare (DO107) ──────
+    // "'Compare Documents' searches: display all Current standards that have a
+    //  previous version indexed (and only those items) in the auto-suggest.
+    //  Displaying titles that we can't compare could be confusing."
+    //
+    // A family qualifies when the index holds a Deprecated edition whose BASE
+    // differs from the current one's — an errata reprint (+E2) or reaffirmed
+    // printing (R25 / (R2023)) of the same edition is the same document, and
+    // comparing against it reports no changes (DO083). null until the one
+    // ?status=all fetch lands; until then the suggest list is unfiltered rather
+    // than empty.
+    let comparableFamilySet = null;
+
+    function compareBaseOf(id) {
+      return String(id || '').toUpperCase()
+        .replace(/\(R\d{2,4}\)$/, '').replace(/R\d{2}$/, '').replace(/\+E\d+$/, '');
+    }
+    function compareFamilyOf(id) {
+      const m = /^(.+?)-\d{2}$/.exec(compareBaseOf(id));
+      return m ? m[1] : compareBaseOf(id);
+    }
+
+    async function loadComparableFamilies() {
+      if (comparableFamilySet !== null) return;
+      try {
+        const res = await fetch('/api/standards?status=all');
+        if (!res.ok) return;
+        const data = await res.json();
+        const rows = (data.standards || []).filter(s => s && s.id);
+        const activeBase = new Map();   // family → base of its current edition
+        for (const s of rows) {
+          if (s.status !== 'Deprecated') activeBase.set(compareFamilyOf(s.id), compareBaseOf(s.id));
+        }
+        const set = new Set();
+        for (const s of rows) {
+          if (s.status !== 'Deprecated') continue;
+          const family = compareFamilyOf(s.id);
+          const current = activeBase.get(family);
+          if (current && compareBaseOf(s.id) !== current) set.add(family);
+        }
+        comparableFamilySet = set;
+        renderCompareSuggestions();   // re-filter whatever is on screen
+      } catch { /* unfiltered suggestions are better than none */ }
     }
 
     // ── Document filters (client wireframes, 2026-08-20) ─────────────────────
@@ -1836,6 +1936,16 @@
       if (!items.length) {
         return `<p class="text-[11px] text-gray-400 px-1 py-1.5">Nothing matches that filter.</p>`;
       }
+      // "Only" appears on cursor-over for the Title and Technical Committee
+      // lists (client DO103, "in the style of google flights"): one press
+      // narrows the group to that single entry, instead of unselect-all plus
+      // one re-tick. A <button> inside the <label> would toggle the checkbox
+      // too, so the handler preventDefaults (see the delegated click below).
+      const onlyBtn = (group === 'title' || group === 'committee')
+        ? (i) => `<button type="button" class="doc-only-btn no-print text-[11px] font-semibold text-ies-blue hover:underline px-1 shrink-0"
+                   data-doc-only="${group}" data-only-value="${escapeHtml(i.value)}"
+                   title="Show only this ${group === 'title' ? 'document' : 'committee'}">Only</button>`
+        : () => '';
       return items.map(i => `
         <label class="side-check">
           <input type="checkbox" data-doc-filter="${group}" data-value="${escapeHtml(i.value)}"
@@ -1846,6 +1956,7 @@
             <span class="${group === 'title' ? 'font-medium' : ''}">${escapeHtml(i.label)}</span>
             ${i.sub ? `<span class="block text-[11px] text-gray-400">${escapeHtml(i.sub)}</span>` : ''}
           </span>
+          ${onlyBtn(i)}
           ${i.count != null ? `<span class="side-count">${i.count}</span>` : ''}
         </label>`).join('');
     }
@@ -1887,6 +1998,14 @@
     function setAllDocFilter(group, on) {
       if (!DOC_FILTER_GROUPS.includes(group)) return;
       docFilterSelected[group] = new Set(on ? docFilterUniverse[group].map(i => i.value) : []);
+      renderDocFilterLists(group);
+    }
+
+    /** "Only" (client DO103): the group narrows to exactly this entry. */
+    function setOnlyDocFilter(group, value) {
+      if (!DOC_FILTER_GROUPS.includes(group) || value == null) return;
+      if (!docFilterUniverse[group].some(i => i.value === value)) return;
+      docFilterSelected[group] = new Set([value]);
       renderDocFilterLists(group);
     }
 
@@ -2009,31 +2128,41 @@
       trigger.classList.toggle('flex', show);
     }
 
+    /** The Contents selection as displayed — for change detection and telemetry. */
+    function displayFiltersKey() {
+      return JSON.stringify({
+        body: !!filterState.body, definitions: !!filterState.definitions,
+        references: !!filterState.references, tables: !!filterState.tables,
+        interior: !!filterState.interior, exterior: !!filterState.exterior,
+      });
+    }
+    let lastDisplayFiltersKey = '';
+
     /**
-     * Apply what the sidebar now says. Content kinds and Interior/Exterior
-     * change WHAT the API is asked for, so those re-run the search; sort and
-     * the Documents narrowing reorder/trim the pool already on screen.
+     * Apply what the sidebar now says — ALWAYS locally (client DO106: "if I
+     * modify filters post-search, can we ensure it does not process a new
+     * search when I click Apply? Faster customization post-search"). The search
+     * already retrieved every content kind, so Contents, Interior/Exterior,
+     * sort and the Documents narrowing all just re-filter the pool on screen.
      */
     function applySidebarSelections() {
       if (!lastQuery) return;
       if (!anyContentSelected()) {
-        showToast('Choose at least one content type to search', 'error');
+        showToast('Choose at least one content type to display', 'error');
         return;
       }
-      const filters = collectFilters();
-      if (JSON.stringify(filters) !== lastSearchFiltersKey) {
-        // "Which filters are engaged post-search" — the second signal the client
-        // asked to measure (DO078). Only a change that actually re-runs the
-        // search is recorded; a local re-sort is not a statement about content.
+      const key = displayFiltersKey();
+      if (key !== lastDisplayFiltersKey) {
+        lastDisplayFiltersKey = key;
+        // "Which filters are engaged post-search" (DO078) — still recorded,
+        // even though applying no longer re-runs the search.
         LensyAPI.logEvent({
           event: 'filter_applied',
           query: lastQuery,
-          content_types: filters.content_types || null,
-          extra: filters.indoor_outdoor ? { indoor_outdoor: filters.indoor_outdoor } : null,
+          content_types: CONTENT_PILLS.filter(name => filterState[name]),
+          extra: (filterState.interior !== filterState.exterior)
+            ? { indoor_outdoor: filterState.interior ? 'Indoor' : 'Outdoor' } : null,
         });
-        document.getElementById('search-input').value = lastQuery;
-        performSearch();
-        return;
       }
       currentPage = 1;
       renderResultsPage();
@@ -2108,6 +2237,7 @@
       document.body.style.overflow = 'hidden';
       const input = document.getElementById('compare-input');
       if (input && input.focus) input.focus();
+      loadComparableFamilies();   // one fetch, then the list self-filters (DO107)
       renderCompareSuggestions();
     }
 
@@ -2142,11 +2272,16 @@
       const input = document.getElementById('compare-input');
       if (!box || !input) return;
       const q = String(input.value || '').trim().toLowerCase();
+      // Only standards WITH an indexed prior edition are offered (client DO107:
+      // "Displaying titles that we can't compare could be confusing"), and ALL
+      // of them — the box scrolls — rather than the first 8 ("Can you display
+      // more (all??) options in the scroll upon load?").
       const rows = standardsIndex.filter(s =>
-        !q || String(s.id).toLowerCase().includes(q)
-          || String(s.full_designation || '').toLowerCase().includes(q)
-          || String(s.title || '').toLowerCase().includes(q)
-      ).slice(0, 8);
+        (comparableFamilySet === null || comparableFamilySet.has(compareFamilyOf(s.id)))
+          && (!q || String(s.id).toLowerCase().includes(q)
+            || String(s.full_designation || '').toLowerCase().includes(q)
+            || String(s.title || '').toLowerCase().includes(q))
+      );
       if (!rows.length) { box.classList.add('hidden'); box.innerHTML = ''; return; }
       box.innerHTML = rows.map(s => `
         <button class="compare-suggestion w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 transition"
@@ -2387,25 +2522,43 @@
       performSearch();
     }
 
+    /**
+     * What the API is ASKED for — no longer what the checkboxes say
+     * (client DO106): "Run queries across all content filters (even if they
+     * are deselected …) so users can see the quantity of results in all filter
+     * types post-search." Every search retrieves every kind; the checkboxes
+     * decide what is DISPLAYED (passesContentFilters), so changing them after a
+     * search filters the pool already on screen instead of running a new one.
+     * Interior/Exterior became display filters for the same reason — the rows
+     * carry their Indoor/Outdoor location, so the server need not pre-narrow.
+     * LensyLite is unaffected: the Worker strips the locked kinds server-side
+     * whatever the request names (that is the boundary, not the checkboxes).
+     */
     function collectFilters() {
-      const filters = {};
-
-      // Interior / Exterior → indoor_outdoor. Both (or neither) selected = no
-      // location narrowing. Only meaningful with Illuminance Tables on.
-      if (filterState.tables) {
-        if (filterState.interior && !filterState.exterior) filters.indoor_outdoor = 'Indoor';
-        else if (filterState.exterior && !filterState.interior) filters.indoor_outdoor = 'Outdoor';
-      }
-
-      const ct = [];
-      if (filterState.tables) ct.push('tables');
-      if (filterState.body) ct.push('body');
-      if (filterState.references) ct.push('references');
-      if (filterState.definitions) ct.push('definitions');
-      if (FEATURES.compareVersions && filterState.compare) ct.push('compare');
-      if (ct.length > 0) filters.content_types = ct;
-
+      const filters = { content_types: ['tables', 'body', 'references', 'definitions'] };
+      if (FEATURES.compareVersions && filterState.compare) filters.content_types.push('compare');
       return filters;
+    }
+
+    /**
+     * The DISPLAY side of DO106: does this result pass the Contents checkboxes?
+     * The kind mapping mirrors contentKindCounts(), so a checkbox's count and
+     * what it shows/hides can never disagree.
+     */
+    function passesContentFilters(r) {
+      const type = r.resultType || 'application';
+      if (type === 'reference') return !!filterState.references;
+      if (type === 'definition') return !!filterState.definitions;
+      if (type === 'application') {
+        if (!filterState.tables) return false;
+        const loc = r.application?.indoorOutdoor;
+        if (loc === 'Indoor') return !!filterState.interior;
+        if (loc === 'Outdoor') return !!filterState.exterior;
+        return true;   // a row with no stated location belongs to the kind itself
+      }
+      // 'excerpt' and the whole-document card are Documents. Deprecated
+      // comparison cards always show — a comparison IS its edition cards.
+      return !!filterState.body || !!r.isDeprecated || type === 'standard';
     }
 
     /** At least one content kind has to be selected for a search to mean anything. */
@@ -2473,9 +2626,12 @@
       clearResults();
 
       const filters = collectFilters();
-      // What this search was ASKED with — the sidebar compares against it to
-      // know whether closing needs a re-run or just a local re-render.
+      // What this search was ASKED with (all content kinds since DO106 — the
+      // checkboxes are display filters; disarmCompare still re-stamps this).
       lastSearchFiltersKey = JSON.stringify(filters);
+      // The display selection this search STARTED with, so the sidebar's Apply
+      // only logs filter_applied when the reader actually changed something.
+      lastDisplayFiltersKey = displayFiltersKey();
       const includeAI = !!filterState.guide;
 
       // ── Compare Versions is a one-shot tool (client DO79) ──────────────────
@@ -2553,22 +2709,15 @@
       // this page's auth event fired.
       if (data.tier) applyTier(data.tier);
 
-      // Sync the pills to the content types the backend ACTUALLY used —
-      // reference- and definition-intent queries auto-scope themselves, a
-      // "what's new" query forces Document Comparison, and an empty selection
-      // falls back to Documents + Illuminance Tables. The visible filter state
-      // must match the results on screen.
-      if (Array.isArray(data.contentTypes)) {
-        filterState.body = data.contentTypes.includes('body');
-        filterState.references = data.contentTypes.includes('references');
-        filterState.definitions = data.contentTypes.includes('definitions');
-        // Illuminance Tables carries its multi-select with it (DO57 note 2).
-        filterState = alignTablesSelection(filterState, data.contentTypes.includes('tables'));
-        if (FEATURES.compareVersions) {
-          // A version-comparison query turns Document Comparison on by itself
-          // (DO32: it "MUST be selected if Version Comparison is selected").
-          filterState.compare = data.contentTypes.includes('compare') || !!data.isVersionComparison;
-        }
+      // The checkboxes are DISPLAY filters now (client DO106): every search
+      // retrieves every content kind, so the response's contentTypes no longer
+      // overwrite the reader's selection — what they checked is what shows.
+      // The one state the backend still owns is Document Comparison: a "what's
+      // new" query turns it on by itself (DO32), and renderResults arming the
+      // pill is what lets disarmCompare turn it back off after (DO79).
+      if (FEATURES.compareVersions
+          && (!!data.isVersionComparison || (Array.isArray(data.contentTypes) && data.contentTypes.includes('compare')))) {
+        filterState.compare = true;
         renderFilterPills();
       }
 
@@ -2588,6 +2737,20 @@
       } else {
         banner.classList.add('hidden');
         bannerText.textContent = '';
+      }
+
+      // Daily-search nudge (client, 2026-09-04: "Nudge after 10, cut after 20").
+      // `searchCap` rides only on a metered reader's response, never the shared
+      // cache, and only once half the window is spent — quiet until it matters.
+      const capBanner = document.getElementById('search-cap-banner');
+      if (capBanner) {
+        const cap = data.searchCap;
+        const nudge = cap && cap.cap > 0 && cap.used >= Math.ceil(cap.cap / 2);
+        if (nudge) {
+          document.getElementById('search-cap-text').textContent =
+            `You've used ${cap.used} of your ${cap.cap} daily searches.`;
+        }
+        capBanner.classList.toggle('hidden', !nudge);
       }
 
       // The AHJ notice stands on its own when there is no Guide card to carry it
@@ -2755,8 +2918,12 @@
     // remove these dynamic filters now that we have the dynamic sidebar") — the
     // sidebar's Title group narrows by document, with counts, and does it for
     // Publication Type and Technical Committee too.
+    //
+    // Contents joined the same client-side pipeline (client DO106): the search
+    // retrieves every kind, and the checkboxes trim what is shown — so Apply
+    // never re-runs the search, it re-filters the pool on screen.
     function visibleResults() {
-      return allResults.filter(passesDocFilters);
+      return allResults.filter(r => passesContentFilters(r) && passesDocFilters(r));
     }
 
     /**
@@ -3107,7 +3274,9 @@
       // names hyperlinked to the Lighting Library (client DO24).
       const textEl = document.getElementById('ai-summary-text');
       aiCurrentStandard = null;   // the running locator context starts fresh
-      textEl.innerHTML = renderAIText(summary.text || '');
+      // sciNotate LAST (client DO070): it only touches text between tags, so
+      // the links renderAIText built are untouched and "Rf" reads R-sub-f.
+      textEl.innerHTML = sciNotate(renderAIText(summary.text || ''));
       textEl.classList.remove('whitespace-pre-line');
       // A translated answer (client note, 2026-09-01) declares its language so
       // screen readers pronounce it correctly; everything else is English.
@@ -3867,8 +4036,9 @@
         </a>` : '';
 
       // Fall back to the plain-text excerpt for responses cached before the
-      // rich-text field existed.
-      const bodyHtml = def.html || `<p>${escapeHtml(result.excerpt?.text || '')}</p>`;
+      // rich-text field existed. sciNotate restores the sub/superscripts PDF
+      // extraction flattened — "(Rf,hj)" reads (R-sub-f,hj) — client DO070.
+      const bodyHtml = sciNotate(def.html || `<p>${escapeHtml(result.excerpt?.text || '')}</p>`);
 
       return `
         <article class="result-card copy-guard bg-white rounded-xl border border-gray-100 shadow-sm p-3 relative overflow-hidden"
@@ -3878,7 +4048,7 @@
                and chip palette still carry the kind (DO32). -->
           <div class="flex items-center justify-between gap-2 flex-wrap mb-1">
             <span class="inline-block text-sm font-bold text-white px-2.5 py-1 rounded align-middle"
-                  style="background-color: ${style.banner};">${escapeHtml(def.term || '')}</span>
+                  style="background-color: ${style.banner};">${sciNotate(escapeHtml(def.term || ''))}</span>
             <div class="flex items-center gap-2.5 shrink-0">
               <!-- The clause is a LOCATOR, so it prints: a printed page is a
                    reference list (DO36). Everything after it is a control. -->
@@ -3892,7 +4062,13 @@
               ${saveSearchButton(result, def.term || '')}
             </div>
           </div>
-          <p class="text-xs text-gray-400 mb-1">${citationHtml(result)}</p>
+          <!-- The LS-1 line links to the public definitions page (client DO100:
+               "LS-1 should link to https://ies.org/standards/definitions/") —
+               LS-1 has no Vitrium PDF, so this is its one openable home. -->
+          <p class="text-xs text-gray-400 mb-1">${citationHtml(result, {
+            href: 'https://ies.org/standards/definitions/',
+            hrefTitle: 'Open the ANSI/IES LS-1 definitions on ies.org',
+          })}</p>
           ${committeeHtml(result).replace('pl-[26px]', '')}
 
           <div class="mt-2 pt-2 border-t border-gray-100">
@@ -4033,10 +4209,14 @@
       // allow-copy + copy-citation: the designation and title stay selectable
       // even inside a copy-guarded card, and the copy handler falls back to this
       // text when a reader tries to copy an excerpt (client DO36).
-      const nameHtml = result.standardLink
-        ? `<a href="${escapeHtml(result.standardLink)}" target="_blank" rel="noopener"
+      // `opts.href` overrides where the NAME points (client DO100: on a
+      // Definition card the LS-1 line opens ies.org/standards/definitions/).
+      const nameHref = opts.href || result.standardLink;
+      const nameTitle = opts.hrefTitle || 'Open this standard from its front cover in the IES Lighting Library';
+      const nameHtml = nameHref
+        ? `<a href="${escapeHtml(nameHref)}" target="_blank" rel="noopener"
              class="allow-copy copy-citation hover:text-ies-blue hover:underline underline-offset-2 decoration-gray-300 transition"
-             title="Open this standard from its front cover in the IES Lighting Library">${escapeHtml(name)}</a>`
+             title="${escapeHtml(nameTitle)}">${escapeHtml(name)}</a>`
         : `<span class="allow-copy copy-citation">${escapeHtml(name)}</span>`;
 
       // Client DO81: on a Document or Reference card the page is printed at the
@@ -4527,8 +4707,10 @@
             ${escapeHtml(FORMULA_NOTICE)}
           </p>` : '';
         // Client DO40: the section number and title head each passage, in bold.
-        // A reference entry has no section to contextualize.
-        const heading = isReference ? '' : sectionPathHtml(e);
+        // A reference entry has no section to contextualize. sciNotate restores
+        // flattened sub/superscripts in the printed title (client DO070 —
+        // "Sample Color Fidelity (Rf,CESi)").
+        const heading = isReference ? '' : sciNotate(sectionPathHtml(e));
         const locator = [
           // The § repeats the bold heading above, so it only prints when there
           // is no heading (a standard indexed before section titles existed).
@@ -4550,7 +4732,7 @@
         return `
           <div class="text-xs text-gray-600 leading-relaxed pl-3 border-l-2 border-gray-200">
             ${heading}
-            ${clipped.trim() ? `<p class="print-withhold">"${linkifyText(clipped)}"</p>` : ''}
+            ${clipped.trim() ? `<p class="print-withhold">"${sciNotate(linkifyText(clipped))}"</p>` : ''}
             ${formulaNote}
             ${(locator || link) ? `
               <div class="mt-0.5 flex items-center gap-2 flex-wrap">
@@ -4692,14 +4874,37 @@
       };
 
       const anyCitation = markers.some(m => m.target === 'citation');
+      // The block wears the same "FROM THE STANDARD" disclosure dress as the
+      // passage drop-down (client DO104: "Introduce the 'From the Standard'
+      // styling for reference markers on 'Reference' result cards" — goal
+      // harmonization): bordered summary strip, filled caret tile with the two
+      // static glyphs, Show/Hide label, open by default.
+      const mCaret = (d) => `<svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3">
+                <path stroke-linecap="round" stroke-linejoin="round" d="${d}"/>
+              </svg>`;
       return `
-        <div class="mt-2 pt-2 border-t border-gray-100">
-          <p class="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-1">Reference markers</p>
-          <div class="flex flex-wrap gap-1.5">${markers.map(chip).join('')}</div>
-          <p class="text-[10px] text-gray-400 mt-1">${anyCitation
-            ? 'IES Standards that cite this reference — the link opens the page where the marker is first printed.'
-            : 'IES Standards that list this reference — the link opens their References page in the Library.'}</p>
-        </div>`;
+        <details class="disclosure mt-2 group" open>
+          <summary class="cursor-pointer list-none select-none rounded-lg border border-gray-200 bg-gray-50 hover:bg-gray-100 hover:border-gray-300 transition px-2 py-1.5">
+            <div class="flex items-center gap-2">
+              <span class="shrink-0 w-5 h-5 rounded flex items-center justify-center text-white"
+                    style="background-color: var(--brand-secondary);" aria-hidden="true">
+                <span class="group-open:hidden">${mCaret('M19 9l-7 7-7-7')}</span>
+                <span class="hidden group-open:inline">${mCaret('M5 15l7-7 7 7')}</span>
+              </span>
+              <span class="text-[11px] font-bold text-gray-900 uppercase tracking-wider">From the Standard</span>
+              <span class="ml-auto text-[10px] font-semibold uppercase tracking-wide text-gray-400 no-print">
+                <span class="group-open:hidden">Show</span><span class="hidden group-open:inline">Hide</span>
+              </span>
+            </div>
+          </summary>
+          <div class="mt-2 pl-[28px]">
+            <p class="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-1">Reference markers</p>
+            <div class="flex flex-wrap gap-1.5">${markers.map(chip).join('')}</div>
+            <p class="text-[10px] text-gray-400 mt-1">${anyCitation
+              ? 'IES Standards that cite this reference — the link opens the page where the marker is first printed.'
+              : 'IES Standards that list this reference — the link opens their References page in the Library.'}</p>
+          </div>
+        </details>`;
     }
 
     // ── Inline hyperlinks for online content (client DO26.3) ─────────────────
@@ -4741,6 +4946,34 @@
         return `<a href="${href}" target="_blank" rel="noopener"
           class="text-ies-blue hover:underline break-all">${core}</a>${tail}`;
       });
+    }
+
+    // ── Scientific sub/superscripts (client DO070, updating DO072) ───────────
+    // "Can you permit AI Guide and response cards to recognize and reproduce
+    //  superscript and subscript? … e.g. Rf means 'fidelity' in our world."
+    //
+    // PDF extraction flattens R_f to "Rf", so the notation is RESTORED at render
+    // time from a fixed vocabulary rather than guessed: the TM-30 measures
+    // (Rf, Rg, and their per-hue/per-sample forms Rf,hj / Rcs,h1 / Rf,CES1),
+    // CRI's Ra, the Duv chromaticity distance, and squared area units (cd/m2 →
+    // cd/m²). Nothing else is touched — an over-eager transformer would be the
+    // DO072a formula-detector mistake all over again.
+    //
+    // Operates on ALREADY-RENDERED HTML: only text between tags is transformed,
+    // so an attribute, a URL or an existing element is never rewritten.
+    function sciNotate(html) {
+      return String(html || '').split(/(<[^>]*>)/).map(part => {
+        if (part.startsWith('<')) return part;
+        return part
+          // Compound TM-30 measures first, so "Rf,hj" is one subscript, not two.
+          .replace(/\bR(f|g|a|cs)(,(?:h(?:j|\d{1,2})|CES(?:i|\d{1,3})))(?![a-zA-Z0-9])/g, 'R<sub>$1$2</sub>')
+          .replace(/\bR(f|g|cs)\b/g, 'R<sub>$1</sub>')
+          // Ra only beside its own vocabulary — bare "Ra" is a common word-start
+          // in prose ("Ra values" is CRI; "Ra" alone could be anything).
+          .replace(/\bRa\b(?=[\s,.;:)]*(?:value|index|of|=|\d|\())/g, 'R<sub>a</sub>')
+          .replace(/\bDuv\b/g, 'D<sub>uv</sub>')
+          .replace(/([a-zA-Z])\/(m|cm|mm|ft)2\b/g, '$1/$2<sup>2</sup>');
+      }).join('');
     }
 
     // Heuristic for request #10: a "From the Standard" excerpt that is mostly

@@ -1596,6 +1596,96 @@ searches for 24hr." Implemented in `src/lib/search-cap.ts`, enforced in
   overrun the cap by a few via KV's eventual consistency — accepted. Tests:
   `src/lib/search-cap.test.js`.
 
+### The 260904 round (DO070-update, DO099–DO111): display filters, honest comparisons, and the permissions chart
+
+Fourteen items (`260904_Lensey Feedback.docx`); `SEARCH_CACHE_SCHEMA` → **v16**.
+
+- **Sub/superscripts are RESTORED, not detected (DO070, updating DO072).** PDF
+  extraction flattens R_f to "Rf", so `sciNotate` (index.html) rewrites a FIXED
+  vocabulary at render time — the TM-30 measures (Rf/Rg/Rcs and the compound
+  Rf,hj / Rcs,h1 / Rf,CESi forms), Ra only beside its own words (bare "Ra" is
+  anybody), Duv, and /m2-style squared units — applied to the Guide's rendered
+  HTML, definition terms and bodies, and passage headings/text. It transforms
+  only text BETWEEN tags, so links and attributes are never rewritten. Kept
+  deliberately narrow: an over-eager transformer is the DO072a formula-detector
+  mistake again.
+- **Content checkboxes became DISPLAY filters (DO106).** Every search now asks
+  the API for every kind (`collectFilters` sends all four + compare;
+  `indoor_outdoor` is no longer sent), and `passesContentFilters` — mirroring
+  `contentKindCounts` so a count and its checkbox can never disagree — trims
+  what renders. The sidebar's Apply therefore NEVER re-runs the search (the
+  client's explicit ask), the per-kind counts are populated for deselected
+  kinds, and the response's `contentTypes` no longer overwrite the reader's
+  selection (only `compare` still arms from the response, for DO79's disarm).
+  LensyLite is unaffected: the Worker strips locked kinds server-side, which
+  was always the boundary. Side benefit: one content_types shape per query =
+  better response-cache hits.
+- **The ANSI procedural pages appear in NO results (DO102).**
+  `isProceduralBoilerplate` (search.ts) recognizes the change-proposal form and
+  the continuous-maintenance process page by heading, and the form by its
+  Submitter/Affiliation/Telephone field trio; applied inside
+  `buildChunkResults` and `pickExcerptsForApp` (so the already-ingested vectors
+  can never surface again, re-ingest or not) and folded into
+  `looksLikeFrontMatter` for comparisons and the AI prompt.
+- **Comparisons weigh evidence beyond the excerpts (DO109 — first pass; Zoe's
+  detailed feedback is coming).** The reported failure: RP-43-25 absorbed LP-2
+  and LP-11 whole (71 pages longer, its own 1.0 Scope says so) and the analysis
+  said "Minimal". Three changes: `FamilyEdition`/`ComparisonContext` now carry
+  `page_count` → the prompt states both editions' page counts as MEASURED FACT
+  and forbids "Minimal" against a large growth; a SCOPE probe in
+  `ensureCurrentEditionExcerpts` always fetches the current edition's
+  front-of-document passages (a merger is declared in Scope by name — no
+  topical retrieval reliably lands there); and the prompt leads the Extent
+  section with any merger a current-edition excerpt states.
+- **Reference entries lose the running header that bled past the page break
+  (DO110).** `cleanReferenceEntryText` strips a trailing folio + (possibly
+  truncated) prefix of the CITING document's title, matched on alphanumeric
+  word runs, only at the entry's very end, and never when the remainder stops
+  reading as a citation. KNOWN LIMIT, ingest-side: an entry whose FIRST line
+  landed in the previous chunk starts mid-entry; that is reference chunk
+  boundaries and needs chunker work + re-ingest.
+- **RP-27 (DO101) was a DATA fix, verified live 2026-09-10:** RP-27-20+E1 is
+  now Deprecated with superseded_by RP-27-26 in production D1 (`notDeprecated`
+  in search.ts reads status from the standards index, so its main-index vectors
+  stopped surfacing immediately — same shape as the DO096 RP-8 demotion). The
+  family helpers already kept RP-27 ≠ RP-27.1 (dot ≠ dash in `standardFamily`,
+  `LIKE 'RP-27-%'`). Outstanding: RP-27-26 itself is not indexed yet (the 2026
+  PDF has not been ingested), and RP-27-20+E1's prose reaches comparison
+  retrieval only after a re-ingest into the deprecated index.
+- **Compare Versions suggests only what it can compare (DO107).** One lazy
+  fetch of `/api/standards?status=all` on first overlay open builds
+  `comparableFamilySet`: a family qualifies when a Deprecated edition's BASE
+  (id minus +E#/R##/(R####)) differs from the current one's — a reaffirmed
+  printing or errata reprint is the same document (DO083). The suggest list
+  shows ALL matches in a scrolling box, not the first 8; until the fetch lands
+  it is unfiltered rather than empty.
+- **DO099** List Standards headings drop the "IES " prefix (display only — the
+  grouping keys, filter matching and committee links are untouched). **DO100**
+  the Definition card's LS-1 line links to ies.org/standards/definitions/
+  (via `citationHtml`'s new `opts.href`). **DO103** Title and Technical
+  Committee rows grow an "Only" button on cursor-over (visibility toggle, so
+  row width never jumps; the handler preventDefaults because the button sits
+  inside the checkbox's label). **DO104** the Reference card's markers block
+  wears the same FROM THE STANDARD disclosure dress as the passage drop-down.
+  **DO105** every AI Guide answer ends "Learn more at the IES eLearning
+  Portal" beside the watermark — URL is `ies.org/education/` PENDING the
+  client confirming the exact portal link. **DO108** the page loads with the
+  cursor in the search bar (re-focused on `lensy:auth`, since autofocus fires
+  behind the gate) and the Recent/Try-searching drop-down opens on CLICK or
+  typing, never on focus.
+- **DO111 is the client's revised permissions chart, mostly config-pending.**
+  Shipped now: the "Nudge after 10, cut after 20" half — `enforceDailySearchCap`
+  returns used/cap, handleSearch attaches `searchCap` to the response OUTSIDE
+  the cached payload (personal state, never shared), and the UI shows a quiet
+  banner once half the window is spent. NOT shipped, needs client input: the
+  tier rows (TC members/chairs → full at $174/$0) want the Wicket role slugs —
+  `LENSY_SUBSCRIBER_ROLES` already takes a comma-separated list, so it is a
+  config change once the slugs exist; "IES Non-Member, Non-Subscriber →
+  Limited" contradicts today's tier `none` and needs a product decision; the
+  Vitrium "Lighting Science Collection" duplicates folder is Vitrium-side and
+  deliberately NOT indexed or linked; "add something to their AI Guide" for
+  lite members is open (lite has the Guide locked off today).
+
 ### The DO089–DO097 round: a column that was never filled, and an edition that was live twice
 
 The client's fourth round. Four UI items are small on their own; the three that

@@ -89,7 +89,14 @@ const DATA_VERSION_KEY = 'cache:data-version';
 //     was treated as English and embedded raw, and that near-random response is
 //     what v14 cached under the raw query. Those entries must not be served now
 //     that such a query is interpreted in English.
-const SEARCH_CACHE_SCHEMA = 'v15';
+// v16: the 260904 feedback round. RESULTS changed: the ANSI procedural pages
+//     (change-proposal form / continuous-maintenance process) are excluded from
+//     every result and every prompt (DO102), reference entries are stripped of
+//     running-header tails (DO110), RP-27-20+E1 is now Deprecated in D1 (DO101)
+//     and stored v15 responses may still cite it as current. The comparison
+//     PROMPT changed too (DO109: page counts + merger evidence + a scope probe
+//     feeding it), and the payload's comparison context gained `pages`.
+const SEARCH_CACHE_SCHEMA = 'v16';
 
 function errMsg(err: unknown): string {
   return err instanceof Error ? err.message : String(err);

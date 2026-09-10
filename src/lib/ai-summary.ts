@@ -743,8 +743,17 @@ Write those sentences now:`;
     ? `\nOlder editions (${older.map(d => d.id).join(', ')}) also appear in the results. Do NOT compare against them and do NOT name them as the edition that was replaced.`
     : '';
 
+  // Page counts are measured facts from the documents themselves, not excerpts
+  // (client DO109): a 71-page growth cannot be "Minimal" however thin the
+  // retrieval was. Only stated when D1 knows both; a one-sided count proves
+  // nothing about the difference.
+  const pages = comparison?.pages;
+  const pagesNote = (pages && pages.current != null && pages.prior != null)
+    ? `\nMEASURED FACT — the documents' own page counts: the current edition runs ${pages.current} pages; the prior edition ran ${pages.prior} pages.`
+    : '';
+
   return `
-This is a VERSION COMPARISON request. ${pair}${olderNote}
+This is a VERSION COMPARISON request. ${pair}${olderNote}${pagesNote}
 
 Produce a substantive, objective, high-level comparison using EXACTLY these four sections, in this order, each as a heading on its own line:
 
@@ -776,11 +785,27 @@ words — Extensive, Moderate or Minimal — and then WRITE TO THAT CLASSIFICATI
     may then be very short, or say plainly that nothing of that kind appears.
     Target 100–300 words; never exceed ~500.
 
-Judge the extent from the excerpts you were given, and say so when the evidence
-is thin: "the retrieved passages suggest the changes are minimal, though they
-cover only part of both documents" is a better answer than a confident one.
-Do NOT pad a Minimal comparison to look thorough — a short, accurate answer is
-the point of this section.
+TWO KINDS OF EVIDENCE OUTRANK the impression the excerpts give (client DO109 —
+an analysis called a merger that grew the document by 71 pages "Minimal"):
+
+1. A MERGER STATED IN THE DOCUMENT'S OWN SCOPE. When a current-edition excerpt
+   — typically from its Scope or Introduction — says the document contains,
+   incorporates, or consolidates the contents of OTHER standards, or that other
+   named documents are deprecated by this publication, that IS an Extensive
+   change. Classify Extensive, open the section by naming the merged/deprecated
+   documents exactly as the excerpt names them, and organize the rest of the
+   analysis around what the merger brings in.
+2. THE PAGE COUNTS given above, when stated. They describe the WHOLE documents,
+   which the excerpts never do. If the current edition is substantially longer
+   (roughly 15+ pages or 20%+), do not classify Minimal: say the growth itself
+   indicates significant added material, state how much, and note that the
+   retrieved passages cover only part of it.
+
+Otherwise, judge the extent from the excerpts you were given, and say so when
+the evidence is thin: "the retrieved passages suggest the changes are minimal,
+though they cover only part of both documents" is a better answer than a
+confident one. Do NOT pad a Minimal comparison to look thorough — a short,
+accurate answer is the point of this section.
 
 STRUCTURE OF THE OTHER THREE SECTIONS — not "Extent of the changes", which is a
 short paragraph (client requirement — follow it exactly):

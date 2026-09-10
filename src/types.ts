@@ -503,6 +503,13 @@ export interface ComparisonContext {
    * than describe the same document as two.
    */
   reaffirmedOnly?: boolean;
+  /**
+   * PDF page counts of the two editions, from D1 (client DO109). Evidence for
+   * "Extent of the changes": RP-43-25 is 71 pages longer than RP-43-22 — it
+   * absorbed LP-2 and LP-11 whole — and the analysis called that "Minimal"
+   * because it judged only from the retrieved excerpts.
+   */
+  pages?: { current: number | null; prior: number | null };
 }
 
 export interface AISummary {

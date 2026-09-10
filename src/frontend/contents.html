@@ -210,6 +210,12 @@
       const named = [...byAuthor.keys()].filter(Boolean).sort((a, b) => a.localeCompare(b));
       const order = byAuthor.has('') ? [...named, ''] : named;
 
+      // Every heading on this page is an IES committee, so the prefix says
+      // nothing (client DO099: "remove the prefix 'IES' from each committee
+      // name — too redundant"). Display only: the grouping keys, the filter
+      // matching and the committee links are untouched.
+      const displayName = (label) => String(label).replace(/^IES\s+/i, '');
+
       return order.map(label => {
         const rows = byAuthor.get(label).sort(compareForToc);
         // The link is resolved server-side (same function the result cards use),
@@ -223,8 +229,8 @@
                      title="${escapeHtml(committee.exact
                        ? 'View this committee’s roster on ies.org'
                        : 'This committee has no current page — opens the list of IES technical committees')}"
-                  >${escapeHtml(label)}${committee.exact ? '' : ' ↗'}</a>`
-              : escapeHtml(label))
+                  >${escapeHtml(displayName(label))}${committee.exact ? '' : ' ↗'}</a>`
+              : escapeHtml(displayName(label)))
           : '<span class="text-gray-400 font-normal">Authoring committee not yet supplied</span>';
 
         return `

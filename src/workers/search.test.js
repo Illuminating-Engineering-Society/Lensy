@@ -4,6 +4,7 @@ import {
   deriveLightingZone, reserveBodySlots, buildComparisonContext, matchesStandardScope, buildResult, buildChunkResults, looksLikeFrontMatter,
   editionYear, orderComparisonResults, requestedDeprecatedEdition, spreadAcrossSections,
   isResolvableDoi, isBrokenDoiUrl, definitionSearchTerm, buildSectionLinkMap,
+  isProceduralBoilerplate, cleanReferenceEntryText,
 } from './search';
 
 // ─── Content-type normalization ───────────────────────────────────────────────
@@ -520,5 +521,112 @@ describe('buildSectionLinkMap', () => {
     ]);
     expect(map['RP-6-24'].sections['5.4']).toContain('/a#page=40');
     expect(buildSectionLinkMap([])).toEqual({});
+  });
+});
+
+// ─── DO102: the ANSI procedural pages appear in NO search results ─────────────
+
+describe('isProceduralBoilerplate', () => {
+  it('recognizes both procedural pages by their headings', () => {
+    expect(isProceduralBoilerplate(
+      'Form for Proposing Change to an ANSI/IES Standard Under Continuous Maintenance NOTE: Use a separate form for each comment.'
+    )).toBe(true);
+    expect(isProceduralBoilerplate(
+      'Process for Change to an ANSI/IES Standard Under Continuous Maintenance. This standard is maintained under continuous maintenance procedures.'
+    )).toBe(true);
+  });
+
+  it('recognizes the form page by its field trio when the heading was lost to layout', () => {
+    expect(isProceduralBoilerplate(
+      '1. Submitter: ____ Affiliation: ____ Address: ____ City: ____ Telephone: ____'
+    )).toBe(true);
+  });
+
+  it('leaves real provisions alone', () => {
+    expect(isProceduralBoilerplate(
+      'Task illuminance in open-plan offices should be maintained at the values in Table 4-1, with uniformity per Section 4.3.'
+    )).toBe(false);
+    expect(isProceduralBoilerplate('Submitter: J. Smith proposed the change in committee.')).toBe(false);
+    expect(isProceduralBoilerplate('')).toBe(false);
+    expect(isProceduralBoilerplate(null)).toBe(false);
+  });
+
+  it('is folded into looksLikeFrontMatter, so comparisons skip the pages too', () => {
+    expect(looksLikeFrontMatter(
+      'Form for Proposing Change to an ANSI/IES Standard Under Continuous Maintenance'
+    )).toBe(true);
+  });
+
+  it('keeps procedural-page chunks out of ordinary body results', () => {
+    const match = (id, text) => ({
+      id, score: 0.8,
+      metadata: { standard_id: 'RP-1-24', chunk_type: 'text', excerpt_text: text, page_number: 3 },
+    });
+    const results = buildChunkResults([
+      match('a', 'Process for Change to an ANSI/IES Standard Under Continuous Maintenance.'),
+      match('b', 'Vertical illuminance on the task plane should meet the criteria of Section 4.'),
+    ], {}, { perStandard: Infinity });
+    expect(results.length).toBe(1);
+    expect(results[0].excerpt.text).toContain('Vertical illuminance');
+  });
+});
+
+// ─── DO110: reference entries lose the running header that bled past the break ─
+
+describe('cleanReferenceEntryText', () => {
+  const TITLE = 'Light and Human Health: An Overview of the Impact of Optical Radiation on Visual, Circadian, Neuroendocrine, and Neurobehavioral Responses';
+
+  it("strips a folio + truncated title tail — the client's TM-18-18 example", () => {
+    const entry = 'Turek, and O. Van Reeth, "Demonstration of rapid light-induced advances and delays of the human circadian clock using hormonal phase markers." American Journal of Physiology, 1994. 266 (6 Pt 1): p. E953-63. 26 Light and Human Health An Overview of the Impact of Optical Radiation on Visual, Circadian, Neuroendocrine, and';
+    const out = cleanReferenceEntryText(entry, TITLE, 'IES TM-18-18');
+    expect(out).toBe('Turek, and O. Van Reeth, "Demonstration of rapid light-induced advances and delays of the human circadian clock using hormonal phase markers." American Journal of Physiology, 1994. 266 (6 Pt 1): p. E953-63.');
+  });
+
+  it('strips a tail that carries the designation too', () => {
+    const out = cleanReferenceEntryText(
+      'Rea MS. Value of circadian metrics. Lighting Res Technol; 2018. IES TM-18-18 Light and Human Health: An Overview',
+      TITLE, 'IES TM-18-18',
+    );
+    expect(out).toBe('Rea MS. Value of circadian metrics. Lighting Res Technol; 2018.');
+  });
+
+  it('never strips when the remainder would stop reading as a citation', () => {
+    const short = 'See Light and Human Health An Overview of the Impact';
+    expect(cleanReferenceEntryText(short, TITLE, null)).toBe(short);
+  });
+
+  it('leaves an entry alone when the title only appears mid-text, or not at all', () => {
+    const cites = 'IES. Light and Human Health: An Overview of the Impact of Optical Radiation on Visual, Circadian, Neuroendocrine, and Neurobehavioral Responses. New York: IES; 2018, is the foundational reference for this chapter and its metrics.';
+    expect(cleanReferenceEntryText(cites, TITLE, null)).toBe(cites);
+    const plain = 'Smith, J. Lighting and vision. Journal of Vision; 1998.';
+    expect(cleanReferenceEntryText(plain, TITLE, null)).toBe(plain);
+    expect(cleanReferenceEntryText(plain, null, null)).toBe(plain);
+  });
+});
+
+// ─── DO109: the comparison context carries the two editions' page counts ──────
+
+describe('buildComparisonContext pages (DO109)', () => {
+  const dep = (std) => ({
+    isDeprecated: true,
+    application: { standard: std, standardFull: `ANSI/IES ${std}` },
+    standardLink: null,
+  });
+  const edition = (id, status, pageCount) => ({
+    id, status, pageCount, title: null, fullDesignation: `ANSI/IES ${id}`,
+    description: null, author: null, collection: null, thumbnailUrl: null,
+    buyUrl: null, webUrl: null, supersededBy: null, year: 2000,
+  });
+
+  it('resolves current and prior page counts from the family rows', () => {
+    const editions = [edition('RP-43-25', 'Active', 217), edition('RP-43-22', 'Deprecated', 146)];
+    const ctx = buildComparisonContext([dep('RP-43-22')], null, editions[0], editions);
+    expect(ctx.pages).toEqual({ current: 217, prior: 146 });
+  });
+
+  it('omits pages entirely when neither edition has a count', () => {
+    const editions = [edition('RP-43-25', 'Active', null), edition('RP-43-22', 'Deprecated', null)];
+    const ctx = buildComparisonContext([dep('RP-43-22')], null, editions[0], editions);
+    expect(ctx.pages).toBeUndefined();
   });
 });

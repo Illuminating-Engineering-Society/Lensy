@@ -364,6 +364,11 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
   // not cost control). Tier `full` and the bearer (grant.user null) are exempt;
   // interpretation choices and failure posture in src/lib/search-cap.ts.
   const searchCap = dailySearchCap(env);
+  // used/cap for THIS metered reader — attached to the response at the return
+  // points (never stored in the shared response cache: it is personal state)
+  // so the UI can nudge before the cut, per the client's permissions chart
+  // (2026-09-04): "will establish Nudge after 10, cut after 20".
+  let searchCapStatus: { used: number; cap: number; remaining: number } | null = null;
   if (searchCap != null && tier !== 'full' && grant.user) {
     const quota = await enforceDailySearchCap(env, grant.user.sub, searchCap, grant.scope);
     if (!quota.allowed) {
@@ -377,6 +382,9 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
         resetAt: new Date(quota.resetAt * 1000).toISOString(),
         subscribeUrl: 'https://store.ies.org/ies/subscriptions/',
       }, 429);
+    }
+    if (quota.used > 0) {
+      searchCapStatus = { used: quota.used, cap: quota.cap, remaining: Math.max(0, quota.cap - quota.used) };
     }
   }
 
@@ -470,7 +478,12 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
     // only the ones that missed the cache.
     const logWrite = logSearch(env, cachedPayload, true);
     if (ctx?.waitUntil) ctx.waitUntil(logWrite); else await logWrite;
-    return jsonResponse({ ...cachedPayload, cached: true });
+    // searchCap is PERSONAL state (this reader's daily-window count) attached
+    // outside the shared cached payload — a cached answer still spent a search.
+    return jsonResponse({
+      ...cachedPayload, cached: true,
+      ...(searchCapStatus ? { searchCap: searchCapStatus } : {}),
+    });
   }
 
   // ── Query language (client note, 2026-09-01) ─────────────────────────────────
@@ -579,10 +592,14 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
   // whatever the vector search happened to return (client DO43: "verify that the
   // tool understands what the 'current' version of any standard is").
   let currentEdition: FamilyEdition | null = null;
+  // Kept for buildComparisonContext below — the rows carry the page counts the
+  // "Extent of the changes" judgement needs (client DO109).
+  let familyEditions: FamilyEdition[] = [];
   if (isVersionComparison) {
     depDbg = body.debug ? {} : null;
     const family = comparisonFamily(mergedFilters, searchQuery);
     const editions = family ? await loadFamilyEditions(env, family) : [];
+    familyEditions = editions;
     currentEdition = editions.find(e => e.status !== 'Deprecated') || null;
     if (depDbg) {
       depDbg.family = family;
@@ -722,6 +739,7 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
         allResults.results,
         requestedDeprecatedEdition(searchQuery, currentIdForComparison),
         currentEdition,
+        familyEditions,
       )
     : undefined;
 
@@ -1022,7 +1040,12 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
     await logWrite;
   }
 
-  return jsonResponse({ ...payload, cached: false });
+  // searchCap rides OUTSIDE `payload` on purpose: the cache stores `payload`,
+  // and this reader's daily-window count must never be served to another reader.
+  return jsonResponse({
+    ...payload, cached: false,
+    ...(searchCapStatus ? { searchCap: searchCapStatus } : {}),
+  });
 }
 
 /**
@@ -1199,6 +1222,7 @@ export function buildComparisonContext(
   results: SearchResult[],
   requestedEdition?: string | null,
   currentOverride?: FamilyEdition | null,
+  familyEditions?: FamilyEdition[] | null,
 ): ComparisonContext {
   const editions: NonNullable<ComparisonContext['deprecated']> = [];
   const seen = new Set<string>();
@@ -1268,7 +1292,23 @@ export function buildComparisonContext(
   // say so and the advisory does not list the current edition as an older one.
   const reaffirmedOnly = editions.length > 0 && comparable.length === 0;
 
-  return { current, deprecated: target, alsoDeprecated, reaffirmedOnly };
+  // Page counts of the two editions being compared (client DO109): a 71-page
+  // growth is evidence the prompt must weigh, whatever the excerpts happened to
+  // cover. Resolved from the family's D1 rows, which is where page_count lives.
+  const pageOf = (id: string | null | undefined): number | null => {
+    if (!id || !familyEditions?.length) return null;
+    const row = familyEditions.find(e => e.id.toUpperCase() === String(id).toUpperCase());
+    return row?.pageCount ?? null;
+  };
+  const pages = {
+    current: currentOverride?.pageCount ?? pageOf(current?.id),
+    prior: pageOf(target[0]?.id),
+  };
+
+  return {
+    current, deprecated: target, alsoDeprecated, reaffirmedOnly,
+    ...(pages.current != null || pages.prior != null ? { pages } : {}),
+  };
 }
 
 /**
@@ -1348,6 +1388,10 @@ export type FamilyEdition = {
   webUrl: string | null;
   status: string;
   supersededBy: string | null;
+  /** PDF page count, written at ingest — evidence for the comparison's
+   *  "Extent of the changes" (client DO109: RP-43-25 is 71 pages longer than
+   *  RP-43-22, and the analysis called the changes "Minimal"). */
+  pageCount: number | null;
   /** Publication year decoded from the id, for newest-first ordering. */
   year: number;
 };
@@ -1355,9 +1399,9 @@ export type FamilyEdition = {
 /** Columns a document card needs. Split out because the last five arrive with migration 0010. */
 const STANDARD_CARD_COLUMNS =
   'id, title, full_designation, description, author, status, superseded_by, vitrium_web_url, ' +
-  'collection, thumbnail_url, buy_url';
+  'page_count, collection, thumbnail_url, buy_url';
 const STANDARD_CARD_COLUMNS_LEGACY =
-  'id, title, full_designation, description, author, status, superseded_by, vitrium_web_url';
+  'id, title, full_designation, description, author, status, superseded_by, vitrium_web_url, page_count';
 
 /**
  * Read standards rows for the document cards, tolerating a database that has not
@@ -1395,6 +1439,7 @@ async function selectStandardRows(env: Env, where: string, bindings: unknown[]):
       webUrl: toLibraryUrlOrNull(r.vitrium_web_url),
       status: r.status || 'Active',
       supersededBy: r.superseded_by || null,
+      pageCount: typeof r.page_count === 'number' && r.page_count > 0 ? r.page_count : null,
       year: editionYear(r.id),
     };
   });
@@ -1446,6 +1491,13 @@ const COMPARISON_CURRENT_TOP_K = 20;
  * own designation and title so the passages are about its subject matter, and
  * spreads the result across sections so it is not one chapter's worth.
  *
+ * The SCOPE probe runs on every comparison, whatever the ordinary search found
+ * (client DO109): when an edition absorbs other standards it says so by name in
+ * its own Scope section — RP-43-25's "1.0 Scope" states it contains the
+ * complete contents of RP-43-22, LP-2-20 and LP-11-20 and deprecates all three
+ * — and no amount of topical retrieval reliably lands on that page. Without it
+ * the analysis judged a 71-page merger "Minimal".
+ *
  * Fail-open: on any error the comparison proceeds with whatever it already had.
  */
 async function ensureCurrentEditionExcerpts(
@@ -1455,28 +1507,23 @@ async function ensureCurrentEditionExcerpts(
     !r.isDeprecated && r.application?.standard === edition.id && (r.excerpt?.text || '').trim().length >= 60
   );
   if (D) D.currentExisting = existing.length;
-  if (existing.length >= 3) return [];
 
-  try {
-    const anchor = [
-      edition.fullDesignation || edition.id,
-      edition.title || '',
-      'scope recommendations criteria requirements design guidance',
-    ].filter(Boolean).join(' ');
+  const seen = new Set(
+    results.flatMap(r => [r.excerpt, ...(r.excerpts || [])])
+      .filter(Boolean)
+      .map(e => `${e!.pageNumber ?? '?'}|${(e!.text || '').slice(0, 60)}`)
+  );
+
+  // One vector probe against this edition, deduped against everything already
+  // on screen AND across the two probes (they share `seen`).
+  const probe = async (anchor: string): Promise<VMatch[]> => {
     const vector = await embedQueryText(env, anchor);
-
     const res = await env.VECTORIZE.query(vector, {
       topK: COMPARISON_CURRENT_TOP_K,
       returnMetadata: 'all',
       filter: { standard_code: edition.id },
     });
-
-    const seen = new Set(
-      results.flatMap(r => [r.excerpt, ...(r.excerpts || [])])
-        .filter(Boolean)
-        .map(e => `${e!.pageNumber ?? '?'}|${(e!.text || '').slice(0, 60)}`)
-    );
-    const usable = ((res.matches || []) as unknown as VMatch[]).filter(m => {
+    return ((res.matches || []) as unknown as VMatch[]).filter(m => {
       const meta = m.metadata || {};
       const text = String(meta.excerpt_text || '');
       if (meta.chunk_type === 'application' || meta.chunk_type === 'reference' || meta.chunk_type === 'table') return false;
@@ -1486,13 +1533,48 @@ async function ensureCurrentEditionExcerpts(
       seen.add(key);
       return true;
     });
-    if (D) { D.currentProbed = (res.matches || []).length; D.currentUsable = usable.length; }
-    if (usable.length === 0) return [];
+  };
 
+  try {
     const standardsIndex = await fetchStandardsIndex(env.DB);
-    const built = buildChunkResults(usable, { standardsIndex }, { perStandard: Infinity })
-      .sort((a, b) => (b.relevanceScore || 0) - (a.relevanceScore || 0));
-    return spreadAcrossSections(built, Math.max(1, COMPARISON_CURRENT_EXCERPTS - existing.length));
+    const build = (matches: VMatch[]) =>
+      buildChunkResults(matches, { standardsIndex }, { perStandard: Infinity })
+        .sort((a, b) => (b.relevanceScore || 0) - (a.relevanceScore || 0));
+
+    // 1. The Scope/Introduction, always. Kept to the front-of-document matches
+    //    (chapter 1, or a passage that says "scope" up front) so the slot is
+    //    never spent on a body chapter the general probe would find anyway.
+    let scopeResults: SearchResult[] = [];
+    try {
+      const scopeMatches = (await probe(
+        `${edition.fullDesignation || edition.id} scope purpose of this document — `
+        + 'contains, incorporates, consolidates, supersedes or replaces prior standards and editions'
+      )).filter(m => {
+        const section = String(m.metadata?.section || '');
+        const opening = String(m.metadata?.excerpt_text || '').slice(0, 200);
+        return /^1(?:\.\d+)*$/.test(section) || /\bscope\b/i.test(opening);
+      });
+      scopeResults = build(scopeMatches).slice(0, 2);
+      if (D) D.currentScopeFound = scopeResults.length;
+    } catch (err) {
+      console.error('scope probe failed (non-fatal):', errMsg(err));
+    }
+
+    // 2. The topical probe, only when the ordinary search left the current
+    //    edition thin — exactly the DO42/DO43 rule as before.
+    let general: SearchResult[] = [];
+    if (existing.length < 3) {
+      const usable = await probe([
+        edition.fullDesignation || edition.id,
+        edition.title || '',
+        'scope recommendations criteria requirements design guidance',
+      ].filter(Boolean).join(' '));
+      if (D) { D.currentProbed = usable.length; D.currentUsable = usable.length; }
+      general = spreadAcrossSections(
+        build(usable), Math.max(1, COMPARISON_CURRENT_EXCERPTS - existing.length));
+    }
+
+    return [...scopeResults, ...general];
   } catch (err) {
     if (D) D.currentProbeError = errMsg(err);
     console.error('current-edition comparison probe failed (non-fatal):', errMsg(err));
@@ -1885,9 +1967,15 @@ async function runSingleSearch(rawQuery: string, filters: SearchFilters, limit: 
     // useless as a bibliography view.
     const refResults = buildChunkResults(liveRefs, linkCtx, { perStandard: Infinity })
       .map(r => {
-        const entryText = r.excerpt?.text || '';
+        // A running header that bled past the page break repeats the CITING
+        // document's title at the end of the entry (client DO110) — strip it
+        // before the entry is displayed, linked, or matched against markers.
+        const stdInfo = standardsIndex.get(r.application?.standard || '');
+        const entryText = cleanReferenceEntryText(
+          r.excerpt?.text || '', stdInfo?.title, stdInfo?.fullDesignation || r.application?.standard);
         return {
           ...r,
+          excerpt: r.excerpt ? { ...r.excerpt, text: entryText } : r.excerpt,
           referenceLink: buildReferenceLink(entryText, standardsIndex),
           // The excerpt index is handed over so a chip can fall back to a body
           // page that names the cited work (client DO064).
@@ -2208,6 +2296,62 @@ export function citedStandardDesignation(text: string): string | null {
     .exec(String(text || ''));
   if (!m) return null;
   return `${m[1]}${m[2] || ''}`.toUpperCase();
+}
+
+/**
+ * Strip a RUNNING HEADER that bled into the end of a reference entry
+ * (client DO110).
+ *
+ * A References section prints the citing document's own title (and folio) as a
+ * page header; when an entry is the last text before the page break, the chunk
+ * carries that header as a trailing fragment — the client's example ended
+ * "…E953-63. 26 Light and Human Health An Overview of the Impact of Optical
+ * Radiation on Visual, Circadian, Neuroendocrine, and" (a folio, then the
+ * citing standard's title cut mid-word). The tail is matched as a PREFIX of the
+ * citing document's title (≥3 words, longest first — the header itself is often
+ * truncated by the chunk boundary), optionally preceded by a folio number and
+ * the designation, and only ever removed at the very end of the entry.
+ *
+ * Deliberately conservative: nothing is stripped unless what remains still
+ * reads as a citation (40+ characters), so an entry that legitimately names a
+ * similar title keeps its text.
+ */
+export function cleanReferenceEntryText(
+  text: string | null | undefined,
+  citingTitle?: string | null,
+  citingDesignation?: string | null,
+): string {
+  const out = String(text || '').trim();
+  // Words are compared by their ALPHANUMERIC content only: the header prints
+  // "Health An" where the title reads "Health: An" — punctuation must neither
+  // block a match nor be required by one.
+  const titleWords = String(citingTitle || '').split(/\s+/)
+    .map(w => w.replace(/[^A-Za-z0-9]+/g, ''))
+    .filter(Boolean);
+  if (!out || titleWords.length < 3) return out;
+
+  const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const SEP = '[^A-Za-z0-9]+';
+  const desigRuns = String(citingDesignation || '').match(/[A-Za-z0-9]+/g) || [];
+  const desig = desigRuns.length
+    ? `(?:(?:ANSI${SEP})?${desigRuns.map(esc).join(SEP)}${SEP})?`
+    : '';
+
+  for (let k = titleWords.length; k >= 3; k--) {
+    const titlePattern = titleWords.slice(0, k).map(esc).join(SEP);
+    // Whitespace opens the match (so "p. E953-63." keeps its punctuation),
+    // then an optional STANDALONE folio, an optional designation, and the
+    // title prefix — all anchored to the entry's very end.
+    const re = new RegExp(
+      `\\s+(?:\\d{1,4}\\s+)?${desig}${titlePattern}[^A-Za-z0-9]*$`,
+      'i',
+    );
+    const m = re.exec(out);
+    if (m && m.index >= 40) {
+      return out.slice(0, m.index).replace(/[\s,;–—-]+$/, '').trim();
+    }
+  }
+  return out;
 }
 
 /**
@@ -3248,6 +3392,32 @@ async function backfillExcerpts(env: Env, queryVector: number[], apps: Applicati
   }));
 }
 
+// ── The ANSI procedural pages (client DO102, 2026-09-04) ─────────────────────
+// "The ANSI/IES procedural pages shouldn't appear in any search results.
+//  Inclusion in the printing is required by ANSI but it does not have any
+//  relevance to our content." Two pages, printed in every ANSI/IES standard:
+// the change-proposal FORM ("Form for Proposing Change to an ANSI/IES Standard
+// Under Continuous Maintenance", with Submitter/Affiliation/Address blanks) and
+// the PROCESS page ("Process for Change to an ANSI/IES Standard Under
+// Continuous Maintenance"). Unlike the general front-matter heuristics below,
+// this is applied to ORDINARY search results too — these pages are boilerplate
+// in every document, so a match against them is never an answer.
+const PROCEDURAL_PAGE_PATTERNS: RegExp[] = [
+  /\bform\s+for\s+proposing\s+change\s+to\s+an\s+ANSI\s*\/?\s*IES\s+standard\b/i,
+  /\bprocess\s+for\s+change\s+to\s+an\s+ANSI\s*\/?\s*IES\s+standard\b/i,
+  /\bunder\s+continuous\s+maintenance\b/i,
+];
+// The form page sometimes extracts as bare field labels with the heading lost
+// to layout — the field trio is as distinctive as the heading.
+const PROCEDURAL_FORM_FIELDS: RegExp[] = [/\bsubmitter\s*:/i, /\baffiliation\s*:/i, /\btelephone\s*:/i];
+
+export function isProceduralBoilerplate(text: string | null | undefined): boolean {
+  if (!text) return false;
+  const t = String(text);
+  if (PROCEDURAL_PAGE_PATTERNS.some(re => re.test(t))) return true;
+  return PROCEDURAL_FORM_FIELDS.filter(re => re.test(t)).length >= 2;
+}
+
 // Front matter and back matter: pages that belong to a standard's packaging
 // rather than its provisions. Harmless as general search hits, but poison for a
 // version comparison — an errata notice or an Annex reference list has no
@@ -3292,6 +3462,7 @@ const FRONT_MATTER_PATTERNS: RegExp[] = [
 export function looksLikeFrontMatter(text: string | null | undefined): boolean {
   if (!text) return true;
   const t = String(text);
+  if (isProceduralBoilerplate(t)) return true;   // ANSI procedural pages (DO102)
   if (FRONT_MATTER_PATTERNS.some(re => re.test(t))) return true;
 
   // Roster density: a page of "J. Smith" / "Smith, J." names is a contributor or
@@ -3337,8 +3508,10 @@ function pickExcerptsForApp(excerptIndex: ExcerptIndex, app: ApplicationRow, max
   if (!bucket || bucket.length === 0) return [];
 
   const isTable = (c: ExcerptChunk) => c.chunk_type === 'table';
-  // Reference entries are bibliography lines — never body context.
-  const usable = bucket.filter(c => c.excerpt_text && c.chunk_type !== 'reference');
+  // Reference entries are bibliography lines — never body context; the ANSI
+  // procedural pages are boilerplate in every document (client DO102).
+  const usable = bucket.filter(c =>
+    c.excerpt_text && c.chunk_type !== 'reference' && !isProceduralBoilerplate(c.excerpt_text));
   const prose = usable.filter(c => !isTable(c) && !isTableLike(c.excerpt_text));
   const pool = prose.length > 0 ? prose : usable;
 
@@ -3530,6 +3703,12 @@ export function buildChunkResults(chunkMatches: VMatch[], linkCtx: LinkCtx = {},
   for (const match of chunkMatches) {
     const stdId = match.metadata?.standard_id || match.metadata?.standard_code;
     if (!stdId) continue;
+    // The ANSI procedural pages appear in NO search results (client DO102):
+    // they are boilerplate printed in every standard, so a match against them
+    // is never an answer. Filtered here — the one gate every ordinary body
+    // result passes — so the vectors ingested before this rule can never
+    // surface again, whether or not the corpus is re-ingested.
+    if (isProceduralBoilerplate(match.metadata?.excerpt_text)) continue;
     if (!byStandard.has(stdId)) byStandard.set(stdId, []);
     byStandard.get(stdId)!.push(match);
   }

@@ -98,7 +98,7 @@ function quotaKey(scope: 'prod' | 'stg', sub: string): string {
 }
 
 export type QuotaOutcome =
-  | { allowed: true }
+  | { allowed: true; used: number; cap: number }
   | { allowed: false; resetAt: number };
 
 /**
@@ -126,13 +126,16 @@ export async function enforceDailySearchCap(
     // expiry check in decideSearchQuota is what actually decides).
     const ttl = Math.max(60, decision.write.windowStartedAt + SEARCH_CAP_WINDOW_SECONDS - nowSec);
     await env.SESSIONS.put(key, JSON.stringify(decision.write), { expirationTtl: ttl });
-    return { allowed: true };
+    // used/cap ride the response so the UI can NUDGE before the cut — the
+    // client's "Nudge after 10, cut after 20" (2026-09-04 permissions chart).
+    return { allowed: true, used: decision.write.count, cap };
   } catch (err) {
     // Fail open: metering must never turn a KV hiccup into "search is down".
     console.error('search_cap_error', {
       detail: err instanceof Error ? err.message : 'unknown',
     });
-    return { allowed: true };
+    // used 0 on the fail-open path: an uncounted search must not nudge anyone.
+    return { allowed: true, used: 0, cap };
   }
 }
 

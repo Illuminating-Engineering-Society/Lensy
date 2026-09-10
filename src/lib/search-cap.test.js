@@ -88,10 +88,10 @@ describe('enforceDailySearchCap', () => {
     };
   };
 
-  it('counts a search and expires the record when the window resets', async () => {
+  it('counts a search — reporting used/cap for the nudge — and expires the record when the window resets', async () => {
     const kv = kvStub({ count: 3, windowStartedAt: NOW - 1000 });
     const out = await enforceDailySearchCap({ SESSIONS: kv }, 'sub-1', 20, 'prod', NOW * 1000);
-    expect(out).toEqual({ allowed: true });
+    expect(out).toEqual({ allowed: true, used: 4, cap: 20 });
     expect(kv.puts[0].value).toEqual({ count: 4, windowStartedAt: NOW - 1000 });
     expect(kv.puts[0].opts.expirationTtl).toBe(SEARCH_CAP_WINDOW_SECONDS - 1000);
   });
@@ -109,13 +109,13 @@ describe('enforceDailySearchCap', () => {
     expect(kv.puts[0].key).toBe('search-quota:stg:sub-1');
   });
 
-  it('fails OPEN on any KV trouble', async () => {
+  it('fails OPEN on any KV trouble, with used 0 so nobody is nudged off an error', async () => {
     const broken = {
       async get() { throw new Error('kv down'); },
       async put() { throw new Error('kv down'); },
     };
     const out = await enforceDailySearchCap({ SESSIONS: broken }, 'sub-1', 20, 'prod', NOW * 1000);
-    expect(out).toEqual({ allowed: true });
+    expect(out).toEqual({ allowed: true, used: 0, cap: 20 });
   });
 
   it('never writes a TTL below the KV minimum of 60s', async () => {

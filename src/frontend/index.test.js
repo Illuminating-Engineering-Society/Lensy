@@ -215,8 +215,9 @@ describe('filter pills', () => {
     run('resetFilters(); setLocation("interior", false); setLocation("exterior", false)');
     const st = JSON.parse(run('JSON.stringify(filterState)'));
     expect(st.tables).toBe(false);
-    expect(JSON.parse(run('JSON.stringify(collectFilters())')).content_types)
-      .not.toContain('tables');
+    // Since DO106 the exclusion is a DISPLAY decision, not a retrieval one: the
+    // API is still asked for every kind, and the table result is hidden here.
+    expect(run('passesContentFilters({ resultType: "application", application: { indoorOutdoor: "Indoor" } })')).toBe(false);
     // …and re-ticking one brings the kind back.
     run('setLocation("exterior", true)');
     expect(JSON.parse(run('JSON.stringify(filterState)')).tables).toBe(true);
@@ -239,38 +240,55 @@ describe('filter pills', () => {
     expect(st.interior).toBe(true);
   });
 
-  it('sends the pill state as content_types', () => {
+  // Client DO106: "Run queries across all content filters (even if they are
+  // deselected…)". The checkboxes stopped shaping the REQUEST — every search
+  // asks for every kind so the sidebar can count them all — and became the
+  // DISPLAY filter instead, so Apply re-filters without a new search.
+  it('always asks the API for every content kind, whatever the checkboxes say (DO106)', () => {
     run('applyFilterState({ definitions: true, body: false, tables: false, references: false })');
-    expect(JSON.parse(run('JSON.stringify(collectFilters())')))
-      .toEqual({ content_types: ['definitions'] });
+    expect(JSON.parse(run('JSON.stringify(collectFilters())')).content_types.sort())
+      .toEqual(['body', 'definitions', 'references', 'tables']);
+    // …and never a server-side location narrowing: the rows carry their own
+    // Indoor/Outdoor and are filtered on screen.
+    run('setLocation("interior", false)');
+    expect(JSON.parse(run('JSON.stringify(collectFilters())')).indoor_outdoor).toBeUndefined();
     run('resetFilters()');
   });
 
-  it('narrows by location only when exactly one of Interior/Exterior is on', () => {
+  it('displays only the selected kinds (the DO106 display filter)', () => {
+    run('applyFilterState({ definitions: true, body: false, tables: false, references: false })');
+    expect(run('passesContentFilters({ resultType: "definition" })')).toBe(true);
+    expect(run('passesContentFilters({ resultType: "excerpt" })')).toBe(false);
+    expect(run('passesContentFilters({ resultType: "reference" })')).toBe(false);
+    expect(run('passesContentFilters({ resultType: "application", application: {} })')).toBe(false);
+    // A deprecated comparison card always shows — a comparison IS its editions.
+    expect(run('passesContentFilters({ resultType: "excerpt", isDeprecated: true })')).toBe(true);
     run('resetFilters()');
-    expect(JSON.parse(run('JSON.stringify(collectFilters())')).indoor_outdoor).toBeUndefined();
-    run('setLocation("interior", false)');
-    expect(JSON.parse(run('JSON.stringify(collectFilters())')).indoor_outdoor).toBe('Outdoor');
+  });
+
+  it('narrows displayed tables by location when exactly one of Interior/Exterior is on', () => {
+    run('resetFilters(); setLocation("interior", false)');
+    expect(run('passesContentFilters({ resultType: "application", application: { indoorOutdoor: "Outdoor" } })')).toBe(true);
+    expect(run('passesContentFilters({ resultType: "application", application: { indoorOutdoor: "Indoor" } })')).toBe(false);
     run('resetFilters()');
   });
 
   // A demo search that means to exclude a kind has to say so: the defaults now
-  // have all four on, so a partial state would leave the others selected.
+  // have all four on, so a partial state would leave the others selected. Since
+  // DO106 the narrowing is what it DISPLAYS; the request still carries all four.
   it('lets a demo search narrow to exactly the kinds it names', () => {
     run(`applyFilterState(DEMO_SEARCHES[1].state)`);
-    expect(JSON.parse(run('JSON.stringify(collectFilters())')).content_types)
-      .toEqual(['references']);
+    expect(run('passesContentFilters({ resultType: "reference" })')).toBe(true);
+    expect(run('passesContentFilters({ resultType: "excerpt" })')).toBe(false);
     run('resetFilters()');
   });
 
-  // An empty selection reaches the API as "no preference", which the Worker
-  // answers with its own defaults — so the page refuses the search instead.
+  // An empty selection would DISPLAY nothing, so the page refuses the search.
   it('refuses to search with no content kind selected', () => {
     run(`resetFilters();
          toggleFilter('body'); toggleFilter('definitions'); toggleFilter('references');
          setLocation('interior', false); setLocation('exterior', false)`);
     expect(run('anyContentSelected()')).toBe(false);
-    expect(JSON.parse(run('JSON.stringify(collectFilters())')).content_types).toBeUndefined();
     run('resetFilters()');
     expect(run('anyContentSelected()')).toBe(true);
   });
@@ -837,11 +855,15 @@ describe('LensyLite', () => {
     expect(demo.body).toBe(true);   // never left with nothing selected
   });
 
-  it('sends no blocked content type to the API', () => {
+  it('never DISPLAYS a blocked kind, and never arms compare (the Worker is the boundary)', () => {
     run(`applyTier('lite'); resetFilters()`);
+    // Since DO106 the request names every kind for everyone — the Worker strips
+    // the blocked ones server-side (liteContentTypes), which was always the
+    // boundary. What the lite UI controls is display + the compare modifier.
     const filters = JSON.parse(run('JSON.stringify(collectFilters())'));
-    expect(filters.content_types || []).not.toContain('tables');
     expect(filters.content_types || []).not.toContain('compare');
+    expect(run('passesContentFilters({ resultType: "application", application: {} })')).toBe(false);
+    expect(JSON.parse(run('JSON.stringify(filterState)')).tables).toBe(false);
     run(`applyTier('full'); resetFilters()`);
   });
 });
@@ -1880,5 +1902,51 @@ describe('one search bar at a time (DO097)', () => {
     run(`compactSearchArmed = true; heroSearchVisible = false; syncCompactSearchBar();
          heroSearchVisible = true; syncCompactSearchBar()`);
     expect(hidden()).toBe(true);
+  });
+});
+
+// ─── DO070: scientific sub/superscripts, restored from a fixed vocabulary ─────
+
+describe('sciNotate (DO070)', () => {
+  const s = (input) => run(`sciNotate(${JSON.stringify(input)})`);
+
+  it('restores the TM-30 measures, compound forms first', () => {
+    expect(s('the Fidelity Index (Rf) is a measure')).toBe('the Fidelity Index (R<sub>f</sub>) is a measure');
+    expect(s('Local Color Fidelity (Rf,hj)')).toBe('Local Color Fidelity (R<sub>f,hj</sub>)');
+    expect(s('Sample Color Fidelity (Rf,CESi)')).toBe('Sample Color Fidelity (R<sub>f,CESi</sub>)');
+    expect(s('Rg and Rcs,h1 values')).toBe('R<sub>g</sub> and R<sub>cs,h1</sub> values');
+  });
+
+  it('restores Duv and squared units', () => {
+    expect(s('a Duv of 0.001')).toBe('a D<sub>uv</sub> of 0.001');
+    expect(s('300 cd/m2 at the task')).toBe('300 cd/m<sup>2</sup> at the task');
+    expect(s('10 W/m2 irradiance')).toBe('10 W/m<sup>2</sup> irradiance');
+  });
+
+  it('is conservative: Ra only beside its own vocabulary, and never inside tags', () => {
+    expect(s('Ra values above 90')).toBe('R<sub>a</sub> values above 90');
+    expect(s('Ra spoke first')).toBe('Ra spoke first');
+    expect(s('<a href="x?Rf,hj=1">Rf</a>')).toBe('<a href="x?Rf,hj=1">R<sub>f</sub></a>');
+    expect(s('Rfx and CRf stay')).toBe('Rfx and CRf stay');
+  });
+});
+
+// ─── DO107: only comparable standards in the Compare Versions suggest list ────
+
+describe('comparable families (DO107)', () => {
+  it('derives base and family through errata and reaffirmation suffixes', () => {
+    expect(run(`compareBaseOf('RP-8-25+E2')`)).toBe('RP-8-25');
+    expect(run(`compareBaseOf('LM-63-19R25')`)).toBe('LM-63-19');
+    expect(run(`compareBaseOf('LM-10-20(R2023)')`)).toBe('LM-10-20');
+    expect(run(`compareFamilyOf('RP-27.1-22')`)).toBe('RP-27.1');
+    expect(run(`compareFamilyOf('RP-27-20+E1')`)).toBe('RP-27');
+  });
+
+  it('a reaffirmed printing of the current edition does not make a family comparable', () => {
+    // The DO083 rule, applied to the suggest list: LM-10-20(R2023) beside a
+    // deprecated LM-10-20 is the SAME edition — nothing to compare.
+    expect(run(`compareBaseOf('LM-10-20(R2023)') === compareBaseOf('LM-10-20')`)).toBe(true);
+    // RP-43-25 beside a deprecated RP-43-22 IS comparable.
+    expect(run(`compareBaseOf('RP-43-25') === compareBaseOf('RP-43-22')`)).toBe(false);
   });
 });
