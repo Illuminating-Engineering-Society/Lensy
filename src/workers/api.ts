@@ -28,6 +28,7 @@ import { handleSearch } from './search';
 import { handleIngest } from './ingest';
 import { handleAdminScanOrphans, handleAdminEnumerateIds, handleAdminDeleteOrphans, handleAdminFlushCache, handleAdminSearchLog, handleAdminSearchEvents, handleAdminR2Multipart, handleAdminIndexStatus, handleAdminDeviceResets, handleAdminDeviceResetUpdate } from './admin';
 import { handleLibraryDocumentLookup, handleDeviceResetRequest } from './library-support';
+import { handleIngestJobs } from './staff-ingest';
 import { handleEvent } from './events';
 import { handlePreferences } from './preferences';
 import { handleAdminUsers } from './users';
@@ -125,6 +126,11 @@ export default {
 
       // ── Admin (SSO `administrator` role, or the staff bearer for scripts;
       //    each handler calls requireAdminAccess — see workers/session.ts) ──
+      // Staff dashboard ingest jobs (upload → parse → index → old-edition
+      // disposition) — the backend of /admin/standards.
+      if (path.startsWith('/api/admin/ingest-jobs')) {
+        return withCors(await handleIngestJobs(request, env, url));
+      }
       if (path === '/api/admin/scan-orphans' && request.method === 'POST') {
         return withCors(await handleAdminScanOrphans(request, env));
       }

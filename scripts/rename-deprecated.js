@@ -33,20 +33,15 @@
 import { readdirSync, renameSync, existsSync, statSync } from 'fs';
 import { join, basename, extname, dirname } from 'path';
 import { fileURLToPath } from 'url';
+// The SAME rule the ingest (script and staff dashboard) uses — no local copy to
+// keep in sync any more.
+import { deriveStandardId } from '../src/lib/standard-id.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const DEPRECATED_DIR = join(ROOT, 'pdfs', 'Deprecated Standards');
 const PDFS_DIR = join(ROOT, 'pdfs');
 
 const APPLY = process.argv.includes('--apply');
-
-// Must stay in sync with deriveStandardId() in scripts/ingest-pdfs.js.
-function deriveStandardId(file) {
-  const stem = basename(file, extname(file));
-  const m = stem.match(/^([A-Z]{1,3}-\d+(?:\.\d+)?(?:-\d+)?)\s*(?:\+\s*(E\d+))?/i);
-  if (!m) return stem.split(/[_ ]/)[0];
-  return m[2] ? `${m[1]}+${m[2]}` : m[1];
-}
 
 function collectPdfs(dir) {
   const out = [];

@@ -55,6 +55,15 @@ main = "src/workers/api.ts"
 compatibility_date = "2025-01-01"
 compatibility_flags = ["nodejs_compat"]
 
+# CPU headroom for the staff-dashboard ingest (POST /api/admin/ingest-jobs/:id/
+# process runs the whole extraction stack — chunker, applications extractor,
+# outline/caption walks — over a full document in one invocation). Billing is
+# per CPU-ms actually used; this only raises the ceiling from the 30 s default
+# so a 400-page standard cannot be killed mid-index. Ordinary requests are
+# unaffected.
+[limits]
+cpu_ms = 300000
+
 # ─── R2: PDF Storage ──────────────────────────────────────────────────────────
 [[r2_buckets]]
 binding = "PDFS"

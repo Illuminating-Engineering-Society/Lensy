@@ -506,9 +506,11 @@ export async function handleAdminR2Multipart(request: Request, env: Env): Promis
   const action = url.searchParams.get('action');
   const key = url.searchParams.get('key') || '';
 
-  // Same namespaces the ingest pipeline writes to — nothing else is writable.
-  if (!/^(standards|deprecated)\/[^/]+\.pdf$/.test(key)) {
-    return jsonResponse({ error: 'key must be standards/<file>.pdf or deprecated/<file>.pdf' }, 400);
+  // Same namespaces the ingest pipeline writes to — plus the staff dashboard's
+  // job staging (ingest-jobs/<jobId>/source.pdf), for files too large for a
+  // single-request upload. Nothing else is writable.
+  if (!/^(standards|deprecated)\/[^/]+\.pdf$|^ingest-jobs\/[^/]+\/source\.pdf$/.test(key)) {
+    return jsonResponse({ error: 'key must be standards/<file>.pdf, deprecated/<file>.pdf or ingest-jobs/<jobId>/source.pdf' }, 400);
   }
 
   if (action === 'create') {

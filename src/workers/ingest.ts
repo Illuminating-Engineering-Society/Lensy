@@ -173,13 +173,29 @@ async function pruneApplications(request: Request, env: Env): Promise<Response> 
   }
 
   const keep = new Set(keepCodes.map(String));
+  const result = await pruneApplicationRowsCore(env, standardId, keep);
+
+  await bumpDataVersion(env.SESSIONS);
+
+  return jsonResponse({ success: true, standardId, ...result });
+}
+
+/**
+ * The prune itself, shared with the staff dashboard's ingest jobs (which run it
+ * in-process after runDocumentIngest). Callers bump the data version.
+ */
+export async function pruneApplicationRowsCore(
+  env: Env,
+  standardId: string,
+  keep: Set<string>,
+): Promise<{ examined: number; deleted: number; vectorsDeleted: number; sample: string[] }> {
   const existing = await env.DB.prepare(
     'SELECT code FROM applications WHERE Standard = ?'
   ).bind(standardId).all<{ code: string }>();
 
   const stale = (existing.results || []).map(r => r.code).filter(code => !keep.has(code));
   if (stale.length === 0) {
-    return jsonResponse({ success: true, standardId, examined: (existing.results || []).length, deleted: 0 });
+    return { examined: (existing.results || []).length, deleted: 0, vectorsDeleted: 0, sample: [] };
   }
 
   // D1 first: a row the UI can no longer reach is the urgent part. Vectorize
@@ -204,16 +220,12 @@ async function pruneApplications(request: Request, env: Env): Promise<Response> 
     console.error(`prune: Vectorize cleanup failed for ${standardId} (non-fatal):`, errMsg(err));
   }
 
-  await bumpDataVersion(env.SESSIONS);
-
-  return jsonResponse({
-    success: true,
-    standardId,
+  return {
     examined: (existing.results || []).length,
     deleted: stale.length,
     vectorsDeleted,
     sample: stale.slice(0, 10),
-  });
+  };
 }
 
 /**
@@ -397,7 +409,9 @@ async function ingestDefinitions(request: Request, env: Env): Promise<Response> 
 }
 
 // ─── PDF Chunk Ingestion ───────────────────────────────────────────────────────
-// Called by scripts/ingest-pdfs.js after it has parsed the PDF locally.
+// Called by scripts/ingest-pdfs.js after it has parsed the PDF locally, and —
+// in-process, via runDocumentIngest — by the staff dashboard's ingest jobs
+// (src/workers/staff-ingest.ts), which parse in the staff browser instead.
 
 async function ingestParsedPDF(request: Request, env: Env): Promise<Response> {
   let body: any;
@@ -406,6 +420,31 @@ async function ingestParsedPDF(request: Request, env: Env): Promise<Response> {
   } catch {
     return jsonResponse({ error: 'Invalid JSON body' }, 400);
   }
+  const { status, payload } = await runDocumentIngest(body, env);
+  return jsonResponse(payload, status);
+}
+
+/** Per-step progress hook for dashboard-driven ingests. Failures inside the
+ *  hook must never fail the ingest itself — callers get a best-effort signal. */
+export type IngestProgress = (step: string, detail?: Record<string, unknown>) => void | Promise<void>;
+
+/**
+ * The embed → Vectorize → D1 half of the pipeline, as an in-process function.
+ *
+ * Exactly the logic POST /api/ingest has always run — ingestParsedPDF above is
+ * now a thin HTTP wrapper around it — plus an optional onProgress hook so the
+ * staff dashboard's job tracker can show "embedding batch 3 of 6" rather than
+ * one opaque long request. Returns the HTTP-shaped { status, payload } the
+ * wrapper (and the job runner) turn into their own responses.
+ */
+export async function runDocumentIngest(
+  body: any,
+  env: Env,
+  onProgress?: IngestProgress,
+): Promise<{ status: number; payload: Record<string, unknown> }> {
+  const report = async (step: string, detail?: Record<string, unknown>) => {
+    try { await onProgress?.(step, detail); } catch { /* progress is advisory */ }
+  };
 
   const {
     standardId,
@@ -421,13 +460,13 @@ async function ingestParsedPDF(request: Request, env: Env): Promise<Response> {
     r2Key = null,
   } = body;
 
-  if (!standardId) return jsonResponse({ error: 'standardId is required' }, 400);
+  if (!standardId) return { status: 400, payload: { error: 'standardId is required' } };
   if (status !== 'current' && status !== 'deprecated') {
-    return jsonResponse({ error: `status must be "current" or "deprecated", got "${status}"` }, 400);
+    return { status: 400, payload: { error: `status must be "current" or "deprecated", got "${status}"` } };
   }
   // chunks can be empty when request is only upserting applications
   if (!Array.isArray(chunks)) {
-    return jsonResponse({ error: 'chunks must be an array' }, 400);
+    return { status: 400, payload: { error: 'chunks must be an array' } };
   }
 
   const isDeprecated = status === 'deprecated';
@@ -465,9 +504,9 @@ async function ingestParsedPDF(request: Request, env: Env): Promise<Response> {
   if (isDeprecated) {
     // Deprecated values must never be served as current guidance.
     if (Array.isArray(applications) && applications.length > 0) {
-      return jsonResponse({
+      return { status: 400, payload: {
         error: 'Deprecated standards cannot carry application records — they are indexed for version comparison only.',
-      }, 400);
+      } };
     }
     // Same id already Active in D1 → this file is a reaffirmed printing of
     // the current edition, not a prior edition. Refuse rather than silently
@@ -481,16 +520,16 @@ async function ingestParsedPDF(request: Request, env: Env): Promise<Response> {
     // supersedes it demonstrably exists.
     const supersedingErrata = await findActiveSupersedingErrata(env.DB, standardId);
     if (existing && existing.status !== 'Deprecated' && !supersedingErrata) {
-      return jsonResponse({
+      return { status: 409, payload: {
         error: `"${standardId}" is already indexed as a CURRENT standard — refusing to re-ingest it as deprecated. ` +
                'If this really is a prior edition, give it a distinct id (e.g. include the edition year).',
-      }, 409);
+      } };
     }
     if (!env.VECTORIZE_DEPRECATED) {
-      return jsonResponse({
+      return { status: 500, payload: {
         error: 'VECTORIZE_DEPRECATED binding is not configured. Create the index and add the binding to wrangler.toml ' +
                '(wrangler vectorize create ies-standards-deprecated-vectors --dimensions=768 --metric=cosine).',
-      }, 500);
+      } };
     }
   }
 
@@ -500,19 +539,21 @@ async function ingestParsedPDF(request: Request, env: Env): Promise<Response> {
   // standard behind.
   for (let i = 0; i < chunks.length; i++) {
     if (typeof chunks[i].text !== 'string' || !chunks[i].text.trim()) {
-      return jsonResponse({ error: `Chunk ${i} has an empty text field — every chunk must carry text` }, 400);
+      return { status: 400, payload: { error: `Chunk ${i} has an empty text field — every chunk must carry text` } };
     }
   }
 
+  await report('embedding', { done: 0, total: chunks.length });
   const embeddings = chunks.length > 0
-    ? await embedInBatches(env.AI, chunks.map(c => c.text))
+    ? await embedInBatches(env.AI, chunks.map(c => c.text),
+        (done, total) => report('embedding', { done, total }))
     : [];
 
   // Full-indexing guarantee: one embedding per chunk, no silent truncation.
   if (embeddings.length !== chunks.length) {
-    return jsonResponse({
+    return { status: 500, payload: {
       error: `Embedding count mismatch: got ${embeddings.length} embeddings for ${chunks.length} chunks — aborting so the index never holds a partial document.`,
-    }, 500);
+    } };
   }
 
   // ── 2. Build Vectorize vectors ─────────────────────────────────────────────
@@ -535,6 +576,7 @@ async function ingestParsedPDF(request: Request, env: Env): Promise<Response> {
 
   // ── 3. Upsert into Vectorize (batched) ────────────────────────────────────
   // Deprecated chunks go to the dedicated deprecated index, never the main one.
+  await report('vectorize', { vectors: vectors.length });
   const targetIndex = isDeprecated ? env.VECTORIZE_DEPRECATED : env.VECTORIZE;
   for (let i = 0; i < vectors.length; i += VECTORIZE_BATCH) {
     await targetIndex.upsert(vectors.slice(i, i + VECTORIZE_BATCH) as unknown as VectorizeVector[]);
@@ -558,6 +600,7 @@ async function ingestParsedPDF(request: Request, env: Env): Promise<Response> {
     : null;
   let staleDeleted = 0;
   if (chunks.length > 0 && existing && prevIndex) {
+    await report('cleanup');
     try {
       if (prevIndex !== targetIndex) {
         // (c) index transition — nothing in the old index was overwritten
@@ -623,6 +666,7 @@ async function ingestParsedPDF(request: Request, env: Env): Promise<Response> {
   const outlineJson = arrayJson(outline);
   const assetsJson = arrayJson(assets);
 
+  await report('metadata');
   if (chunks.length > 0 || tables.length > 0 || metadata.title) await env.DB.prepare(`
     INSERT INTO standards
       (id, title, description, author, year, full_designation, r2_key,
@@ -707,6 +751,7 @@ async function ingestParsedPDF(request: Request, env: Env): Promise<Response> {
   // the PDF, not from a manually maintained CSV.
   let applicationsUpserted = 0;
   if (Array.isArray(applications) && applications.length > 0) {
+    await report('applications', { total: applications.length });
     applicationsUpserted = await upsertApplications(env.DB, applications);
   }
 
@@ -720,7 +765,7 @@ async function ingestParsedPDF(request: Request, env: Env): Promise<Response> {
   // Corpus changed — invalidate all cached search responses.
   await bumpDataVersion(env.SESSIONS);
 
-  return jsonResponse({
+  return { status: 200, payload: {
     success: true,
     standardId,
     chunksIndexed: chunks.length,
@@ -731,7 +776,7 @@ async function ingestParsedPDF(request: Request, env: Env): Promise<Response> {
     applicationsUpserted,
     r2ObjectRemoved: r2Removed,
     coverage: chunks.length > 0 ? { ...coverage, pageCount } : null,
-  });
+  } };
 }
 
 // Bounds for the probe-based cleanup (endIndex unknown): far beyond any real
@@ -744,8 +789,11 @@ const PROBE_HARD_CAP = 5000;
  * When endIndex is null (unknown previous count), probe upward window by
  * window via getByIds and delete whatever exists, stopping at the first
  * fully-empty window. Returns the number of vectors deleted.
+ *
+ * Exported for the staff dashboard's "remove old edition entirely" disposition
+ * (src/workers/staff-ingest.ts).
  */
-async function deleteVectorRange(index: VectorizeIndex, standardId: string, startIndex: number, endIndex: number | null): Promise<number> {
+export async function deleteVectorRange(index: VectorizeIndex, standardId: string, startIndex: number, endIndex: number | null): Promise<number> {
   let deleted = 0;
 
   if (endIndex != null) {
@@ -855,32 +903,31 @@ const UPDATE_COLS = APP_COLS.filter(c =>
 async function upsertApplications(db: D1Database, applications: Partial<ApplicationRow>[]): Promise<number> {
   if (applications.length === 0) return 0;
 
-  const BATCH = 1; // insert one row at a time to avoid D1 variable limit
+  // One ROW per statement — 60+ columns per row would blow D1's bound-variable
+  // limit per statement otherwise — but the statements are sent through
+  // db.batch() in groups, so a whole document's rows cost a handful of
+  // subrequests instead of one per row. That matters for the dashboard-driven
+  // ingest (staff-ingest.ts), which sends ALL of a document's applications in
+  // one in-process call rather than the script's 20-row HTTP batches.
+  const STMT_BATCH = 20;
+  const setClauses = UPDATE_COLS.map(c => `${c} = excluded.${c}`).join(', ');
+  const sql = `
+    INSERT INTO applications (${APP_COLS.join(', ')})
+    VALUES (${APP_COLS.map(() => '?').join(', ')})
+    ON CONFLICT(code) DO UPDATE SET
+      ${setClauses},
+      updated_at = CURRENT_TIMESTAMP
+  `;
+
   let upserted = 0;
-
-  for (let i = 0; i < applications.length; i += BATCH) {
-    const batch = applications.slice(i, i + BATCH);
-
-    const placeholderRows = batch.map(() =>
-      `(${APP_COLS.map(() => '?').join(', ')})`
-    ).join(', ');
-
-    const setClauses = UPDATE_COLS.map(c => `${c} = excluded.${c}`).join(', ');
-    const sql = `
-      INSERT INTO applications (${APP_COLS.join(', ')})
-      VALUES ${placeholderRows}
-      ON CONFLICT(code) DO UPDATE SET
-        ${setClauses},
-        updated_at = CURRENT_TIMESTAMP
-    `;
-
-    const bindings = batch.flatMap(app => APP_COLS.map(col => {
+  for (let i = 0; i < applications.length; i += STMT_BATCH) {
+    const group = applications.slice(i, i + STMT_BATCH);
+    const stmts = group.map(app => db.prepare(sql).bind(...APP_COLS.map(col => {
       const v = app[col as keyof ApplicationRow];
       return (v === undefined || v === '') ? null : v;
-    }));
-
-    await db.prepare(sql).bind(...bindings).run();
-    upserted += batch.length;
+    })));
+    await db.batch(stmts);
+    upserted += group.length;
   }
 
   return upserted;
@@ -1014,8 +1061,9 @@ function buildApplicationEmbedText(app: ApplicationRow): string {
 const R2_PREFIXES = ['standards/', 'deprecated/'] as const;
 const R2_LIST_LIMIT = 1000;
 
-/** The R2 key a standard's PDF belongs at, given its status. */
-function pdfKeyFor(standardId: string, status: string): string {
+/** The R2 key a standard's PDF belongs at, given its status. Exported for the
+ *  staff dashboard's ingest jobs (old-edition move/delete in finalize). */
+export function pdfKeyFor(standardId: string, status: string): string {
   return `${status === 'Deprecated' ? 'deprecated' : 'standards'}/${standardId}.pdf`;
 }
 
@@ -1126,12 +1174,17 @@ async function getR2UploadUrl(request: Request, env: Env): Promise<Response> {
 
 // ─── Shared Helpers ───────────────────────────────────────────────────────────
 
-async function embedInBatches(ai: Ai, texts: string[]): Promise<number[][]> {
+async function embedInBatches(
+  ai: Ai,
+  texts: string[],
+  onBatch?: (done: number, total: number) => void | Promise<void>,
+): Promise<number[][]> {
   const embeddings: number[][] = [];
   for (let i = 0; i < texts.length; i += EMBED_BATCH) {
     const batch = texts.slice(i, i + EMBED_BATCH);
     const response = await embedWithRetry(ai, batch, i / EMBED_BATCH);
     embeddings.push(...response.data);
+    try { await onBatch?.(embeddings.length, texts.length); } catch { /* advisory */ }
   }
   return embeddings;
 }

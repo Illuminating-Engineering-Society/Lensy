@@ -1596,6 +1596,65 @@ searches for 24hr." Implemented in `src/lib/search-cap.ts`, enforced in
   overrun the cap by a few via KV's eventual consistency — accepted. Tests:
   `src/lib/search-cap.test.js`.
 
+### The staff dashboard ingests standards (client, 2026-09-10)
+
+"Select an existing Standard … upload a new version of the PDF that will replace
+it in Lensy … a progress tracker with the AI reading and indexing … an option of
+what to do with the old standard." Lives at **/admin/standards**
+(`src/frontend/admin/standards.html`, `data-require-admin` like /admin/users),
+backed by `/api/admin/ingest-jobs` (`src/workers/staff-ingest.ts`, migration
+**0017** `ingest_jobs`). Full design: `docs/STAFF_INGEST.md`.
+
+- **The staff BROWSER takes the Node script's seat.** pdfjs cannot run in
+  workerd, but it is a browser library first — vendored at
+  `src/frontend/vendor/pdfjs/` (CSP `script-src 'self'` forbids a CDN copy).
+  The browser ships only RAW pdfjs text items per page; every judgement — line
+  building, chunking, sections, applications — runs in the Worker in the same
+  `src/lib/` modules the script imports. The pure half of `pdf-parser.js` moved
+  to **`src/lib/pdf-pages.js`** (parser now imports it) and
+  `deriveStandardId`/`inferFullDesignation` moved to **`src/lib/standard-id.js`**
+  (script imports it), so the two ingest paths CANNOT drift — same id, same
+  lines, same chunks for the same file.
+- **The write half runs in-process.** `ingestParsedPDF` is now a thin HTTP
+  wrapper over exported `runDocumentIngest(body, env, onProgress?)`; every rule
+  it enforces (deprecated-over-Active 409, applications-on-deprecated 400,
+  stale-vector cleanup, curated-field COALESCEs) applies to dashboard ingests
+  unchanged. `onProgress` writes step + embed-batch progress onto the job row,
+  which the page polls every 1.5 s — that IS the tracker. `upsertApplications`
+  switched to `db.batch` groups of 20 (still one row per statement — the
+  60-column param budget) because the dashboard sends ALL applications in one
+  call rather than the script's 20-row HTTP batches. `[limits] cpu_ms = 300000`
+  in wrangler.toml gives /process headroom.
+- **Flow:** create job (id derived by the shared rule, staff-overridable;
+  family-mismatch and overwrite warnings at creation) → PDF to R2
+  `ingest-jobs/<id>/source.pdf` (raw stream; >90 MB via the existing
+  r2-multipart, whose key regex now also admits that staging key) → raw pages
+  in batches of 12 (batch 1 must start at page 1 — it establishes the
+  header/footer set) → /process (extract + `runDocumentIngest` + prune) →
+  /finalize (disposition + staging cleanup). Every phase resumable from the job
+  list: the PDF is in R2 from step one (`GET …/:id/pdf` streams it back), so a
+  closed tab costs only the phase in flight. Staging lives under `ingest-jobs/`,
+  a prefix `sweepR2` never lists.
+- **Dispositions** (chosen at creation, applied at finalize — AFTER the new
+  edition indexed): `deprecate` (default) is the RP-27/RP-8 demotion shape —
+  status flip + `superseded_by` + PDF moved to `deprecated/`, old main-index
+  vectors left to the live `notDeprecated` status filter; optionally a
+  follow-up job (pdf_key = the moved PDF) indexes the old edition into the
+  DEPRECATED index so version comparison survives the swap. `delete` removes
+  chunk vectors (`deleteVectorRange`, now exported), application rows + their
+  vectors, the standards row and the PDF. Same-id upload = in-place re-ingest,
+  disposition forced `none`.
+- **Vitrium push is designed, NOT built** — the client's longer-term "one
+  upload updates everywhere" needs the Vitrium API privileges that are still
+  pending with Tom (everything 403s today). The seam is a `vitrium` finalize
+  step keyed on `standards.vitrium_doc_id`; until then the dashboard says
+  outright: update Vitrium in its admin app, then `npm run sync-metadata`. The
+  dashboard's standards list is `/api/admin/index-status?verify=0` (the
+  ingest-health report), not the reader ToC.
+- **To take effect:** migration 0017 (`npm run db:migrate:remote`) + deploy.
+  Tests: `src/workers/staff-ingest.test.js`, `src/lib/pdf-pages.test.js`,
+  `src/lib/standard-id.test.js`.
+
 ### The 260904 round (DO070-update, DO099–DO111): display filters, honest comparisons, and the permissions chart
 
 Fourteen items (`260904_Lensey Feedback.docx`); `SEARCH_CACHE_SCHEMA` → **v16**.
