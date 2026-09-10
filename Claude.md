@@ -1566,6 +1566,36 @@ deliberately NOT built.
   are scoped apart (same Worker, same KV, different IdPs). Tests:
   `src/lib/session-cap.test.js`.
 
+### Daily search cap for non-subscribers (client Teams update, 2026-09-08)
+
+The client refined item 3 above: "Subscribers: No daily cap at this time.
+Non-Subscribers: Enforce 20x daily search cap (subject to change after usage
+data is available). After that, 'AI' is locked out for the rest of the user's
+searches for 24hr." Implemented in `src/lib/search-cap.ts`, enforced in
+`handleSearch` right after query validation; `LENSY_DAILY_SEARCH_CAP` (default
+"20", "off"/"0" disables) is meant to be tuned once usage data exists.
+
+- **Who is metered:** any tier below `full` — under DO53 that is LensyLite.
+  Subscribers, full-tier invitees, admins and the staff bearer never are.
+  `resolveSearchGrant` (workers/session.ts) is `resolveRequestTier` plus the
+  `sub` the quota is keyed on; `user: null` marks the never-metered callers.
+- **The window is a rolling 24h** anchored at its first search (one KV record,
+  `search-quota:<prod|stg>:<sub>`, whose expiry IS the reset; an overdue record
+  restarts rather than extending its own lockout). Cache hits count — this is
+  user-facing metering, not cost control, so "20 searches" means what a reader
+  would count. A 400 spends nothing.
+- **Past the cap, SEARCH ITSELF answers 429** (`daily_search_cap`, with a
+  message naming the reset time and the subscription link — api.js already
+  prefers `err.message`, so no UI change was needed). The client's wording
+  could also read as "cards keep working, only the AI Guide stops", but the
+  only non-subscriber tier that exists has the Guide locked off already, so
+  that reading enforces nothing observable — blocking is the one with an
+  effect, and the enforcement point in handleSearch is the single place to
+  change if the client confirms the softer reading. **Flagged to the client.**
+- **Fail-open** on any KV trouble, same posture as the session cap; a burst can
+  overrun the cap by a few via KV's eventual consistency — accepted. Tests:
+  `src/lib/search-cap.test.js`.
+
 ### The DO089–DO097 round: a column that was never filled, and an edition that was live twice
 
 The client's fourth round. Four UI items are small on their own; the three that

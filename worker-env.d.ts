@@ -38,6 +38,12 @@ declare global {
     LENSY_SESSION_CAP?: string;
     // Idle minutes before an unused seat frees itself. Unset → 30.
     LENSY_SESSION_CAP_IDLE_MINUTES?: string;
+    // ── Daily search cap for non-subscribers (client, 2026-09-08) ───────────
+    // Searches per rolling 24h window for tiers below `full`. Unset → 20 (the
+    // client's number); "off" or "0" disables metering; any positive integer
+    // overrides (src/lib/search-cap.ts). Subscribers and the staff bearer are
+    // never metered.
+    LENSY_DAILY_SEARCH_CAP?: string;
     // ── Lighting Library error page (2026-09-04) ────────────────────────────
     // Staff inbox for device-limit reset requests submitted from
     // library-error.html. Unset → requests are still stored in

@@ -74,7 +74,8 @@ import { toLibraryUrlOrNull } from '../lib/library-url.js';
 import {
   liteContentTypes, liteEnabled, LITE_COLLECTION, LITE_FALLBACK_PREFIX, LITE_NOTICE,
 } from '../lib/tiers';
-import { resolveRequestTier } from './session';
+import { resolveSearchGrant } from './session';
+import { dailySearchCap, enforceDailySearchCap, describeReset } from '../lib/search-cap';
 import { generateResponse } from '../lib/ai-summary';
 import { rerankResults, extractGuideCitations, curateResults } from '../lib/curation';
 import { generateRefinePrompt } from '../lib/refine';
@@ -347,12 +348,36 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
   // AI Guide, Document Comparison and Illuminance Tables are not part of it.
   // Enforced HERE as well as in the UI — the pills are a courtesy, this is the
   // rule. Off entirely unless LENSY_LITE=on (see src/lib/tiers.ts).
-  const tier = await resolveRequestTier(request, env);
+  const grant = await resolveSearchGrant(request, env);
+  const tier = grant.tier;
   const isLite = tier === 'lite';
   if (isLite) includeAISummary = false;
 
   if (!query || typeof query !== 'string' || !query.trim()) {
     return jsonResponse({ error: 'query is required' }, 400);
+  }
+
+  // ── Daily search cap for non-subscribers (client Teams update, 2026-09-08) ──
+  // "Subscribers: No daily cap … Non-Subscribers: Enforce 20x daily search cap."
+  // Counted AFTER validation (a 400 spends nothing) and BEFORE the cache lookup
+  // (a cached answer is still one of the reader's searches — this is metering,
+  // not cost control). Tier `full` and the bearer (grant.user null) are exempt;
+  // interpretation choices and failure posture in src/lib/search-cap.ts.
+  const searchCap = dailySearchCap(env);
+  if (searchCap != null && tier !== 'full' && grant.user) {
+    const quota = await enforceDailySearchCap(env, grant.user.sub, searchCap, grant.scope);
+    if (!quota.allowed) {
+      const nowSec = Math.floor(Date.now() / 1000);
+      return jsonResponse({
+        error: 'daily_search_cap',
+        message:
+          `You've used today's ${searchCap} searches — searching without a Lighting Library ` +
+          `subscription is limited to ${searchCap} per day. Your searches resume ` +
+          `${describeReset(quota.resetAt, nowSec)}, or subscribe for unlimited searching.`,
+        resetAt: new Date(quota.resetAt * 1000).toISOString(),
+        subscribeUrl: 'https://store.ies.org/ies/subscriptions/',
+      }, 429);
+    }
   }
 
   const cleanLimit = Math.min(Math.max(1, Math.floor(limit)), MAX_LIMIT);

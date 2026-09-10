@@ -191,6 +191,32 @@ export async function resolveRequestTier(request: Request, env: Env): Promise<Le
   return tierFor(gate.user, gate.decision, env);
 }
 
+/**
+ * `resolveRequestTier` plus who is asking — what the daily search cap needs
+ * (src/lib/search-cap.ts). `user` is null exactly when the caller is never
+ * metered: the staff bearer (scripts, cron, the verification harness), a
+ * request with no usable session (the route gate already rejected it), or a
+ * deployment with tiering off entirely (no non-subscribers exist to meter).
+ */
+export interface SearchGrant {
+  tier: LensyTier;
+  user: { sub: string } | null;
+  /** Staging traffic is metered apart from production, like session seats. */
+  scope: 'prod' | 'stg';
+}
+
+export async function resolveSearchGrant(request: Request, env: Env): Promise<SearchGrant> {
+  const scope = isStagingRequest(request.url) ? 'stg' : 'prod';
+  if (!liteEnabled(env)) return { tier: 'full', user: null, scope };
+  if (request.headers.get('authorization')) {
+    const viaSecret = await checkAuth(request, env);
+    if (viaSecret.ok) return { tier: 'full', user: null, scope };
+  }
+  const gate = await evaluateSession(request, env);
+  if (!gate.ok) return { tier: 'none', user: null, scope };
+  return { tier: tierFor(gate.user, gate.decision, env), user: { sub: gate.user.sub }, scope };
+}
+
 // ─── Shared gate plumbing ─────────────────────────────────────────────────────
 
 type SessionGate =

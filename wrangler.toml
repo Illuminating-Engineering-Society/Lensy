@@ -182,7 +182,12 @@ LENSY_SUBSCRIBER_ROLES = "lighting-library-full-access"
 # device_reset_requests (migration 0016) and exportable at
 # GET /api/admin/device-resets.csv — only the per-request notification email is
 # skipped. Uncomment and fill in once the client confirms the address:
-DEVICE_RESET_NOTIFY_EMAIL = "…@ies.org"
+# DEVICE_RESET_NOTIFY_EMAIL = "…@ies.org"
+#   ^ RE-COMMENTED 2026-09-10: it had been uncommented with the "…" placeholder
+#     still in it, which passes the email-shape check and makes every staff
+#     notification ATTEMPT a send to a nonexistent address (each failure is
+#     recorded on the row as notify_error). Put the real inbox here when the
+#     client names it — until then requests queue silently, as designed.
 # ── 1-concurrent-session cap (client, 2026-09-04) ──────────────────────────────
 # "Out of the gate, Lensy should cap at (only) a 1-concurrent-session cap."
 # One Lensy seat per account: the most recent sign-in holds it, an older
@@ -194,6 +199,16 @@ DEVICE_RESET_NOTIFY_EMAIL = "…@ies.org"
 # "off" disables the cap entirely. Enforced in src/lib/session-cap.ts, fails
 # OPEN on KV trouble.
 LENSY_SESSION_CAP = "on"
+# ── Daily search cap for non-subscribers (client Teams update, 2026-09-08) ─────
+# "Subscribers: No daily cap at this time. Non-Subscribers: Enforce 20x daily
+# search cap (subject to change after usage data is available)."
+# Searches per rolling 24h window for tiers below `full`; past the cap,
+# /api/search answers 429 (message names the reset time and the subscription)
+# until the window expires. Subscribers, full-tier invitees, admins and the
+# staff bearer are never metered. "off" or "0" disables; the number is meant to
+# be tuned once usage data exists. Enforced in src/lib/search-cap.ts (which
+# also documents the interpretation choices), fails OPEN on KV trouble.
+LENSY_DAILY_SEARCH_CAP = "20"
 
 # Secrets set via `wrangler secret put`:
 # VITRIUM_API_KEY
