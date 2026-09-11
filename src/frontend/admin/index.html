@@ -47,6 +47,7 @@
     h1, h2, h3, .font-display { font-family: 'Nohemi', 'Inter', sans-serif; }
     .fade-in { animation: fadeIn 0.2s ease-out; }
     @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+    .modal-backdrop { backdrop-filter: blur(4px); }
     .spin { animation: spin 0.9s linear infinite; display: inline-block; }
     @keyframes spin { to { transform: rotate(360deg); } }
   </style>
@@ -67,12 +68,11 @@
           <span class="hidden sm:inline text-blue-200 text-sm ml-2">Staff · Dashboard</span>
         </div>
       </a>
-      <!-- auth-gate.js appends the signed-in user chip + Sign out here. -->
+      <!-- auth-gate.js appends the signed-in user chip + Sign out here. Every
+           staff area lives in the tabs below, so the nav carries only the way
+           back to the app. -->
       <nav class="flex items-center gap-1 text-sm">
         <a href="/" class="px-3 py-1.5 rounded-md text-blue-200 hover:text-white hover:bg-white/10 transition">Search</a>
-        <a href="/admin" class="px-3 py-1.5 rounded-md bg-white/10 text-white transition">Dashboard</a>
-        <a href="/admin/users" class="px-3 py-1.5 rounded-md text-blue-200 hover:text-white hover:bg-white/10 transition">Users</a>
-        <a href="/admin/standards" class="px-3 py-1.5 rounded-md text-blue-200 hover:text-white hover:bg-white/10 transition">Standards</a>
       </nav>
     </div>
   </header>
@@ -80,7 +80,7 @@
   <main class="max-w-6xl mx-auto px-4 py-8">
 
     <h1 class="font-display text-2xl font-bold mb-1">Staff dashboard</h1>
-    <p class="text-sm text-gray-500 mb-6">Corpus health, search activity and reader-support queues for Lensy.</p>
+    <p class="text-sm text-gray-500 mb-6">Corpus health, access grants, search activity and reader-support queues for Lensy.</p>
 
     <!-- ── Tabs ───────────────────────────────────────────────────────────── -->
     <div class="border-b border-gray-200 mb-6">
@@ -101,7 +101,7 @@
         <div>
           <div class="flex items-center justify-between mb-2">
             <h3 class="font-display font-bold">Recent ingest runs</h3>
-            <a href="/admin/standards" class="text-sm text-brand-secondary hover:underline">Open Standards →</a>
+            <a href="#standards" class="text-sm text-brand-secondary hover:underline">Open Standards →</a>
           </div>
           <div class="bg-white rounded-xl shadow overflow-hidden">
             <table class="w-full text-sm">
@@ -123,6 +123,138 @@
             <a href="#index" class="text-sm text-brand-secondary hover:underline">Open Index health →</a>
           </div>
           <div id="ov-warnings" class="bg-white rounded-xl shadow p-4 text-sm text-gray-400">Loading…</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ══ Users (formerly /admin/users) ════════════════════════════════════ -->
+    <section id="panel-users" class="hidden fade-in">
+      <div class="flex flex-wrap items-center justify-between gap-3 mb-5">
+        <h2 class="font-display text-xl font-bold">Invited users</h2>
+        <div class="flex items-center gap-2">
+          <button onclick="loadUsers()" class="px-3 py-2 text-sm rounded-lg border border-gray-300 bg-white hover:bg-gray-50 transition">Refresh</button>
+          <button onclick="openInvite()" class="px-4 py-2 text-sm rounded-lg bg-brand-primary hover:bg-brand-primary-dark text-white font-medium transition">+ Invite users</button>
+        </div>
+      </div>
+
+      <!-- Filters -->
+      <div class="flex flex-wrap items-center gap-2 mb-4">
+        <div id="u-chips" class="flex flex-wrap gap-2"></div>
+        <div class="flex-1 min-w-[220px]">
+          <input id="u-search" type="search" placeholder="Filter by email, name, organization…"
+                 oninput="debouncedUserRender()"
+                 class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-brand-primary focus:border-transparent bg-white" />
+        </div>
+      </div>
+
+      <p id="u-capped-note" class="hidden text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-3">
+        Showing the first 1000 rows only — narrow the filter to see everything.
+      </p>
+
+      <!-- Table -->
+      <div class="bg-white rounded-xl shadow overflow-hidden">
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead>
+              <tr class="text-left text-xs uppercase tracking-wide text-gray-500 border-b border-gray-200">
+                <th class="px-4 py-3">Email</th>
+                <th class="px-4 py-3">Name</th>
+                <th class="px-4 py-3">Organization</th>
+                <th class="px-4 py-3">Role</th>
+                <th class="px-4 py-3">Grants</th>
+                <th class="px-4 py-3">Status</th>
+                <th class="px-4 py-3">Invite email</th>
+                <th class="px-4 py-3">Expires</th>
+                <th class="px-4 py-3">Last login</th>
+                <th class="px-4 py-3 text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody id="u-rows"></tbody>
+          </table>
+        </div>
+        <p id="u-empty" class="hidden text-center text-gray-400 text-sm py-10">No users match this view.</p>
+      </div>
+    </section>
+
+    <!-- ══ Standards & indexing (formerly /admin/standards) ═════════════════ -->
+    <section id="panel-standards" class="hidden fade-in">
+      <div class="flex flex-wrap items-center justify-between gap-3 mb-2">
+        <h2 class="font-display text-xl font-bold">Standards</h2>
+        <div class="flex items-center gap-2">
+          <button onclick="loadStandards()" class="px-3 py-2 text-sm rounded-lg border border-gray-300 bg-white hover:bg-gray-50 transition">Refresh</button>
+          <button onclick="openIngest(null)" class="px-4 py-2 text-sm rounded-lg bg-brand-primary hover:bg-brand-primary-dark text-white font-medium transition">+ Ingest a standard</button>
+        </div>
+      </div>
+      <p id="totals" class="text-sm text-gray-500 mb-4"></p>
+
+      <div class="flex flex-wrap items-center gap-2 mb-4">
+        <div id="std-chips" class="flex flex-wrap gap-2"></div>
+        <div class="flex-1 min-w-[220px]">
+          <input id="std-search" type="search" placeholder="Filter by designation or title…"
+                 oninput="debouncedStdRender()"
+                 class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-brand-primary focus:border-transparent bg-white" />
+        </div>
+      </div>
+
+      <div class="bg-white rounded-xl shadow overflow-hidden">
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead>
+              <tr class="text-left text-xs uppercase tracking-wide text-gray-500 border-b border-gray-200">
+                <th class="px-4 py-3">Designation</th>
+                <th class="px-4 py-3">Title</th>
+                <th class="px-4 py-3">Status</th>
+                <th class="px-4 py-3 text-right">Pages</th>
+                <th class="px-4 py-3 text-right">Chunks</th>
+                <th class="px-4 py-3 text-right">Illum. rows</th>
+                <th class="px-4 py-3">Indexed</th>
+                <th class="px-4 py-3 text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody id="std-rows"></tbody>
+          </table>
+        </div>
+        <p id="std-empty" class="hidden text-center text-gray-400 text-sm py-10">No standards match this view.</p>
+      </div>
+
+      <!-- ── Ingest runs ────────────────────────────────────────────────────── -->
+      <div class="mt-10">
+        <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+          <h3 class="font-display text-lg font-bold">Ingest runs</h3>
+          <button onclick="loadJobs()" class="px-3 py-2 text-sm rounded-lg border border-gray-300 bg-white hover:bg-gray-50 transition">Refresh</button>
+        </div>
+        <div class="bg-white rounded-xl shadow overflow-hidden">
+          <div class="overflow-x-auto">
+            <table class="w-full text-sm">
+              <thead>
+                <tr class="text-left text-xs uppercase tracking-wide text-gray-500 border-b border-gray-200">
+                  <th class="px-4 py-3">Started</th>
+                  <th class="px-4 py-3">Standard</th>
+                  <th class="px-4 py-3">File</th>
+                  <th class="px-4 py-3">By</th>
+                  <th class="px-4 py-3">Status</th>
+                  <th class="px-4 py-3">Detail</th>
+                  <th class="px-4 py-3 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody id="job-rows"></tbody>
+            </table>
+          </div>
+          <p id="job-empty" class="hidden text-center text-gray-400 text-sm py-10">No ingest runs yet.</p>
+        </div>
+      </div>
+
+      <!-- ── Vitrium (longer-term) ──────────────────────────────────────────── -->
+      <div class="mt-10">
+        <div class="bg-blue-50 border border-blue-200 rounded-xl p-5 text-sm text-blue-900">
+          <h3 class="font-display font-bold mb-1">Vitrium is still a separate step — for now</h3>
+          <p>
+            Indexing here updates <strong>Lensy only</strong>. Upload the new PDF version in the Vitrium admin app as
+            usual, then refresh Lensy's links and covers with <code class="font-mono text-xs bg-blue-100 px-1 rounded">npm run sync-metadata</code>
+            (Vitrium export CSV + portal JSON). The longer-term plan — one upload here pushing the new version to
+            Vitrium automatically — is designed but blocked on API access (the privilege grant for the IES API account
+            is still pending with Vitrium). See <span class="font-mono text-xs">docs/STAFF_INGEST.md</span>.
+          </p>
         </div>
       </div>
     </section>
@@ -354,9 +486,9 @@
         <div class="bg-white rounded-xl shadow p-5">
           <h3 class="font-display font-bold mb-1">Runbook pointers</h3>
           <ul class="text-sm space-y-2 text-gray-600">
-            <li>• New or replacement PDFs: <a href="/admin/standards" class="text-brand-secondary hover:underline">Standards &amp; Indexing</a> (upload → index → disposition).</li>
-            <li>• Access grants and invitations: <a href="/admin/users" class="text-brand-secondary hover:underline">Invited users</a>.</li>
-            <li>• Vitrium metadata (titles, covers, buy links): <code class="font-mono text-xs">npm run sync-metadata</code>, then flush the cache here.</li>
+            <li>• New or replacement PDFs: the <a href="#standards" class="text-brand-secondary hover:underline">Standards</a> tab (upload → index → disposition).</li>
+            <li>• Access grants and invitations: the <a href="#users" class="text-brand-secondary hover:underline">Users</a> tab.</li>
+            <li>• Vitrium metadata (titles, covers, buy links, collections): <code class="font-mono text-xs">npm run sync-metadata</code>, then flush the cache here.</li>
             <li>• Device resets are actioned in the Vitrium admin app (Users → “Clear Use”), then marked Done in the queue tab.</li>
           </ul>
         </div>
@@ -365,10 +497,227 @@
     </section>
   </main>
 
+  <!-- ── Invite modal (Users tab) ─────────────────────────────────────────── -->
+  <div id="invite-modal" class="hidden fixed inset-0 z-50 flex items-start justify-center bg-black/40 modal-backdrop overflow-y-auto p-4">
+    <div class="bg-white rounded-xl shadow-xl w-full max-w-lg my-10 fade-in">
+      <div class="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+        <h2 class="font-display text-lg font-bold">Invite users</h2>
+        <button onclick="closeInvite()" class="text-gray-400 hover:text-gray-600 text-xl leading-none">&times;</button>
+      </div>
+      <form onsubmit="return submitInvite(event)" class="px-6 py-5 space-y-4">
+        <div>
+          <label class="block text-xs font-medium text-gray-600 mb-1">Emails <span class="text-gray-400">(one per line — optionally “email, Name, Organization”)</span></label>
+          <textarea id="inv-emails" rows="5" required
+                    placeholder="guest@example.com&#10;dana@firm.com, Dana Ruiz, Firm LLC"
+                    class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg font-mono focus:ring-2 focus:ring-brand-primary focus:border-transparent"></textarea>
+        </div>
+        <div class="grid grid-cols-3 gap-3">
+          <div>
+            <label class="block text-xs font-medium text-gray-600 mb-1">Role <span class="text-gray-400">(admin rights)</span></label>
+            <select id="inv-role" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white">
+              <option value="guest" selected>guest</option>
+              <option value="staff">staff</option>
+              <option value="admin">admin</option>
+            </select>
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-gray-600 mb-1">Grants</label>
+            <select id="inv-tier" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white">
+              <option value="full" selected>full — all of Lensy</option>
+              <option value="lite">lite — Lighting Science only</option>
+            </select>
+            <p class="mt-1 text-xs text-gray-400">Applies whether or not they are an IES member.</p>
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-gray-600 mb-1">Access expires <span class="text-gray-400">(optional)</span></label>
+            <input id="inv-expires" type="date" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white" />
+          </div>
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block text-xs font-medium text-gray-600 mb-1">Invited by <span class="text-gray-400">(you)</span></label>
+            <input id="inv-by" type="text" placeholder="Your name" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg" />
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-gray-600 mb-1">Notes <span class="text-gray-400">(optional)</span></label>
+            <input id="inv-notes" type="text" placeholder="e.g. 2026 conference guests" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg" />
+          </div>
+        </div>
+        <label class="flex items-center gap-2 text-xs text-gray-600">
+          <input type="checkbox" id="inv-notify" checked class="rounded border-gray-300">
+          Email each person an invitation with a link to Lensy
+        </label>
+        <p class="text-xs text-gray-400">
+          Invitees sign in with their IES account and set a password on first use. Anyone
+          <strong>not</strong> already in the IES directory cannot sign in yet — they will be added to the
+          list but the link will not let them in.
+        </p>
+        <div id="invite-result" class="hidden text-sm rounded-lg px-3 py-2"></div>
+        <div class="flex justify-end gap-2 pt-1">
+          <button type="button" onclick="closeInvite()" class="px-4 py-2 text-sm rounded-lg border border-gray-300 hover:bg-gray-50 transition">Cancel</button>
+          <button type="submit" id="invite-submit" class="px-4 py-2 text-sm rounded-lg bg-brand-primary hover:bg-brand-primary-dark text-white font-medium transition">Add to access list</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ── Edit modal (Users tab) ───────────────────────────────────────────── -->
+  <div id="edit-modal" class="hidden fixed inset-0 z-50 flex items-start justify-center bg-black/40 modal-backdrop overflow-y-auto p-4">
+    <div class="bg-white rounded-xl shadow-xl w-full max-w-md my-10 fade-in">
+      <div class="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+        <h2 class="font-display text-lg font-bold">Edit user</h2>
+        <button onclick="closeEdit()" class="text-gray-400 hover:text-gray-600 text-xl leading-none">&times;</button>
+      </div>
+      <form onsubmit="return submitEdit(event)" class="px-6 py-5 space-y-4">
+        <p id="edit-email" class="font-mono text-sm text-gray-500"></p>
+        <input type="hidden" id="edit-id" />
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block text-xs font-medium text-gray-600 mb-1">Name</label>
+            <input id="edit-name" type="text" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg" />
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-gray-600 mb-1">Organization</label>
+            <input id="edit-org" type="text" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg" />
+          </div>
+        </div>
+        <div class="grid grid-cols-4 gap-3">
+          <div>
+            <label class="block text-xs font-medium text-gray-600 mb-1">Role</label>
+            <select id="edit-role" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white">
+              <option value="guest">guest</option>
+              <option value="staff">staff</option>
+              <option value="admin">admin</option>
+            </select>
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-gray-600 mb-1">Grants</label>
+            <select id="edit-tier" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white">
+              <option value="full">full</option>
+              <option value="lite">lite</option>
+            </select>
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-gray-600 mb-1">Status</label>
+            <select id="edit-status" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white">
+              <option value="invited">invited</option>
+              <option value="active">active</option>
+              <option value="revoked">revoked</option>
+            </select>
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-gray-600 mb-1">Expires</label>
+            <input id="edit-expires" type="date" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg" />
+          </div>
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-gray-600 mb-1">Notes</label>
+          <input id="edit-notes" type="text" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg" />
+        </div>
+        <div id="edit-result" class="hidden text-sm rounded-lg px-3 py-2"></div>
+        <div class="flex justify-end gap-2 pt-1">
+          <button type="button" onclick="closeEdit()" class="px-4 py-2 text-sm rounded-lg border border-gray-300 hover:bg-gray-50 transition">Cancel</button>
+          <button type="submit" class="px-4 py-2 text-sm rounded-lg bg-brand-primary hover:bg-brand-primary-dark text-white font-medium transition">Save changes</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ── New-ingest modal (Standards tab) ─────────────────────────────────── -->
+  <div id="ingest-modal" class="hidden fixed inset-0 z-50 flex items-start justify-center bg-black/40 modal-backdrop overflow-y-auto p-4">
+    <div class="bg-white rounded-xl shadow-xl w-full max-w-lg my-10 fade-in">
+      <div class="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+        <h2 class="font-display text-lg font-bold">Ingest a standard</h2>
+        <button onclick="closeIngest()" class="text-gray-400 hover:text-gray-600 text-xl leading-none">&times;</button>
+      </div>
+      <form onsubmit="return submitIngest(event)" class="px-6 py-5 space-y-4">
+        <div>
+          <label class="block text-xs font-medium text-gray-600 mb-1">PDF file</label>
+          <input id="ing-file" type="file" accept=".pdf,application/pdf" required onchange="onIngestFile()"
+                 class="w-full text-sm border border-gray-300 rounded-lg bg-white file:mr-3 file:px-3 file:py-2 file:border-0 file:bg-gray-100 file:rounded-l-lg file:text-sm" />
+          <p class="mt-1 text-xs text-gray-400">The PDF is read in <em>your</em> browser; Lensy indexes what it reads. Files over ~90 MB upload in parts automatically.</p>
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block text-xs font-medium text-gray-600 mb-1">Standard id <span class="text-gray-400">(derived from the filename)</span></label>
+            <input id="ing-id" type="text" placeholder="e.g. RP-27-26" oninput="this.dataset.edited='1'"
+                   class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg font-mono" />
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-gray-600 mb-1">Index as</label>
+            <select id="ing-status" onchange="onIngestStatusChange()" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white">
+              <option value="current" selected>Current standard</option>
+              <option value="deprecated">Deprecated (version-comparison index)</option>
+            </select>
+          </div>
+        </div>
+        <div id="ing-replace-wrap">
+          <label class="block text-xs font-medium text-gray-600 mb-1">Replaces <span class="text-gray-400">(the old edition in Lensy)</span></label>
+          <select id="ing-replaces" onchange="onIngestReplacesChange()" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white font-mono">
+            <option value="">— nothing (new standard, or same-id re-ingest)</option>
+          </select>
+        </div>
+        <fieldset id="ing-disp-wrap" class="hidden border border-gray-200 rounded-lg p-3 space-y-2">
+          <legend class="text-xs font-medium text-gray-600 px-1">What happens to the old edition</legend>
+          <label class="flex items-start gap-2 text-sm">
+            <input type="radio" name="ing-disp" value="deprecate" checked class="mt-0.5">
+            <span><strong>Deprecate it</strong> (recommended) — marked superseded, kept out of search results, PDF moved to the deprecated archive.</span>
+          </label>
+          <label id="ing-cmp-label" class="flex items-start gap-2 text-xs text-gray-600 ml-6">
+            <input type="checkbox" id="ing-cmp" checked class="mt-0.5 rounded border-gray-300">
+            <span>Also index it into the comparison index, so “what's new in …” can compare against it.</span>
+          </label>
+          <label class="flex items-start gap-2 text-sm">
+            <input type="radio" name="ing-disp" value="delete" class="mt-0.5">
+            <span class="text-red-700"><strong>Remove it entirely</strong> — vectors, illuminance rows, catalog row and PDF are deleted. Not recoverable from Lensy.</span>
+          </label>
+          <label class="flex items-start gap-2 text-sm">
+            <input type="radio" name="ing-disp" value="none" class="mt-0.5">
+            <span>Leave it unchanged for now (handle it later by hand).</span>
+          </label>
+        </fieldset>
+        <div id="ingest-error" class="hidden text-sm rounded-lg px-3 py-2 bg-red-50 text-red-700"></div>
+        <div class="flex justify-end gap-2 pt-1">
+          <button type="button" onclick="closeIngest()" class="px-4 py-2 text-sm rounded-lg border border-gray-300 hover:bg-gray-50 transition">Cancel</button>
+          <button type="submit" id="ingest-submit" class="px-4 py-2 text-sm rounded-lg bg-brand-primary hover:bg-brand-primary-dark text-white font-medium transition">Upload &amp; index</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ── Progress tracker (Standards tab) ─────────────────────────────────── -->
+  <div id="tracker-modal" class="hidden fixed inset-0 z-50 flex items-start justify-center bg-black/40 modal-backdrop overflow-y-auto p-4">
+    <div class="bg-white rounded-xl shadow-xl w-full max-w-lg my-10 fade-in">
+      <div class="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+        <div>
+          <h2 class="font-display text-lg font-bold" id="trk-title">Indexing…</h2>
+          <p class="text-xs text-gray-500 font-mono" id="trk-sub"></p>
+        </div>
+        <button onclick="hideTracker()" class="text-gray-400 hover:text-gray-600 text-xl leading-none" title="Hide (a run in the browser pauses if you leave the page)">&times;</button>
+      </div>
+      <div class="px-6 py-5">
+        <ol id="trk-steps" class="space-y-3"></ol>
+        <div id="trk-warnings" class="hidden mt-4 text-xs rounded-lg px-3 py-2 bg-amber-50 text-amber-800 space-y-1"></div>
+        <div id="trk-result" class="hidden mt-4 text-xs rounded-lg px-3 py-2 bg-green-50 text-green-800 space-y-1"></div>
+        <div id="trk-error" class="hidden mt-4 text-sm rounded-lg px-3 py-2 bg-red-50 text-red-700"></div>
+        <div id="trk-followup" class="hidden mt-4">
+          <button id="trk-followup-btn" class="w-full px-4 py-2 text-sm rounded-lg bg-brand-secondary hover:bg-brand-secondary-dark text-white font-medium transition"></button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Hidden picker for resuming a job whose file never finished uploading. -->
+  <input type="file" id="resume-file" accept=".pdf,application/pdf" class="hidden" />
+
+  <div id="toast" class="hidden fixed bottom-6 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-lg shadow-lg text-sm"></div>
+
   <script>
     // ── Tabs ──────────────────────────────────────────────────────────────
     const TABS = [
       ['overview',    'Overview'],
+      ['users',       'Users'],
+      ['standards',   'Standards'],
       ['analytics',   'Search analytics'],
       ['resets',      'Device resets'],
       ['index',       'Index health'],
@@ -399,14 +748,28 @@
       renderTabs();
       if (!loadedTabs[id]) {
         loadedTabs[id] = true;
-        ({ overview: loadOverview, analytics: loadAnalytics, resets: loadResets,
-           index: () => {}, maintenance: () => {} })[id]();
+        // The Standards tab's code lives in the module script below and hangs
+        // its entry points on window (module scripts evaluate before the gate
+        // fires `lensy:auth`, so they exist by the time a tab can be opened).
+        ({
+          overview: loadOverview,
+          users: loadUsers,
+          standards: () => { window.loadStandards(); window.loadJobs(); },
+          analytics: loadAnalytics,
+          resets: loadResets,
+          index: () => {},
+          maintenance: () => {},
+        })[id]();
       }
     }
 
     window.addEventListener('hashchange', () => activateTab(location.hash.slice(1)));
 
-    // ── Helpers (same contract as the other staff pages) ──────────────────
+    // ── Helpers (same contract as the pre-merge staff pages) ──────────────
+    // Auth is the ies_auth SSO cookie, sent automatically (same-origin) — no
+    // key to type or store. A session that dies under us (expired cookie,
+    // revoked admin) reloads the page so auth-gate.js re-runs and shows the
+    // right screen, rather than leaving a dashboard that silently fails.
     async function api(path, options = {}) {
       const res = await fetch(path, {
         ...options,
@@ -456,7 +819,7 @@
       const cards = [];
       if (ix?.totals) {
         cards.push(statCard('Standards indexed', fmt(ix.totals.standards),
-          { sub: `${fmt(ix.totals.active)} active · ${fmt(ix.totals.deprecated)} deprecated`, href: '#index' }));
+          { sub: `${fmt(ix.totals.active)} active · ${fmt(ix.totals.deprecated)} deprecated`, href: '#standards' }));
         cards.push(statCard('Chunks in Vectorize', fmt(ix.totals.totalChunks),
           { sub: `${fmt(ix.totals.totalApplicationRows)} illuminance rows`, href: '#index' }));
         cards.push(statCard('Index warnings', fmt(ix.totals.standardsWithWarnings),
@@ -470,7 +833,7 @@
       }
       if (us?.counts) {
         cards.push(statCard('Invited users', fmt(us.counts.all),
-          { sub: `${fmt(us.counts.active)} active · ${fmt(us.counts.invited)} invited`, href: '/admin/users' }));
+          { sub: `${fmt(us.counts.active)} active · ${fmt(us.counts.invited)} invited`, href: '#users' }));
       }
       if (rs?.counts) {
         cards.push(statCard('Reset requests', fmt(rs.counts.new),
@@ -512,6 +875,230 @@
           </div>`).join('') +
           (ix.warnings.length > 8 ? `<p class="text-xs text-gray-400 mt-2">…and ${ix.warnings.length - 8} more — see Index health.</p>` : '');
       }
+    }
+
+    // ── Users (ported from /admin/users — same API, same behavior) ────────
+    const INVITED_BY_STORAGE = 'lensy_admin_invited_by';
+    let allUsers = [];
+    let userCounts = { all: 0, invited: 0, active: 0, revoked: 0, expired: 0 };
+    let userStatusFilter = 'all';
+    let userSearchTimer = null;
+
+    async function loadUsers() {
+      const { data } = await api('/api/admin/users');
+      allUsers = data.users || [];
+      userCounts = data.counts || userCounts;
+      document.getElementById('u-capped-note').classList.toggle('hidden', !data.capped);
+      renderUsers();
+    }
+
+    function debouncedUserRender() {
+      clearTimeout(userSearchTimer);
+      userSearchTimer = setTimeout(renderUsers, 150);
+    }
+
+    function setUserFilter(s) { userStatusFilter = s; renderUsers(); }
+
+    const USER_CHIP_DEFS = [
+      ['all', 'All'], ['invited', 'Invited'], ['active', 'Active'],
+      ['expired', 'Expired'], ['revoked', 'Revoked'],
+    ];
+    const USER_BADGE = {
+      invited: 'bg-amber-100 text-amber-800',
+      active:  'bg-green-100 text-green-800',
+      expired: 'bg-gray-200 text-gray-600',
+      revoked: 'bg-red-100 text-red-700',
+    };
+
+    // Three distinct states, because "no email yet" and "email bounced" call for
+    // different actions: send it, versus fix the address or the sender domain.
+    function inviteEmailCell(u) {
+      if (u.invite_send_error) {
+        return `<span class="text-red-600" title="${esc(u.invite_send_error)}">failed ⚠</span>`;
+      }
+      if (u.invite_sent_at) {
+        return `<span class="text-gray-500" title="Sent ${esc(u.invite_sent_at)}">${esc(u.invite_sent_at.slice(0, 10))}</span>`;
+      }
+      return '<span class="text-amber-700">not sent</span>';
+    }
+
+    function renderUsers() {
+      // Chips
+      document.getElementById('u-chips').innerHTML = USER_CHIP_DEFS.map(([s, label]) => {
+        const active = userStatusFilter === s;
+        return `<button onclick="setUserFilter('${s}')"
+          class="px-3 py-1.5 text-sm rounded-full border transition ${active
+            ? 'bg-brand-secondary text-white border-brand-secondary'
+            : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'}">
+          ${label} <span class="${active ? 'text-blue-200' : 'text-gray-400'}">${userCounts[s] ?? 0}</span>
+        </button>`;
+      }).join('');
+
+      // Rows
+      const q = document.getElementById('u-search').value.trim().toLowerCase();
+      const visible = allUsers.filter(u => {
+        if (userStatusFilter !== 'all' && u.effective_status !== userStatusFilter) return false;
+        if (!q) return true;
+        return [u.email, u.name, u.organization, u.invited_by]
+          .some(f => f && f.toLowerCase().includes(q));
+      });
+
+      const tbody = document.getElementById('u-rows');
+      tbody.innerHTML = visible.map(u => {
+        const badge = USER_BADGE[u.effective_status] || 'bg-gray-100 text-gray-600';
+        const revokeBtn = u.status === 'revoked'
+          ? `<button onclick="quickStatus(${u.id}, 'invited')" class="text-green-700 hover:underline">Reinstate</button>`
+          : `<button onclick="quickStatus(${u.id}, 'revoked')" class="text-red-600 hover:underline">Revoke</button>`;
+        // Resending an invite to a revoked/expired row is refused server-side —
+        // don't offer it.
+        const mailable = u.effective_status !== 'revoked' && u.effective_status !== 'expired';
+        const resendBtn = mailable
+          ? `<button onclick="resendInvite(${u.id}, '${esc(u.email)}')" class="text-brand-secondary hover:underline">${u.invite_sent_at ? 'Resend' : 'Send invite'}</button>`
+          : '';
+        return `<tr class="border-b border-gray-100 hover:bg-gray-50">
+          <td class="px-4 py-3 font-mono text-xs">${esc(u.email)}</td>
+          <td class="px-4 py-3">${esc(u.name) || '<span class="text-gray-300">—</span>'}</td>
+          <td class="px-4 py-3">${esc(u.organization) || '<span class="text-gray-300">—</span>'}</td>
+          <td class="px-4 py-3">${esc(u.role)}</td>
+          <td class="px-4 py-3">${(u.tier || 'full') === 'lite'
+            ? '<span class="inline-block px-2 py-0.5 rounded-full text-xs font-medium bg-amber-50 text-amber-800">lite</span>'
+            : '<span class="inline-block px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-700">full</span>'}</td>
+          <td class="px-4 py-3"><span class="inline-block px-2 py-0.5 rounded-full text-xs font-medium ${badge}">${esc(u.effective_status)}</span></td>
+          <td class="px-4 py-3 text-xs">${inviteEmailCell(u)}</td>
+          <td class="px-4 py-3 text-xs text-gray-500">${u.expires_at ? esc(u.expires_at.slice(0, 10)) : '—'}</td>
+          <td class="px-4 py-3 text-xs text-gray-500">${u.last_login_at ? esc(u.last_login_at.slice(0, 10)) : 'never'}</td>
+          <td class="px-4 py-3 text-right whitespace-nowrap space-x-3 text-xs">
+            ${resendBtn}
+            ${revokeBtn}
+            <button onclick="openEdit(${u.id})" class="text-brand-secondary hover:underline">Edit</button>
+            <button onclick="removeUser(${u.id}, '${esc(u.email)}')" class="text-gray-400 hover:text-red-600 hover:underline">Delete</button>
+          </td>
+        </tr>`;
+      }).join('');
+      document.getElementById('u-empty').classList.toggle('hidden', visible.length > 0);
+    }
+
+    // ── Invite ────────────────────────────────────────────────────────────
+    function openInvite() {
+      document.getElementById('inv-by').value = localStorage.getItem(INVITED_BY_STORAGE) || '';
+      document.getElementById('invite-result').classList.add('hidden');
+      document.getElementById('invite-modal').classList.remove('hidden');
+    }
+    function closeInvite() { document.getElementById('invite-modal').classList.add('hidden'); }
+
+    async function submitInvite(ev) {
+      ev.preventDefault();
+      const lines = document.getElementById('inv-emails').value.split('\n')
+        .map(l => l.trim()).filter(Boolean);
+      const role = document.getElementById('inv-role').value;
+      const tier = document.getElementById('inv-tier').value;
+      const expires = document.getElementById('inv-expires').value || null;
+      const invitedBy = document.getElementById('inv-by').value.trim() || null;
+      const notes = document.getElementById('inv-notes').value.trim() || null;
+      if (invitedBy) localStorage.setItem(INVITED_BY_STORAGE, invitedBy);
+
+      const payload = lines.map(line => {
+        const [email, name, organization] = line.split(',').map(p => p.trim());
+        return { email, name: name || null, organization: organization || null,
+                 role, tier, expires_at: expires, notes, invited_by: invitedBy };
+      });
+      if (payload.length === 0) return false;
+
+      const notify = document.getElementById('inv-notify').checked;
+      const btn = document.getElementById('invite-submit');
+      btn.disabled = true;
+      try {
+        const { data } = await api('/api/admin/users' + (notify ? '' : '?email=0'),
+          { method: 'POST', body: JSON.stringify(payload) });
+        const box = document.getElementById('invite-result');
+        const parts = [];
+        if (data.inserted?.length) parts.push(`${data.inserted.length} added`);
+        if (data.skipped?.length)  parts.push(`${data.skipped.length} already invited`);
+        if (data.rejected?.length) parts.push(`${data.rejected.length} rejected: ` +
+          data.rejected.map(r => `${r.email ?? '(no email)'} (${r.reason})`).join('; '));
+        // A failed send is the thing staff most need to see — name the reason
+        // rather than leaving them to guess why nobody replied.
+        const em = data.emailed;
+        if (em?.skipped) parts.push('no email sent (by choice)');
+        else if (em) {
+          if (em.sent) parts.push(`${em.sent} emailed`);
+          if (em.failed?.length) parts.push(`${em.failed.length} NOT emailed: ` +
+            em.failed.map(f => `${f.email} (${f.error})`).join('; '));
+        }
+        const trouble = data.rejected?.length || em?.failed?.length;
+        box.textContent = parts.join(' · ') || 'Nothing to do.';
+        box.className = 'text-sm rounded-lg px-3 py-2 ' +
+          (trouble ? 'bg-amber-50 text-amber-800' : 'bg-green-50 text-green-800');
+        box.classList.remove('hidden');
+        if (data.inserted?.length) document.getElementById('inv-emails').value = '';
+        await loadUsers();
+      } finally {
+        btn.disabled = false;
+      }
+      return false;
+    }
+
+    async function resendInvite(id, email) {
+      if (!confirm(`Email the Lensy invitation to ${email}?`)) return;
+      const { status, data } = await api(`/api/admin/users/${id}/resend`, { method: 'POST' });
+      if (status >= 400) alert(`Could not send: ${data.error || 'unknown error'}`);
+      await loadUsers();
+    }
+
+    // ── Edit / quick actions ──────────────────────────────────────────────
+    function openEdit(id) {
+      const u = allUsers.find(x => x.id === id);
+      if (!u) return;
+      document.getElementById('edit-id').value = id;
+      document.getElementById('edit-email').textContent = u.email;
+      document.getElementById('edit-name').value = u.name || '';
+      document.getElementById('edit-org').value = u.organization || '';
+      document.getElementById('edit-role').value = u.role;
+      document.getElementById('edit-tier').value = u.tier || 'full';
+      document.getElementById('edit-status').value = u.status;
+      document.getElementById('edit-expires').value = u.expires_at ? u.expires_at.slice(0, 10) : '';
+      document.getElementById('edit-notes').value = u.notes || '';
+      document.getElementById('edit-result').classList.add('hidden');
+      document.getElementById('edit-modal').classList.remove('hidden');
+    }
+    function closeEdit() { document.getElementById('edit-modal').classList.add('hidden'); }
+
+    async function submitEdit(ev) {
+      ev.preventDefault();
+      const id = document.getElementById('edit-id').value;
+      const patch = {
+        name: document.getElementById('edit-name').value,
+        organization: document.getElementById('edit-org').value,
+        role: document.getElementById('edit-role').value,
+        tier: document.getElementById('edit-tier').value,
+        status: document.getElementById('edit-status').value,
+        expires_at: document.getElementById('edit-expires').value || null,
+        notes: document.getElementById('edit-notes').value,
+      };
+      const { status, data } = await api(`/api/admin/users/${id}`, {
+        method: 'PATCH', body: JSON.stringify(patch),
+      });
+      if (status >= 400) {
+        const box = document.getElementById('edit-result');
+        box.textContent = data.error || 'Update failed';
+        box.className = 'text-sm rounded-lg px-3 py-2 bg-red-50 text-red-700';
+        box.classList.remove('hidden');
+        return false;
+      }
+      closeEdit();
+      await loadUsers();
+      return false;
+    }
+
+    async function quickStatus(id, status) {
+      await api(`/api/admin/users/${id}`, { method: 'PATCH', body: JSON.stringify({ status }) });
+      await loadUsers();
+    }
+
+    async function removeUser(id, email) {
+      if (!confirm(`Delete ${email} from the access list? This cannot be undone — use Revoke to keep the record.`)) return;
+      await api(`/api/admin/users/${id}`, { method: 'DELETE' });
+      await loadUsers();
     }
 
     // ── Search analytics ──────────────────────────────────────────────────
@@ -600,7 +1187,7 @@
     }
 
     // ── Device resets ─────────────────────────────────────────────────────
-    const BY_STORAGE = 'lensy_admin_resolved_by';
+    const RESOLVED_BY_STORAGE = 'lensy_admin_resolved_by';
     let resetCounts = { all: 0, new: 0, done: 0, dismissed: 0 };
     let resetRows = [];
     let resetFilter = 'new';
@@ -617,7 +1204,7 @@
     };
 
     async function loadResets() {
-      document.getElementById('rs-by').value = localStorage.getItem(BY_STORAGE) || '';
+      document.getElementById('rs-by').value = localStorage.getItem(RESOLVED_BY_STORAGE) || '';
       const { data } = await api('/api/admin/device-resets');
       resetRows = data.requests || [];
       resetCounts = data.counts || resetCounts;
@@ -677,7 +1264,7 @@
 
     async function updateReset(id, status) {
       const by = document.getElementById('rs-by').value.trim() || null;
-      if (by) localStorage.setItem(BY_STORAGE, by);
+      if (by) localStorage.setItem(RESOLVED_BY_STORAGE, by);
       if (status === 'done' &&
           !confirm('Mark as done? Remember: the actual reset is the “Clear Use” action in the Vitrium admin app — this only records that it happened.')) return;
       const { status: code, data } = await api('/api/admin/device-resets', {
@@ -815,6 +1402,681 @@
     document.addEventListener('lensy:auth', function () {
       renderTabs();
       activateTab(location.hash.slice(1) || 'overview');
+    });
+  </script>
+
+  <!-- ── Standards & indexing (module: pdfjs import needs module scope).
+       Ported verbatim from the former /admin/standards page; its entry points
+       are hung on window so the tab loader and inline onclick handlers reach
+       them. Everything else (api/esc/toast) is module-scoped and deliberately
+       separate from the classic script above. ─────────────────────────────── -->
+  <script type="module">
+    // ── Constants ─────────────────────────────────────────────────────────
+    const PAGE_BATCH = 12;                        // raw pages per POST (~2–4 MB)
+    const MULTIPART_THRESHOLD = 90 * 1024 * 1024; // beyond this, upload in parts
+    const PART_SIZE = 64 * 1024 * 1024;
+
+    let standards = [];
+    let totals = null;
+    let jobs = [];
+    let stdFilter = 'all';
+    let stdTimer = null;
+    let running = false;      // a client-driven phase is live (guard unload)
+    let resumeTarget = null;  // job waiting on the hidden file picker
+
+    // ── pdfjs (vendored — CSP allows self-hosted scripts only) ────────────
+    let pdfjsPromise = null;
+    function loadPdfjsLib() {
+      if (!pdfjsPromise) {
+        pdfjsPromise = import('/vendor/pdfjs/pdf.min.mjs').then(lib => {
+          lib.GlobalWorkerOptions.workerSrc = '/vendor/pdfjs/pdf.worker.min.mjs';
+          return lib;
+        });
+      }
+      return pdfjsPromise;
+    }
+
+    // ── API helper (same idiom as the classic script above: cookie auth,
+    //    reload on a dead session so auth-gate re-runs) ────────────────────
+    async function api(path, options = {}) {
+      const res = await fetch(path, {
+        ...options,
+        headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+      });
+      if (res.status === 401 || res.status === 403 || res.status === 503) {
+        location.reload();
+        throw new Error('session_lost');
+      }
+      const data = await res.json().catch(() => ({}));
+      return { status: res.status, data };
+    }
+
+    function esc(s) {
+      return String(s ?? '').replace(/[&<>"']/g, c =>
+        ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
+    }
+
+    function toast(message, kind = 'ok') {
+      const el = document.getElementById('toast');
+      el.textContent = message;
+      el.className = 'fixed bottom-6 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-lg shadow-lg text-sm ' +
+        (kind === 'ok' ? 'bg-green-700 text-white' : 'bg-red-700 text-white');
+      el.classList.remove('hidden');
+      setTimeout(() => el.classList.add('hidden'), 4000);
+    }
+
+    // ── Standards list (from the ingest-health report) ────────────────────
+    async function loadStandards() {
+      const { status, data } = await api('/api/admin/index-status?verify=0');
+      if (status >= 400) { toast(data.error || 'Could not load standards', 'err'); return; }
+      standards = (data.standards || []).sort((a, b) => a.id.localeCompare(b.id, undefined, { numeric: true }));
+      totals = data.totals || null;
+      renderStandards();
+    }
+
+    function debouncedStdRender() {
+      clearTimeout(stdTimer);
+      stdTimer = setTimeout(renderStandards, 150);
+    }
+    function setStdFilter(f) { stdFilter = f; renderStandards(); }
+
+    const STD_CHIPS = [['all', 'All'], ['active', 'Active'], ['deprecated', 'Deprecated'], ['warnings', 'Warnings']];
+
+    function renderStandards() {
+      if (totals) {
+        document.getElementById('totals').textContent =
+          `${totals.standards} standards (${totals.active} active, ${totals.deprecated} deprecated) · ` +
+          `${(totals.totalChunks || 0).toLocaleString()} indexed passages · ` +
+          `${(totals.totalApplicationRows || 0).toLocaleString()} illuminance rows` +
+          (totals.standardsWithWarnings ? ` · ${totals.standardsWithWarnings} with warnings` : '');
+      }
+
+      const counts = {
+        all: standards.length,
+        active: standards.filter(s => s.status !== 'Deprecated').length,
+        deprecated: standards.filter(s => s.status === 'Deprecated').length,
+        warnings: standards.filter(s => (s.warnings || []).length > 0).length,
+      };
+      document.getElementById('std-chips').innerHTML = STD_CHIPS.map(([f, label]) => {
+        const active = stdFilter === f;
+        return `<button onclick="setStdFilter('${f}')"
+          class="px-3 py-1.5 text-sm rounded-full border transition ${active
+            ? 'bg-brand-secondary text-white border-brand-secondary'
+            : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'}">
+          ${label} <span class="${active ? 'text-blue-200' : 'text-gray-400'}">${counts[f] ?? 0}</span>
+        </button>`;
+      }).join('');
+
+      const q = document.getElementById('std-search').value.trim().toLowerCase();
+      const visible = standards.filter(s => {
+        if (stdFilter === 'active' && s.status === 'Deprecated') return false;
+        if (stdFilter === 'deprecated' && s.status !== 'Deprecated') return false;
+        if (stdFilter === 'warnings' && !(s.warnings || []).length) return false;
+        if (!q) return true;
+        return [s.id, s.title].some(f => f && f.toLowerCase().includes(q));
+      });
+
+      document.getElementById('std-rows').innerHTML = visible.map(s => {
+        const deprecated = s.status === 'Deprecated';
+        const warn = (s.warnings || []).length
+          ? `<span class="text-amber-600" title="${esc((s.warnings || []).join('\n'))}">⚠</span> ` : '';
+        return `<tr class="border-b border-gray-100 hover:bg-gray-50">
+          <td class="px-4 py-3 font-mono text-xs whitespace-nowrap">${warn}${esc(s.id)}</td>
+          <td class="px-4 py-3">${esc(s.title || '')}</td>
+          <td class="px-4 py-3"><span class="inline-block px-2 py-0.5 rounded-full text-xs font-medium ${deprecated
+            ? 'bg-amber-100 text-amber-800' : 'bg-green-100 text-green-800'}">${esc(s.status)}</span></td>
+          <td class="px-4 py-3 text-right text-xs text-gray-500">${s.pageCount ?? '—'}</td>
+          <td class="px-4 py-3 text-right text-xs text-gray-500">${s.chunkCount ?? '—'}</td>
+          <td class="px-4 py-3 text-right text-xs text-gray-500">${s.applicationRows || '—'}</td>
+          <td class="px-4 py-3 text-xs text-gray-500">${s.indexedAt ? esc(String(s.indexedAt).slice(0, 10)) : 'never'}</td>
+          <td class="px-4 py-3 text-right whitespace-nowrap text-xs">
+            <button onclick="openIngest('${esc(s.id)}')" class="text-brand-secondary hover:underline">Upload new version</button>
+          </td>
+        </tr>`;
+      }).join('');
+      document.getElementById('std-empty').classList.toggle('hidden', visible.length > 0);
+    }
+
+    // ── Jobs list ─────────────────────────────────────────────────────────
+    async function loadJobs() {
+      const { status, data } = await api('/api/admin/ingest-jobs');
+      if (status >= 400) { toast(data.error || 'Could not load ingest runs', 'err'); return; }
+      jobs = data.jobs || [];
+      if (data.note) toast(data.note, 'err');
+      renderJobs();
+    }
+
+    const JOB_BADGE = {
+      created:    'bg-gray-200 text-gray-600',
+      uploaded:   'bg-blue-100 text-blue-800',
+      parsing:    'bg-blue-100 text-blue-800',
+      parsed:     'bg-blue-100 text-blue-800',
+      processing: 'bg-indigo-100 text-indigo-800',
+      indexed:    'bg-teal-100 text-teal-800',
+      finalizing: 'bg-teal-100 text-teal-800',
+      complete:   'bg-green-100 text-green-800',
+      failed:     'bg-red-100 text-red-700',
+      cancelled:  'bg-gray-200 text-gray-500',
+    };
+
+    function jobDetail(j) {
+      if (j.status === 'failed') return j.error || 'failed';
+      if (j.status === 'parsing') return `${j.pages_received}/${j.page_count ?? '?'} pages received`;
+      if (j.status === 'processing') return serverStepLabel(j);
+      if (j.status === 'complete' || j.status === 'indexed') {
+        const r = j.result || {};
+        return r.chunksIndexed != null
+          ? `${r.chunksIndexed} passages, ${r.applicationsUpserted || 0} illuminance rows${(r.warnings || []).length ? `, ${r.warnings.length} warning(s)` : ''}`
+          : '';
+      }
+      return '';
+    }
+
+    function jobActions(j) {
+      const a = [];
+      const btn = (label, fn, cls = 'text-brand-secondary') =>
+        `<button onclick="${fn}('${esc(j.id)}')" class="${cls} hover:underline">${label}</button>`;
+      switch (j.status) {
+        case 'created':    a.push(btn('Resume (pick file)', 'resumeJob'), btn('Cancel', 'cancelJobUi', 'text-gray-400')); break;
+        case 'uploaded':
+        case 'parsing':    a.push(btn('Resume', 'resumeJob'), btn('Cancel', 'cancelJobUi', 'text-gray-400')); break;
+        case 'parsed':     a.push(btn('Run indexing', 'resumeJob'), btn('Cancel', 'cancelJobUi', 'text-gray-400')); break;
+        case 'processing': a.push(btn('Retry indexing', 'resumeJob'), btn('Cancel', 'cancelJobUi', 'text-gray-400')); break;
+        case 'indexed':
+        case 'finalizing': a.push(btn('Finalize', 'resumeJob')); break;
+        case 'failed':     a.push(btn('Retry', 'resumeJob'), btn('Cancel', 'cancelJobUi', 'text-gray-400')); break;
+        case 'complete':   a.push(btn('Details', 'showJobDetails')); break;
+        default: break;
+      }
+      return a.join(' ');
+    }
+
+    function renderJobs() {
+      document.getElementById('job-rows').innerHTML = jobs.map(j => `
+        <tr class="border-b border-gray-100 hover:bg-gray-50">
+          <td class="px-4 py-3 text-xs text-gray-500 whitespace-nowrap">${esc(String(j.created_at || '').slice(0, 16))}</td>
+          <td class="px-4 py-3 font-mono text-xs">${esc(j.standard_id)}${j.ingest_status === 'deprecated'
+            ? ' <span class="inline-block px-1.5 rounded bg-amber-100 text-amber-800 text-[10px]">comparison</span>' : ''}</td>
+          <td class="px-4 py-3 text-xs text-gray-500 max-w-[180px] truncate" title="${esc(j.filename)}">${esc(j.filename)}</td>
+          <td class="px-4 py-3 text-xs text-gray-500">${esc(j.created_by || '')}</td>
+          <td class="px-4 py-3"><span class="inline-block px-2 py-0.5 rounded-full text-xs font-medium ${JOB_BADGE[j.status] || 'bg-gray-100 text-gray-600'}">${esc(j.status)}</span></td>
+          <td class="px-4 py-3 text-xs text-gray-500 max-w-[220px] truncate" title="${esc(jobDetail(j))}">${esc(jobDetail(j))}</td>
+          <td class="px-4 py-3 text-right whitespace-nowrap space-x-3 text-xs">${jobActions(j)}</td>
+        </tr>`).join('');
+      document.getElementById('job-empty').classList.toggle('hidden', jobs.length > 0);
+    }
+
+    // ── New-ingest modal ──────────────────────────────────────────────────
+    function openIngest(replacesId) {
+      document.getElementById('ing-file').value = '';
+      const idField = document.getElementById('ing-id');
+      idField.value = '';
+      delete idField.dataset.edited;
+      document.getElementById('ing-status').value = 'current';
+      const sel = document.getElementById('ing-replaces');
+      sel.innerHTML = '<option value="">— nothing (new standard, or same-id re-ingest)</option>' +
+        standards.map(s => `<option value="${esc(s.id)}">${esc(s.id)}${s.status === 'Deprecated' ? ' (deprecated)' : ''}</option>`).join('');
+      sel.value = replacesId || '';
+      document.getElementById('ingest-error').classList.add('hidden');
+      onIngestStatusChange();
+      onIngestReplacesChange();
+      document.getElementById('ingest-modal').classList.remove('hidden');
+    }
+    function closeIngest() { document.getElementById('ingest-modal').classList.add('hidden'); }
+
+    // Preview only: the shared server-side rule (src/lib/standard-id.js) is the
+    // authority — when the field is left untouched we omit standardId and the
+    // server derives it from the filename with that rule.
+    function previewDeriveId(name) {
+      const stem = String(name || '').replace(/^.*[\\/]/, '').replace(/\.[^.]*$/, '');
+      const m = stem.match(/^([A-Z]{1,3}-\d+(?:\.\d+)?(?:-\d+)?)\s*(?:\+\s*(E\d+))?/i);
+      if (!m) return stem.split(/[_ ]/)[0];
+      return m[2] ? `${m[1]}+${m[2]}` : m[1];
+    }
+
+    function onIngestFile() {
+      const file = document.getElementById('ing-file').files[0];
+      const idField = document.getElementById('ing-id');
+      if (file && idField.dataset.edited !== '1') {
+        idField.value = previewDeriveId(file.name);
+        // Suggest the Active edition of the same family as the one replaced.
+        const sel = document.getElementById('ing-replaces');
+        if (!sel.value) {
+          const fam = (idField.value.match(/^(.+)-\d{2}(?:\+E\d+)?$/) || [])[1];
+          if (fam) {
+            const candidate = standards.find(s =>
+              s.status !== 'Deprecated' && s.id !== idField.value &&
+              (s.id.match(/^(.+)-\d{2}(?:\+E\d+)?$/) || [])[1] === fam);
+            if (candidate) { sel.value = candidate.id; }
+          }
+        }
+        onIngestReplacesChange();
+      }
+    }
+
+    function onIngestStatusChange() {
+      const deprecated = document.getElementById('ing-status').value === 'deprecated';
+      document.getElementById('ing-replace-wrap').classList.toggle('hidden', deprecated);
+      if (deprecated) document.getElementById('ing-replaces').value = '';
+      onIngestReplacesChange();
+    }
+
+    function onIngestReplacesChange() {
+      const replaces = document.getElementById('ing-replaces').value;
+      const target = document.getElementById('ing-id').value.trim();
+      const show = !!replaces && replaces !== target &&
+        document.getElementById('ing-status').value === 'current';
+      document.getElementById('ing-disp-wrap').classList.toggle('hidden', !show);
+    }
+
+    async function submitIngest(ev) {
+      ev.preventDefault();
+      const file = document.getElementById('ing-file').files[0];
+      if (!file) return false;
+
+      const idField = document.getElementById('ing-id');
+      const statusSel = document.getElementById('ing-status').value;
+      const replaces = statusSel === 'current' ? (document.getElementById('ing-replaces').value || null) : null;
+      const target = idField.value.trim();
+      const sameId = replaces && target && replaces === target;
+      const disposition = (replaces && !sameId)
+        ? (document.querySelector('input[name=ing-disp]:checked')?.value || 'deprecate')
+        : 'none';
+
+      if (disposition === 'delete' &&
+          !confirm(`After indexing, ${replaces} will be removed from Lensy ENTIRELY — vectors, illuminance rows, catalog row and PDF. This is not recoverable from Lensy. Continue?`)) {
+        return false;
+      }
+
+      const payload = {
+        filename: file.name,
+        status: statusSel,
+        replacesId: replaces || undefined,
+        disposition,
+        indexOldForComparison: disposition === 'deprecate' && document.getElementById('ing-cmp').checked,
+      };
+      if (idField.dataset.edited === '1' && target) payload.standardId = target;
+
+      const btn = document.getElementById('ingest-submit');
+      btn.disabled = true;
+      try {
+        const { status, data } = await api('/api/admin/ingest-jobs', { method: 'POST', body: JSON.stringify(payload) });
+        if (status >= 400) {
+          const box = document.getElementById('ingest-error');
+          box.textContent = data.error || 'Could not create the ingest job';
+          box.classList.remove('hidden');
+          return false;
+        }
+        closeIngest();
+        openTracker(data.job, data.warnings || []);
+        runPipeline(data.job, 'upload', file);
+        loadJobs();
+      } finally {
+        btn.disabled = false;
+      }
+      return false;
+    }
+
+    // ── Progress tracker ──────────────────────────────────────────────────
+    const STEPS = [
+      ['upload', 'Upload PDF'],
+      ['parse',  'Read pages in the browser'],
+      ['index',  'Analyze & index (Lensy)'],
+      ['old',    'Old edition'],
+      ['done',   'Done'],
+    ];
+    const stepState = {};
+
+    function openTracker(job, warnings = []) {
+      document.getElementById('trk-title').textContent = `Indexing ${job.standard_id}`;
+      document.getElementById('trk-sub').textContent = `${job.filename} · job ${job.id.slice(0, 8)}`;
+      for (const [key] of STEPS) stepState[key] = { state: 'pending', detail: '' };
+      const wbox = document.getElementById('trk-warnings');
+      wbox.innerHTML = warnings.map(w => `<p>⚠ ${esc(w)}</p>`).join('');
+      wbox.classList.toggle('hidden', warnings.length === 0);
+      document.getElementById('trk-result').classList.add('hidden');
+      document.getElementById('trk-error').classList.add('hidden');
+      document.getElementById('trk-followup').classList.add('hidden');
+      renderTracker();
+      document.getElementById('tracker-modal').classList.remove('hidden');
+    }
+    function hideTracker() { document.getElementById('tracker-modal').classList.add('hidden'); }
+
+    function setStep(key, state, detail) {
+      if (!stepState[key]) return;
+      stepState[key].state = state;
+      if (detail !== undefined) stepState[key].detail = detail;
+      renderTracker();
+    }
+
+    function renderTracker() {
+      const icon = s =>
+        s === 'done' ? '<span class="text-green-600">✓</span>' :
+        s === 'run'  ? '<span class="spin text-brand-primary">◐</span>' :
+        s === 'fail' ? '<span class="text-red-600">✗</span>' :
+                       '<span class="text-gray-300">○</span>';
+      document.getElementById('trk-steps').innerHTML = STEPS.map(([key, label]) => {
+        const st = stepState[key] || { state: 'pending', detail: '' };
+        return `<li class="flex items-start gap-3">
+          <span class="w-5 text-center">${icon(st.state)}</span>
+          <span class="flex-1">
+            <span class="${st.state === 'pending' ? 'text-gray-400' : 'font-medium'}">${label}</span>
+            ${st.detail ? `<span class="block text-xs text-gray-500">${esc(st.detail)}</span>` : ''}
+          </span>
+        </li>`;
+      }).join('');
+    }
+
+    function showRunError(message) {
+      const box = document.getElementById('trk-error');
+      box.textContent = message;
+      box.classList.remove('hidden');
+      for (const key of Object.keys(stepState)) {
+        if (stepState[key].state === 'run') stepState[key].state = 'fail';
+      }
+      renderTracker();
+    }
+
+    const SERVER_STEP_LABELS = {
+      assemble: 'Assembling pages',
+      extract: 'Reading structure — tables, sections, applications',
+      store: 'Storing the PDF in the library',
+      embedding: 'Embedding passages',
+      vectorize: 'Writing search vectors',
+      cleanup: 'Cleaning up stale vectors',
+      metadata: 'Updating the catalog',
+      applications: 'Writing illuminance rows',
+      prune: 'Pruning stale rows',
+      done: 'Indexed',
+    };
+    function serverStepLabel(job) {
+      const run = (job.progress && job.progress.run) || {};
+      let label = SERVER_STEP_LABELS[job.step] || job.step || 'Working…';
+      if (job.step === 'embedding' && run.total) label += ` (${run.done || 0} / ${run.total})`;
+      return label;
+    }
+
+    // ── The pipeline (client-driven; every phase is resumable) ────────────
+    window.addEventListener('beforeunload', ev => {
+      if (running) { ev.preventDefault(); ev.returnValue = ''; }
+    });
+
+    async function runPipeline(job, phase, file = null) {
+      running = true;
+      try {
+        if (phase === 'upload') {
+          await doUpload(job, file);
+          phase = 'parse';
+        }
+        if (phase === 'parse') {
+          const blob = file || await downloadJobPdf(job);
+          await doParseAndSend(job, blob);
+          phase = 'process';
+        } else {
+          setStep('upload', 'done');
+          setStep('parse', 'done');
+        }
+        if (phase === 'process') {
+          await doProcess(job);
+          phase = 'finalize';
+        }
+        if (phase === 'finalize') {
+          await doFinalize(job);
+        }
+        setStep('done', 'done');
+        toast(`${job.standard_id} indexed`, 'ok');
+      } catch (err) {
+        if (err.message !== 'session_lost') showRunError(err.message);
+      } finally {
+        running = false;
+        loadStandards();
+        loadJobs();
+      }
+    }
+
+    async function doUpload(job, file) {
+      setStep('upload', 'run', `${(file.size / 1024 / 1024).toFixed(1)} MB`);
+      if (file.size > MULTIPART_THRESHOLD) {
+        await multipartUpload(job, file);
+      } else {
+        await new Promise((resolve, reject) => {
+          const xhr = new XMLHttpRequest();
+          xhr.open('POST', `/api/admin/ingest-jobs/${job.id}/pdf`);
+          xhr.setRequestHeader('Content-Type', 'application/pdf');
+          xhr.upload.onprogress = e => {
+            if (e.lengthComputable) setStep('upload', 'run', `${Math.round(e.loaded / e.total * 100)}%`);
+          };
+          xhr.onload = () => {
+            if (xhr.status < 400) return resolve();
+            let msg = `Upload failed (${xhr.status})`;
+            try { msg = JSON.parse(xhr.responseText).error || msg; } catch { /* keep */ }
+            reject(new Error(msg));
+          };
+          xhr.onerror = () => reject(new Error('Upload failed (network)'));
+          xhr.send(file);
+        });
+      }
+      setStep('upload', 'done', `${(file.size / 1024 / 1024).toFixed(1)} MB`);
+    }
+
+    async function multipartUpload(job, file) {
+      const key = `ingest-jobs/${job.id}/source.pdf`;
+      const enc = encodeURIComponent(key);
+      const create = await api(`/api/admin/r2-multipart?action=create&key=${enc}`, { method: 'POST' });
+      if (create.status >= 400) throw new Error(create.data.error || 'Multipart create failed');
+      const uploadId = create.data.uploadId;
+      try {
+        const parts = [];
+        let partNumber = 1;
+        for (let off = 0; off < file.size; off += PART_SIZE, partNumber++) {
+          const slice = file.slice(off, Math.min(file.size, off + PART_SIZE));
+          const res = await fetch(
+            `/api/admin/r2-multipart?action=part&key=${enc}&uploadId=${encodeURIComponent(uploadId)}&partNumber=${partNumber}`,
+            { method: 'POST', body: slice });
+          if (!res.ok) throw new Error(`Upload part ${partNumber} failed (${res.status})`);
+          const part = await res.json();
+          parts.push({ partNumber: part.partNumber, etag: part.etag });
+          setStep('upload', 'run', `${Math.round(Math.min(file.size, off + PART_SIZE) / file.size * 100)}% (part ${partNumber})`);
+        }
+        const done = await api(`/api/admin/r2-multipart?action=complete&key=${enc}`,
+          { method: 'POST', body: JSON.stringify({ uploadId, parts }) });
+        if (done.status >= 400) throw new Error(done.data.error || 'Multipart complete failed');
+      } catch (err) {
+        await api(`/api/admin/r2-multipart?action=abort&key=${enc}`,
+          { method: 'POST', body: JSON.stringify({ uploadId }) }).catch(() => {});
+        throw err;
+      }
+      const rec = await api(`/api/admin/ingest-jobs/${job.id}/pdf`,
+        { method: 'POST', body: JSON.stringify({ multipartComplete: true }) });
+      if (rec.status >= 400) throw new Error(rec.data.error || 'Could not record the upload');
+    }
+
+    async function downloadJobPdf(job) {
+      setStep('upload', 'run', 'fetching the stored PDF…');
+      const res = await fetch(`/api/admin/ingest-jobs/${job.id}/pdf`);
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || `No stored PDF for this job (${res.status}) — cancel it and start over.`);
+      }
+      const blob = await res.blob();
+      setStep('upload', 'done', `${(blob.size / 1024 / 1024).toFixed(1)} MB (stored)`);
+      return blob;
+    }
+
+    async function doParseAndSend(job, blob) {
+      setStep('parse', 'run', 'opening the PDF…');
+      const lib = await loadPdfjsLib();
+      const doc = await lib.getDocument({
+        data: new Uint8Array(await blob.arrayBuffer()),
+        isEvalSupported: false,
+        disableFontFace: true,
+        useSystemFonts: true,
+      }).promise;
+      try {
+        const total = doc.numPages;
+        const meta = await doc.getMetadata().catch(() => null);
+        const info = (meta && meta.info) || {};
+        const docMeta = {
+          Title: info.Title, Author: info.Author, Subject: info.Subject,
+          Keywords: info.Keywords, CreationDate: info.CreationDate, ModDate: info.ModDate,
+        };
+
+        for (let start = 1; start <= total; start += PAGE_BATCH) {
+          const end = Math.min(total, start + PAGE_BATCH - 1);
+          const raw = [];
+          for (let n = start; n <= end; n++) {
+            const page = await doc.getPage(n);
+            const tc = await page.getTextContent({ includeMarkedContent: false });
+            // Only the fields src/lib/pdf-pages.js reads; empty items are
+            // filtered by every consumer, so dropping them just shrinks the wire.
+            const items = [];
+            for (const it of tc.items) {
+              if (!it.str || !it.str.trim()) continue;
+              items.push({ str: it.str, transform: it.transform, fontName: it.fontName, width: it.width, hasEOL: it.hasEOL });
+            }
+            raw.push({ number: n, view: Array.from(page.view), items });
+            page.cleanup();
+          }
+          const payload = { totalPages: total, pageStart: start, pages: raw };
+          if (start === 1) payload.docMeta = docMeta;
+          const { status, data } = await api(`/api/admin/ingest-jobs/${job.id}/pages`,
+            { method: 'POST', body: JSON.stringify(payload) });
+          if (status >= 400) throw new Error(data.error || `Pages batch failed (${status})`);
+          setStep('parse', 'run', `${data.pagesReceived} / ${total} pages`);
+        }
+        setStep('parse', 'done', `${total} pages`);
+      } finally {
+        doc.destroy().catch(() => {});
+      }
+    }
+
+    async function doProcess(job) {
+      setStep('index', 'run', 'starting…');
+      const poll = setInterval(async () => {
+        try {
+          const { status, data } = await api(`/api/admin/ingest-jobs/${job.id}`);
+          if (status < 400 && data.job && data.job.status === 'processing') {
+            setStep('index', 'run', serverStepLabel(data.job));
+          }
+        } catch { /* transient — next tick */ }
+      }, 1500);
+      try {
+        const { status, data } = await api(`/api/admin/ingest-jobs/${job.id}/process`,
+          { method: 'POST', body: '{}' });
+        if (status >= 400) throw new Error(data.error || `Indexing failed (${status})`);
+        const r = data.result || {};
+        setStep('index', 'done',
+          `${r.chunksIndexed ?? '?'} passages · ${r.applicationsUpserted || 0} illuminance rows · ${r.sectionTitles || 0} headings`);
+        renderResultBox(r);
+      } finally {
+        clearInterval(poll);
+      }
+    }
+
+    function renderResultBox(r) {
+      const box = document.getElementById('trk-result');
+      const lines = [
+        `Structure: ${r.structure || '?'} · ${r.pageCount || '?'} pages · coverage ${r.coveragePct ?? '?'}%`,
+        r.title ? `Title (from the cover): ${r.title}` : null,
+        r.committee ? `Committee: ${r.committee}` : null,
+      ].filter(Boolean);
+      box.innerHTML = lines.map(l => `<p>${esc(l)}</p>`).join('');
+      box.classList.remove('hidden');
+      if ((r.warnings || []).length) {
+        const wbox = document.getElementById('trk-warnings');
+        wbox.innerHTML += r.warnings.map(w => `<p>⚠ ${esc(w)}</p>`).join('');
+        wbox.classList.remove('hidden');
+      }
+    }
+
+    async function doFinalize(job) {
+      const hasOld = job.replaces_id && job.replaces_id !== job.standard_id;
+      setStep('old', 'run', hasOld ? `${job.disposition} → ${job.replaces_id}` : 'nothing to do');
+      const { status, data } = await api(`/api/admin/ingest-jobs/${job.id}/finalize`,
+        { method: 'POST', body: '{}' });
+      if (status >= 400) throw new Error(data.error || `Finalize failed (${status})`);
+      const summary = (data.actions || []).map(a => a.action).join(', ') || 'nothing to do';
+      setStep('old', 'done', summary);
+      if (data.followUpJobId) {
+        const wrap = document.getElementById('trk-followup');
+        const btn = document.getElementById('trk-followup-btn');
+        btn.textContent = `Index ${job.replaces_id} into the comparison index now`;
+        btn.onclick = () => { wrap.classList.add('hidden'); startFollowUp(data.followUpJobId); };
+        wrap.classList.remove('hidden');
+      }
+    }
+
+    async function startFollowUp(jobId) {
+      const { status, data } = await api(`/api/admin/ingest-jobs/${jobId}`);
+      if (status >= 400 || !data.job) { toast('Follow-up job not found', 'err'); return; }
+      openTracker(data.job, []);
+      runPipeline(data.job, 'parse');
+    }
+
+    // ── Resume / cancel / details ─────────────────────────────────────────
+    async function resumeJob(jobId) {
+      const { status, data } = await api(`/api/admin/ingest-jobs/${jobId}`);
+      if (status >= 400 || !data.job) { toast('Job not found', 'err'); return; }
+      const job = data.job;
+      const pagesComplete = job.page_count > 0 && job.pages_received >= job.page_count;
+
+      if (job.status === 'created') {
+        // The PDF never made it up — ask for the file again.
+        resumeTarget = job;
+        document.getElementById('resume-file').click();
+        return;
+      }
+      openTracker(job, []);
+      if (['indexed', 'finalizing'].includes(job.status)) {
+        setStep('upload', 'done'); setStep('parse', 'done'); setStep('index', 'done');
+        runPipeline(job, 'finalize');
+      } else if (pagesComplete) {
+        setStep('upload', 'done'); setStep('parse', 'done', `${job.page_count} pages (stored)`);
+        runPipeline(job, 'process');
+      } else {
+        runPipeline(job, 'parse');
+      }
+    }
+
+    document.getElementById('resume-file').addEventListener('change', function () {
+      const file = this.files[0];
+      this.value = '';
+      if (!file || !resumeTarget) return;
+      const job = resumeTarget;
+      resumeTarget = null;
+      openTracker(job, []);
+      runPipeline(job, 'upload', file);
+    });
+
+    async function cancelJobUi(jobId) {
+      if (!confirm('Abandon this ingest run? Uploaded staging data is deleted; anything already indexed stays.')) return;
+      const { status, data } = await api(`/api/admin/ingest-jobs/${jobId}/cancel`, { method: 'POST', body: '{}' });
+      if (status >= 400) toast(data.error || 'Could not cancel', 'err');
+      loadJobs();
+    }
+
+    async function showJobDetails(jobId) {
+      const { status, data } = await api(`/api/admin/ingest-jobs/${jobId}`);
+      if (status >= 400 || !data.job) { toast('Job not found', 'err'); return; }
+      const job = data.job;
+      openTracker(job, []);
+      setStep('upload', 'done', job.pdf_size ? `${(job.pdf_size / 1024 / 1024).toFixed(1)} MB` : '');
+      setStep('parse', 'done', job.page_count ? `${job.page_count} pages` : '');
+      setStep('index', 'done');
+      const fin = (job.result && job.result.finalize) || [];
+      setStep('old', 'done', fin.map(a => a.action).join(', ') || 'nothing to do');
+      setStep('done', 'done');
+      if (job.result) renderResultBox(job.result);
+    }
+
+    // Inline onclick handlers and the tab loader need module functions on
+    // window. (No lensy:auth listener here — the Standards tab loads lazily
+    // through activateTab in the classic script.)
+    Object.assign(window, {
+      loadStandards, loadJobs, setStdFilter, debouncedStdRender,
+      openIngest, closeIngest, submitIngest, onIngestFile,
+      onIngestStatusChange, onIngestReplacesChange,
+      hideTracker, resumeJob, cancelJobUi, showJobDetails,
     });
   </script>
 </body>

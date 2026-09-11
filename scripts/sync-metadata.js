@@ -316,7 +316,8 @@ function loadCsvExport(filePath, portalByCode = null) {
   }
   console.log(tocCols.length > 0
     ? `  Table of Contents columns found: ${tocCols.join(', ')}`
-    : '  No Table of Contents columns in this export (Collection, Author, Description, Thumbnail, Buy URL, eLearning) — those fields stay as they are.');
+    : '  No Table of Contents columns in this export (Collection, Author, Description, Thumbnail, Buy URL, eLearning) — '
+      + 'those fields stay as they are, except collection, which is derived from the Folder Path when present.');
 
   // standardId → { entry, deprecated }
   const byStandard = new Map();
@@ -347,7 +348,13 @@ function loadCsvExport(filePath, portalByCode = null) {
       : null;
     const entry = {
       standardId, docId, webUrl,
-      collection: cell(iCollection),
+      // An explicit Collection column wins; otherwise the Vitrium folder IS the
+      // collection ("Main Folder/IES Lighting Library/Lighting Science" →
+      // "Lighting Science") — see collectionFromFolderPath. This is what scopes
+      // LensyLite (client DO53): the tier searches standards whose collection
+      // matches "Lighting Science", with the LS- series prefix as the fallback
+      // only while this field is empty.
+      collection: cell(iCollection) || collectionFromFolderPath(iFolder !== -1 ? row[iFolder] : null),
       author: cell(iAuthor) || (portal ? portal.author : null),
       description: cell(iDescription) || (portal ? portal.description : null),
       // An explicit Thumbnail/Cover URL wins; otherwise the portal URL is built
@@ -400,6 +407,37 @@ function parseElearningCell(raw) {
     out.push({ title: (b && url === b ? a : null) || url, url });
   }
   return out.length > 0 ? out : null;
+}
+
+/**
+ * Derive the webstore collection from a Vitrium folder path.
+ *
+ * The stock "Web Viewer URLs" export carries no Collection column, but its
+ * Folder Path leaf names the collection — measured on the 2026-08-24 export:
+ *
+ *   Main Folder/IES Lighting Library/Lighting Science                    → 17 docs
+ *   Main Folder/IES Lighting Library/Lighting Measurements and Testing   → 49
+ *   Main Folder/IES Lighting Library/Recommended Practice                → 23
+ *   Main Folder/IES Lighting Library/Lighting Practice                   → 23
+ *   Main Folder/IES Lighting Library/Roadway and Parking Facilities      →  1
+ *
+ * and the Lighting Science folder holds exactly the Lighting Science
+ * Collection (LS series + RP-27/RP-27.1 + the light-science TMs) — the corpus
+ * LensyLite scopes to. The client has said the collection will eventually be
+ * distributed across MULTIPLE folders; as long as those folders keep the
+ * collection in their name the LIKE-match in search.ts still finds them, and
+ * if they do not, the export needs an explicit Collection column (which wins
+ * over this derivation).
+ *
+ * The deprecated archive and the library's root/container folders are not
+ * collections — those rows return null so the stored value is left untouched.
+ */
+function collectionFromFolderPath(folderPath) {
+  const leaf = String(folderPath || '').split('/').map(s => s.trim()).filter(Boolean).pop() || '';
+  if (!leaf) return null;
+  if (/z_deprecated/i.test(leaf)) return null;
+  if (/^main folder$/i.test(leaf) || /lighting library$/i.test(leaf)) return null;
+  return leaf;
 }
 
 /**

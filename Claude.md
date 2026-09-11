@@ -1655,29 +1655,39 @@ backed by `/api/admin/ingest-jobs` (`src/workers/staff-ingest.ts`, migration
   Tests: `src/workers/staff-ingest.test.js`, `src/lib/pdf-pages.test.js`,
   `src/lib/standard-id.test.js`.
 
-### /admin is a tabbed staff hub (2026-09-11)
+### /admin is THE staff page — one dashboard, seven tabs (2026-09-11)
 
-`/admin` now resolves — `src/frontend/admin/index.html`, served by Workers
-assets' default html_handling — and is the staff landing page. Same shape as
-the other two staff pages: `auth-gate.js data-require-admin` as UX gate,
-`requireAdminAccess` on every API it touches. Five hash-routed tabs
-(`#overview` … `#maintenance`), each lazy-loaded on first open:
+`/admin` (`src/frontend/admin/index.html`, served by Workers assets' default
+html_handling) is the ONLY staff page: the former /admin/users and
+/admin/standards live inside it as tabs, and those two files are now redirect
+stubs to `/admin#users` / `/admin#standards` so old bookmarks keep working.
+The header nav carries only "Search" — every staff area is a tab. Same gate
+shape as before: `auth-gate.js data-require-admin` as UX gate,
+`requireAdminAccess` on every API. Seven hash-routed tabs, each lazy-loaded on
+first open:
 
 - **Overview** — stat cards from `index-status?verify=0`, `/api/admin/users`
   counts, the reset queue, `analytics?days=7`, plus the last ingest runs and a
-  warnings digest.
-- **Search analytics** — NEW `GET /api/admin/analytics?days=` (admin.ts):
+  warnings digest; each card deep-links to its tab.
+- **Users** — the invited-users dashboard, ported intact (same endpoints,
+  ids prefixed `u-*` to coexist with the other tabs).
+- **Standards** — the staff-ingest dashboard, ported intact as its own
+  `<script type="module">` (pdfjs import needs module scope; its entry points
+  hang on `window` for the tab loader and inline handlers). The upload →
+  parse → index → disposition pipeline is byte-for-byte the STAFF_INGEST flow.
+- **Search analytics** — `GET /api/admin/analytics?days=` (admin.ts):
   SQL-side aggregates of `search_log` + `search_events` — per-day counts
   (zero-filled bars in the UI), top queries grouped case-insensitively,
   zero-result queries as the corpus-gap signal, events by type, most-opened
   standards. Raw rows remain CSV-export territory; each table fails soft to
   zeros + a note (missing-migration posture of the CSV handlers), and the days
   window is clamped 1–365 and bound as a `datetime()` modifier, never SQL text.
-- **Device resets** — NEW `GET /api/admin/device-resets` (JSON sibling of the
+- **Device resets** — `GET /api/admin/device-resets` (JSON sibling of the
   CSV export, same filters, plus per-status counts) renders the queue with
   Mark done / Dismiss / Reopen over the existing POST; "resolved by" is
   remembered in localStorage, and the UI repeats that the actual reset is
-  Vitrium's "Clear Use" — the queue is bookkeeping.
+  Vitrium's "Clear Use" — the queue is bookkeeping. The tab wears a red badge
+  with the count of new requests.
 - **Index health** — `/api/admin/index-status` with the Vectorize spot-check
   as an opt-in checkbox (default `verify=0`, since the spot-check is a
   per-standard Vectorize call), a warnings-only toggle and a text filter.
@@ -1685,8 +1695,26 @@ the other two staff pages: `auth-gate.js data-require-admin` as UX gate,
   (deletion stays script-driven; deliberately NO delete button — see the LS-1
   incident above), the three CSV exports, and runbook pointers.
 
-All three /admin pages now share one header nav (Search · Dashboard · Users ·
-Standards). Tests: `src/workers/admin.test.js`.
+Tests: `src/workers/admin.test.js`.
+
+### standards.collection is synced from the Vitrium folder path (2026-09-11)
+
+`sync-metadata.js` now derives `collection` from the export's Folder Path leaf
+("Main Folder/IES Lighting Library/Lighting Science" → "Lighting Science")
+when the export carries no explicit Collection column (an explicit column
+still wins; the deprecated archive and container folders yield null). Run
+against production the same day: 111 Active standards now carry a collection,
+and **LensyLite's corpus went from the 8 LS-prefix standards to the 16 Active
+members of the Lighting Science folder** (LS series + RP-27.1 + TM-18/24/30/
+34/37/39/40/41 — RP-27-20+E1 is in the folder but Deprecated, so the
+status='Active' filter in `liteAllowedStandards` excludes it). This was always
+the design (the LS- prefix was an explicit stopgap "until that metadata is
+synced"), and it answers the client's 2026-09 note that the Lighting Science
+Collection "will now be distributed across multiple folders": as long as those
+folders keep "Lighting Science" in their name the LIKE-match still finds them;
+if they will not, the export needs an explicit Collection column. Verified
+against wrangler: `d1 execute --remote --file` works on this account (an
+earlier 401 was transient — the memory saying otherwise was deleted).
 
 ### The 260904 round (DO070-update, DO099–DO111): display filters, honest comparisons, and the permissions chart
 
@@ -2314,7 +2342,7 @@ Vitrium's document export gives each standard an opaque short code on Vitrium's 
 - **An invitation is a grant in its own right** (migration 0012). `invited_users.tier` (`full` | `lite`) is what the row grants, independent of IES membership, Wicket roles or any subscription — that is the point of an allowlist, reaching people the directory does not know. It can only ever ADD access: `resolveTier` takes the higher of the invitation and what the person earns, so a `lite` invite cannot demote a Library subscriber. `role` now decides admin rights and nothing else. Before this, tier came from `role` via `FULL_ACCESS_INVITE_ROLES = {admin, staff, subscriber}`, which meant a plain `guest` — the schema's own default — matched no rule and resolved to `none`: invited in, shown nothing.
 - **Two subscriber cohorts are still unmapped, and it is a product question for IES.** The narrower Wicket products do not grant `full`, so their holders land on `lite`: "The Illuminance Selector" (205 people) are paying for exactly the tool Lensy replaces, yet `lite` is the one tier that LOCKS Illuminance Tables; and a "Lighting Science Collection" subscriber (3) gets on `lite` precisely the collection they bought, free to every member. Nobody is harmed yet — none has activated a password. `src/lib/tiers.test.js` fails first if the mapping changes.
 - The rule is a pure function (`resolveTier` in `src/lib/tiers.ts`); `resolveRequestTier` in `workers/session.ts` applies it to a request, and the bearer secret is always `full` so ingest and the verification harness see the whole corpus.
-- Enforced server-side in `handleSearch`: content types are stripped (`liteContentTypes`), `includeAISummary` is forced off, version comparison is disabled, and results are restricted to the Lighting Science collection (`standards.collection`, falling back to the `LS-` series until that metadata is synced). The locked pills are signposting; this is the boundary. The tier is part of the response-cache key.
+- Enforced server-side in `handleSearch`: content types are stripped (`liteContentTypes`), `includeAISummary` is forced off, version comparison is disabled, and results are restricted to the Lighting Science collection (`standards.collection` — synced from the Vitrium folder path 2026-09-11, 16 Active standards; the `LS-` series prefix remains only as the fallback for an empty column). The locked pills are signposting; this is the boundary. The tier is part of the response-cache key.
 
 ### A shared collection opens without an account (client DO52)
 
