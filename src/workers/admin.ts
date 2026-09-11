@@ -32,6 +32,15 @@
  *     Full-indexing confidence report: per standard, the chunk/page coverage
  *     stats written at ingest time PLUS a live Vectorize spot-check that the
  *     first/middle/last chunk vectors actually exist (?verify=0 to skip).
+ *
+ *   GET /api/admin/analytics
+ *     Aggregates of the anonymous search + interaction logs for the staff
+ *     dashboard (?days=30). Computed in SQL — the CSV exports stay the way
+ *     to pull raw rows.
+ *
+ *   GET /api/admin/device-resets
+ *     The device-limit reset queue as JSON (the CSV export's dashboard
+ *     sibling), with per-status counts.
  */
 
 import { bumpDataVersion, getDataVersion } from '../lib/cache';
@@ -551,6 +560,99 @@ export async function handleAdminR2Multipart(request: Request, env: Env): Promis
   return jsonResponse({ error: 'action must be create | part | complete | abort' }, 400);
 }
 
+// ─── Search & interaction analytics (staff dashboard, 2026-09-11) ─────────────
+
+/**
+ * GET /api/admin/analytics?days=30 — aggregates of the anonymous search log
+ * and interaction log for the staff dashboard (/admin#analytics).
+ *
+ * Everything is computed in SQL so the dashboard never downloads raw rows —
+ * the CSV exports above remain the way to pull the underlying data. Same
+ * privacy contract as those exports: neither table carries user identity, so
+ * there is nothing personal to aggregate. Each table fails soft (missing
+ * migration → zeros plus a note), matching the CSV handlers' posture.
+ */
+export async function handleAdminAnalytics(request: Request, env: Env): Promise<Response> {
+  const denied = await requireAuth(request, env);
+  if (denied) return denied;
+
+  const url = new URL(request.url);
+  const days = Math.min(365, Math.max(1, parseInt(url.searchParams.get('days') || '30', 10) || 30));
+  // Bound as a datetime() modifier — SQLite accepts parameters in function
+  // arguments, so the window never reaches the SQL as text.
+  const since = `-${days} days`;
+
+  const searches: Record<string, unknown> = {
+    total: 0, cached: 0, noStrongMatch: 0, zeroResults: 0,
+    perDay: [], topQueries: [], zeroResultQueries: [],
+  };
+  try {
+    const [totals, perDay, topQueries, zeroResultQueries] = await Promise.all([
+      env.DB.prepare(`
+        SELECT COUNT(*) AS total,
+               COALESCE(SUM(cached), 0) AS cached,
+               COALESCE(SUM(CASE WHEN no_strong_match = 1 THEN 1 ELSE 0 END), 0) AS noStrongMatch,
+               COALESCE(SUM(CASE WHEN result_count = 0 THEN 1 ELSE 0 END), 0) AS zeroResults
+        FROM search_log WHERE created_at >= datetime('now', ?)
+      `).bind(since).first<Record<string, number>>(),
+      env.DB.prepare(`
+        SELECT date(created_at) AS day, COUNT(*) AS searches
+        FROM search_log WHERE created_at >= datetime('now', ?)
+        GROUP BY day ORDER BY day
+      `).bind(since).all<{ day: string; searches: number }>(),
+      // Grouped case-insensitively so "RP-6" and "rp-6" read as one query;
+      // MIN(query) picks a deterministic representative spelling.
+      env.DB.prepare(`
+        SELECT MIN(query) AS query, COUNT(*) AS searches,
+               COALESCE(SUM(CASE WHEN no_strong_match = 1 THEN 1 ELSE 0 END), 0) AS noStrongMatch,
+               MAX(created_at) AS lastSeen
+        FROM search_log WHERE created_at >= datetime('now', ?)
+        GROUP BY LOWER(TRIM(query))
+        ORDER BY searches DESC, lastSeen DESC LIMIT 25
+      `).bind(since).all<Record<string, unknown>>(),
+      // What people looked for and did NOT find — the corpus-gap signal.
+      env.DB.prepare(`
+        SELECT MIN(query) AS query, COUNT(*) AS searches, MAX(created_at) AS lastSeen
+        FROM search_log
+        WHERE created_at >= datetime('now', ?) AND result_count = 0
+        GROUP BY LOWER(TRIM(query))
+        ORDER BY searches DESC, lastSeen DESC LIMIT 15
+      `).bind(since).all<Record<string, unknown>>(),
+    ]);
+    Object.assign(searches, totals ?? {});
+    searches.perDay = perDay.results || [];
+    searches.topQueries = topQueries.results || [];
+    searches.zeroResultQueries = zeroResultQueries.results || [];
+  } catch (err) {
+    searches.note = `search_log unavailable: ${err instanceof Error ? err.message : String(err)}`;
+  }
+
+  const events: Record<string, unknown> = { total: 0, byEvent: [], topStandards: [] };
+  try {
+    const [byEvent, topStandards] = await Promise.all([
+      env.DB.prepare(`
+        SELECT event, COUNT(*) AS n
+        FROM search_events WHERE created_at >= datetime('now', ?)
+        GROUP BY event ORDER BY n DESC
+      `).bind(since).all<{ event: string; n: number }>(),
+      env.DB.prepare(`
+        SELECT standard_id AS standardId, COUNT(*) AS n
+        FROM search_events
+        WHERE created_at >= datetime('now', ?) AND standard_id IS NOT NULL AND standard_id <> ''
+        GROUP BY standard_id ORDER BY n DESC LIMIT 15
+      `).bind(since).all<{ standardId: string; n: number }>(),
+    ]);
+    events.byEvent = byEvent.results || [];
+    events.topStandards = topStandards.results || [];
+    events.total = (byEvent.results || []).reduce((s, r) => s + (r.n || 0), 0);
+  } catch (err) {
+    // Table exists only once migration 0013 is applied — zeros, not a 500.
+    events.note = `search_events unavailable (migration 0013 applied?): ${err instanceof Error ? err.message : String(err)}`;
+  }
+
+  return jsonResponse({ days, searches, events });
+}
+
 // ─── Device-limit reset queue (Vitrium error page, 2026-09-04) ────────────────
 
 /**
@@ -609,6 +711,62 @@ export async function handleAdminDeviceResets(request: Request, env: Env): Promi
       'Content-Disposition': 'attachment; filename="library-device-resets.csv"',
     },
   });
+}
+
+/**
+ * GET /api/admin/device-resets — the reset-request queue as JSON, for the
+ * staff dashboard (/admin#resets). Same rows and filters as the CSV export
+ * above (?status=&from=&to=&limit=), plus per-status counts so the dashboard
+ * chips can be painted without a second request. The rows are personal (staff
+ * cannot clear a limit without knowing whose), which is why this too stays
+ * behind the admin gate.
+ */
+export async function handleAdminDeviceResetsList(request: Request, env: Env): Promise<Response> {
+  const denied = await requireAuth(request, env);
+  if (denied) return denied;
+
+  const url = new URL(request.url);
+  const status = url.searchParams.get('status');
+  const from = url.searchParams.get('from');
+  const to = url.searchParams.get('to');
+  // A queue view, not an export — the CSV endpoint is the way to pull history.
+  const limit = Math.min(2000, Math.max(1, parseInt(url.searchParams.get('limit') || '500', 10) || 500));
+
+  let sql = `
+    SELECT id, created_at, email, name, document_code, document_id, document_title,
+           error_code, raw_message, user_note, status, notify_sent, notify_error,
+           resolved_at, resolved_by
+    FROM device_reset_requests WHERE 1=1
+  `;
+  const bindings: (string | number)[] = [];
+  if (status) { sql += ' AND status = ?'; bindings.push(status); }
+  if (from) { sql += ' AND created_at >= ?'; bindings.push(from); }
+  if (to) { sql += ' AND created_at <= ?'; bindings.push(to); }
+  sql += ' ORDER BY created_at DESC LIMIT ?';
+  bindings.push(limit);
+
+  const counts: Record<string, number> = { all: 0, new: 0, done: 0, dismissed: 0 };
+  let requests: Record<string, unknown>[] = [];
+  let note: string | undefined;
+  try {
+    const [rowsRes, countsRes] = await Promise.all([
+      env.DB.prepare(sql).bind(...bindings).all<Record<string, unknown>>(),
+      env.DB.prepare(
+        'SELECT status, COUNT(*) AS n FROM device_reset_requests GROUP BY status'
+      ).all<{ status: string; n: number }>(),
+    ]);
+    requests = rowsRes.results || [];
+    for (const row of countsRes.results || []) {
+      counts[row.status] = row.n;
+      counts.all += row.n;
+    }
+  } catch (err) {
+    // The table only exists once migration 0016 has been applied; an empty
+    // queue is a truer answer than a 500 — same posture as the CSV export.
+    note = `device_reset_requests unavailable (migration 0016 applied?): ${err instanceof Error ? err.message : String(err)}`;
+  }
+
+  return jsonResponse(note ? { requests, counts, note } : { requests, counts });
 }
 
 /**

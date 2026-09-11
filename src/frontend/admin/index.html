@@ -1,0 +1,821 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Lensy — Staff Dashboard</title>
+  <!-- SSO gate, first: hides the page until /api/auth/me confirms an IES
+       session carrying the `administrator` role. The API enforces the same
+       thing server-side (requireAdminAccess), so this is UX only. -->
+  <script src="/utils/auth-gate.js" data-require-admin></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    // IES brand design tokens — duplicated per page (no shared build step yet;
+    // see the note in index.html).
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            'brand-primary':        '#D95D2B',
+            'brand-primary-dark':   '#B84A20',
+            'brand-secondary':      '#3A5068',
+            'brand-secondary-dark': '#2C3D4F',
+            'brand-accent':         '#EFA723',
+            'surface':              '#F7F7F7',
+            'ink':                  '#2C2C2C',
+          },
+          fontFamily: {
+            display: ['Nohemi', 'Inter', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'sans-serif'],
+            sans:    ['Inter', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'sans-serif'],
+            mono:    ['ui-monospace', 'SFMono-Regular', 'monospace'],
+          },
+        }
+      }
+    }
+  </script>
+  <style>
+    @font-face {
+      font-family: 'Nohemi'; font-style: normal; font-weight: 400 700;
+      font-display: swap; src: url('/fonts/Nohemi-Variable.woff2') format('woff2');
+    }
+    @font-face {
+      font-family: 'Inter'; font-style: normal; font-weight: 100 900;
+      font-display: swap; src: url('/fonts/Inter-Variable.woff2') format('woff2');
+    }
+    body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; color: #2C2C2C; }
+    h1, h2, h3, .font-display { font-family: 'Nohemi', 'Inter', sans-serif; }
+    .fade-in { animation: fadeIn 0.2s ease-out; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+    .spin { animation: spin 0.9s linear infinite; display: inline-block; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body class="bg-surface min-h-screen text-ink">
+
+  <!-- ── Header ─────────────────────────────────────────────────────────── -->
+  <header class="bg-brand-secondary text-white shadow-md sticky top-0 z-40">
+    <div class="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between">
+      <a href="/" class="flex items-center gap-3">
+        <div class="w-8 h-8 rounded-lg bg-white/15 flex items-center justify-center">
+          <svg class="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M12 3v1m0 16v1M4.22 4.22l.707.707M18.364 18.364l.707.707M3 12H2m20 0h-1M4.927 19.073l.707-.707M18.364 5.636l.707-.707M12 8a4 4 0 100 8 4 4 0 000-8z"/>
+          </svg>
+        </div>
+        <div>
+          <span class="font-display text-xl font-bold tracking-tight">Lensy</span>
+          <span class="hidden sm:inline text-blue-200 text-sm ml-2">Staff · Dashboard</span>
+        </div>
+      </a>
+      <!-- auth-gate.js appends the signed-in user chip + Sign out here. -->
+      <nav class="flex items-center gap-1 text-sm">
+        <a href="/" class="px-3 py-1.5 rounded-md text-blue-200 hover:text-white hover:bg-white/10 transition">Search</a>
+        <a href="/admin" class="px-3 py-1.5 rounded-md bg-white/10 text-white transition">Dashboard</a>
+        <a href="/admin/users" class="px-3 py-1.5 rounded-md text-blue-200 hover:text-white hover:bg-white/10 transition">Users</a>
+        <a href="/admin/standards" class="px-3 py-1.5 rounded-md text-blue-200 hover:text-white hover:bg-white/10 transition">Standards</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="max-w-6xl mx-auto px-4 py-8">
+
+    <h1 class="font-display text-2xl font-bold mb-1">Staff dashboard</h1>
+    <p class="text-sm text-gray-500 mb-6">Corpus health, search activity and reader-support queues for Lensy.</p>
+
+    <!-- ── Tabs ───────────────────────────────────────────────────────────── -->
+    <div class="border-b border-gray-200 mb-6">
+      <nav id="tabs" class="flex flex-wrap gap-1 -mb-px text-sm"></nav>
+    </div>
+
+    <!-- ══ Overview ═════════════════════════════════════════════════════════ -->
+    <section id="panel-overview" class="hidden fade-in">
+      <div class="flex items-center justify-between mb-4">
+        <h2 class="font-display text-xl font-bold">Overview</h2>
+        <button onclick="loadOverview()" class="px-3 py-2 text-sm rounded-lg border border-gray-300 bg-white hover:bg-gray-50 transition">Refresh</button>
+      </div>
+      <div id="ov-cards" class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 mb-8">
+        <p class="col-span-full text-sm text-gray-400">Loading…</p>
+      </div>
+
+      <div class="grid lg:grid-cols-2 gap-6">
+        <div>
+          <div class="flex items-center justify-between mb-2">
+            <h3 class="font-display font-bold">Recent ingest runs</h3>
+            <a href="/admin/standards" class="text-sm text-brand-secondary hover:underline">Open Standards →</a>
+          </div>
+          <div class="bg-white rounded-xl shadow overflow-hidden">
+            <table class="w-full text-sm">
+              <thead>
+                <tr class="text-left text-xs uppercase tracking-wide text-gray-500 border-b border-gray-200">
+                  <th class="px-4 py-2.5">Started</th>
+                  <th class="px-4 py-2.5">Standard</th>
+                  <th class="px-4 py-2.5">By</th>
+                  <th class="px-4 py-2.5">Status</th>
+                </tr>
+              </thead>
+              <tbody id="ov-jobs"><tr><td colspan="4" class="px-4 py-6 text-center text-gray-400">Loading…</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+        <div>
+          <div class="flex items-center justify-between mb-2">
+            <h3 class="font-display font-bold">Index warnings</h3>
+            <a href="#index" class="text-sm text-brand-secondary hover:underline">Open Index health →</a>
+          </div>
+          <div id="ov-warnings" class="bg-white rounded-xl shadow p-4 text-sm text-gray-400">Loading…</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ══ Search analytics ═════════════════════════════════════════════════ -->
+    <section id="panel-analytics" class="hidden fade-in">
+      <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+        <h2 class="font-display text-xl font-bold">Search analytics</h2>
+        <div class="flex items-center gap-2">
+          <select id="an-days" onchange="loadAnalytics()" class="px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white">
+            <option value="7">Last 7 days</option>
+            <option value="30" selected>Last 30 days</option>
+            <option value="90">Last 90 days</option>
+            <option value="365">Last 365 days</option>
+          </select>
+          <button onclick="loadAnalytics()" class="px-3 py-2 text-sm rounded-lg border border-gray-300 bg-white hover:bg-gray-50 transition">Refresh</button>
+        </div>
+      </div>
+      <p class="text-xs text-gray-400 mb-4">The logs are anonymous by design — no user identity is stored, so nothing here is per-person. Raw rows: <a id="an-csv-log" href="/api/admin/search-log.csv" class="text-brand-secondary hover:underline">search-log.csv</a> · <a id="an-csv-events" href="/api/admin/search-events.csv" class="text-brand-secondary hover:underline">search-events.csv</a></p>
+
+      <div id="an-note" class="hidden text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-4"></div>
+
+      <div id="an-cards" class="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">
+        <p class="col-span-full text-sm text-gray-400">Loading…</p>
+      </div>
+
+      <div class="bg-white rounded-xl shadow p-4 mb-6">
+        <h3 class="font-display font-bold mb-3">Searches per day</h3>
+        <div id="an-chart" class="flex items-end gap-px h-32"></div>
+        <div id="an-chart-labels" class="flex justify-between text-xs text-gray-400 mt-1"></div>
+      </div>
+
+      <div class="grid lg:grid-cols-2 gap-6 mb-6">
+        <div>
+          <h3 class="font-display font-bold mb-2">Top queries</h3>
+          <div class="bg-white rounded-xl shadow overflow-hidden">
+            <table class="w-full text-sm">
+              <thead>
+                <tr class="text-left text-xs uppercase tracking-wide text-gray-500 border-b border-gray-200">
+                  <th class="px-4 py-2.5">Query</th>
+                  <th class="px-4 py-2.5 text-right">Searches</th>
+                  <th class="px-4 py-2.5 text-right">Low-conf.</th>
+                  <th class="px-4 py-2.5">Last seen</th>
+                </tr>
+              </thead>
+              <tbody id="an-top-queries"></tbody>
+            </table>
+            <p id="an-top-queries-empty" class="hidden text-center text-gray-400 text-sm py-8">No searches in this window.</p>
+          </div>
+        </div>
+        <div>
+          <h3 class="font-display font-bold mb-2">Queries with zero results <span class="text-xs font-sans font-normal text-gray-400">(corpus gaps)</span></h3>
+          <div class="bg-white rounded-xl shadow overflow-hidden">
+            <table class="w-full text-sm">
+              <thead>
+                <tr class="text-left text-xs uppercase tracking-wide text-gray-500 border-b border-gray-200">
+                  <th class="px-4 py-2.5">Query</th>
+                  <th class="px-4 py-2.5 text-right">Tries</th>
+                  <th class="px-4 py-2.5">Last seen</th>
+                </tr>
+              </thead>
+              <tbody id="an-zero-queries"></tbody>
+            </table>
+            <p id="an-zero-queries-empty" class="hidden text-center text-gray-400 text-sm py-8">Nothing came up empty — good.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="grid lg:grid-cols-2 gap-6">
+        <div>
+          <h3 class="font-display font-bold mb-2">Reader interactions <span class="text-xs font-sans font-normal text-gray-400">(what cards people open)</span></h3>
+          <div id="an-events" class="bg-white rounded-xl shadow p-4 text-sm"></div>
+        </div>
+        <div>
+          <h3 class="font-display font-bold mb-2">Most-opened standards</h3>
+          <div class="bg-white rounded-xl shadow overflow-hidden">
+            <table class="w-full text-sm">
+              <thead>
+                <tr class="text-left text-xs uppercase tracking-wide text-gray-500 border-b border-gray-200">
+                  <th class="px-4 py-2.5">Standard</th>
+                  <th class="px-4 py-2.5 text-right">Opens</th>
+                </tr>
+              </thead>
+              <tbody id="an-top-standards"></tbody>
+            </table>
+            <p id="an-top-standards-empty" class="hidden text-center text-gray-400 text-sm py-8">No interaction events in this window.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ══ Device resets ════════════════════════════════════════════════════ -->
+    <section id="panel-resets" class="hidden fade-in">
+      <div class="flex flex-wrap items-center justify-between gap-3 mb-2">
+        <h2 class="font-display text-xl font-bold">Device-limit reset requests</h2>
+        <div class="flex items-center gap-2">
+          <a href="/api/admin/device-resets.csv" class="px-3 py-2 text-sm rounded-lg border border-gray-300 bg-white hover:bg-gray-50 transition">Export CSV</a>
+          <button onclick="loadResets()" class="px-3 py-2 text-sm rounded-lg border border-gray-300 bg-white hover:bg-gray-50 transition">Refresh</button>
+        </div>
+      </div>
+      <p class="text-sm text-gray-500 mb-4">
+        Requests submitted from the Lighting Library error page when a reader hits a Vitrium usage limit.
+        Marking a row <strong>Done</strong> is bookkeeping only — the actual reset is the
+        <strong>“Clear Use”</strong> action in the Vitrium admin app (Users → Clear Use).
+      </p>
+
+      <div class="flex flex-wrap items-center gap-2 mb-4">
+        <div id="rs-chips" class="flex flex-wrap gap-2"></div>
+        <div class="flex items-center gap-2 ml-auto">
+          <label class="text-xs text-gray-500" for="rs-by">Resolved by</label>
+          <input id="rs-by" type="text" placeholder="Your name" class="px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white w-40" />
+        </div>
+      </div>
+
+      <p id="rs-note" class="hidden text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-3"></p>
+
+      <div class="bg-white rounded-xl shadow overflow-hidden">
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead>
+              <tr class="text-left text-xs uppercase tracking-wide text-gray-500 border-b border-gray-200">
+                <th class="px-4 py-3">Received</th>
+                <th class="px-4 py-3">Requester</th>
+                <th class="px-4 py-3">Document</th>
+                <th class="px-4 py-3">Limit hit</th>
+                <th class="px-4 py-3">Note</th>
+                <th class="px-4 py-3">Status</th>
+                <th class="px-4 py-3 text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody id="rs-rows"></tbody>
+          </table>
+        </div>
+        <p id="rs-empty" class="hidden text-center text-gray-400 text-sm py-10">No requests match this view.</p>
+      </div>
+    </section>
+
+    <!-- ══ Index health ═════════════════════════════════════════════════════ -->
+    <section id="panel-index" class="hidden fade-in">
+      <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+        <h2 class="font-display text-xl font-bold">Index health</h2>
+        <div class="flex items-center gap-3">
+          <label class="flex items-center gap-2 text-sm text-gray-600">
+            <input type="checkbox" id="ix-verify" class="rounded border-gray-300">
+            Verify vectors in Vectorize <span class="text-gray-400">(slower)</span>
+          </label>
+          <button onclick="loadIndexStatus()" id="ix-run" class="px-4 py-2 text-sm rounded-lg bg-brand-primary hover:bg-brand-primary-dark text-white font-medium transition">Run report</button>
+        </div>
+      </div>
+      <p class="text-sm text-gray-500 mb-4">
+        Per-standard coverage recorded at ingest time. With the verify option on, the first / middle / last
+        chunk vector of every standard is also fetched live from Vectorize — a gap means D1 and the index
+        disagree and the standard needs re-ingesting.
+      </p>
+
+      <div id="ix-cards" class="grid grid-cols-2 md:grid-cols-6 gap-3 mb-6"></div>
+
+      <div class="flex flex-wrap items-center gap-2 mb-4">
+        <button id="ix-warn-toggle" onclick="toggleWarnOnly()" class="px-3 py-1.5 text-sm rounded-full border bg-white text-gray-600 border-gray-300 hover:bg-gray-50 transition">Only warnings</button>
+        <div class="flex-1 min-w-[220px]">
+          <input id="ix-search" type="search" placeholder="Filter by designation or title…"
+                 oninput="renderIndexStatus()"
+                 class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-brand-primary focus:border-transparent bg-white" />
+        </div>
+      </div>
+
+      <div class="bg-white rounded-xl shadow overflow-hidden">
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead>
+              <tr class="text-left text-xs uppercase tracking-wide text-gray-500 border-b border-gray-200">
+                <th class="px-4 py-3">Designation</th>
+                <th class="px-4 py-3">Title</th>
+                <th class="px-4 py-3">Status</th>
+                <th class="px-4 py-3 text-right">Pages</th>
+                <th class="px-4 py-3 text-right">Chunks</th>
+                <th class="px-4 py-3 text-right">Coverage</th>
+                <th class="px-4 py-3 text-right">Illum. rows</th>
+                <th class="px-4 py-3">Spot-check</th>
+                <th class="px-4 py-3">Warnings</th>
+              </tr>
+            </thead>
+            <tbody id="ix-rows"><tr><td colspan="9" class="px-4 py-8 text-center text-gray-400">Press “Run report” to load the index report.</td></tr></tbody>
+          </table>
+        </div>
+        <p id="ix-empty" class="hidden text-center text-gray-400 text-sm py-10">No standards match this view.</p>
+      </div>
+    </section>
+
+    <!-- ══ Maintenance ══════════════════════════════════════════════════════ -->
+    <section id="panel-maintenance" class="hidden fade-in">
+      <h2 class="font-display text-xl font-bold mb-4">Maintenance</h2>
+      <div class="grid md:grid-cols-2 gap-6">
+
+        <div class="bg-white rounded-xl shadow p-5">
+          <h3 class="font-display font-bold mb-1">Flush the search cache</h3>
+          <p class="text-sm text-gray-500 mb-3">
+            Bumps the corpus data version so every cached search response is invalidated. Use after
+            out-of-band data changes (direct D1 writes, <code class="font-mono text-xs">sync-metadata.js</code>)
+            that bypass the ingest endpoints. Cheap — one KV write; the next search of each query is
+            simply uncached.
+          </p>
+          <button onclick="flushCache()" id="mt-flush" class="px-4 py-2 text-sm rounded-lg bg-brand-primary hover:bg-brand-primary-dark text-white font-medium transition">Flush cache</button>
+          <span id="mt-flush-result" class="ml-3 text-sm text-gray-500"></span>
+        </div>
+
+        <div class="bg-white rounded-xl shadow p-5">
+          <h3 class="font-display font-bold mb-1">Scan for orphan vectors</h3>
+          <p class="text-sm text-gray-500 mb-3">
+            Probes Vectorize for <code class="font-mono text-xs">standard_id</code> values with no row in D1.
+            <strong>Read-only</strong> — it never deletes. Heuristic: re-run for higher confidence. LS-1
+            definition vectors are excluded by design (they have no standards row and never will).
+            Deleting anything it finds is deliberately script-driven, not a dashboard button.
+          </p>
+          <button onclick="scanOrphans()" id="mt-scan" class="px-4 py-2 text-sm rounded-lg bg-brand-secondary hover:bg-brand-secondary-dark text-white font-medium transition">Run scan</button>
+          <div id="mt-scan-result" class="mt-3 text-sm"></div>
+        </div>
+
+        <div class="bg-white rounded-xl shadow p-5">
+          <h3 class="font-display font-bold mb-1">Data exports</h3>
+          <p class="text-sm text-gray-500 mb-3">Staff-only CSV exports. The two logs are anonymous by design; the reset queue is personal and stays behind this gate.</p>
+          <ul class="text-sm space-y-2">
+            <li><a href="/api/admin/search-log.csv" class="text-brand-secondary hover:underline">search-log.csv</a> <span class="text-gray-400">— every query, result count, low-confidence flag</span></li>
+            <li><a href="/api/admin/search-events.csv" class="text-brand-secondary hover:underline">search-events.csv</a> <span class="text-gray-400">— which cards readers opened, from what position</span></li>
+            <li><a href="/api/admin/device-resets.csv" class="text-brand-secondary hover:underline">device-resets.csv</a> <span class="text-gray-400">— the Vitrium reset-request queue</span></li>
+          </ul>
+        </div>
+
+        <div class="bg-white rounded-xl shadow p-5">
+          <h3 class="font-display font-bold mb-1">Runbook pointers</h3>
+          <ul class="text-sm space-y-2 text-gray-600">
+            <li>• New or replacement PDFs: <a href="/admin/standards" class="text-brand-secondary hover:underline">Standards &amp; Indexing</a> (upload → index → disposition).</li>
+            <li>• Access grants and invitations: <a href="/admin/users" class="text-brand-secondary hover:underline">Invited users</a>.</li>
+            <li>• Vitrium metadata (titles, covers, buy links): <code class="font-mono text-xs">npm run sync-metadata</code>, then flush the cache here.</li>
+            <li>• Device resets are actioned in the Vitrium admin app (Users → “Clear Use”), then marked Done in the queue tab.</li>
+          </ul>
+        </div>
+
+      </div>
+    </section>
+  </main>
+
+  <script>
+    // ── Tabs ──────────────────────────────────────────────────────────────
+    const TABS = [
+      ['overview',    'Overview'],
+      ['analytics',   'Search analytics'],
+      ['resets',      'Device resets'],
+      ['index',       'Index health'],
+      ['maintenance', 'Maintenance'],
+    ];
+    const loadedTabs = {};
+    let currentTab = null;
+
+    function renderTabs() {
+      document.getElementById('tabs').innerHTML = TABS.map(([id, label]) => {
+        const active = currentTab === id;
+        const badge = id === 'resets' && resetCounts.new > 0
+          ? ` <span class="inline-flex items-center justify-center min-w-[1.25rem] h-5 px-1 rounded-full text-xs ${active ? 'bg-brand-primary text-white' : 'bg-red-100 text-red-700'}">${resetCounts.new}</span>`
+          : '';
+        return `<a href="#${id}"
+          class="px-4 py-2.5 border-b-2 font-medium transition ${active
+            ? 'border-brand-primary text-brand-primary'
+            : 'border-transparent text-gray-500 hover:text-gray-800 hover:border-gray-300'}">${label}${badge}</a>`;
+      }).join('');
+    }
+
+    function activateTab(id) {
+      if (!TABS.some(([t]) => t === id)) id = 'overview';
+      currentTab = id;
+      for (const [t] of TABS) {
+        document.getElementById(`panel-${t}`).classList.toggle('hidden', t !== id);
+      }
+      renderTabs();
+      if (!loadedTabs[id]) {
+        loadedTabs[id] = true;
+        ({ overview: loadOverview, analytics: loadAnalytics, resets: loadResets,
+           index: () => {}, maintenance: () => {} })[id]();
+      }
+    }
+
+    window.addEventListener('hashchange', () => activateTab(location.hash.slice(1)));
+
+    // ── Helpers (same contract as the other staff pages) ──────────────────
+    async function api(path, options = {}) {
+      const res = await fetch(path, {
+        ...options,
+        headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+      });
+      if (res.status === 401 || res.status === 403 || res.status === 503) {
+        location.reload();
+        throw new Error('session_lost');
+      }
+      const data = await res.json().catch(() => ({}));
+      return { status: res.status, data };
+    }
+
+    function esc(s) {
+      return String(s ?? '').replace(/[&<>"']/g, c =>
+        ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
+    }
+    const fmt = n => Number(n || 0).toLocaleString('en-US');
+    const pct = (part, whole) => whole ? Math.round((part / whole) * 100) + '%' : '—';
+    const day = s => s ? String(s).slice(0, 10) : '—';
+
+    function statCard(label, value, opts = {}) {
+      const tone = opts.tone === 'warn' ? 'text-amber-700' : opts.tone === 'bad' ? 'text-red-600' : 'text-ink';
+      const sub = opts.sub ? `<p class="text-xs text-gray-400 mt-0.5">${opts.sub}</p>` : '';
+      const inner = `
+        <p class="text-xs uppercase tracking-wide text-gray-500">${label}</p>
+        <p class="font-display text-2xl font-bold mt-1 ${tone}">${value}</p>${sub}`;
+      return opts.href
+        ? `<a href="${opts.href}" class="block bg-white rounded-xl shadow p-4 hover:shadow-md transition">${inner}</a>`
+        : `<div class="bg-white rounded-xl shadow p-4">${inner}</div>`;
+    }
+
+    // ── Overview ──────────────────────────────────────────────────────────
+    async function loadOverview() {
+      const [index, users, resets, week, jobs] = await Promise.allSettled([
+        api('/api/admin/index-status?verify=0'),
+        api('/api/admin/users'),
+        api('/api/admin/device-resets?limit=1'),
+        api('/api/admin/analytics?days=7'),
+        api('/api/admin/ingest-jobs?limit=6'),
+      ]);
+      const val = r => (r.status === 'fulfilled' ? r.value.data : null);
+      const ix = val(index), us = val(users), rs = val(resets), an = val(week), jb = val(jobs);
+
+      if (rs?.counts) { resetCounts = rs.counts; renderTabs(); }
+
+      const cards = [];
+      if (ix?.totals) {
+        cards.push(statCard('Standards indexed', fmt(ix.totals.standards),
+          { sub: `${fmt(ix.totals.active)} active · ${fmt(ix.totals.deprecated)} deprecated`, href: '#index' }));
+        cards.push(statCard('Chunks in Vectorize', fmt(ix.totals.totalChunks),
+          { sub: `${fmt(ix.totals.totalApplicationRows)} illuminance rows`, href: '#index' }));
+        cards.push(statCard('Index warnings', fmt(ix.totals.standardsWithWarnings),
+          { tone: ix.totals.standardsWithWarnings > 0 ? 'warn' : undefined, sub: 'standards flagged', href: '#index' }));
+      } else {
+        cards.push(statCard('Index report', '—', { sub: 'could not load' }));
+      }
+      if (an?.searches) {
+        cards.push(statCard('Searches (7 days)', fmt(an.searches.total),
+          { sub: `${pct(an.searches.noStrongMatch, an.searches.total)} low-confidence`, href: '#analytics' }));
+      }
+      if (us?.counts) {
+        cards.push(statCard('Invited users', fmt(us.counts.all),
+          { sub: `${fmt(us.counts.active)} active · ${fmt(us.counts.invited)} invited`, href: '/admin/users' }));
+      }
+      if (rs?.counts) {
+        cards.push(statCard('Reset requests', fmt(rs.counts.new),
+          { tone: rs.counts.new > 0 ? 'bad' : undefined, sub: 'awaiting action', href: '#resets' }));
+      }
+      document.getElementById('ov-cards').innerHTML = cards.join('');
+
+      // Recent ingest runs
+      const JOB_TONE = s => /fail|error/i.test(s) ? 'bg-red-100 text-red-700'
+        : /done|complete|finali|index/i.test(s) ? 'bg-green-100 text-green-800'
+        : /cancel/i.test(s) ? 'bg-gray-200 text-gray-600'
+        : 'bg-amber-100 text-amber-800';
+      const jobsRows = (jb?.jobs || []).slice(0, 6).map(j => `
+        <tr class="border-b border-gray-100">
+          <td class="px-4 py-2.5 text-xs text-gray-500 whitespace-nowrap">${esc(day(j.created_at))}</td>
+          <td class="px-4 py-2.5 font-mono text-xs">${esc(j.standard_id || j.filename || '—')}</td>
+          <td class="px-4 py-2.5 text-xs">${esc(j.created_by || '—')}</td>
+          <td class="px-4 py-2.5"><span class="inline-block px-2 py-0.5 rounded-full text-xs font-medium ${JOB_TONE(String(j.status || ''))}" title="${esc(j.error || j.step || '')}">${esc(j.status || '—')}</span></td>
+        </tr>`);
+      document.getElementById('ov-jobs').innerHTML = jobsRows.join('') ||
+        '<tr><td colspan="4" class="px-4 py-6 text-center text-gray-400">No ingest runs yet.</td></tr>';
+      if (jb?.note) {
+        document.getElementById('ov-jobs').innerHTML =
+          `<tr><td colspan="4" class="px-4 py-6 text-center text-gray-400">${esc(jb.note)}</td></tr>`;
+      }
+
+      // Warnings digest
+      const warnEl = document.getElementById('ov-warnings');
+      if (!ix?.warnings) {
+        warnEl.textContent = 'Could not load the index report.';
+      } else if (ix.warnings.length === 0) {
+        warnEl.innerHTML = '<span class="text-green-700">✓ No standards are flagged — coverage looks complete.</span>';
+      } else {
+        warnEl.classList.remove('text-gray-400');
+        warnEl.innerHTML = ix.warnings.slice(0, 8).map(w => `
+          <div class="py-1.5 border-b border-gray-100 last:border-0">
+            <span class="font-mono text-xs font-medium">${esc(w.id)}</span>
+            <span class="text-xs text-gray-500 ml-1">${esc(w.warnings[0])}${w.warnings.length > 1 ? ` (+${w.warnings.length - 1} more)` : ''}</span>
+          </div>`).join('') +
+          (ix.warnings.length > 8 ? `<p class="text-xs text-gray-400 mt-2">…and ${ix.warnings.length - 8} more — see Index health.</p>` : '');
+      }
+    }
+
+    // ── Search analytics ──────────────────────────────────────────────────
+    async function loadAnalytics() {
+      const days = document.getElementById('an-days').value;
+      const { data } = await api(`/api/admin/analytics?days=${encodeURIComponent(days)}`);
+      const s = data.searches || {};
+      const e = data.events || {};
+
+      // CSV links follow the selected window (dates are UTC, like the log).
+      const from = new Date(Date.now() - (Number(days) - 1) * 86400e3).toISOString().slice(0, 10);
+      document.getElementById('an-csv-log').href = `/api/admin/search-log.csv?from=${from}`;
+      document.getElementById('an-csv-events').href = `/api/admin/search-events.csv?from=${from}`;
+
+      const noteEl = document.getElementById('an-note');
+      const notes = [s.note, e.note].filter(Boolean);
+      noteEl.classList.toggle('hidden', notes.length === 0);
+      noteEl.textContent = notes.join(' · ');
+
+      document.getElementById('an-cards').innerHTML = [
+        statCard('Searches', fmt(s.total)),
+        statCard('Served from cache', pct(s.cached, s.total), { sub: `${fmt(s.cached)} responses` }),
+        statCard('Low-confidence', pct(s.noStrongMatch, s.total), { sub: `${fmt(s.noStrongMatch)} searches`, tone: s.total && s.noStrongMatch / s.total > 0.3 ? 'warn' : undefined }),
+        statCard('Zero results', fmt(s.zeroResults), { tone: s.zeroResults > 0 ? 'warn' : undefined }),
+        statCard('Cards opened', fmt(e.total), { sub: 'interaction events' }),
+      ].join('');
+
+      renderChart(s.perDay || [], Number(days));
+
+      const topQ = (s.topQueries || []).map(q => `
+        <tr class="border-b border-gray-100">
+          <td class="px-4 py-2.5">${esc(q.query)}</td>
+          <td class="px-4 py-2.5 text-right">${fmt(q.searches)}</td>
+          <td class="px-4 py-2.5 text-right ${q.noStrongMatch > 0 ? 'text-amber-700' : 'text-gray-400'}">${fmt(q.noStrongMatch)}</td>
+          <td class="px-4 py-2.5 text-xs text-gray-500 whitespace-nowrap">${esc(day(q.lastSeen))}</td>
+        </tr>`);
+      document.getElementById('an-top-queries').innerHTML = topQ.join('');
+      document.getElementById('an-top-queries-empty').classList.toggle('hidden', topQ.length > 0);
+
+      const zeroQ = (s.zeroResultQueries || []).map(q => `
+        <tr class="border-b border-gray-100">
+          <td class="px-4 py-2.5">${esc(q.query)}</td>
+          <td class="px-4 py-2.5 text-right">${fmt(q.searches)}</td>
+          <td class="px-4 py-2.5 text-xs text-gray-500 whitespace-nowrap">${esc(day(q.lastSeen))}</td>
+        </tr>`);
+      document.getElementById('an-zero-queries').innerHTML = zeroQ.join('');
+      document.getElementById('an-zero-queries-empty').classList.toggle('hidden', zeroQ.length > 0);
+
+      const evEl = document.getElementById('an-events');
+      evEl.innerHTML = (e.byEvent || []).length
+        ? (e.byEvent || []).map(ev => `
+            <div class="flex items-center justify-between py-1.5 border-b border-gray-100 last:border-0">
+              <span class="font-mono text-xs">${esc(ev.event)}</span>
+              <span class="font-medium">${fmt(ev.n)}</span>
+            </div>`).join('')
+        : '<p class="text-gray-400">No interaction events in this window.' +
+          (e.note ? '' : ' Events are only recorded when a reader opens a card in the Library.') + '</p>';
+
+      const topStd = (e.topStandards || []).map(t => `
+        <tr class="border-b border-gray-100">
+          <td class="px-4 py-2.5 font-mono text-xs">${esc(t.standardId)}</td>
+          <td class="px-4 py-2.5 text-right">${fmt(t.n)}</td>
+        </tr>`);
+      document.getElementById('an-top-standards').innerHTML = topStd.join('');
+      document.getElementById('an-top-standards-empty').classList.toggle('hidden', topStd.length > 0);
+    }
+
+    // Simple CSS bar chart: one bar per day of the window, zero-filled so a
+    // quiet day reads as quiet rather than missing. Dates are UTC to match
+    // SQLite's datetime('now').
+    function renderChart(perDay, days) {
+      const byDay = Object.fromEntries(perDay.map(d => [d.day, d.searches]));
+      const bars = [];
+      const today = new Date();
+      for (let i = days - 1; i >= 0; i--) {
+        const d = new Date(today.getTime() - i * 86400e3).toISOString().slice(0, 10);
+        bars.push({ day: d, n: byDay[d] || 0 });
+      }
+      const max = Math.max(1, ...bars.map(b => b.n));
+      document.getElementById('an-chart').innerHTML = bars.map(b => `
+        <div class="flex-1 min-w-[2px] rounded-t ${b.n ? 'bg-brand-secondary hover:bg-brand-primary' : 'bg-gray-100'} transition"
+             style="height:${b.n ? Math.max(4, Math.round((b.n / max) * 100)) : 2}%"
+             title="${esc(b.day)}: ${fmt(b.n)} search${b.n === 1 ? '' : 'es'}"></div>`).join('');
+      document.getElementById('an-chart-labels').innerHTML =
+        `<span>${esc(bars[0].day)}</span><span>${esc(bars[bars.length - 1].day)}</span>`;
+    }
+
+    // ── Device resets ─────────────────────────────────────────────────────
+    const BY_STORAGE = 'lensy_admin_resolved_by';
+    let resetCounts = { all: 0, new: 0, done: 0, dismissed: 0 };
+    let resetRows = [];
+    let resetFilter = 'new';
+
+    // Vitrium's Clear-Use error family — the only codes the public form accepts.
+    const RESET_CODES = {
+      vc3: 'Device limit', dvc3: 'Content limit', dovc3: 'Open limit',
+      dpvc3: 'Print limit', vp3: 'Print limit', ipvc3: 'IP limit',
+    };
+    const RS_BADGE = {
+      new: 'bg-red-100 text-red-700',
+      done: 'bg-green-100 text-green-800',
+      dismissed: 'bg-gray-200 text-gray-600',
+    };
+
+    async function loadResets() {
+      document.getElementById('rs-by').value = localStorage.getItem(BY_STORAGE) || '';
+      const { data } = await api('/api/admin/device-resets');
+      resetRows = data.requests || [];
+      resetCounts = data.counts || resetCounts;
+      const note = document.getElementById('rs-note');
+      note.classList.toggle('hidden', !data.note);
+      note.textContent = data.note || '';
+      renderTabs();
+      renderResets();
+    }
+
+    function setResetFilter(s) { resetFilter = s; renderResets(); }
+
+    function renderResets() {
+      const CHIPS = [['new', 'New'], ['done', 'Done'], ['dismissed', 'Dismissed'], ['all', 'All']];
+      document.getElementById('rs-chips').innerHTML = CHIPS.map(([s, label]) => {
+        const active = resetFilter === s;
+        return `<button onclick="setResetFilter('${s}')"
+          class="px-3 py-1.5 text-sm rounded-full border transition ${active
+            ? 'bg-brand-secondary text-white border-brand-secondary'
+            : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'}">
+          ${label} <span class="${active ? 'text-blue-200' : 'text-gray-400'}">${resetCounts[s] ?? 0}</span>
+        </button>`;
+      }).join('');
+
+      const visible = resetRows.filter(r => resetFilter === 'all' || r.status === resetFilter);
+      document.getElementById('rs-rows').innerHTML = visible.map(r => {
+        const codeLabel = RESET_CODES[r.error_code] || r.error_code;
+        const actions = r.status === 'new'
+          ? `<button onclick="updateReset(${r.id}, 'done')" class="text-green-700 hover:underline">Mark done</button>
+             <button onclick="updateReset(${r.id}, 'dismissed')" class="text-gray-400 hover:text-red-600 hover:underline">Dismiss</button>`
+          : `<button onclick="updateReset(${r.id}, 'new')" class="text-brand-secondary hover:underline">Reopen</button>`;
+        const resolved = r.resolved_at
+          ? `<p class="text-xs text-gray-400 mt-0.5">${esc(day(r.resolved_at))}${r.resolved_by ? ' · ' + esc(r.resolved_by) : ''}</p>`
+          : '';
+        const notify = r.notify_error
+          ? `<p class="text-xs text-red-600 mt-0.5" title="${esc(r.notify_error)}">staff email failed ⚠</p>`
+          : '';
+        return `<tr class="border-b border-gray-100 hover:bg-gray-50 align-top">
+          <td class="px-4 py-3 text-xs text-gray-500 whitespace-nowrap">${esc(day(r.created_at))}</td>
+          <td class="px-4 py-3">
+            <span class="font-mono text-xs">${esc(r.email)}</span>
+            ${r.name ? `<p class="text-xs text-gray-500">${esc(r.name)}</p>` : ''}${notify}
+          </td>
+          <td class="px-4 py-3 text-xs">
+            ${r.document_id ? `<span class="font-mono font-medium">${esc(r.document_id)}</span>` : `<span class="font-mono text-gray-400">${esc(r.document_code || '—')}</span>`}
+            ${r.document_title ? `<p class="text-gray-500 max-w-[220px] truncate" title="${esc(r.document_title)}">${esc(r.document_title)}</p>` : ''}
+          </td>
+          <td class="px-4 py-3 text-xs"><span title="${esc(r.raw_message || '')}">${esc(codeLabel)}</span>
+            <p class="font-mono text-gray-400">${esc(r.error_code)}</p></td>
+          <td class="px-4 py-3 text-xs text-gray-600 max-w-[260px]"><span class="line-clamp-3" title="${esc(r.user_note || '')}">${esc(r.user_note) || '<span class="text-gray-300">—</span>'}</span></td>
+          <td class="px-4 py-3"><span class="inline-block px-2 py-0.5 rounded-full text-xs font-medium ${RS_BADGE[r.status] || 'bg-gray-100 text-gray-600'}">${esc(r.status)}</span>${resolved}</td>
+          <td class="px-4 py-3 text-right whitespace-nowrap space-x-3 text-xs">${actions}</td>
+        </tr>`;
+      }).join('');
+      document.getElementById('rs-empty').classList.toggle('hidden', visible.length > 0);
+    }
+
+    async function updateReset(id, status) {
+      const by = document.getElementById('rs-by').value.trim() || null;
+      if (by) localStorage.setItem(BY_STORAGE, by);
+      if (status === 'done' &&
+          !confirm('Mark as done? Remember: the actual reset is the “Clear Use” action in the Vitrium admin app — this only records that it happened.')) return;
+      const { status: code, data } = await api('/api/admin/device-resets', {
+        method: 'POST', body: JSON.stringify({ id, status, resolved_by: by }),
+      });
+      if (code >= 400) alert(`Could not update: ${data.error || 'unknown error'}`);
+      await loadResets();
+    }
+
+    // ── Index health ──────────────────────────────────────────────────────
+    let indexReport = null;
+    let warnOnly = false;
+
+    async function loadIndexStatus() {
+      const verify = document.getElementById('ix-verify').checked;
+      const btn = document.getElementById('ix-run');
+      btn.disabled = true;
+      const label = btn.textContent;
+      btn.innerHTML = '<span class="spin">◌</span> Running…';
+      document.getElementById('ix-rows').innerHTML =
+        `<tr><td colspan="9" class="px-4 py-8 text-center text-gray-400">${verify ? 'Spot-checking every standard against Vectorize — this takes a moment…' : 'Loading…'}</td></tr>`;
+      try {
+        const { data } = await api(`/api/admin/index-status?verify=${verify ? 1 : 0}`);
+        indexReport = data;
+        renderIndexStatus();
+      } finally {
+        btn.disabled = false;
+        btn.textContent = label;
+      }
+    }
+
+    function toggleWarnOnly() {
+      warnOnly = !warnOnly;
+      document.getElementById('ix-warn-toggle').className =
+        'px-3 py-1.5 text-sm rounded-full border transition ' + (warnOnly
+          ? 'bg-brand-secondary text-white border-brand-secondary'
+          : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50');
+      renderIndexStatus();
+    }
+
+    function renderIndexStatus() {
+      if (!indexReport) return;
+      const t = indexReport.totals || {};
+      document.getElementById('ix-cards').innerHTML = [
+        statCard('Standards', fmt(t.standards)),
+        statCard('Active', fmt(t.active)),
+        statCard('Deprecated', fmt(t.deprecated)),
+        statCard('Chunks', fmt(t.totalChunks)),
+        statCard('Illuminance rows', fmt(t.totalApplicationRows)),
+        statCard('With warnings', fmt(t.standardsWithWarnings), { tone: t.standardsWithWarnings > 0 ? 'warn' : undefined }),
+      ].join('');
+
+      const q = (document.getElementById('ix-search').value || '').trim().toLowerCase();
+      const visible = (indexReport.standards || []).filter(s => {
+        if (warnOnly && (!s.warnings || s.warnings.length === 0)) return false;
+        if (!q) return true;
+        return [s.id, s.title].some(f => f && f.toLowerCase().includes(q));
+      });
+
+      document.getElementById('ix-rows').innerHTML = visible.map(s => {
+        const cov = s.pageCoveragePct;
+        const covTone = cov == null ? 'text-gray-400' : cov < 60 ? 'text-red-600 font-medium' : cov < 85 ? 'text-amber-700' : 'text-gray-600';
+        let spot = '<span class="text-gray-300">—</span>';
+        if (s.vectorSpotCheck) {
+          if (s.vectorSpotCheck.error) {
+            spot = `<span class="text-red-600 text-xs" title="${esc(s.vectorSpotCheck.error)}">error</span>`;
+          } else {
+            const ok = s.vectorSpotCheck.found === s.vectorSpotCheck.probed;
+            spot = ok
+              ? `<span class="text-green-700 text-xs">✓ ${s.vectorSpotCheck.found}/${s.vectorSpotCheck.probed}</span>`
+              : `<span class="text-red-600 text-xs font-medium" title="${esc((s.vectorSpotCheck.missing || []).join(', '))}">✗ ${s.vectorSpotCheck.found}/${s.vectorSpotCheck.probed}</span>`;
+          }
+        }
+        const warn = (s.warnings || []).length
+          ? `<span class="text-xs text-amber-700" title="${esc(s.warnings.join('\n'))}">${esc(s.warnings[0])}${s.warnings.length > 1 ? ` (+${s.warnings.length - 1})` : ''}</span>`
+          : '<span class="text-gray-300">—</span>';
+        return `<tr class="border-b border-gray-100 hover:bg-gray-50">
+          <td class="px-4 py-2.5 font-mono text-xs whitespace-nowrap">${esc(s.id)}</td>
+          <td class="px-4 py-2.5 text-xs max-w-[260px] truncate" title="${esc(s.title)}">${esc(s.title)}</td>
+          <td class="px-4 py-2.5"><span class="inline-block px-2 py-0.5 rounded-full text-xs font-medium ${s.status === 'Deprecated' ? 'bg-amber-100 text-amber-800' : 'bg-green-100 text-green-800'}">${esc(s.status || '—')}</span></td>
+          <td class="px-4 py-2.5 text-right text-xs">${s.pageCount != null ? fmt(s.pageCount) : '—'}</td>
+          <td class="px-4 py-2.5 text-right text-xs">${s.chunkCount != null ? fmt(s.chunkCount) : '—'}</td>
+          <td class="px-4 py-2.5 text-right text-xs ${covTone}">${cov != null ? cov + '%' : '—'}</td>
+          <td class="px-4 py-2.5 text-right text-xs">${fmt(s.applicationRows)}</td>
+          <td class="px-4 py-2.5">${spot}</td>
+          <td class="px-4 py-2.5">${warn}</td>
+        </tr>`;
+      }).join('');
+      document.getElementById('ix-empty').classList.toggle('hidden', visible.length > 0);
+    }
+
+    // ── Maintenance ───────────────────────────────────────────────────────
+    async function flushCache() {
+      if (!confirm('Flush the search response cache? Every query becomes uncached until searched again.')) return;
+      const btn = document.getElementById('mt-flush');
+      btn.disabled = true;
+      try {
+        const { status, data } = await api('/api/admin/flush-cache', { method: 'POST' });
+        document.getElementById('mt-flush-result').textContent = status < 400
+          ? `✓ Flushed — data version is now ${data.dataVersion}`
+          : `Failed: ${data.error || status}`;
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    async function scanOrphans() {
+      const btn = document.getElementById('mt-scan');
+      const out = document.getElementById('mt-scan-result');
+      btn.disabled = true;
+      out.innerHTML = '<span class="text-gray-400"><span class="spin">◌</span> Probing Vectorize…</span>';
+      try {
+        const { status, data } = await api('/api/admin/scan-orphans', { method: 'POST', body: '{}' });
+        if (status >= 400) {
+          out.innerHTML = `<span class="text-red-600">Scan failed: ${esc(data.error || status)}</span>`;
+          return;
+        }
+        const orphans = data.orphanStandards || [];
+        out.innerHTML = `
+          <p class="text-gray-600 mb-2">Probed ${fmt(data.passes)} passes · saw ${fmt(data.standardsSeenInVectorize)} standards in Vectorize.</p>
+          ${orphans.length === 0
+            ? '<p class="text-green-700 font-medium">✓ No orphan standards found.</p>'
+            : `<p class="text-red-600 font-medium mb-1">${orphans.length} orphan standard(s):</p>
+               <ul class="font-mono text-xs space-y-0.5">${orphans.map(o => `<li>${esc(o)}</li>`).join('')}</ul>
+               <p class="text-xs text-gray-400 mt-2">Deletion is script-driven by design — see scripts/ and POST /api/admin/delete-orphans.</p>`}
+        `;
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    // ── Boot ──────────────────────────────────────────────────────────────
+    // auth-gate.js has already verified the admin session by the time it fires
+    // `lensy:auth`; before that the whole body is hidden.
+    document.addEventListener('lensy:auth', function () {
+      renderTabs();
+      activateTab(location.hash.slice(1) || 'overview');
+    });
+  </script>
+</body>
+</html>

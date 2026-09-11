@@ -26,7 +26,7 @@
 
 import { handleSearch } from './search';
 import { handleIngest } from './ingest';
-import { handleAdminScanOrphans, handleAdminEnumerateIds, handleAdminDeleteOrphans, handleAdminFlushCache, handleAdminSearchLog, handleAdminSearchEvents, handleAdminR2Multipart, handleAdminIndexStatus, handleAdminDeviceResets, handleAdminDeviceResetUpdate } from './admin';
+import { handleAdminScanOrphans, handleAdminEnumerateIds, handleAdminDeleteOrphans, handleAdminFlushCache, handleAdminSearchLog, handleAdminSearchEvents, handleAdminR2Multipart, handleAdminIndexStatus, handleAdminAnalytics, handleAdminDeviceResets, handleAdminDeviceResetsList, handleAdminDeviceResetUpdate } from './admin';
 import { handleLibraryDocumentLookup, handleDeviceResetRequest } from './library-support';
 import { handleIngestJobs } from './staff-ingest';
 import { handleEvent } from './events';
@@ -155,8 +155,14 @@ export default {
       if (path === '/api/admin/r2-multipart' && request.method === 'POST') {
         return withCors(await handleAdminR2Multipart(request, env));
       }
+      if (path === '/api/admin/analytics' && request.method === 'GET') {
+        return withCors(await handleAdminAnalytics(request, env));
+      }
       if (path === '/api/admin/device-resets.csv' && request.method === 'GET') {
         return withCors(await handleAdminDeviceResets(request, env));
+      }
+      if (path === '/api/admin/device-resets' && request.method === 'GET') {
+        return withCors(await handleAdminDeviceResetsList(request, env));
       }
       if (path === '/api/admin/device-resets' && request.method === 'POST') {
         return withCors(await handleAdminDeviceResetUpdate(request, env));

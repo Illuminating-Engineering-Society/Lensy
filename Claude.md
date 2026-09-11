@@ -1655,6 +1655,39 @@ backed by `/api/admin/ingest-jobs` (`src/workers/staff-ingest.ts`, migration
   Tests: `src/workers/staff-ingest.test.js`, `src/lib/pdf-pages.test.js`,
   `src/lib/standard-id.test.js`.
 
+### /admin is a tabbed staff hub (2026-09-11)
+
+`/admin` now resolves — `src/frontend/admin/index.html`, served by Workers
+assets' default html_handling — and is the staff landing page. Same shape as
+the other two staff pages: `auth-gate.js data-require-admin` as UX gate,
+`requireAdminAccess` on every API it touches. Five hash-routed tabs
+(`#overview` … `#maintenance`), each lazy-loaded on first open:
+
+- **Overview** — stat cards from `index-status?verify=0`, `/api/admin/users`
+  counts, the reset queue, `analytics?days=7`, plus the last ingest runs and a
+  warnings digest.
+- **Search analytics** — NEW `GET /api/admin/analytics?days=` (admin.ts):
+  SQL-side aggregates of `search_log` + `search_events` — per-day counts
+  (zero-filled bars in the UI), top queries grouped case-insensitively,
+  zero-result queries as the corpus-gap signal, events by type, most-opened
+  standards. Raw rows remain CSV-export territory; each table fails soft to
+  zeros + a note (missing-migration posture of the CSV handlers), and the days
+  window is clamped 1–365 and bound as a `datetime()` modifier, never SQL text.
+- **Device resets** — NEW `GET /api/admin/device-resets` (JSON sibling of the
+  CSV export, same filters, plus per-status counts) renders the queue with
+  Mark done / Dismiss / Reopen over the existing POST; "resolved by" is
+  remembered in localStorage, and the UI repeats that the actual reset is
+  Vitrium's "Clear Use" — the queue is bookkeeping.
+- **Index health** — `/api/admin/index-status` with the Vectorize spot-check
+  as an opt-in checkbox (default `verify=0`, since the spot-check is a
+  per-standard Vectorize call), a warnings-only toggle and a text filter.
+- **Maintenance** — flush-cache and the read-only orphan scan as buttons
+  (deletion stays script-driven; deliberately NO delete button — see the LS-1
+  incident above), the three CSV exports, and runbook pointers.
+
+All three /admin pages now share one header nav (Search · Dashboard · Users ·
+Standards). Tests: `src/workers/admin.test.js`.
+
 ### The 260904 round (DO070-update, DO099–DO111): display filters, honest comparisons, and the permissions chart
 
 Fourteen items (`260904_Lensey Feedback.docx`); `SEARCH_CACHE_SCHEMA` → **v16**.
