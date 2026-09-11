@@ -1655,6 +1655,79 @@ backed by `/api/admin/ingest-jobs` (`src/workers/staff-ingest.ts`, migration
   Tests: `src/workers/staff-ingest.test.js`, `src/lib/pdf-pages.test.js`,
   `src/lib/standard-id.test.js`.
 
+### The Word manuscript rides beside the PDF (dual-upload ingest, 2026-09-11)
+
+The client's next expansion of the dashboard: "require two uploads: Word Doc
+[and] PDF. The Word doc should be responsible for feeding and training the AI
+system on the content. The PDF should be responsible for directing the page in
+which the content exists in that standard (for the Vitrium pass-over)." Phase A
+is built (design + rationale in `docs/STAFF_INGEST.md`'s sibling
+**`docs/DOCX_INGEST.md`** — read it before touching this seam); "training" is
+really extraction + embedding, and the client's motive ("ensure we're not
+losing content") is answered by the alignment report, not by the model.
+
+- **The manuscript is OPTIONAL per job, and the PDF stays required** — the
+  client said "require", but deprecated editions and the existing corpus have
+  no retrievable final manuscripts, so a hard requirement would block exactly
+  the re-ingests the dashboard exists for. The modal encourages attaching it;
+  every DOCX failure downgrades to the proven PDF-only path with a warning,
+  NEVER to a failed ingest.
+- **Parsed in the Worker, not the browser** (`src/lib/docx-extract.js`): a
+  .docx is ZIP + XML, so unlike the PDF it needs no pdfjs seat — a minimal ZIP
+  reader over `DecompressionStream('deflate-raw')` and a non-validating XML
+  walk, zero dependencies. Structure replaces every layout heuristic: headings
+  come from styles/outlineLvl (auto-numbered ones are synthesized from
+  counters ONLY under `w:numPr` — an unnumbered heading gets no invented
+  locator, the DO071 rule; a year-shaped "section 2026" is refused), each
+  References paragraph is one entry (gated by the same
+  `looksLikeFormalReference`), a `w:tbl` serializes cell text (the raster
+  tables invisible to the PDF path included), captions reuse
+  `parseCaptionLine`, OMML math linearizes to readable text ("E_v=(Φ)/(A)")
+  instead of DO072's underscore soup, and the body ToC (TOC styles, usually
+  inside an SDT) is skipped so headings don't duplicate as prose. Chunk sizing
+  mirrors the chunker's DEFAULTS, continuation marker and overlap included.
+  **Tracked changes refuse the upload outright** — accepting either side of an
+  unaccepted revision indexes text nobody approved — and a manuscript whose
+  designation names a different standard FAMILY than the job is refused at
+  upload (wrong file attached).
+- **Pages come from alignment, never from Word** (`src/lib/page-align.js`):
+  both texts collapse to a bare [a-z0-9] stream (the DO110 trick — it erases
+  hyphenation-at-line-break, ligatures, whitespace, and subsetted-font
+  punctuation in one move), then each chunk's opening 72 normalized chars are
+  searched MONOTONICALLY (from just past the previous match, so overlap
+  carries still land inside their predecessor; anchor ladder 72→40→24, one
+  full-strength global retry for out-of-order content). An unlocatable chunk
+  inherits a neighbour's page and is COUNTED: `bodyInheritedFraction` over
+  PROSE chunks (tables excluded — DOCX cell order need not match the PDF's
+  layout stream) above `DOCX_BODY_DRIFT_LIMIT` (5%) means the files are
+  different revisions and the manuscript is DISCARDED — a pre-copyedit draft
+  must never be indexed under a published standard's name. A second gate
+  refuses a manuscript yielding under 40% of the PDF's chunk count (a chapter
+  draft, not the document). Outline pages come from each section's first
+  LOCATED chunk (searching heading text directly would land in the PDF's own
+  printed ToC); caption alignment starts at the first body match so a List of
+  Figures can't claim it, and manuscript assets MERGE over the PDF's
+  (manuscript wins collisions, PDF fills what alignment couldn't place).
+- **Wiring:** POST/DELETE `/api/admin/ingest-jobs/:id/docx` validates at
+  upload time (tracked changes / family / not-a-docx answer 400 while staff
+  are still looking); `/process` runs `docx` + `align` steps between extract
+  and store; migration **0018** adds `docx_key`, `docx_size` and
+  `alignment_json` (the full report — located/inherited counts, unmatched
+  samples, `uncoveredPages`: substantial PDF pages no chunk covered, the other
+  direction of "not losing content"). `result_json` gains
+  `source: 'docx+pdf' | 'pdf'` and an alignment summary the tracker prints;
+  the jobs list badges manuscript-fed runs. General-notes chunks,
+  applications, reference markers, cover metadata and page_count stay
+  PDF-side (Phase B — applications from `w:tbl` — deliberately not started).
+- **Not yet validated against a real manuscript** — IES has supplied none
+  (RP-27-26 would be the natural first, its PDF is pending anyway). If real
+  manuscripts turn out to be pre-layout drafts, the drift gate will refuse
+  them — that is the gate working; the follow-up is a conversation with the
+  client, not a looser threshold. Tests: `src/lib/docx-extract.test.js`,
+  `src/lib/page-align.test.js`, the dual-upload cases in
+  `staff-ingest.test.js` (fixtures are stored-method ZIPs so they run on any
+  Node ≥ 18; `src/lib/docx-fixture.js` is test-only).
+
 ### /admin is THE staff page — one dashboard, seven tabs (2026-09-11)
 
 `/admin` (`src/frontend/admin/index.html`, served by Workers assets' default

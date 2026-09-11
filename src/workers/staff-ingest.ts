@@ -48,10 +48,26 @@
  *   POST /api/admin/ingest-jobs/:id/pdf        raw PDF bytes → R2
  *   GET  /api/admin/ingest-jobs/:id/pdf        stream the PDF back (resume, and
  *                                              the comparison follow-up parse)
+ *   POST /api/admin/ingest-jobs/:id/docx       optional Word manuscript → R2
+ *                                              (validated: tracked changes and a
+ *                                              wrong-family designation refuse)
+ *   DELETE /api/admin/ingest-jobs/:id/docx     detach the manuscript
  *   POST /api/admin/ingest-jobs/:id/pages      one batch of raw pages
  *   POST /api/admin/ingest-jobs/:id/process    extract + embed + index
  *   POST /api/admin/ingest-jobs/:id/finalize   old-edition disposition + cleanup
- *   POST /api/admin/ingest-jobs/:id/cancel     abandon + clean up staging
+ *   POST /api/admin/ingest-jobs/:id/cancel    abandon + clean up staging
+ *
+ * Dual-upload (docs/DOCX_INGEST.md, client 2026-09-11): when a job carries a
+ * Word manuscript, /process reads the CONTENT from it (headings by style,
+ * references as paragraphs, real tables, linearized math — none of the PDF
+ * layout heuristics) and src/lib/page-align.js stamps every chunk with the
+ * page of the published PDF, which stays the citation authority. Unlike the
+ * PDF, the .docx is parsed in the Worker itself (ZIP + XML — no pdfjs, no
+ * browser step). Every failure downgrades to the proven PDF-only path with a
+ * warning, never to a failed ingest; a body-drift above
+ * DOCX_BODY_DRIFT_LIMIT means the files look like different revisions and the
+ * manuscript is discarded rather than indexing draft text under a published
+ * standard's name.
  *
  * NOT here, by design: pushing the new PDF to Vitrium. The client's longer-term
  * goal is for Lensy to be the single place staff update a standard everywhere,
@@ -77,6 +93,8 @@ import { extractReferenceMarkers } from '../lib/reference-markers.js';
 import {
   extractApplicationsFromPages, detectNewTableStructure,
 } from '../lib/applications-extractor.js';
+import { extractDocx } from '../lib/docx-extract.js';
+import { alignChunksToPdfPages, alignSequenceToPages } from '../lib/page-align.js';
 
 function errMsg(err: unknown): string { return err instanceof Error ? err.message : String(err); }
 
@@ -89,6 +107,20 @@ const MAX_STANDARD_ID_LENGTH = 40;
 const STANDARD_ID_RE = /^[A-Za-z]{1,3}-[0-9][0-9A-Za-z.+-]*$/;
 const APP_DELETE_BATCH = 50;   // D1 bound-param budget (same as ingest prune)
 const VEC_DELETE_BATCH = 100;  // Vectorize deleteByIds cap (measured, admin.ts)
+
+// Manuscripts are text: the largest .docx in a standards workflow is a few MB;
+// far beyond that it is the wrong file (or carries embedded media we would
+// hold in memory to parse).
+const MAX_DOCX_BYTES = 40 * 1024 * 1024;
+// Above this fraction of PROSE chunks unlocatable in the PDF, the two files
+// look like different revisions and the manuscript is discarded (design
+// threshold in docs/DOCX_INGEST.md). Tables are excluded from the gate: a
+// DOCX table serializes cells in an order the PDF's layout stream need not
+// share, so they legitimately miss.
+const DOCX_BODY_DRIFT_LIMIT = 0.05;
+// A manuscript yielding far fewer passages than the PDF is not the full
+// published document (a chapter draft, an outline).
+const DOCX_MIN_CHUNK_RATIO = 0.4;
 
 interface IngestJobRow {
   id: string;
@@ -108,6 +140,9 @@ interface IngestJobRow {
   pages_received: number;
   pdf_key: string | null;
   pdf_size: number | null;
+  docx_key: string | null;
+  docx_size: number | null;
+  alignment_json: string | null;
   result_json: string | null;
   error: string | null;
 }
@@ -145,6 +180,10 @@ export async function handleIngestJobs(request: Request, env: Env, url: URL): Pr
     case 'pdf':
       if (request.method === 'POST') return uploadPdf(request, env, job);
       if (request.method === 'GET') return downloadPdf(env, job);
+      return jsonResponse({ error: 'Method not allowed' }, 405);
+    case 'docx':
+      if (request.method === 'POST') return uploadDocx(request, env, job);
+      if (request.method === 'DELETE') return removeDocx(env, job);
       return jsonResponse({ error: 'Method not allowed' }, 405);
     case 'pages':
       if (request.method !== 'POST') return jsonResponse({ error: 'Method not allowed' }, 405);
@@ -320,6 +359,65 @@ async function downloadPdf(env: Env, job: IngestJobRow): Promise<Response> {
   });
 }
 
+// ─── Word manuscript upload (optional — the dual-upload content source) ───────
+
+async function uploadDocx(request: Request, env: Env, job: IngestJobRow): Promise<Response> {
+  if (!['created', 'uploaded', 'parsing', 'parsed', 'failed'].includes(job.status)) {
+    return jsonResponse({ error: `Job is ${job.status} — the manuscript can only be attached before processing completes.` }, 409);
+  }
+  if (!request.body) return jsonResponse({ error: 'Request body (raw .docx bytes) required' }, 400);
+
+  const bytes = new Uint8Array(await request.arrayBuffer());
+  if (bytes.length > MAX_DOCX_BYTES) {
+    return jsonResponse({ error: `The manuscript is ${Math.round(bytes.length / 1024 / 1024)} MB — larger than any Word standards manuscript should be (limit ${MAX_DOCX_BYTES / 1024 / 1024} MB).` }, 400);
+  }
+
+  // Validate NOW, while the staff member is looking at the tracker, not at
+  // /process minutes later: tracked changes and structural failures refuse the
+  // upload with an actionable message (design rule 2 in docs/DOCX_INGEST.md).
+  let extraction;
+  try {
+    extraction = await extractDocx(bytes);
+  } catch (err) {
+    return jsonResponse({ error: `Not a usable Word manuscript: ${errMsg(err)}` }, 400);
+  }
+
+  // The wrong-manuscript check: a new edition's manuscript names its own
+  // designation, which must share the job's FAMILY (RP-8-25's manuscript says
+  // RP-8-something). A manuscript with no detectable designation passes — the
+  // alignment drift gate catches a wrong file at /process anyway.
+  const docxFamily = extraction.designation ? standardFamilyOf(extraction.designation) : null;
+  const jobFamily = standardFamilyOf(job.standard_id);
+  if (docxFamily && jobFamily && docxFamily !== jobFamily) {
+    return jsonResponse({
+      error: `The manuscript names ${extraction.designation} — a different standard family than ${job.standard_id}. ` +
+             'Attach the matching Word file, or fix the job id.',
+    }, 400);
+  }
+
+  const key = `${JOB_R2_PREFIX}${job.id}/source.docx`;
+  await env.PDFS.put(key, bytes, {
+    httpMetadata: { contentType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' },
+  });
+  await touchJob(env, job.id, { docx_key: key, docx_size: bytes.length });
+
+  return jsonResponse({
+    success: true,
+    key,
+    size: bytes.length,
+    designation: extraction.designation,
+    stats: extraction.stats,
+  });
+}
+
+async function removeDocx(env: Env, job: IngestJobRow): Promise<Response> {
+  if (job.docx_key) {
+    try { await env.PDFS.delete(job.docx_key); } catch { /* staging sweep gets it */ }
+  }
+  await touchJob(env, job.id, { docx_key: null, docx_size: null, alignment_json: null });
+  return jsonResponse({ success: true });
+}
+
 // ─── Raw pages intake ─────────────────────────────────────────────────────────
 
 async function receivePages(request: Request, env: Env, job: IngestJobRow): Promise<Response> {
@@ -461,17 +559,40 @@ async function processJob(request: Request, env: Env, job: IngestJobRow): Promis
     }));
     // No sizing overrides: the chunker's own DEFAULTS are the single source
     // (the Node script's CONFIG mirrors them and is documented as such).
-    const chunks = [...chunkIESDocument(pages), ...noteChunks];
-
+    const pdfBodyChunks = chunkIESDocument(pages);
     const referenceMarkers = extractReferenceMarkers(pages);
-    const outline = extractOutline(pages);
-    const sections: Record<string, string> = {};
-    for (const entry of outline) if (!sections[entry.number]) sections[entry.number] = entry.title;
-    const assets = extractDocumentAssets(pages);
+    const pdfAssets = extractDocumentAssets(pages);
 
     // The same ingest-time quality warnings the script prints, kept on the job
     // row so the dashboard can surface them.
     const warnings: string[] = [];
+
+    // ── The dual-upload content source (docs/DOCX_INGEST.md) ────────────────
+    // With a manuscript attached, the CONTENT comes from its structure and
+    // every page number from aligning it against the PDF — which stays what
+    // the reader's Library links open. Any failure below downgrades to the
+    // proven PDF-only path with a warning, never to a failed ingest.
+    let chunks = [...pdfBodyChunks, ...noteChunks];
+    let outline = extractOutline(pages);
+    let assets = pdfAssets;
+    let contentSource = 'pdf';
+    let alignmentReport: Record<string, unknown> | null = null;
+
+    if (job.docx_key) {
+      const manuscript = await useDocxManuscript(env, job, pages, pdfBodyChunks.length, pdfAssets, setStep);
+      alignmentReport = manuscript.report || null;
+      if (manuscript.ok) {
+        chunks = [...manuscript.chunks, ...noteChunks];
+        outline = manuscript.outline;
+        assets = manuscript.assets;
+        contentSource = 'docx+pdf';
+      } else {
+        warnings.push(manuscript.warning);
+      }
+    }
+
+    const sections: Record<string, string> = {};
+    for (const entry of outline) if (entry.title && !sections[entry.number]) sections[entry.number] = entry.title;
     const coveredPages = new Set(chunks.map((c: { pageNumber: number | null }) => c.pageNumber).filter(p => p != null));
     const coveragePct = pages.length > 0 ? Math.round((coveredPages.size / pages.length) * 100) : 0;
     if (coveragePct < 60 && pages.length > 3) {
@@ -557,6 +678,16 @@ async function processJob(request: Request, env: Env, job: IngestJobRow): Promis
       applicationsPruned,
       sectionTitles: outline.length,
       assetCaptions: assets.length,
+      // 'docx+pdf' = the manuscript's structure is what got indexed; 'pdf' =
+      // the classic path (no manuscript, or one that was downgraded — see
+      // warnings and the alignment report for why).
+      source: contentSource,
+      alignment: alignmentReport ? {
+        total: alignmentReport.total,
+        located: alignmentReport.located,
+        inherited: alignmentReport.inherited,
+        uncoveredPdfPages: alignmentReport.uncoveredPageCount,
+      } : null,
       warnings,
     };
 
@@ -564,6 +695,7 @@ async function processJob(request: Request, env: Env, job: IngestJobRow): Promis
       status: 'indexed',
       step: 'done',
       result_json: JSON.stringify(result),
+      alignment_json: alignmentReport ? JSON.stringify(alignmentReport) : null,
       error: null,
     });
     return jsonResponse({ success: true, result });
@@ -575,6 +707,116 @@ async function processJob(request: Request, env: Env, job: IngestJobRow): Promis
     // generic handler would mask it in production).
     return jsonResponse({ error: `Processing failed: ${message}` }, 500);
   }
+}
+
+/**
+ * Read the stored manuscript, extract its structure, and stamp every chunk
+ * with a PDF page. Returns ok:false (with the reason as a ready-made warning)
+ * whenever the manuscript should NOT be trusted — the caller then indexes from
+ * the PDF alone, exactly as if no manuscript were attached.
+ */
+async function useDocxManuscript(
+  env: Env,
+  job: IngestJobRow,
+  pages: any[],
+  pdfBodyChunkCount: number,
+  pdfAssets: Array<{ kind: string; label: string; caption: string; page: number }>,
+  setStep: (step: string, detail?: Record<string, unknown>) => Promise<void>,
+): Promise<
+  | { ok: true; chunks: any[]; outline: any[]; assets: any[]; report: Record<string, unknown> }
+  | { ok: false; warning: string; report?: Record<string, unknown> }
+> {
+  try {
+    await setStep('docx');
+    const obj = await env.PDFS.get(job.docx_key!);
+    if (!obj) throw new Error(`the stored manuscript is missing (${job.docx_key})`);
+    const bytes = new Uint8Array(await new Response(obj.body as ReadableStream).arrayBuffer());
+    const docx = await extractDocx(bytes);
+
+    await setStep('align');
+    const aligned = alignChunksToPdfPages(docx.chunks, pages);
+    const report = aligned.report as Record<string, unknown>;
+
+    // Gate 1: a manuscript far smaller than the PDF's own extraction is not
+    // the full published document.
+    if (docx.chunks.length < Math.max(5, Math.round(pdfBodyChunkCount * DOCX_MIN_CHUNK_RATIO))) {
+      return {
+        ok: false, report,
+        warning: `Word manuscript NOT used: it yielded ${docx.chunks.length} passages where the PDF yields ${pdfBodyChunkCount} — ` +
+                 'it does not look like the full published document. Indexed from the PDF alone.',
+      };
+    }
+    // Gate 2: prose the PDF does not contain is manuscript drift — a
+    // pre-copyedit draft must never be indexed under a published standard.
+    const drift = Number(report.bodyInheritedFraction) || 0;
+    if (drift > DOCX_BODY_DRIFT_LIMIT) {
+      return {
+        ok: false, report,
+        warning: `Word manuscript NOT used: ${Math.round(drift * 100)}% of its prose could not be located in the PDF ` +
+                 `(limit ${DOCX_BODY_DRIFT_LIMIT * 100}%) — the files look like different revisions. Indexed from the PDF alone.`,
+      };
+    }
+
+    // Outline pages come from each section's first LOCATED chunk — searching
+    // heading text directly would land in the PDF's own table of contents,
+    // which precedes the body and repeats every heading verbatim.
+    const outline = outlineWithPages(docx.outline, aligned.chunks);
+
+    // Captions are searched from where body content starts, so a List of
+    // Figures cannot claim them; one the PDF page stream cannot vouch for is
+    // dropped (a raster caption may exist only in the manuscript) — the PDF's
+    // own extraction fills those in via the merge below.
+    const captionHits = alignSequenceToPages(
+      aligned.index,
+      docx.assets.map(a => `${a.label} ${a.caption}`),
+      { startPos: aligned.firstMatchPos },
+    );
+    const docxAssets = docx.assets
+      .map((a, i) => (captionHits[i] ? { ...a, page: captionHits[i]!.page } : null))
+      .filter(Boolean) as Array<{ kind: string; label: string; caption: string; page: number }>;
+
+    return { ok: true, chunks: aligned.chunks, outline, assets: mergeAssets(docxAssets, pdfAssets), report };
+  } catch (err) {
+    return { ok: false, warning: `Word manuscript NOT used (${errMsg(err)}) — indexed from the PDF alone.` };
+  }
+}
+
+/** Manuscript outline entries → { number, title, page }, pages from the
+ *  sections' first located chunks; a gap inherits the previous entry's page
+ *  (document order makes it the honest lower bound); still-pageless leading
+ *  entries are dropped rather than printed with a page we cannot vouch for. */
+function outlineWithPages(
+  outline: Array<{ number: string; title: string; level?: number }>,
+  alignedChunks: Array<{ section: string | null; pageNumber: number | null; pageConfidence: string }>,
+): Array<{ number: string; title: string; page: number }> {
+  const firstPageBySection = new Map<string, number>();
+  for (const c of alignedChunks) {
+    if (c.section && c.pageNumber != null && c.pageConfidence !== 'inherited' && !firstPageBySection.has(c.section)) {
+      firstPageBySection.set(c.section, c.pageNumber);
+    }
+  }
+  const out: Array<{ number: string; title: string; page: number }> = [];
+  let lastPage: number | null = null;
+  for (const entry of outline) {
+    const page: number | null = firstPageBySection.get(entry.number) ?? lastPage;
+    if (page == null) continue;
+    lastPage = page;
+    out.push({ number: entry.number, title: entry.title, page });
+  }
+  return out;
+}
+
+/** Union of manuscript captions (page-aligned) and the PDF's own extraction,
+ *  keyed on kind+label — the manuscript wins a collision (whole captions,
+ *  never column-split), the PDF fills what the manuscript could not place. */
+function mergeAssets(
+  docxAssets: Array<{ kind: string; label: string; caption: string; page: number }>,
+  pdfAssets: Array<{ kind: string; label: string; caption: string; page: number }>,
+): Array<{ kind: string; label: string; caption: string; page: number }> {
+  const byKey = new Map<string, { kind: string; label: string; caption: string; page: number }>();
+  for (const a of pdfAssets) byKey.set(`${a.kind}|${a.label}`, a);
+  for (const a of docxAssets) byKey.set(`${a.kind}|${a.label}`, a);
+  return [...byKey.values()].sort((a, b) => (a.page || 0) - (b.page || 0));
 }
 
 /** Read every stored pages batch back, in page order. */
@@ -775,7 +1017,8 @@ async function getJob(env: Env, id: string): Promise<IngestJobRow | null> {
 // smuggle SQL through a key.
 const JOB_COLUMNS = new Set([
   'status', 'step', 'progress_json', 'page_count', 'pages_received',
-  'pdf_key', 'pdf_size', 'result_json', 'error',
+  'pdf_key', 'pdf_size', 'docx_key', 'docx_size', 'alignment_json',
+  'result_json', 'error',
 ]);
 
 async function touchJob(env: Env, id: string, fields: Record<string, unknown>): Promise<void> {
@@ -794,8 +1037,10 @@ function publicJob(job: IngestJobRow): Record<string, unknown> {
     index_old_for_comparison: !!job.index_old_for_comparison,
     progress: parseJsonColumn(job.progress_json),
     result: parseJsonColumn(job.result_json),
+    alignment: parseJsonColumn(job.alignment_json),
     progress_json: undefined,
     result_json: undefined,
+    alignment_json: undefined,
   };
 }
 

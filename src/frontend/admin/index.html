@@ -637,6 +637,12 @@
                  class="w-full text-sm border border-gray-300 rounded-lg bg-white file:mr-3 file:px-3 file:py-2 file:border-0 file:bg-gray-100 file:rounded-l-lg file:text-sm" />
           <p class="mt-1 text-xs text-gray-400">The PDF is read in <em>your</em> browser; Lensy indexes what it reads. Files over ~90 MB upload in parts automatically.</p>
         </div>
+        <div>
+          <label class="block text-xs font-medium text-gray-600 mb-1">Word manuscript <span class="text-gray-400">(optional — recommended for new editions)</span></label>
+          <input id="ing-docx" type="file" accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                 class="w-full text-sm border border-gray-300 rounded-lg bg-white file:mr-3 file:px-3 file:py-2 file:border-0 file:bg-gray-100 file:rounded-l-lg file:text-sm" />
+          <p class="mt-1 text-xs text-gray-400">With the manuscript attached, its structure becomes the indexed text (exact headings, whole captions, real tables) and the PDF stays the page authority for Library links. Tracked changes must be accepted in Word first. If the two files disagree too much, Lensy falls back to the PDF alone.</p>
+        </div>
         <div class="grid grid-cols-2 gap-3">
           <div>
             <label class="block text-xs font-medium text-gray-600 mb-1">Standard id <span class="text-gray-400">(derived from the filename)</span></label>
@@ -1596,7 +1602,8 @@
         <tr class="border-b border-gray-100 hover:bg-gray-50">
           <td class="px-4 py-3 text-xs text-gray-500 whitespace-nowrap">${esc(String(j.created_at || '').slice(0, 16))}</td>
           <td class="px-4 py-3 font-mono text-xs">${esc(j.standard_id)}${j.ingest_status === 'deprecated'
-            ? ' <span class="inline-block px-1.5 rounded bg-amber-100 text-amber-800 text-[10px]">comparison</span>' : ''}</td>
+            ? ' <span class="inline-block px-1.5 rounded bg-amber-100 text-amber-800 text-[10px]">comparison</span>' : ''}${j.docx_key
+            ? ' <span class="inline-block px-1.5 rounded bg-sky-100 text-sky-800 text-[10px]" title="A Word manuscript is attached — its structure is the indexed text; pages come from the PDF">manuscript</span>' : ''}</td>
           <td class="px-4 py-3 text-xs text-gray-500 max-w-[180px] truncate" title="${esc(j.filename)}">${esc(j.filename)}</td>
           <td class="px-4 py-3 text-xs text-gray-500">${esc(j.created_by || '')}</td>
           <td class="px-4 py-3"><span class="inline-block px-2 py-0.5 rounded-full text-xs font-medium ${JOB_BADGE[j.status] || 'bg-gray-100 text-gray-600'}">${esc(j.status)}</span></td>
@@ -1609,6 +1616,7 @@
     // ── New-ingest modal ──────────────────────────────────────────────────
     function openIngest(replacesId) {
       document.getElementById('ing-file').value = '';
+      document.getElementById('ing-docx').value = '';
       const idField = document.getElementById('ing-id');
       idField.value = '';
       delete idField.dataset.edited;
@@ -1709,7 +1717,7 @@
         }
         closeIngest();
         openTracker(data.job, data.warnings || []);
-        runPipeline(data.job, 'upload', file);
+        runPipeline(data.job, 'upload', file, document.getElementById('ing-docx').files[0] || null);
         loadJobs();
       } finally {
         btn.disabled = false;
@@ -1780,6 +1788,8 @@
     const SERVER_STEP_LABELS = {
       assemble: 'Assembling pages',
       extract: 'Reading structure — tables, sections, applications',
+      docx: 'Reading the Word manuscript',
+      align: 'Aligning the manuscript to PDF pages',
       store: 'Storing the PDF in the library',
       embedding: 'Embedding passages',
       vectorize: 'Writing search vectors',
@@ -1801,11 +1811,12 @@
       if (running) { ev.preventDefault(); ev.returnValue = ''; }
     });
 
-    async function runPipeline(job, phase, file = null) {
+    async function runPipeline(job, phase, file = null, docxFile = null) {
       running = true;
       try {
         if (phase === 'upload') {
           await doUpload(job, file);
+          if (docxFile) await doUploadDocx(job, docxFile);
           phase = 'parse';
         }
         if (phase === 'parse') {
@@ -1889,6 +1900,33 @@
       const rec = await api(`/api/admin/ingest-jobs/${job.id}/pdf`,
         { method: 'POST', body: JSON.stringify({ multipartComplete: true }) });
       if (rec.status >= 400) throw new Error(rec.data.error || 'Could not record the upload');
+    }
+
+    // The manuscript is OPTIONAL by design (docs/DOCX_INGEST.md): a refused
+    // upload — tracked changes, wrong family, not a .docx — becomes a warning
+    // and the run continues on the proven PDF-only path, never a dead ingest.
+    async function doUploadDocx(job, file) {
+      setStep('upload', 'run', `manuscript · ${(file.size / 1024 / 1024).toFixed(1)} MB…`);
+      let data = {};
+      let ok = false;
+      try {
+        const res = await fetch(`/api/admin/ingest-jobs/${job.id}/docx`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' },
+          body: file,
+        });
+        data = await res.json().catch(() => ({}));
+        ok = res.ok;
+      } catch { /* network — treated like a refusal below */ }
+      if (!ok) {
+        const wbox = document.getElementById('trk-warnings');
+        wbox.innerHTML += `<p>⚠ Word manuscript not attached: ${esc(data.error || 'upload failed')} — indexing from the PDF alone.</p>`;
+        wbox.classList.remove('hidden');
+        setStep('upload', 'done');
+        return;
+      }
+      const s = data.stats || {};
+      setStep('upload', 'done', `PDF + manuscript (${s.headings || 0} headings, ${s.tables || 0} tables read)`);
     }
 
     async function downloadJobPdf(job) {
@@ -1979,6 +2017,10 @@
         `Structure: ${r.structure || '?'} · ${r.pageCount || '?'} pages · coverage ${r.coveragePct ?? '?'}%`,
         r.title ? `Title (from the cover): ${r.title}` : null,
         r.committee ? `Committee: ${r.committee}` : null,
+        r.source === 'docx+pdf' && r.alignment
+          ? `Content from the Word manuscript — ${r.alignment.located} of ${r.alignment.total} passages located in the PDF` +
+            `${r.alignment.uncoveredPdfPages ? ` · ${r.alignment.uncoveredPdfPages} PDF page(s) the manuscript never covered` : ''}`
+          : null,
       ].filter(Boolean);
       box.innerHTML = lines.map(l => `<p>${esc(l)}</p>`).join('');
       box.classList.remove('hidden');

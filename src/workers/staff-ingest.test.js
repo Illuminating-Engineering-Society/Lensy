@@ -12,6 +12,7 @@
 
 import { describe, it, expect, beforeAll } from 'vitest';
 import { handleIngestJobs } from './staff-ingest';
+import { fixturePara as para, fixtureDocxBytes as docxBytes } from '../lib/docx-fixture.js';
 
 // workerd global; in Node the identity pair is enough for the copy stream.
 beforeAll(() => {
@@ -496,5 +497,132 @@ describe('cancel', () => {
     expect(status).toBe(200);
     expect(state.job.status).toBe('cancelled');
     expect([...env.PDFS.store.keys()].some(k => k.startsWith('ingest-jobs/j1/'))).toBe(false);
+  });
+});
+
+// ─── Dual-upload: the Word manuscript (docs/DOCX_INGEST.md) ────────────────────
+
+const wordsOf = (n, prefix) => Array.from({ length: n }, (_, i) => `${prefix}${i}`).join(' ');
+
+/** A five-section manuscript and the matching built PDF pages — the same text
+ *  on both sides, so alignment succeeds; three pages so the stamps differ. */
+function manuscriptFixture() {
+  const sections = [1, 2, 3, 4, 5].map(i => ({
+    heading: `${i} Chapter Title ${['One', 'Two', 'Three', 'Four', 'Five'][i - 1]}`,
+    body: wordsOf(40, `sec${i}word`),
+  }));
+  const body = sections.map(s => para(s.heading, { style: 'Heading1' }) + para(s.body, {})).join('');
+  const bytes = docxBytes(body);
+  const pageText = (list) => list.map(s => `${s.heading}\n${s.body}`).join('\n');
+  const builtPages = [
+    { number: 1, text: pageText(sections.slice(0, 2)), lines: [], width: 612, height: 792 },
+    { number: 2, text: pageText(sections.slice(2, 4)), lines: [], width: 612, height: 792 },
+    { number: 3, text: pageText(sections.slice(4)), lines: [], width: 612, height: 792 },
+  ];
+  return { bytes, builtPages };
+}
+
+function docxJob(overrides = {}) {
+  return {
+    id: 'j1', created_at: '', updated_at: '', created_by: 'staff@ies.org',
+    filename: 'TM-99-26.pdf', standard_id: 'TM-99-26', ingest_status: 'current',
+    replaces_id: null, disposition: 'none', index_old_for_comparison: 0,
+    status: 'parsed', step: null,
+    progress_json: JSON.stringify({
+      headerFooters: [], totalPages: 3, batches: { 1: 3 },
+      docMeta: { title: 'Test Standard', author: '', subject: '', keywords: '', year: '2026' },
+    }),
+    page_count: 3, pages_received: 3,
+    pdf_key: 'ingest-jobs/j1/source.pdf', pdf_size: 5,
+    docx_key: null, docx_size: null, alignment_json: null,
+    result_json: null, error: null,
+    ...overrides,
+  };
+}
+
+describe('docx upload', () => {
+  it('validates, stores and records the manuscript', async () => {
+    const { bytes } = manuscriptFixture();
+    const { env, state } = makeEnv({ job: docxJob({ status: 'uploaded' }) });
+    const { status, body } = await call(env, 'POST', '/api/admin/ingest-jobs/j1/docx', bytes,
+      { 'Content-Type': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
+    expect(status).toBe(200);
+    expect(body.stats.headings).toBe(5);
+    expect(env.PDFS.store.has('ingest-jobs/j1/source.docx')).toBe(true);
+    expect(state.job.docx_key).toBe('ingest-jobs/j1/source.docx');
+  });
+
+  it('refuses a manuscript with unaccepted tracked changes', async () => {
+    const body =
+      para('1 Scope', { style: 'Heading1' }) +
+      '<w:p><w:ins w:id="1" w:author="editor"><w:r><w:t>draft insertion</w:t></w:r></w:ins></w:p>';
+    const { env, state } = makeEnv({ job: docxJob({ status: 'uploaded' }) });
+    const res = await call(env, 'POST', '/api/admin/ingest-jobs/j1/docx', docxBytes(body),
+      { 'Content-Type': 'application/octet-stream' });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/tracked changes/i);
+    expect(state.job.docx_key).toBe(null);
+  });
+
+  it('refuses a manuscript naming a different standard family', async () => {
+    const body =
+      para('ANSI/IES RP-9-25 Recommended Practice: Lighting Hospitality Spaces', {}) +
+      para('1 Scope', { style: 'Heading1' }) +
+      para(wordsOf(40, 'w'), {});
+    const { env } = makeEnv({ job: docxJob({ status: 'uploaded' }) });
+    const res = await call(env, 'POST', '/api/admin/ingest-jobs/j1/docx', docxBytes(body),
+      { 'Content-Type': 'application/octet-stream' });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/different standard family/i);
+  });
+});
+
+describe('process with a manuscript', () => {
+  it('indexes the manuscript content with PDF-aligned pages', async () => {
+    const { bytes, builtPages } = manuscriptFixture();
+    const { env, state } = makeEnv({
+      job: docxJob({ docx_key: 'ingest-jobs/j1/source.docx', docx_size: bytes.length }),
+      r2seed: {
+        'ingest-jobs/j1/source.pdf': '%PDF-fake',
+        'ingest-jobs/j1/pages-00001.json': JSON.stringify(builtPages),
+      },
+    });
+    env.PDFS.store.set('ingest-jobs/j1/source.docx', bytes);
+
+    const { status, body } = await call(env, 'POST', '/api/admin/ingest-jobs/j1/process', {});
+    expect(status).toBe(200);
+    expect(body.result.source).toBe('docx+pdf');
+    expect(body.result.alignment.located).toBe(5);
+    expect(body.result.alignment.inherited).toBe(0);
+    expect(body.result.sectionTitles).toBe(5);
+    expect(state.job.status).toBe('indexed');
+    // The full report is kept on the row for the dashboard.
+    const report = JSON.parse(state.job.alignment_json);
+    expect(report.bodyInheritedFraction).toBe(0);
+  });
+
+  it('downgrades to the PDF path when the manuscript drifts from the PDF', async () => {
+    // Same five-section manuscript, but the PDF pages carry entirely different
+    // prose — the files are different revisions.
+    const { bytes } = manuscriptFixture();
+    const strangerPages = [1, 2, 3].map(n => ({
+      number: n,
+      text: `${n} Other Heading\n${wordsOf(60, `other${n}word`)}`,
+      lines: [], width: 612, height: 792,
+    }));
+    const { env, state } = makeEnv({
+      job: docxJob({ docx_key: 'ingest-jobs/j1/source.docx', docx_size: bytes.length }),
+      r2seed: {
+        'ingest-jobs/j1/source.pdf': '%PDF-fake',
+        'ingest-jobs/j1/pages-00001.json': JSON.stringify(strangerPages),
+      },
+    });
+    env.PDFS.store.set('ingest-jobs/j1/source.docx', bytes);
+
+    const { status, body } = await call(env, 'POST', '/api/admin/ingest-jobs/j1/process', {});
+    expect(status).toBe(200);
+    expect(body.result.source).toBe('pdf');
+    expect(body.result.warnings.join(' ')).toMatch(/manuscript NOT used/i);
+    expect(state.job.status).toBe('indexed');
   });
 });
