@@ -171,13 +171,23 @@ describe('liteContentTypes', () => {
   });
 });
 
-describe('the three locked tools', () => {
+describe('the locked tools', () => {
+  // DO999 turned the AI Guide into a metered trial for non-subscribers, so it
+  // left this list: what remains is what the client still sells as a
+  // subscriber unlock ("browse illuminance table values", "compare versions").
   it('are exactly the ones the client named', () => {
-    expect([...LITE_BLOCKED_FILTERS]).toEqual(['tables', 'guide', 'compare']);
+    expect([...LITE_BLOCKED_FILTERS]).toEqual(['tables', 'compare']);
+  });
+
+  it('never blocks the AI Guide, which the daily cap meters instead', () => {
+    expect([...LITE_BLOCKED_FILTERS]).not.toContain('guide');
   });
 
   it('has the banner in the client\'s own words', () => {
-    expect(LITE_NOTICE).toContain('IES Members receive limited access to Lighting Science Collection');
-    expect(LITE_NOTICE).toContain('Subscribe to unlock full Lensy');
+    // DO111: a subscription is always called the Lighting Library, and the
+    // separate LensyLite product name is gone.
+    expect(LITE_NOTICE).toContain('Lighting Science Collection');
+    expect(LITE_NOTICE).toContain('Subscribe to the Lighting Library');
+    expect(LITE_NOTICE).not.toMatch(/lensy/i);
   });
 });

@@ -75,7 +75,7 @@ import {
   liteContentTypes, liteEnabled, LITE_COLLECTION, LITE_FALLBACK_PREFIX, LITE_NOTICE,
 } from '../lib/tiers';
 import { resolveSearchGrant } from './session';
-import { dailySearchCap, enforceDailySearchCap, describeReset } from '../lib/search-cap';
+import { dailySearchCap, enforceDailySearchCap } from '../lib/search-cap';
 import { generateResponse } from '../lib/ai-summary';
 import { rerankResults, extractGuideCitations, curateResults } from '../lib/curation';
 import { generateRefinePrompt } from '../lib/refine';
@@ -342,16 +342,17 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
   const answerStyle: AnswerStyle =
     body.answerStyle === 'brief' || body.answerStyle === 'full' ? body.answerStyle : 'auto';
 
-  // ── Access tier (client DO53) ────────────────────────────────────────────────
-  // LensyLite is an IES member benefit for people who do not subscribe to the
-  // Lighting Library: it searches the Lighting Science collection only, and the
-  // AI Guide, Document Comparison and Illuminance Tables are not part of it.
-  // Enforced HERE as well as in the UI — the pills are a courtesy, this is the
-  // rule. Off entirely unless LENSY_LITE=on (see src/lib/tiers.ts).
+  // ── Access tier (client DO53, revised DO999) ────────────────────────────────
+  // A Non-Subscriber searches the Lighting Science collection only, and
+  // Document Comparison and Illuminance Tables are not part of it. Enforced
+  // HERE as well as in the UI — the pills are a courtesy, this is the rule.
+  // Off entirely unless LENSY_LITE=on (see src/lib/tiers.ts).
+  //
+  // The AI Guide is NO LONGER switched off by tier: DO999 gives non-subscribers
+  // a metered trial of it, and the daily cap below is what ends the trial.
   const grant = await resolveSearchGrant(request, env);
   const tier = grant.tier;
   const isLite = tier === 'lite';
-  if (isLite) includeAISummary = false;
 
   if (!query || typeof query !== 'string' || !query.trim()) {
     return jsonResponse({ error: 'query is required' }, 400);
@@ -364,29 +365,33 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
   // not cost control). Tier `full` and the bearer (grant.user null) are exempt;
   // interpretation choices and failure posture in src/lib/search-cap.ts.
   const searchCap = dailySearchCap(env);
-  // used/cap for THIS metered reader — attached to the response at the return
-  // points (never stored in the shared response cache: it is personal state)
-  // so the UI can nudge before the cut, per the client's permissions chart
-  // (2026-09-04): "will establish Nudge after 10, cut after 20".
-  let searchCapStatus: { used: number; cap: number; remaining: number } | null = null;
+  // used/cap/remaining for THIS metered reader — attached to the response at the
+  // return points (never stored in the shared response cache: it is personal
+  // state) so the UI can print the client's two notices: the warning with 5
+  // left, and the banner once AI has been cut off.
+  let searchCapStatus:
+    | { used: number; cap: number; remaining: number; aiDisabled: boolean; resetAt?: string }
+    | null = null;
   if (searchCap != null && tier !== 'full' && grant.user) {
     const quota = await enforceDailySearchCap(env, grant.user.sub, searchCap, grant.scope);
     if (!quota.allowed) {
-      const nowSec = Math.floor(Date.now() / 1000);
-      return jsonResponse({
-        error: 'daily_search_cap',
-        message:
-          `You've used today's ${searchCap} searches — searching without a Lighting Library ` +
-          `subscription is limited to ${searchCap} per day. Your searches resume ` +
-          `${describeReset(quota.resetAt, nowSec)}, or subscribe for unlimited searching.`,
+      // Past the cap the SEARCH still runs and the cards still come — only the
+      // AI stops (DO999). Clearing the flag here rather than at the tier check
+      // is what keeps `aiGuideSuppressed` below able to name the reason.
+      includeAISummary = false;
+      searchCapStatus = {
+        used: searchCap, cap: searchCap, remaining: 0, aiDisabled: true,
         resetAt: new Date(quota.resetAt * 1000).toISOString(),
-        subscribeUrl: 'https://store.ies.org/ies/subscriptions/',
-      }, 429);
-    }
-    if (quota.used > 0) {
-      searchCapStatus = { used: quota.used, cap: quota.cap, remaining: Math.max(0, quota.cap - quota.used) };
+      };
+    } else if (quota.used > 0) {
+      searchCapStatus = {
+        used: quota.used, cap: quota.cap,
+        remaining: Math.max(0, quota.cap - quota.used),
+        aiDisabled: false,
+      };
     }
   }
+  const aiCapReached = searchCapStatus?.aiDisabled === true;
 
   const cleanLimit = Math.min(Math.max(1, Math.floor(limit)), MAX_LIMIT);
   // "Sample Search: what's new in RP-8?" — the label pasted along with an example
@@ -572,7 +577,10 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
   // A Lite user cannot be handed a document outside their collection, not even
   // by naming it exactly (client DO53).
   if (liteAllowed) documentCards = restrictToStandards(documentCards, liteAllowed);
-  let aiGuideSuppressed: string | null = null;
+  // Why there is no Guide. The daily cap is checked first because it was
+  // decided before retrieval ran, and because the UI prints its own banner for
+  // that case rather than the silent treatment a standard lookup gets.
+  let aiGuideSuppressed: string | null = aiCapReached ? 'daily_cap' : null;
   if (includeAISummary && documentCards.length > 0) {
     includeAISummary = false;
     aiGuideSuppressed = 'standard_lookup';

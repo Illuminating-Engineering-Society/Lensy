@@ -35,6 +35,7 @@
  *                                     Thumbnail?externalKey=<LatestVersionId>
  *   Description     → standards.description
  *   Authors         → standards.author (the authoring committee)
+ *   PublishDate     → standards.published_date (client DO112)
  *
  * NOTE the trap: the portal's `externalKey` is the LatestVersionId, NOT the
  * "External Key" column in Vitrium's export. Those are different identifiers
@@ -128,6 +129,7 @@ SET vitrium_doc_id = '${sqlEsc(docId)}',
     ${col('collection', e.collection)},
     ${fillCol('author', e.author)},
     ${col('description', e.description)},
+    ${col('published_date', e.publishedDate)},
     ${col('thumbnail_url', e.thumbnailUrl)},
     ${col('buy_url', e.buyUrl)},
     ${col('elearning_json', e.elearning ? JSON.stringify(e.elearning) : null)},
@@ -146,6 +148,7 @@ WHERE Standard = '${sqlEsc(standardId)}';
         e.collection && `collection="${e.collection}"`,
         e.author && `author="${e.author}"`,
         e.description && 'description',
+        e.publishedDate && `published ${e.publishedDate}`,
         e.thumbnailUrl && 'thumbnail',
         e.buyUrl && 'buy',
         e.elearning && `${e.elearning.length} eLearning link(s)`,
@@ -200,10 +203,40 @@ function thumbnailUrlFor(portalKey) {
 }
 
 /**
+ * The portal's PublishDate as an ISO `YYYY-MM-DD`, or null (client DO112).
+ *
+ * A date in the FUTURE is a data-entry error and is refused: measured on the
+ * 2026-08 portal list, RP-3-20+E1 reads 2030-07-23 and LP-4-20 reads
+ * 2029-01-31. Left in, those two would head the "Newest first" sort and claim a
+ * place in the "Most Recent (past 6 months)" band — the two places on the page
+ * where a wrong date is most visible. Rejecting them yields null, which `col()`
+ * writes as "leave whatever is stored", never as a blanking overwrite.
+ *
+ * A date years AFTER the designation year is not an error and is kept: a
+ * reaffirmed printing genuinely publishes then (LS-6-20+E1 (R2025) → 2025).
+ */
+function publishedDateFrom(raw, today = new Date()) {
+  const text = String(raw || '').trim();
+  if (!text) return null;
+  const parsed = new Date(text);
+  if (Number.isNaN(parsed.getTime())) return null;
+  // The portal writes a local-midnight timestamp ("2025-06-05T00:00:00"), so the
+  // date part of the string IS the date — no timezone shift to undo.
+  const iso = text.slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(iso)) return null;
+  return iso > toIsoDate(today) ? null : iso;
+}
+
+function toIsoDate(date) {
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+
+/**
  * The portal's document list, indexed by Doc Code — the one field it shares
  * with Vitrium's export, and which matched every row when this was written.
  *
- * Returns a Map: docCode → { thumbnailUrl, description, author }.
+ * Returns a Map: docCode → { thumbnailUrl, description, author, publishedDate }.
  */
 function loadPortalDocuments(filePath) {
   const raw = JSON.parse(fs.readFileSync(filePath, 'utf8'));
@@ -214,7 +247,7 @@ function loadPortalDocuments(filePath) {
   }
 
   const byCode = new Map();
-  let covers = 0, descriptions = 0, authors = 0;
+  let covers = 0, descriptions = 0, authors = 0, published = 0, future = 0;
   for (const d of docs) {
     const code = String(d.DocCode || '').trim();
     if (!code) continue;
@@ -224,14 +257,25 @@ function loadPortalDocuments(filePath) {
     const thumbnailUrl = thumbnailUrlFor(d.LatestVersionId);
     const description = String(d.Description || '').trim() || null;
     const author = String(d.Authors || '').trim() || null;
+    const publishedDate = publishedDateFrom(d.PublishDate);
     if (thumbnailUrl) covers++;
     if (description) descriptions++;
     if (author) authors++;
-    byCode.set(code, { thumbnailUrl, description, author });
+    if (publishedDate) published++;
+    // A well-formed date that publishedDateFrom still refused can only have been
+    // refused for being in the future — worth naming, since it is a portal
+    // record IES may want to correct at the source.
+    else if (/^\d{4}-\d{2}-\d{2}/.test(String(d.PublishDate || '').trim())) future++;
+    byCode.set(code, { thumbnailUrl, description, author, publishedDate });
   }
 
   console.log(`  Portal documents: ${byCode.size} — ${covers} cover image(s), `
-    + `${descriptions} description(s), ${authors} committee credit(s).`);
+    + `${descriptions} description(s), ${authors} committee credit(s), `
+    + `${published} publication date(s).`);
+  if (future > 0) {
+    console.log(`  NOTE: ${future} PublishDate value(s) are in the future and were refused as `
+      + 'data-entry errors — those standards keep whatever date is already stored.');
+  }
   return byCode;
 }
 
@@ -270,6 +314,7 @@ function loadCsvExport(filePath, portalByCode = null) {
   const iDescription = firstCol('description', 'abstract', 'summary');
   const iThumbnail   = firstCol('thumbnail', 'thumbnail url', 'cover', 'cover url');
   const iBuy         = firstCol('buy url', 'buy', 'store url', 'webstore url', 'product url');
+  const iPublished   = firstCol('publish date', 'published', 'published date', 'publication date');
   const iElearning   = firstCol('elearning', 'e-learning', 'elearning products');
   // ── Cover images (measured 2026-08-24) ─────────────────────────────────────
   // The Lighting Library portal serves covers publicly — 200 image/png, no
@@ -297,6 +342,7 @@ function loadCsvExport(filePath, portalByCode = null) {
     iDescription !== -1 && 'Description', iThumbnail !== -1 && 'Thumbnail',
     iPortalKey !== -1 && 'Portal Key (→ cover image)',
     iBuy !== -1 && 'Buy URL', iElearning !== -1 && 'eLearning',
+    iPublished !== -1 && 'Publish Date',
   ].filter(Boolean);
 
   // Covers come from a Thumbnail URL column or a Portal Key column. If neither
@@ -357,6 +403,10 @@ function loadCsvExport(filePath, portalByCode = null) {
       collection: cell(iCollection) || collectionFromFolderPath(iFolder !== -1 ? row[iFolder] : null),
       author: cell(iAuthor) || (portal ? portal.author : null),
       description: cell(iDescription) || (portal ? portal.description : null),
+      // The portal is the only source for the publication date (client DO112) —
+      // Vitrium's export carries nothing resembling one, and `year` is read off
+      // the designation, which is the edition label rather than a date.
+      publishedDate: publishedDateFrom(cell(iPublished)) || (portal ? portal.publishedDate : null),
       // An explicit Thumbnail/Cover URL wins; otherwise the portal URL is built
       // from a PORTAL key. Never from Vitrium's "External Key" — see the note
       // above the column lookups. Both columns may be absent, in which case the

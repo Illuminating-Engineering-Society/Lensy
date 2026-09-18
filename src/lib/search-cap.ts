@@ -5,25 +5,28 @@
  *  search cap (subject to change after usage data is available). After that,
  *  'AI' is locked out for the rest of the user's searches for 24hr."
  *
- * What ships: a non-`full` session gets LENSY_DAILY_SEARCH_CAP searches per
- * rolling 24-hour window; past that, /api/search answers 429 with a message
- * naming when searches resume and where to subscribe, until the window
- * expires. Tier `full` — subscribers, full-tier invitees, admins — and the
- * staff bearer are never metered.
+ * What ships: a non-`full` session gets LENSY_DAILY_SEARCH_CAP AI-assisted
+ * searches per rolling 24-hour window. Tier `full` — subscribers, full-tier
+ * invitees, admins — and the staff bearer are never metered.
  *
- * Two interpretation choices, made deliberately and easy to revisit:
+ * Two interpretation choices:
  *
- *  1. PAST THE CAP, SEARCH ITSELF PAUSES — not just the AI Guide. The client's
- *     wording ("'AI' is locked out for the rest of the user's searches") could
- *     also read as "cards keep working, the Guide stops", but the only
- *     non-subscriber tier that exists is LensyLite, and LensyLite has the Guide
- *     locked off ALREADY (DO53) — under that reading the cap would enforce
- *     nothing observable today. Blocking is the one reading with an effect. If
- *     the client confirms the softer reading, the enforcement point in
- *     handleSearch is the single place to change.
+ *  1. PAST THE CAP, ONLY THE AI STOPS — the search itself keeps working.
+ *     This shipped the other way round first, because when the cap was written
+ *     the only non-subscriber tier had the Guide locked off ALREADY (DO53), so
+ *     "disable the AI" would have enforced nothing observable and blocking was
+ *     the one reading with an effect. **DO999 settled it**: non-subscribers now
+ *     GET the Guide as a metered trial, and the client wrote the over-cap copy
+ *     themselves — "You have exceeded your trial AI search limit for the day.
+ *     AI assistance has been disabled." Cards keep coming; the Guide does not.
+ *     As predicted, handleSearch was the single place to change.
  *  2. "DAILY" IS A ROLLING 24H WINDOW anchored at the window's first search —
  *     the literal "for 24hr", with no timezone question. The window is one KV
  *     record whose expiration IS the reset time.
+ *
+ * `decideSearchQuota` still answers `allowed: false` past the cap; what that
+ * now means to the caller is "no AI for this search", not "no search". The
+ * rule is unchanged and so are its tests — only the consequence moved.
  *
  * Every search request that passes validation counts, cache hits included: the
  * cap is user-facing metering, not a cost control, and "20 searches" must mean
@@ -31,6 +34,15 @@
  * the cap by a few — accepted, same posture as session-cap.ts: this is a cap,
  * not a billing meter, and it FAILS OPEN on any KV trouble.
  */
+
+/**
+ * How many searches are left when the reader is warned that the trial is
+ * running out. The client's copy names the number: "When Non-subscriber has
+ * used 15x daily search cap, display a notice: … You have 5 AI-assisted
+ * searches remaining for the day." Expressed as a remainder rather than as
+ * "15" so that re-tuning LENSY_DAILY_SEARCH_CAP keeps the warning meaningful.
+ */
+export const SEARCH_CAP_WARN_REMAINING = 5;
 
 /** The rolling window: "daily" per the client, 24 hours per their own words. */
 export const SEARCH_CAP_WINDOW_SECONDS = 24 * 3600;

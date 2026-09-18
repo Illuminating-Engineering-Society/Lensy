@@ -28,6 +28,7 @@ import { handleSearch } from './search';
 import { handleIngest } from './ingest';
 import { handleAdminScanOrphans, handleAdminEnumerateIds, handleAdminDeleteOrphans, handleAdminFlushCache, handleAdminSearchLog, handleAdminSearchEvents, handleAdminR2Multipart, handleAdminIndexStatus, handleAdminAnalytics, handleAdminDeviceResets, handleAdminDeviceResetsList, handleAdminDeviceResetUpdate } from './admin';
 import { handleLibraryDocumentLookup, handleDeviceResetRequest } from './library-support';
+import { handleAdminCompAccess, handleAdminCompAccessCsv } from './comp-access';
 import { handleIngestJobs } from './staff-ingest';
 import { handleEvent } from './events';
 import { handlePreferences } from './preferences';
@@ -166,6 +167,16 @@ export default {
       }
       if (path === '/api/admin/device-resets' && request.method === 'POST') {
         return withCors(await handleAdminDeviceResetUpdate(request, env));
+      }
+
+      // ── Admin: 90-day complimentary document access (client DO110) ───────
+      // Records grants and emails recipients; the access itself is still
+      // enabled by hand in Vitrium — see workers/comp-access.ts.
+      if (path === '/api/admin/comp-access.csv' && request.method === 'GET') {
+        return withCors(await handleAdminCompAccessCsv(request, env));
+      }
+      if (path === '/api/admin/comp-access' || path.startsWith('/api/admin/comp-access/')) {
+        return withCors(await handleAdminCompAccess(request, env, url));
       }
 
       // ── Admin: invited-users dashboard backend ───────────────────────────
@@ -352,9 +363,13 @@ async function handleStandards(request: Request, env: Env, url: URL): Promise<Re
     // grouping, cover thumbnail, description, authoring committee, Read/Buy and
     // the staff-curated eLearning links. All optional — they arrive from the
     // Vitrium/webstore export and are simply null until it carries them.
+    // `published_date` (client DO112) is the portal's PublishDate, ISO
+    // YYYY-MM-DD; `year` beside it is the EDITION label read off the
+    // designation, so the two disagree legitimately on a reaffirmed printing.
     const result = await env.DB.prepare(
       'SELECT id, title, full_designation, year, status, vitrium_web_url, page_count,' +
-      ' description, author, collection, thumbnail_url, buy_url, elearning_json' +
+      ' description, author, collection, thumbnail_url, buy_url, elearning_json,' +
+      ' published_date' +
       ` FROM standards${where} ORDER BY id`
     ).all<Record<string, any>>();
 
@@ -702,11 +717,11 @@ async function emailCollection(request: Request, env: Env, projectId: string): P
     message: typeof body?.message === 'string' ? body.message.trim() || null : null,
     collection,
     items: await collectionItems(env, projectId),
-    claimUrl: `${appUrl}/projects.html?share=${token}`,
+    claimUrl: `${appUrl}/bookmarks?share=${token}`,
     appUrl,
   });
 
-  return json({ ...outcome, to, share_token: token, path: `/projects.html?share=${token}` });
+  return json({ ...outcome, to, share_token: token, path: `/bookmarks?share=${token}` });
 }
 
 /** Read a shared collection by token — the recipient's preview before claiming. */

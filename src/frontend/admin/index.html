@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="robots" content="noindex, nofollow">
-  <title>Lensy — Staff Dashboard</title>
+  <title>IES Lens — Staff Dashboard</title>
   <!-- SSO gate, first: hides the page until /api/auth/me confirms an IES
        session carrying the `administrator` role. The API enforces the same
        thing server-side (requireAdminAccess), so this is UX only. -->
@@ -64,7 +64,7 @@
           </svg>
         </div>
         <div>
-          <span class="font-display text-xl font-bold tracking-tight">Lensy</span>
+          <span class="font-display text-xl font-bold tracking-tight">IES Lens</span>
           <span class="hidden sm:inline text-blue-200 text-sm ml-2">Staff · Dashboard</span>
         </div>
       </a>
@@ -80,7 +80,7 @@
   <main class="max-w-6xl mx-auto px-4 py-8">
 
     <h1 class="font-display text-2xl font-bold mb-1">Staff dashboard</h1>
-    <p class="text-sm text-gray-500 mb-6">Corpus health, access grants, search activity and reader-support queues for Lensy.</p>
+    <p class="text-sm text-gray-500 mb-6">Corpus health, access grants, search activity and reader-support queues for IES Lens.</p>
 
     <!-- ── Tabs ───────────────────────────────────────────────────────────── -->
     <div class="border-b border-gray-200 mb-6">
@@ -249,8 +249,8 @@
         <div class="bg-blue-50 border border-blue-200 rounded-xl p-5 text-sm text-blue-900">
           <h3 class="font-display font-bold mb-1">Vitrium is still a separate step — for now</h3>
           <p>
-            Indexing here updates <strong>Lensy only</strong>. Upload the new PDF version in the Vitrium admin app as
-            usual, then refresh Lensy's links and covers with <code class="font-mono text-xs bg-blue-100 px-1 rounded">npm run sync-metadata</code>
+            Indexing here updates <strong>IES Lens only</strong>. Upload the new PDF version in the Vitrium admin app as
+            usual, then refresh IES Lens's links and covers with <code class="font-mono text-xs bg-blue-100 px-1 rounded">npm run sync-metadata</code>
             (Vitrium export CSV + portal JSON). The longer-term plan — one upload here pushing the new version to
             Vitrium automatically — is designed but blocked on API access (the privilege grant for the IES API account
             is still pending with Vitrium). See <span class="font-mono text-xs">docs/STAFF_INGEST.md</span>.
@@ -392,6 +392,128 @@
       </div>
     </section>
 
+    <!-- ══ Comp access (client DO110) ═══════════════════════════════════════ -->
+    <section id="panel-comp-access" class="hidden fade-in">
+      <div class="flex flex-wrap items-center justify-between gap-3 mb-2">
+        <h2 class="font-display text-xl font-bold">Complimentary document access</h2>
+        <div class="flex items-center gap-2">
+          <a href="/api/admin/comp-access.csv" class="px-3 py-2 text-sm rounded-lg border border-gray-300 bg-white hover:bg-gray-50 transition">Export CSV</a>
+          <button onclick="loadCompAccess()" class="px-3 py-2 text-sm rounded-lg border border-gray-300 bg-white hover:bg-gray-50 transition">Refresh</button>
+        </div>
+      </div>
+      <p class="text-sm text-gray-500 mb-4">
+        Give one person — or a whole classroom or committee — time-limited access to specific standards,
+        without a Lighting Library subscription. IES Lens records the grant and emails each recipient the
+        documents, dates and links.
+      </p>
+
+      <!-- The one thing a staff member must not miss: this page does not grant
+           anything. Stated where the grant is created, not only in the docs. -->
+      <div class="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 mb-6 text-sm text-amber-900">
+        <p class="font-medium mb-1">The access itself is still enabled by hand.</p>
+        <p>
+          After creating a grant, open the Vitrium admin app and give each recipient access to the listed
+          documents through the end date, then press <strong>Mark applied</strong> here. Recipients are told
+          their access may take a few hours to appear, so the email can safely go out first.
+          Automating this step is waiting on Vitrium API access (a privilege grant pending with Vitrium) —
+          and note that Vitrium’s External Services mode has no groups, so the “90-day document comp” group
+          in the original request has to become a per-document permission.
+        </p>
+      </div>
+
+      <!-- ── New grant ──────────────────────────────────────────────────── -->
+      <form onsubmit="return submitCompGrant(event)" class="bg-white rounded-xl shadow p-5 mb-8 space-y-4">
+        <h3 class="font-display font-bold">New grant</h3>
+
+        <div class="grid md:grid-cols-2 gap-4">
+          <div>
+            <label class="block text-xs font-medium text-gray-600 mb-1">Recipients <span class="text-gray-400">(one per line — optionally “email, Name”)</span></label>
+            <textarea id="ca-emails" rows="5" required
+                      placeholder="student@example.edu&#10;dana@firm.com, Dana Ruiz"
+                      class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg font-mono focus:ring-2 focus:ring-brand-primary focus:border-transparent"></textarea>
+            <div class="mt-2 flex items-center gap-2">
+              <input id="ca-csv" type="file" accept=".csv,text/csv" onchange="onCompCsv()"
+                     class="text-xs text-gray-500 file:mr-2 file:px-2 file:py-1 file:border-0 file:bg-gray-100 file:rounded file:text-xs" />
+              <span class="text-xs text-gray-400">A CSV of addresses is read here and added above.</span>
+            </div>
+          </div>
+
+          <div>
+            <label class="block text-xs font-medium text-gray-600 mb-1">Documents <span class="text-gray-400">(current or deprecated)</span></label>
+            <div id="ca-doc-chips" class="flex flex-wrap gap-1.5 mb-2"></div>
+            <div class="relative">
+              <input id="ca-doc-search" type="text" autocomplete="off" placeholder="Type a designation or title…"
+                     oninput="renderCompDocMatches()" onfocus="renderCompDocMatches()" onkeydown="return onCompDocKey(event)"
+                     onblur="hideCompDocMatches()"
+                     class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-brand-primary focus:border-transparent" />
+              <div id="ca-doc-matches" class="hidden absolute z-20 left-0 right-0 mt-1 max-h-60 overflow-y-auto bg-white border border-gray-200 rounded-lg shadow-lg text-sm"></div>
+            </div>
+            <p id="ca-doc-hint" class="mt-1 text-xs text-gray-400">Loading the standards list…</p>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <div>
+            <label class="block text-xs font-medium text-gray-600 mb-1">Start date</label>
+            <input id="ca-start" type="date" oninput="recomputeCompEnd()" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white" />
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-gray-600 mb-1">Days</label>
+            <input id="ca-days" type="number" min="1" max="730" value="90" oninput="recomputeCompEnd()" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white" />
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-gray-600 mb-1">Ends <span class="text-gray-400">(override allowed)</span></label>
+            <input id="ca-end" type="date" oninput="onCompEndOverride()" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white" />
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-gray-600 mb-1">Notes <span class="text-gray-400">(optional)</span></label>
+            <input id="ca-notes" type="text" placeholder="e.g. Lighting 201, Fall 2026" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg" />
+          </div>
+        </div>
+
+        <label class="flex items-center gap-2 text-xs text-gray-600">
+          <input type="checkbox" id="ca-notify" checked class="rounded border-gray-300">
+          Email each recipient the documents, dates and Library links
+        </label>
+
+        <div id="ca-result" class="hidden text-sm rounded-lg px-3 py-2"></div>
+        <div class="flex justify-end">
+          <button type="submit" id="ca-submit" class="px-4 py-2 text-sm rounded-lg bg-brand-primary hover:bg-brand-primary-dark text-white font-medium transition">Grant access</button>
+        </div>
+      </form>
+
+      <!-- ── Existing grants ────────────────────────────────────────────── -->
+      <div class="flex flex-wrap items-center gap-2 mb-4">
+        <div id="ca-chips" class="flex flex-wrap gap-2"></div>
+        <div class="flex-1 min-w-[200px]">
+          <input id="ca-filter" type="search" placeholder="Filter by recipient, standard or note…" oninput="renderCompGrants()"
+                 class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white focus:ring-2 focus:ring-brand-primary focus:border-transparent" />
+        </div>
+      </div>
+
+      <p id="ca-note" class="hidden text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-3"></p>
+
+      <div class="bg-white rounded-xl shadow overflow-hidden">
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead>
+              <tr class="text-left text-xs uppercase tracking-wide text-gray-500 border-b border-gray-200">
+                <th class="px-4 py-3">Recipient</th>
+                <th class="px-4 py-3">Documents</th>
+                <th class="px-4 py-3">Window</th>
+                <th class="px-4 py-3">In Vitrium</th>
+                <th class="px-4 py-3">Email</th>
+                <th class="px-4 py-3">Status</th>
+                <th class="px-4 py-3 text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody id="ca-rows"></tbody>
+          </table>
+        </div>
+        <p id="ca-empty" class="hidden text-center text-gray-400 text-sm py-10">No grants match this view.</p>
+      </div>
+    </section>
+
     <!-- ══ Index health ═════════════════════════════════════════════════════ -->
     <section id="panel-index" class="hidden fade-in">
       <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
@@ -523,7 +645,7 @@
           <div>
             <label class="block text-xs font-medium text-gray-600 mb-1">Grants</label>
             <select id="inv-tier" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white">
-              <option value="full" selected>full — all of Lensy</option>
+              <option value="full" selected>full — all of IES Lens</option>
               <option value="lite">lite — Lighting Science only</option>
             </select>
             <p class="mt-1 text-xs text-gray-400">Applies whether or not they are an IES member.</p>
@@ -545,7 +667,7 @@
         </div>
         <label class="flex items-center gap-2 text-xs text-gray-600">
           <input type="checkbox" id="inv-notify" checked class="rounded border-gray-300">
-          Email each person an invitation with a link to Lensy
+          Email each person an invitation with a link to IES Lens
         </label>
         <p class="text-xs text-gray-400">
           Invitees sign in with their IES account and set a password on first use. Anyone
@@ -635,13 +757,13 @@
           <label class="block text-xs font-medium text-gray-600 mb-1">PDF file</label>
           <input id="ing-file" type="file" accept=".pdf,application/pdf" required onchange="onIngestFile()"
                  class="w-full text-sm border border-gray-300 rounded-lg bg-white file:mr-3 file:px-3 file:py-2 file:border-0 file:bg-gray-100 file:rounded-l-lg file:text-sm" />
-          <p class="mt-1 text-xs text-gray-400">The PDF is read in <em>your</em> browser; Lensy indexes what it reads. Files over ~90 MB upload in parts automatically.</p>
+          <p class="mt-1 text-xs text-gray-400">The PDF is read in <em>your</em> browser; IES Lens indexes what it reads. Files over ~90 MB upload in parts automatically.</p>
         </div>
         <div>
           <label class="block text-xs font-medium text-gray-600 mb-1">Word manuscript <span class="text-gray-400">(optional — recommended for new editions)</span></label>
           <input id="ing-docx" type="file" accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                  class="w-full text-sm border border-gray-300 rounded-lg bg-white file:mr-3 file:px-3 file:py-2 file:border-0 file:bg-gray-100 file:rounded-l-lg file:text-sm" />
-          <p class="mt-1 text-xs text-gray-400">With the manuscript attached, its structure becomes the indexed text (exact headings, whole captions, real tables) and the PDF stays the page authority for Library links. Tracked changes must be accepted in Word first. If the two files disagree too much, Lensy falls back to the PDF alone.</p>
+          <p class="mt-1 text-xs text-gray-400">With the manuscript attached, its structure becomes the indexed text (exact headings, whole captions, real tables) and the PDF stays the page authority for Library links. Tracked changes must be accepted in Word first. If the two files disagree too much, IES Lens falls back to the PDF alone.</p>
         </div>
         <div class="grid grid-cols-2 gap-3">
           <div>
@@ -658,7 +780,7 @@
           </div>
         </div>
         <div id="ing-replace-wrap">
-          <label class="block text-xs font-medium text-gray-600 mb-1">Replaces <span class="text-gray-400">(the old edition in Lensy)</span></label>
+          <label class="block text-xs font-medium text-gray-600 mb-1">Replaces <span class="text-gray-400">(the old edition in IES Lens)</span></label>
           <select id="ing-replaces" onchange="onIngestReplacesChange()" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white font-mono">
             <option value="">— nothing (new standard, or same-id re-ingest)</option>
           </select>
@@ -675,7 +797,7 @@
           </label>
           <label class="flex items-start gap-2 text-sm">
             <input type="radio" name="ing-disp" value="delete" class="mt-0.5">
-            <span class="text-red-700"><strong>Remove it entirely</strong> — vectors, illuminance rows, catalog row and PDF are deleted. Not recoverable from Lensy.</span>
+            <span class="text-red-700"><strong>Remove it entirely</strong> — vectors, illuminance rows, catalog row and PDF are deleted. Not recoverable from IES Lens.</span>
           </label>
           <label class="flex items-start gap-2 text-sm">
             <input type="radio" name="ing-disp" value="none" class="mt-0.5">
@@ -726,6 +848,7 @@
       ['standards',   'Standards'],
       ['analytics',   'Search analytics'],
       ['resets',      'Device resets'],
+      ['comp-access', 'Comp access'],
       ['index',       'Index health'],
       ['maintenance', 'Maintenance'],
     ];
@@ -763,6 +886,7 @@
           standards: () => { window.loadStandards(); window.loadJobs(); },
           analytics: loadAnalytics,
           resets: loadResets,
+          'comp-access': loadCompAccess,
           index: () => {},
           maintenance: () => {},
         })[id]();
@@ -1045,7 +1169,7 @@
     }
 
     async function resendInvite(id, email) {
-      if (!confirm(`Email the Lensy invitation to ${email}?`)) return;
+      if (!confirm(`Email the IES Lens invitation to ${email}?`)) return;
       const { status, data } = await api(`/api/admin/users/${id}/resend`, { method: 'POST' });
       if (status >= 400) alert(`Could not send: ${data.error || 'unknown error'}`);
       await loadUsers();
@@ -1278,6 +1402,308 @@
       });
       if (code >= 400) alert(`Could not update: ${data.error || 'unknown error'}`);
       await loadResets();
+    }
+
+    // ── Comp access (client DO110) ────────────────────────────────────────
+    // The tab creates and tracks 90-day complimentary document grants. It does
+    // NOT enable them: that is still a manual step in the Vitrium admin app
+    // (see the banner in the panel), which is why every row carries an
+    // "In Vitrium" state of its own, separate from the grant's status.
+    let compCatalog = [];      // every indexed standard, current AND deprecated
+    let compSelected = [];     // ids chosen for the grant being written
+    let compGrants = [];
+    let compCounts = { all: 0, active: 0, revoked: 0, expired: 0, pendingVitrium: 0 };
+    let compFilter = 'all';
+
+    const CA_BADGE = {
+      active: 'bg-green-100 text-green-800',
+      expired: 'bg-gray-200 text-gray-600',
+      revoked: 'bg-red-100 text-red-700',
+    };
+
+    async function loadCompAccess() {
+      if (!document.getElementById('ca-start').value) {
+        // "Assign 'start' date" — today unless staff say otherwise.
+        document.getElementById('ca-start').value = new Date().toISOString().slice(0, 10);
+        recomputeCompEnd();
+      }
+      await Promise.all([loadCompCatalog(), loadCompGrants()]);
+    }
+
+    // The ingest-health report is the only list that includes DEPRECATED
+    // standards, which the client explicitly allows comping.
+    async function loadCompCatalog() {
+      if (compCatalog.length) return;
+      const hint = document.getElementById('ca-doc-hint');
+      try {
+        const { data } = await api('/api/admin/index-status?verify=0');
+        compCatalog = (data.standards || []).map(s => ({
+          id: s.id,
+          // The ingest writes title = id when a cover could not be read.
+          title: s.title && s.title !== s.id ? s.title : '',
+          status: s.status || 'Active',
+        }));
+        hint.textContent = `${fmt(compCatalog.length)} standards available (current and deprecated).`;
+      } catch {
+        hint.textContent = 'Could not load the standards list — reload the page to try again.';
+      }
+    }
+
+    async function loadCompGrants() {
+      const { data } = await api('/api/admin/comp-access');
+      compGrants = data.grants || [];
+      compCounts = data.counts || compCounts;
+      const note = document.getElementById('ca-note');
+      note.classList.toggle('hidden', !data.note);
+      note.textContent = data.note || '';
+      renderCompGrants();
+    }
+
+    // ── Document picker ───────────────────────────────────────────────────
+    function compDocMatches() {
+      const q = (document.getElementById('ca-doc-search').value || '').trim().toLowerCase();
+      const pool = compCatalog.filter(s => !compSelected.includes(s.id));
+      if (!q) return pool.slice(0, 8);
+      return pool.filter(s => s.id.toLowerCase().includes(q) || s.title.toLowerCase().includes(q)).slice(0, 8);
+    }
+
+    function renderCompDocMatches() {
+      const box = document.getElementById('ca-doc-matches');
+      const matches = compDocMatches();
+      box.classList.toggle('hidden', matches.length === 0);
+      box.innerHTML = matches.map(s => `
+        <button type="button" onclick="addCompDoc('${esc(s.id)}')"
+                class="w-full text-left px-3 py-2 hover:bg-gray-50 border-b border-gray-100 last:border-0">
+          <span class="font-mono text-xs font-medium">${esc(s.id)}</span>
+          ${s.status === 'Deprecated' ? '<span class="ml-1 px-1.5 py-0.5 rounded text-[10px] bg-amber-100 text-amber-800">deprecated</span>' : ''}
+          ${s.title ? `<span class="block text-xs text-gray-500 truncate">${esc(s.title)}</span>` : ''}
+        </button>`).join('');
+    }
+
+    // Deferred, because blur lands before the click on a match would register.
+    function hideCompDocMatches() {
+      setTimeout(() => document.getElementById('ca-doc-matches').classList.add('hidden'), 150);
+    }
+
+    // Enter inside the picker picks the first match; without this it submits
+    // the surrounding form with no documents chosen.
+    function onCompDocKey(event) {
+      if (event.key !== 'Enter') return true;
+      event.preventDefault();
+      const first = compDocMatches()[0];
+      if (first) addCompDoc(first.id);
+      return false;
+    }
+
+    function addCompDoc(id) {
+      if (!compSelected.includes(id)) compSelected.push(id);
+      document.getElementById('ca-doc-search').value = '';
+      renderCompDocChips();
+      renderCompDocMatches();
+    }
+
+    function removeCompDoc(id) {
+      compSelected = compSelected.filter(s => s !== id);
+      renderCompDocChips();
+      renderCompDocMatches();
+    }
+
+    function renderCompDocChips() {
+      document.getElementById('ca-doc-chips').innerHTML = compSelected.map(id => {
+        const std = compCatalog.find(s => s.id === id);
+        return `<span class="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-brand-secondary/10 text-brand-secondary text-xs font-mono"
+                      title="${esc(std?.title || '')}">
+          ${esc(id)}
+          <button type="button" onclick="removeCompDoc('${esc(id)}')" class="text-brand-secondary/60 hover:text-red-600" aria-label="Remove">&times;</button>
+        </span>`;
+      }).join('');
+    }
+
+    // ── Dates ─────────────────────────────────────────────────────────────
+    // Two-way: days drive the end date, and an overridden end date drives days,
+    // so whichever staff touch last, the two always describe the same window —
+    // which is what the recipient's email prints.
+    const caDay = 86400000;
+
+    function recomputeCompEnd() {
+      const start = document.getElementById('ca-start').value;
+      const days = parseInt(document.getElementById('ca-days').value, 10);
+      if (!start || !Number.isInteger(days) || days < 1) return;
+      document.getElementById('ca-end').value =
+        new Date(Date.parse(start + 'T00:00:00Z') + days * caDay).toISOString().slice(0, 10);
+    }
+
+    function onCompEndOverride() {
+      const start = document.getElementById('ca-start').value;
+      const end = document.getElementById('ca-end').value;
+      if (!start || !end) return;
+      const days = Math.round((Date.parse(end + 'T00:00:00Z') - Date.parse(start + 'T00:00:00Z')) / caDay);
+      if (days >= 1) document.getElementById('ca-days').value = days;
+    }
+
+    // ── Recipients ────────────────────────────────────────────────────────
+    // Parsed here rather than uploaded, so staff see and can edit exactly what
+    // will be submitted before anyone is emailed.
+    function onCompCsv() {
+      const input = document.getElementById('ca-csv');
+      const file = input.files && input.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        const box = document.getElementById('ca-emails');
+        const lines = String(reader.result || '').split(/\r?\n/);
+        const added = [];
+        for (const line of lines) {
+          const cells = line.split(',').map(c => c.trim().replace(/^"|"$/g, ''));
+          const email = cells.find(c => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(c));
+          if (!email) continue;                       // header rows drop out here
+          const name = cells.find(c => c && c !== email && !c.includes('@'));
+          added.push(name ? `${email}, ${name}` : email);
+        }
+        box.value = [box.value.trim(), ...added].filter(Boolean).join('\n');
+        input.value = '';
+        if (added.length === 0) alert('No email addresses were found in that file.');
+      };
+      reader.readAsText(file);
+    }
+
+    function parseCompRecipients() {
+      return document.getElementById('ca-emails').value
+        .split('\n')
+        .map(l => l.trim())
+        .filter(Boolean)
+        .map(line => {
+          const [email, ...rest] = line.split(',');
+          return { email: email.trim(), name: rest.join(',').trim() || null };
+        });
+    }
+
+    async function submitCompGrant(event) {
+      event.preventDefault();
+      const out = document.getElementById('ca-result');
+      const btn = document.getElementById('ca-submit');
+      if (compSelected.length === 0) {
+        out.className = 'text-sm rounded-lg px-3 py-2 bg-red-50 text-red-700';
+        out.textContent = 'Choose at least one document.';
+        return false;
+      }
+      btn.disabled = true;
+      try {
+        const { status, data } = await api('/api/admin/comp-access', {
+          method: 'POST',
+          body: JSON.stringify({
+            recipients: parseCompRecipients(),
+            standard_ids: compSelected,
+            start_date: document.getElementById('ca-start').value,
+            end_date: document.getElementById('ca-end').value,
+            notes: document.getElementById('ca-notes').value.trim() || null,
+            notify: document.getElementById('ca-notify').checked,
+          }),
+        });
+        if (status >= 400) {
+          out.className = 'text-sm rounded-lg px-3 py-2 bg-red-50 text-red-700';
+          out.textContent = data.error || `Failed (${status})`;
+          return false;
+        }
+        const created = (data.created || []).length;
+        const parts = [`${created} grant${created === 1 ? '' : 's'} recorded`];
+        if (data.emailed?.sent) parts.push(`${data.emailed.sent} emailed`);
+        if (data.emailed?.failed?.length) parts.push(`${data.emailed.failed.length} email(s) failed`);
+        if (data.rejected?.length) parts.push(`${data.rejected.length} rejected (${esc(data.rejected[0].reason)})`);
+        out.className = 'text-sm rounded-lg px-3 py-2 bg-green-50 text-green-800';
+        out.innerHTML = `${parts.join(' · ')}.<br><strong>Next:</strong> enable these documents for each recipient in the Vitrium admin app, then press “Mark applied”.`;
+        document.getElementById('ca-emails').value = '';
+        document.getElementById('ca-notes').value = '';
+        compSelected = [];
+        renderCompDocChips();
+        await loadCompGrants();
+      } finally {
+        btn.disabled = false;
+        out.classList.remove('hidden');
+      }
+      return false;
+    }
+
+    // ── Existing grants ───────────────────────────────────────────────────
+    function setCompFilter(s) { compFilter = s; renderCompGrants(); }
+
+    function renderCompGrants() {
+      const CHIPS = [
+        ['pending', 'Awaiting Vitrium'], ['active', 'Active'],
+        ['expired', 'Expired'], ['revoked', 'Revoked'], ['all', 'All'],
+      ];
+      document.getElementById('ca-chips').innerHTML = CHIPS.map(([s, label]) => {
+        const active = compFilter === s;
+        const n = s === 'pending' ? compCounts.pendingVitrium : compCounts[s];
+        return `<button onclick="setCompFilter('${s}')"
+          class="px-3 py-1.5 text-sm rounded-full border transition ${active
+            ? 'bg-brand-secondary text-white border-brand-secondary'
+            : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'}">
+          ${label} <span class="${active ? 'text-blue-200' : 'text-gray-400'}">${n ?? 0}</span>
+        </button>`;
+      }).join('');
+
+      const q = (document.getElementById('ca-filter').value || '').trim().toLowerCase();
+      const visible = compGrants.filter(g => {
+        if (compFilter === 'pending' && (g.vitrium_applied_at || g.effective_status !== 'active')) return false;
+        if (compFilter !== 'all' && compFilter !== 'pending' && g.effective_status !== compFilter) return false;
+        if (!q) return true;
+        return [g.email, g.name, g.notes, g.created_by, ...g.documents.map(d => d.designation + ' ' + (d.title || ''))]
+          .some(f => f && String(f).toLowerCase().includes(q));
+      });
+
+      document.getElementById('ca-rows').innerHTML = visible.map(g => {
+        const docs = g.documents.map(d => `<span class="inline-block px-1.5 py-0.5 rounded bg-gray-100 font-mono text-[11px] mr-1 mb-1"
+          title="${esc(d.title || d.designation)}">${esc(d.id)}</span>`).join('');
+        const applied = g.vitrium_applied_at
+          ? `<span class="text-green-700 text-xs">✓ ${esc(day(g.vitrium_applied_at))}</span>
+             ${g.vitrium_applied_by ? `<p class="text-xs text-gray-400">${esc(g.vitrium_applied_by)}</p>` : ''}`
+          : '<span class="text-xs text-amber-700 font-medium">Not yet</span>';
+        const mail = g.notify_error
+          ? `<span class="text-xs text-red-600" title="${esc(g.notify_error)}">failed ⚠</span>`
+          : g.notify_sent
+            ? `<span class="text-xs text-green-700">✓ ${esc(day(g.notify_sent_at))}</span>`
+            : '<span class="text-xs text-gray-400">not sent</span>';
+        const revoked = g.effective_status === 'revoked';
+        const actions = [
+          g.vitrium_applied_at
+            ? `<button onclick="compAction(${g.id}, {vitrium_applied:false})" class="text-gray-400 hover:text-gray-700 hover:underline">Undo applied</button>`
+            : `<button onclick="compAction(${g.id}, {vitrium_applied:true})" class="text-green-700 hover:underline">Mark applied</button>`,
+          revoked
+            ? `<button onclick="compAction(${g.id}, {status:'active'})" class="text-brand-secondary hover:underline">Reinstate</button>`
+            : `<button onclick="compAction(${g.id}, {status:'revoked'})" class="text-gray-400 hover:text-red-600 hover:underline">Revoke</button>`,
+          revoked ? '' : `<button onclick="compAction(${g.id}, {resend:true})" class="text-brand-secondary hover:underline">Resend</button>`,
+        ].filter(Boolean).join('\n');
+
+        return `<tr class="border-b border-gray-100 hover:bg-gray-50 align-top">
+          <td class="px-4 py-3">
+            <span class="font-mono text-xs">${esc(g.email)}</span>
+            ${g.name ? `<p class="text-xs text-gray-500">${esc(g.name)}</p>` : ''}
+            ${g.notes ? `<p class="text-xs text-gray-400 max-w-[200px] truncate" title="${esc(g.notes)}">${esc(g.notes)}</p>` : ''}
+          </td>
+          <td class="px-4 py-3 max-w-[260px]">${docs}</td>
+          <td class="px-4 py-3 text-xs whitespace-nowrap">${esc(g.start_date)} → ${esc(g.end_date)}
+            <p class="text-gray-400">${fmt(g.days)} days</p></td>
+          <td class="px-4 py-3">${applied}</td>
+          <td class="px-4 py-3">${mail}</td>
+          <td class="px-4 py-3"><span class="inline-block px-2 py-0.5 rounded-full text-xs font-medium ${CA_BADGE[g.effective_status] || 'bg-gray-100 text-gray-600'}">${esc(g.effective_status)}</span></td>
+          <td class="px-4 py-3 text-right whitespace-nowrap space-x-3 text-xs">${actions}</td>
+        </tr>`;
+      }).join('');
+      document.getElementById('ca-empty').classList.toggle('hidden', visible.length > 0);
+    }
+
+    async function compAction(id, patch) {
+      if (patch.status === 'revoked' &&
+          !confirm('Revoke this grant? Remember to remove the access in the Vitrium admin app too — revoking here only records the decision.')) return;
+      if (patch.vitrium_applied === true &&
+          !confirm('Mark as applied in Vitrium? Only do this once the recipient can actually open the documents.')) return;
+      const { status, data } = await api(`/api/admin/comp-access/${id}`, {
+        method: 'PATCH', body: JSON.stringify(patch),
+      });
+      if (status >= 400) alert(`Could not update: ${data.error || 'unknown error'}`);
+      else if (patch.resend) alert('Notification re-sent.');
+      await loadCompGrants();
     }
 
     // ── Index health ──────────────────────────────────────────────────────
@@ -1692,7 +2118,7 @@
         : 'none';
 
       if (disposition === 'delete' &&
-          !confirm(`After indexing, ${replaces} will be removed from Lensy ENTIRELY — vectors, illuminance rows, catalog row and PDF. This is not recoverable from Lensy. Continue?`)) {
+          !confirm(`After indexing, ${replaces} will be removed from IES Lens ENTIRELY — vectors, illuminance rows, catalog row and PDF. This is not recoverable from IES Lens. Continue?`)) {
         return false;
       }
 
@@ -1729,7 +2155,7 @@
     const STEPS = [
       ['upload', 'Upload PDF'],
       ['parse',  'Read pages in the browser'],
-      ['index',  'Analyze & index (Lensy)'],
+      ['index',  'Analyze & index (IES Lens)'],
       ['old',    'Old edition'],
       ['done',   'Done'],
     ];

@@ -1,0 +1,30 @@
+-- Migration: 0019_published_date
+--
+-- ── DO112: "add 'published' date for each" standard on the List Standards page ─
+--
+-- The table has carried `year` and `edition` since the beginning, but both are
+-- read off the DESIGNATION ("RP-1-24" → 2024), which is the edition's label and
+-- not the day the Lighting Library published it. The client asked for the date,
+-- and for a "Publication Date" sort with a "Most Recent (past 6 months)" band —
+-- neither of which a year can answer.
+--
+-- The source is the Lighting Library portal's own document list (the
+-- PortalDocuments JSON that --portal already joins onto the Vitrium export by
+-- Doc Code), whose `PublishDate` covers 271 of 278 documents. Stored as an ISO
+-- date, `YYYY-MM-DD`, so a string sort IS a chronological sort.
+--
+-- Two guards live in scripts/sync-metadata.js rather than here, because they are
+-- judgements about the data and not about the schema:
+--
+--   1. The portal holds data-entry errors — RP-3-20+E1 says 2030-07-23 and
+--      LP-4-20 says 2029-01-31. A date in the future would sort to the very top
+--      of "Newest first" AND claim a place in the "Most Recent" band, so a
+--      PublishDate later than the sync date is stored as NULL instead.
+--   2. A reaffirmed printing legitimately publishes years after its designation
+--      year (LS-6-20+E1 (R2025) → 2025). Those are correct and are kept.
+--
+-- Optional by design: a standard the portal has no date for renders the edition
+-- year derived from its designation, marked as a year rather than a date, and is
+-- never admitted to the "Most Recent" band.
+
+ALTER TABLE standards ADD COLUMN published_date TEXT;

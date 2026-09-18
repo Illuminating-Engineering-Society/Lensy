@@ -815,22 +815,32 @@ describe('save-search note', () => {
 
 // ─── DO53: LensyLite ──────────────────────────────────────────────────────────
 
-describe('LensyLite', () => {
+describe('Non-Subscriber (DO53, revised DO999)', () => {
   it('is off by default — every tool is available', () => {
     run(`applyTier('full'); resetFilters()`);
-    expect(elements.get('wordmark').textContent).toBe('Lensy');
     expect(pills.get('tables').disabled).toBe(false);
     expect(JSON.parse(run('JSON.stringify(filterState)')).tables).toBe(true);
   });
 
-  it('renames the product and locks the three tools a subscription unlocks', () => {
+  // DO999: "Only 1 logo (no more LensyLite)" — the mark stopped being a tier
+  // signal, so the account menu names the SUBSCRIPTION instead (DO111).
+  it('names the subscription rather than renaming the product', () => {
+    run(`applyTier('full')`);
+    expect(elements.get('menu-tier-label').textContent).toBe('Lighting Library');
     run(`applyTier('lite')`);
-    expect(elements.get('wordmark').textContent).toBe('LensyLite');
-    for (const name of ['tables', 'guide', 'compare']) {
+    expect(elements.get('menu-tier-label').textContent).toBe('No subscription');
+  });
+
+  it('locks the tools a subscription unlocks — and no longer the AI Guide', () => {
+    run(`applyTier('lite')`);
+    for (const name of ['tables', 'compare']) {
       expect(pills.get(name).disabled).toBe(true);
       expect(pills.get(name).title).toContain('Lighting Library subscription');
     }
-    // …and leaves the rest of the tools alone.
+    // The Guide is a metered trial now, not a locked tool: the daily cap ends
+    // it, so the control stays live.
+    expect(pills.get('guide').disabled).toBe(false);
+    // …and the rest of the tools are left alone.
     expect(pills.get('body').disabled).toBe(false);
     expect(pills.get('definitions').disabled).toBe(false);
     expect(pills.get('references').disabled).toBe(false);
@@ -840,18 +850,17 @@ describe('LensyLite', () => {
     run(`applyTier('lite')`);
     expect(elements.get('lite-banner').classList.contains('hidden')).toBe(false);
     expect(elements.get('lite-banner-text').textContent)
-      .toContain('IES Members receive limited access to Lighting Science Collection');
+      .toContain('Lighting Science Collection');
   });
 
   it('never lets a locked tool be switched on', () => {
-    run(`applyTier('lite'); resetFilters(); toggleFilter('tables'); toggleFilter('guide')`);
+    run(`applyTier('lite'); resetFilters(); toggleFilter('tables')`);
     const state = JSON.parse(run('JSON.stringify(filterState)'));
     expect(state.tables).toBe(false);
-    expect(state.guide).toBe(false);
     // A demo search that asks for them is normalized too.
-    run(`applyFilterState({ tables: true, guide: true, compare: true })`);
+    run(`applyFilterState({ tables: true, compare: true })`);
     const demo = JSON.parse(run('JSON.stringify(filterState)'));
-    expect(demo.tables || demo.guide || demo.compare).toBe(false);
+    expect(demo.tables || demo.compare).toBe(false);
     expect(demo.body).toBe(true);   // never left with nothing selected
   });
 
@@ -1633,9 +1642,14 @@ describe('AI Guide preference (DO080)', () => {
     expect(JSON.parse(run('JSON.stringify(filterState.guide)'))).toBe(true);
   });
 
-  it('never switches it on for a LensyLite account', () => {
-    run(`applyTier('lite'); resetFilters(); applyGuidePreference(true)`);
+  // DO999 handed non-subscribers the Guide as a metered trial, so the stored
+  // preference now applies to them exactly as it does to a subscriber. The
+  // guard itself stays for any tier that genuinely cannot use the tool.
+  it('applies to a non-subscriber too, now that the Guide is theirs to use', () => {
+    run(`applyTier('lite'); resetFilters(); applyGuidePreference(false)`);
     expect(JSON.parse(run('JSON.stringify(filterState.guide)'))).toBe(false);
+    run(`applyGuidePreference(true)`);
+    expect(JSON.parse(run('JSON.stringify(filterState.guide)'))).toBe(true);
     run(`applyTier('full'); resetFilters()`);
   });
 

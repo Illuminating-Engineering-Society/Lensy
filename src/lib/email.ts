@@ -28,7 +28,7 @@
  */
 
 const FROM_ADDRESS = 'noreply@lensy.ies.org';
-const FROM_NAME = 'IES Lensy';
+const FROM_NAME = 'IES Lens';
 
 // IES brand tokens, matching the app shell (src/frontend/*.html).
 const BRAND_SECONDARY = '#3A5068';
@@ -103,16 +103,16 @@ export function buildInviteEmail(ctx: InviteEmailContext): InviteEmailContent {
   const invitedBy = (ctx.invitedBy ?? '').trim();
   const isStaffRole = ctx.role === 'staff' || ctx.role === 'admin';
 
-  const subject = 'You have access to Lensy — the IES Standards Assistant';
+  const subject = 'You have access to IES Lens — the IES Standards Assistant';
 
   const lines: string[] = [];
   lines.push(
     invitedBy
-      ? `${invitedBy} has given you access to Lensy, the Illuminating Engineering Society's assistant for searching the IES Lighting Library.`
-      : `You have been given access to Lensy, the Illuminating Engineering Society's assistant for searching the IES Lighting Library.`,
+      ? `${invitedBy} has given you access to IES Lens, the Illuminating Engineering Society's assistant for searching the IES Lighting Library.`
+      : `You have been given access to IES Lens, the Illuminating Engineering Society's assistant for searching the IES Lighting Library.`,
   );
   lines.push(
-    'Ask a question in plain language — "how bright should a skating rink be?" — and Lensy answers with the relevant passages, illuminance tables and citations from current IES standards.',
+    'Ask a question in plain language — "how bright should a skating rink be?" — and IES Lens answers with the relevant passages, illuminance tables and citations from current IES standards.',
   );
   lines.push(
     'Sign in with your IES account. The first time you sign in since the IES sign-in upgrade you will be asked to set a new password; look for a separate email from IES after you enter your address.',
@@ -121,35 +121,35 @@ export function buildInviteEmail(ctx: InviteEmailContext): InviteEmailContent {
     lines.push(`Your access runs through ${formatExpiry(ctx.expiresAt)}.`);
   }
   if (isStaffRole) {
-    lines.push('Your account also has staff access to the Lensy admin tools.');
+    lines.push('Your account also has staff access to the IES Lens admin tools.');
   }
 
   const html = `<!doctype html><html><body style="margin:0;background:#f4f6f8;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif">
   <div style="max-width:560px;margin:24px auto;background:#fff;border:1px solid #e2e6ea;border-radius:8px;overflow:hidden">
     <div style="background:${BRAND_SECONDARY};color:#fff;padding:16px 20px;font-size:15px;font-weight:700">Illuminating Engineering Society</div>
     <div style="padding:24px 20px">
-      <h1 style="margin:0 0 14px;font-size:19px;color:${BRAND_SECONDARY}">Your access to Lensy is ready</h1>
+      <h1 style="margin:0 0 14px;font-size:19px;color:${BRAND_SECONDARY}">Your access to IES Lens is ready</h1>
       ${paragraph(greeting(ctx.name))}
       ${lines.map(paragraph).join('\n      ')}
-      <p style="margin:0 0 20px"><a href="${escapeHtml(appUrl)}/" style="display:inline-block;background:${BRAND_PRIMARY};color:#fff;text-decoration:none;padding:12px 22px;border-radius:6px;font-weight:600;font-size:15px">Open Lensy</a></p>
+      <p style="margin:0 0 20px"><a href="${escapeHtml(appUrl)}/" style="display:inline-block;background:${BRAND_PRIMARY};color:#fff;text-decoration:none;padding:12px 22px;border-radius:6px;font-weight:600;font-size:15px">Open IES Lens</a></p>
       <p style="margin:0 0 20px;font-size:13px;color:#666">If the button doesn't work, copy this address into your browser:<br><span style="color:${BRAND_SECONDARY};word-break:break-all">${escapeHtml(appUrl)}/</span></p>
       <p style="margin:0;font-size:13px;color:#666">Questions about IES standards? Contact <a href="mailto:Standards@ies.org" style="color:${BRAND_SECONDARY}">Standards@ies.org</a>.</p>
     </div>
-    <div style="padding:14px 20px;background:#f4f6f8;color:#888;font-size:12px">Sent by lensy.ies.org because you were added to Lensy's access list${invitedBy ? ` by ${escapeHtml(invitedBy)}` : ''} — please do not reply to this message.</div>
+    <div style="padding:14px 20px;background:#f4f6f8;color:#888;font-size:12px">Sent by lensy.ies.org because you were added to IES Lens's access list${invitedBy ? ` by ${escapeHtml(invitedBy)}` : ''} — please do not reply to this message.</div>
   </div>
 </body></html>`;
 
   const text = [
-    'Your access to Lensy is ready',
+    'Your access to IES Lens is ready',
     '',
     greeting(ctx.name),
     '',
     ...lines.flatMap((l) => [l, '']),
-    `Open Lensy: ${appUrl}/`,
+    `Open IES Lens: ${appUrl}/`,
     '',
     'Questions about IES standards? Contact Standards@ies.org.',
     '',
-    `Sent by lensy.ies.org because you were added to Lensy's access list${invitedBy ? ` by ${invitedBy}` : ''} — please do not reply.`,
+    `Sent by lensy.ies.org because you were added to IES Lens's access list${invitedBy ? ` by ${invitedBy}` : ''} — please do not reply.`,
   ].join('\n');
 
   return { subject, html, text };
@@ -250,7 +250,7 @@ export interface CollectionShareEmailContext {
     location?: string | null;
   };
   items: ShareEmailItem[];
-  /** Absolute "Save Search to My Lensy" URL, or null when no token exists. */
+  /** Absolute "Save to My Bookmarks" URL, or null when no token exists. */
   claimUrl: string | null;
   appUrl: string;
 }
@@ -348,8 +348,8 @@ export function buildCollectionShareEmail(ctx: CollectionShareEmailContext): Inv
       </div>`;
 
   const claimHtml = ctx.claimUrl
-    ? `<p style="margin:0 0 8px"><a href="${escapeHtml(ctx.claimUrl)}" style="display:inline-block;background:${BRAND_PRIMARY};color:#fff;text-decoration:none;padding:12px 22px;border-radius:6px;font-weight:600;font-size:15px">Save Search to My Lensy</a></p>
-      <p style="margin:0 0 20px;font-size:13px;color:#666">This copies the collection into your own Lensy account, where you can add to it and keep your own notes. It does not change ${sender ? escapeHtml(sender) + "'s" : 'the sender&#39;s'} copy.</p>`
+    ? `<p style="margin:0 0 8px"><a href="${escapeHtml(ctx.claimUrl)}" style="display:inline-block;background:${BRAND_PRIMARY};color:#fff;text-decoration:none;padding:12px 22px;border-radius:6px;font-weight:600;font-size:15px">Save to My Bookmarks</a></p>
+      <p style="margin:0 0 20px;font-size:13px;color:#666">This copies the collection into your own IES Lens account, where you can add to it and keep your own notes. It does not change ${sender ? escapeHtml(sender) + "'s" : 'the sender&#39;s'} copy.</p>`
     : '';
 
   const meta = [
@@ -375,7 +375,7 @@ export function buildCollectionShareEmail(ctx: CollectionShareEmailContext): Inv
       ${accessHtml}
       <p style="margin:22px 0 0;font-size:13px;color:#666">Questions about IES standards? Contact <a href="mailto:Standards@ies.org" style="color:${BRAND_SECONDARY}">Standards@ies.org</a>.</p>
     </div>
-    <div style="padding:14px 20px;background:#f4f6f8;color:#888;font-size:12px">Sent by lensy.ies.org because ${sender ? escapeHtml(sender) : 'a Lensy user'} shared these search results with you — please do not reply to this message. Excerpt text is not reproduced; each reference links to the standard in the IES Lighting Library.</div>
+    <div style="padding:14px 20px;background:#f4f6f8;color:#888;font-size:12px">Sent by lensy.ies.org because ${sender ? escapeHtml(sender) : 'an IES Lens user'} shared these search results with you — please do not reply to this message. Excerpt text is not reproduced; each reference links to the standard in the IES Lighting Library.</div>
   </div>
 </body></html>`;
 
@@ -390,8 +390,8 @@ export function buildCollectionShareEmail(ctx: CollectionShareEmailContext): Inv
     countLine,
     '',
     itemText || 'This collection has no saved results yet.',
-    ...(ctx.claimUrl ? ['', `Save Search to My Lensy: ${ctx.claimUrl}`,
-      'This copies the collection into your own Lensy account; the sender keeps theirs.'] : []),
+    ...(ctx.claimUrl ? ['', `Save to My Bookmarks: ${ctx.claimUrl}`,
+      'This copies the collection into your own IES Lens account; the sender keeps theirs.'] : []),
     '',
     "Don't have access to these standards?",
     `Subscribe to the Lighting Library: ${SUBSCRIBE_URL}`,
@@ -399,7 +399,7 @@ export function buildCollectionShareEmail(ctx: CollectionShareEmailContext): Inv
     '',
     'Questions about IES standards? Contact Standards@ies.org.',
     '',
-    `Sent by lensy.ies.org because ${sender || 'a Lensy user'} shared these search results with you — please do not reply.`,
+    `Sent by lensy.ies.org because ${sender || 'an IES Lens user'} shared these search results with you — please do not reply.`,
     'Excerpt text is not reproduced; each reference links to the standard in the IES Lighting Library.',
   ].join('\n');
 
@@ -531,6 +531,147 @@ export async function sendDeviceResetEmail(
   } catch (err) {
     const error = describeSendError(err);
     console.error('device_reset_email_failed', { to: ctx.to, error });
+    return { sent: false, error };
+  }
+}
+
+// ─── Complimentary document access (client DO110) ─────────────────────────────
+
+/** One granted standard, already resolved against D1 by the caller. */
+export interface CompAccessDocument {
+  /** standards.id — 'RP-8-25+E2'. */
+  id: string;
+  /** standards.full_designation, or a constructed 'ANSI/IES <id>'. */
+  designation: string;
+  title: string | null;
+  /**
+   * The BRANDED Lighting Library link (lib/library-url.js), or null when the
+   * standard has no viewer URL synced. Never Vitrium's own viewer host: a
+   * reader following that lands on a Vitrium auth error.
+   */
+  libraryUrl: string | null;
+}
+
+export interface CompAccessEmailContext {
+  to: string;
+  name: string | null;
+  documents: CompAccessDocument[];
+  days: number;
+  /** YYYY-MM-DD. */
+  startDate: string;
+  endDate: string;
+  /** Staff member who cut the grant, if they filled it in. */
+  grantedBy: string | null;
+}
+
+/** The library the granted documents live in — where the reader signs in. */
+const LIBRARY_URL = 'https://lighting.ies.org/';
+
+/**
+ * The recipient's notification for one complimentary access grant.
+ *
+ * Deliberately says "access will be available in the IES Lighting Library"
+ * rather than "is available now": the permission is added by hand in the
+ * Vitrium admin app (see migration 0020), so this mail can go out minutes
+ * before the access does. Naming that gap is better than a reader concluding
+ * the link is broken.
+ *
+ * The client asked for "full designations and titles of documents" and a
+ * hyperlink per standard, which is exactly what the list below prints.
+ */
+export function buildCompAccessEmail(ctx: CompAccessEmailContext): InviteEmailContent {
+  const docs = ctx.documents || [];
+  const count = docs.length;
+  const subject = count === 1
+    ? `Complimentary ${ctx.days}-day access: ${docs[0].designation}`
+    : `Complimentary ${ctx.days}-day access to ${count} IES standards`;
+
+  const lines: string[] = [];
+  lines.push(
+    ctx.grantedBy
+      ? `${ctx.grantedBy} at the Illuminating Engineering Society has given you complimentary ${ctx.days}-day access to the ${count === 1 ? 'standard' : 'standards'} listed below.`
+      : `The Illuminating Engineering Society has given you complimentary ${ctx.days}-day access to the ${count === 1 ? 'standard' : 'standards'} listed below.`,
+  );
+  lines.push(
+    `Your access runs from ${formatExpiry(ctx.startDate)} through ${formatExpiry(ctx.endDate)}. It covers only these documents — it is not a Lighting Library subscription.`,
+  );
+  lines.push(
+    'Sign in to the IES Lighting Library with your IES account to read them. If your access has not appeared yet, give it a few hours: it is enabled by IES staff shortly after this message goes out.',
+  );
+
+  const docHtml = docs.map(d => {
+    const label = d.title ? `${d.designation} ${d.title}` : d.designation;
+    return `<tr><td style="padding:10px 0;border-bottom:1px solid #eef1f4">
+        <div style="font-size:14px;color:${BRAND_SECONDARY};font-weight:600;line-height:1.45">${escapeHtml(label)}</div>
+        ${d.libraryUrl ? `<div style="padding-top:5px"><a href="${escapeHtml(d.libraryUrl)}" style="color:${BRAND_PRIMARY};font-size:13px;text-decoration:none">Open in the IES Lighting Library →</a></div>` : ''}
+      </td></tr>`;
+  }).join('\n      ');
+
+  const docText = docs.map(d => {
+    const label = d.title ? `${d.designation} ${d.title}` : d.designation;
+    return d.libraryUrl ? `${label}\n    ${d.libraryUrl}` : label;
+  }).join('\n\n');
+
+  const html = `<!doctype html><html><body style="margin:0;background:#f4f6f8;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif">
+  <div style="max-width:600px;margin:24px auto;background:#fff;border:1px solid #e2e6ea;border-radius:8px;overflow:hidden">
+    <div style="background:${BRAND_SECONDARY};color:#fff;padding:16px 20px;font-size:15px;font-weight:700">Illuminating Engineering Society</div>
+    <div style="padding:24px 20px">
+      <h1 style="margin:0 0 14px;font-size:19px;color:${BRAND_SECONDARY}">Your complimentary ${escapeHtml(String(ctx.days))}-day access</h1>
+      ${paragraph(greeting(ctx.name))}
+      ${lines.map(paragraph).join('\n      ')}
+      <p style="margin:0 0 4px;font-size:13px;color:#7a8794;letter-spacing:.03em;text-transform:uppercase">${count === 1 ? '1 standard' : `${count} standards`}</p>
+      <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse;margin:0 0 22px">
+      ${docHtml}
+      </table>
+      <p style="margin:0 0 20px"><a href="${LIBRARY_URL}" style="display:inline-block;background:${BRAND_PRIMARY};color:#fff;text-decoration:none;padding:12px 22px;border-radius:6px;font-weight:600;font-size:15px">Open the IES Lighting Library</a></p>
+      <p style="margin:0;font-size:13px;color:#666">Questions about IES standards? Contact <a href="mailto:Standards@ies.org" style="color:${BRAND_SECONDARY}">Standards@ies.org</a>.</p>
+    </div>
+    <div style="padding:14px 20px;background:#f4f6f8;color:#888;font-size:12px">Sent by lensy.ies.org because IES granted you complimentary access to these standards${ctx.grantedBy ? ` (${escapeHtml(ctx.grantedBy)})` : ''} — please do not reply to this message.</div>
+  </div>
+</body></html>`;
+
+  const text = [
+    `Your complimentary ${ctx.days}-day access`,
+    '',
+    greeting(ctx.name),
+    '',
+    ...lines.flatMap(l => [l, '']),
+    count === 1 ? '1 standard' : `${count} standards`,
+    '',
+    docText,
+    '',
+    `Open the IES Lighting Library: ${LIBRARY_URL}`,
+    '',
+    'Questions about IES standards? Contact Standards@ies.org.',
+    '',
+    `Sent by lensy.ies.org because IES granted you complimentary access to these standards${ctx.grantedBy ? ` (${ctx.grantedBy})` : ''} — please do not reply.`,
+  ].join('\n');
+
+  return { subject, html, text };
+}
+
+/** Send one grant notification. Never throws — same contract as sendInviteEmail. */
+export async function sendCompAccessEmail(
+  env: Env,
+  ctx: CompAccessEmailContext,
+): Promise<SendOutcome> {
+  const binding = env.SEND_EMAIL;
+  if (!binding) {
+    return { sent: false, error: 'SEND_EMAIL binding is not configured on this deployment.' };
+  }
+  const { subject, html, text } = buildCompAccessEmail(ctx);
+  try {
+    await binding.send({
+      to: ctx.to,
+      from: { email: FROM_ADDRESS, name: FROM_NAME },
+      subject,
+      html,
+      text,
+    });
+    return { sent: true };
+  } catch (err) {
+    const error = describeSendError(err);
+    console.error('comp_access_email_failed', { to: ctx.to, error });
     return { sent: false, error };
   }
 }

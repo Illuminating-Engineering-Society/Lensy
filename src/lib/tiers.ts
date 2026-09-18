@@ -1,18 +1,31 @@
 /**
- * Access tiers — Lensy and LensyLite (client DO53).
+ * Access tiers — Subscriber and Non-Subscriber (client DO53, revised DO999).
  *
- * "Begin development of 'LensyLite'. Provide limited access to IES Members who
- *  do not subscribe to the Lighting Library."
+ * The 2026-09-17 round renamed the product and rewrote the policy:
  *
- *   Lighting Library subscription                → Lensy      ('full')
- *   IES individual member, no subscription       → LensyLite  ('lite')
+ *   "'IES Lens' is the tool name, always. Only 1 logo (no more LensyLite)."
+ *   "'Subscriber' is a user with full access … a single-user license to the
+ *    full Lighting Library plus full IES Lens … No daily search cap."
+ *   "'Non-Subscriber' is all other users with a free IES account (including IES
+ *    Members without a subscription) … 20x daily search cap (then AI is
+ *    disabled for 24hr)."
+ *
+ *   Lighting Library subscription                → Subscriber      ('full')
+ *   IES account, no subscription                 → Non-Subscriber  ('lite')
  *   Any other IES account                        → 'none': may open a saved
  *                                                  collection shared with them,
  *                                                  but has no search access
  *
- * LensyLite shows every tool and BLOCKS three of them — Illuminance Tables,
- * the AI Guide and Document Comparison — and searches only the current Lighting
- * Science collection.
+ * The tier ids stay 'full' / 'lite' / 'none' — they are internal identifiers on
+ * the wire, in the response-cache key and in `invited_users.tier`, and renaming
+ * them would be a data migration for no reader-visible gain. What changed is
+ * what 'lite' GRANTS and what it is CALLED on screen.
+ *
+ * Non-Subscriber blocks two tools — Illuminance Tables and Document Comparison
+ * — and searches only the current Lighting Science collection. **The AI Guide
+ * is no longer blocked**: DO999 makes it a metered trial ("then AI is disabled"
+ * presupposes it was enabled), bounded by the 20-a-day cap in
+ * src/lib/search-cap.ts rather than by tier.
  *
  * ─── Where the signal comes from (resolved 2026-08-12) ───────────────────────
  *
@@ -62,16 +75,23 @@ import type { ContentType } from '../types';
 export type LensyTier = 'full' | 'lite' | 'none';
 
 /**
- * The webstore collection LensyLite may search — "the current Lighting Science
- * Collection (the 'Lighting Science' folder in Vitrium)".
+ * The webstore collection a Non-Subscriber may search — "the current Lighting
+ * Science Collection (the 'Lighting Science' folder in Vitrium)".
  */
 export const LITE_COLLECTION = 'Lighting Science';
 
 /** Series prefix used when the Collection metadata has not been synced yet. */
 export const LITE_FALLBACK_PREFIX = 'LS-';
 
-/** Tools LensyLite does not include, by the filter name the UI uses. */
-export const LITE_BLOCKED_FILTERS = ['tables', 'guide', 'compare'] as const;
+/**
+ * Tools a Non-Subscriber does not include, by the filter name the UI uses.
+ *
+ * 'guide' was here until DO999 and is deliberately gone: the AI Guide is now a
+ * metered trial for non-subscribers, cut off by the daily cap rather than by
+ * tier. Everything the client still sells as a subscriber unlock — "browse
+ * illuminance table values", "compare versions" — stays.
+ */
+export const LITE_BLOCKED_FILTERS = ['tables', 'compare'] as const;
 
 /**
  * Role slugs that mean "has a Lighting Library subscription", by default.
@@ -169,11 +189,12 @@ function earnedTier(input: TierInput, env: { LENSY_SUBSCRIBER_ROLES?: string }):
 }
 
 /**
- * The content types a LensyLite search may use.
+ * The content types a Non-Subscriber search may use.
  *
  * Illuminance Tables are blocked outright, and `compare` (Document Comparison)
- * with them. Documents, Definitions and References stay — inside the Lighting
- * Science collection, which is where LensyLite's corpus is scoped.
+ * with them. Documents, Definitions and References stay — the client's own
+ * wording is "You may search for standards, references and definitions" —
+ * inside the Lighting Science collection, which is where the tier is scoped.
  */
 export function liteContentTypes(contentTypes: Set<ContentType>): Set<ContentType> {
   const allowed = new Set<ContentType>(
@@ -185,7 +206,14 @@ export function liteContentTypes(contentTypes: Set<ContentType>): Set<ContentTyp
   return allowed;
 }
 
-/** The banner LensyLite prints, verbatim from the client's mockup. */
+/**
+ * The banner a Non-Subscriber search prints.
+ *
+ * Reworded for DO999/DO111: the tier is no longer a separate product with its
+ * own name ("no more LensyLite"), and a subscription is always called the
+ * Lighting Library ("We will always refer to subscriptions as 'Lighting
+ * Library', as the umbrella product").
+ */
 export const LITE_NOTICE =
-  'IES Members receive limited access to Lighting Science Collection and LensyLite. ' +
-  'Subscribe to unlock full Lensy and Lighting Library access.';
+  'You are searching the Lighting Science Collection. ' +
+  'Subscribe to the Lighting Library to unlock full access.';

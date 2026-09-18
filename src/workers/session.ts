@@ -240,7 +240,7 @@ function supersededResponse(request: Request, env: Env): Response {
   return json({
     error: 'session_superseded',
     message:
-      'Your IES account signed in to Lensy on another device or browser, and Lensy allows one active session at a time. Sign out and back in to use Lensy here instead.',
+      'Your IES account signed in to IES Lens on another device or browser, and only one active session is allowed at a time. Sign out and back in to use it here instead.',
     loginUrl: buildLoginUrl(env, request.url),
     logoutUrl: buildLogoutUrl(env, request.url),
   }, 401);

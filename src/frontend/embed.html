@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Embed Lensy — IES Lighting Library</title>
+  <title>Embed IES Lens — IES Lighting Library</title>
   <!-- NO auth gate: this page hands staff a snippet to paste into the Vitrium
        portal. It contains no standards content, so gating it would only make it
        harder to reach from wherever the portal is being configured. -->
@@ -32,22 +32,22 @@
 
   <header class="text-white shadow-md" style="background-color: #EFA723;">
     <div class="max-w-3xl mx-auto px-4 py-2.5 flex items-center justify-between">
-      <a href="/" class="flex items-center gap-2.5" title="Lensy — IES Assistant">
+      <a href="/" class="flex items-center gap-2.5" title="IES Lens — IES Assistant">
         <div class="w-10 h-10 rounded bg-white/25 flex items-center justify-center">
           <span class="font-display font-extrabold text-lg tracking-tight">IES</span>
         </div>
-        <span class="font-display text-lg font-bold tracking-tight">Lensy</span>
+        <span class="font-display text-lg font-bold tracking-tight">IES Lens</span>
       </a>
       <a href="/" class="text-sm px-3 py-1.5 rounded-md text-white/90 hover:text-white hover:bg-white/15 transition">← Back to search</a>
     </div>
   </header>
 
   <main class="max-w-3xl mx-auto px-4 py-8">
-    <h1 class="font-display text-2xl font-bold mb-1">Embed Lensy in the Vitrium portal</h1>
+    <h1 class="font-display text-2xl font-bold mb-1">Embed IES Lens in the Vitrium portal</h1>
     <p class="text-sm text-gray-600 mb-6">
       Client request DO076. Paste the snippet below into
       <span class="font-medium">Portal Settings → Portal Header</span> in Vitrium Security.
-      Typing a question and pressing Search opens Lensy in a new tab with that query
+      Typing a question and pressing Search opens IES Lens in a new tab with that query
       already run.
     </p>
 
@@ -58,7 +58,7 @@
       <form action="https://lensy.ies.org/" method="get" target="_blank" rel="noopener"
             style="display:flex;gap:8px;align-items:center;max-width:520px;margin:0 auto;font-family:inherit;">
         <input type="text" name="q" placeholder="Type a topic or ask a question"
-               aria-label="Search the IES Lighting Library with Lensy"
+               aria-label="Search the IES Lighting Library with IES Lens"
                style="flex:1 1 auto;min-width:0;padding:10px 14px;border:1px solid #D1D5DB;border-radius:10px;font-size:14px;color:#2C2C2C;background:#fff;">
         <button type="submit"
                 style="flex:none;display:inline-flex;align-items:center;gap:6px;padding:10px 18px;border:0;border-radius:10px;background:#D8930F;color:#fff;font-size:14px;font-weight:700;cursor:pointer;">
@@ -83,11 +83,11 @@
           Copy
         </button>
       </div>
-      <pre id="snippet" class="text-[11px] leading-relaxed bg-gray-50 border border-gray-100 rounded-lg p-3 overflow-x-auto whitespace-pre">&lt;!-- Lensy — IES Standards Assistant. Opens lensy.ies.org in a new tab. --&gt;
+      <pre id="snippet" class="text-[11px] leading-relaxed bg-gray-50 border border-gray-100 rounded-lg p-3 overflow-x-auto whitespace-pre">&lt;!-- IES Lens — IES Standards Assistant. Opens lensy.ies.org in a new tab. --&gt;
 &lt;form action="https://lensy.ies.org/" method="get" target="_blank" rel="noopener"
       style="display:flex;gap:8px;align-items:center;max-width:520px;margin:0 auto;font-family:inherit;"&gt;
   &lt;input type="text" name="q" placeholder="Type a topic or ask a question"
-         aria-label="Search the IES Lighting Library with Lensy"
+         aria-label="Search the IES Lighting Library with IES Lens"
          style="flex:1 1 auto;min-width:0;padding:10px 14px;border:1px solid #D1D5DB;border-radius:10px;font-size:14px;color:#2C2C2C;background:#fff;"&gt;
   &lt;button type="submit"
           style="flex:none;display:inline-flex;align-items:center;gap:6px;padding:10px 18px;border:0;border-radius:10px;background:#D8930F;color:#fff;font-size:14px;font-weight:700;cursor:pointer;"&gt;
@@ -109,14 +109,14 @@
         header field. Every style is inline for the same reason.
       </p>
       <p>
-        <span class="font-semibold text-ink">No iframe.</span> Lensy sends
+        <span class="font-semibold text-ink">No iframe.</span> IES Lens sends
         <span class="font-mono text-xs">frame-ancestors 'none'</span>, so it cannot be framed —
         embedding the search UI itself inside the portal is not possible, and would in any case
         put a second session boundary between the reader and their Library.
       </p>
       <p>
         <span class="font-semibold text-ink">Sign-in is preserved.</span> The query travels in the
-        URL, and Lensy's sign-in gate carries the whole path and query through the round trip —
+        URL, and IES Lens's sign-in gate carries the whole path and query through the round trip —
         so a reader who is not yet signed in lands on their results, not on an empty search box.
       </p>
       <p>
@@ -128,7 +128,7 @@
   </main>
 
   <footer class="max-w-3xl mx-auto px-4 py-8 text-center text-xs text-gray-400">
-    Lensy — IES Assistant
+    IES Lens — IES Assistant
   </footer>
 
   <script>

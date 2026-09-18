@@ -1,0 +1,1333 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>My Bookmark Collections — IES Lens</title>
+  <!-- SSO gate: hides the app until /api/auth/me authorizes the visitor.
+       Must load before anything renders.
+       data-public-when-share: a ?share= link stays open to anyone (client DO52)
+       — the collection is references and links, and saving it still needs an
+       account, which the page then offers. -->
+  <script src="/utils/auth-gate.js" data-public-when-share></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    // IES brand design tokens — mirror of index.html's config (duplicated
+    // because the CDN-Tailwind setup has no shared build step; a future
+    // Vite/Tailwind build would make this a single source of truth).
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            'brand-primary':        '#D95D2B',
+            'brand-primary-dark':   '#B84A20',
+            'brand-secondary':      '#3A5068',
+            'brand-secondary-dark': '#2C3D4F',
+            'brand-accent':         '#EFA723',
+            'brand-accent-dark':    '#D8930F',
+            'surface':              '#FBF3DF',  // page background (DO109 #7)
+            'ink':                  '#2C2C2C',
+            // Back-compat aliases → Primary (see index.html for rationale)
+            'ies-blue':      '#D95D2B',
+            'ies-blue-dark': '#B84A20',
+            'ies-gold':      '#EFA723',
+            // Client DO107/DO109 — see the palette note in index.html: `action`
+            // is the one orange for filled buttons, and it only ever pairs with
+            // `action-ink`, because white on #FFAA00 fails contrast.
+            'action':      '#FFAA00',
+            'action-dark': '#E69900',
+            'action-ink':  '#30363D',
+            'banner':      '#F6F6F6',
+            'nav-ink':     '#30363D',
+            'nav-muted':   '#84898F',
+          },
+          fontFamily: {
+            display: ['Nohemi', 'Inter', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'sans-serif'],
+            sans:    ['Inter', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'sans-serif'],
+            mono:    ['ui-monospace', 'SFMono-Regular', 'monospace'],
+          },
+          spacing: { xs: '13.3px', s: '20px', m: '30px', l: '45px', xl: '67.5px', xxl: '101.25px' },
+          borderRadius: { xs: '4px', s: '8px', m: '12px', l: '16px', xl: '24px', xxl: '32px' },
+          boxShadow: {
+            m:  '0 1px 3px rgba(44,44,44,0.08), 0 1px 2px rgba(44,44,44,0.06)',
+            l:  '0 4px 16px rgba(44,44,44,0.10)',
+            xl: '0 12px 32px rgba(44,44,44,0.14)',
+          },
+        }
+      }
+    }
+  </script>
+  <style>
+    @font-face {
+      font-family: 'Nohemi'; font-style: normal; font-weight: 400 700;
+      font-display: swap; src: url('/fonts/Nohemi-Variable.woff2') format('woff2');
+    }
+    @font-face {
+      font-family: 'Inter'; font-style: normal; font-weight: 100 900;
+      font-display: swap; src: url('/fonts/Inter-Variable.woff2') format('woff2');
+    }
+    :root {
+      --brand-primary: #D95D2B; --brand-secondary: #3A5068; --brand-accent: #EFA723;
+      --surface: #FBF3DF; --ink: #2C2C2C;
+      /* Client DO107/DO109 — see the palette note in index.html. */
+      --action: #FFAA00; --action-dark: #E69900; --action-ink: #30363D;
+      --banner: #F6F6F6; --footer-band: #F6F6F6;
+      --nav-ink: #30363D; --nav-muted: #84898F;
+    }
+    body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; color: var(--ink); }
+    h1, h2, h3, .font-display { font-family: 'Nohemi', 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; }
+    /* The header menus, mirroring index.html (no component build yet). */
+    .nav-item { color: var(--nav-muted); }
+    .nav-item:hover { color: var(--nav-ink); background: rgba(48,54,61,0.07); }
+    .menu-item {
+      display: flex; align-items: center; gap: 0.625rem; width: 100%;
+      padding: 0.5rem 1rem; font-size: 0.875rem; color: var(--nav-ink);
+      text-align: left; transition: background .15s;
+    }
+    .menu-item:hover { background: #f3f4f6; }
+    /* auth-gate appends its own signed-in chip to `header nav`; this page
+       renders that information itself, in the account menu. */
+    #lensy-user-chip { display: none !important; }
+    .skeleton { background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%); background-size: 200% 100%; animation: skeleton-loading 1.4s infinite; }
+    @keyframes skeleton-loading { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+    .fade-in { animation: fadeIn 0.2s ease-out; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+    .modal-backdrop { backdrop-filter: blur(4px); }
+    .project-card { transition: box-shadow 0.15s, transform 0.15s; }
+    .project-card:hover { box-shadow: 0 4px 24px rgba(44,44,44,0.10); transform: translateY(-1px); }
+    .lux-value { font-variant-numeric: tabular-nums; font-weight: 700; }
+    @media print {
+      .no-print { display: none !important; }
+      .project-card { break-inside: avoid; box-shadow: none; transform: none; }
+    }
+  </style>
+</head>
+<body class="bg-surface min-h-screen text-ink">
+
+  <!-- ── Header (client DO109) ─────────────────────────────────────────────────
+       The two menus from the search page, recreated: "Search with IES Lens" for
+       the library-wide actions, and the account menu — without "My Bookmarks",
+       which is this page. The banner is no longer the IES gold, so the nav is
+       the client's inactive/active pair (#84898F → #30363D) rather than white.
+       Duplicated rather than shared because there is no component build yet. -->
+  <header class="shadow-sm no-print" style="background-color: var(--banner); color: var(--nav-ink);">
+    <div class="max-w-5xl mx-auto px-4 py-2.5 flex items-center justify-between gap-3">
+      <a href="/" class="flex items-center gap-2.5 shrink-0" title="Search with IES Lens">
+        <img src="/assets/ies-lens-logo.png" alt="IES Lens" class="h-9 w-auto" width="790" height="346" />
+      </a>
+      <nav class="flex items-center gap-1 text-sm">
+
+        <div class="relative" id="tools-wrap">
+          <button id="tools-btn" onclick="toggleToolsMenu()"
+                  aria-haspopup="true" aria-expanded="false"
+                  class="nav-item flex items-center gap-2 px-3 py-1.5 rounded-md transition">
+            <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+            </svg>
+            <span class="font-medium">Search with IES Lens</span>
+            <svg class="w-3 h-3 opacity-80" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/>
+            </svg>
+          </button>
+          <div id="tools-menu"
+               class="hidden absolute right-0 top-[calc(100%+8px)] w-72 bg-white text-ink rounded-xl shadow-xl border border-gray-200 py-1 z-50 text-left">
+            <a href="/" class="menu-item">
+              <svg class="w-4 h-4 text-gray-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+              </svg>
+              Search the Lighting Library
+            </a>
+            <a href="https://lighting.ies.org" target="_blank" rel="noopener" class="menu-item">
+              <svg class="w-4 h-4 text-gray-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M4 19.5V5a1 1 0 011-1h2a1 1 0 011 1v14.5M10 19.5V5a1 1 0 011-1h2a1 1 0 011 1v14.5M16.5 19.5l-2-14 2.5-.5 2.5 14z"/>
+              </svg>
+              Browse Your Lighting Library
+            </a>
+            <a href="/contents" target="_blank" rel="noopener" class="menu-item">
+              <svg class="w-4 h-4 text-gray-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h10"/>
+              </svg>
+              List Standards
+            </a>
+          </div>
+        </div>
+
+        <div class="relative ml-1" id="account-wrap">
+          <button id="account-menu-btn" onclick="toggleAccountMenu()"
+                  aria-haspopup="true" aria-expanded="false"
+                  class="flex items-center gap-1.5 rounded-full px-3 py-1.5 transition"
+                  style="border: 1px solid var(--nav-muted); color: var(--nav-muted);"
+                  title="Your account">
+            <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" d="M4 7h16M4 12h16M4 17h16"/>
+            </svg>
+            <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/>
+            </svg>
+          </button>
+          <div id="account-menu"
+               class="hidden absolute right-0 top-[calc(100%+8px)] w-72 bg-white text-ink rounded-xl shadow-xl border border-gray-200 py-1 z-50 text-left">
+            <p id="menu-email" class="px-4 py-2.5 text-sm font-medium text-gray-700 border-b border-gray-100 truncate">Signed in</p>
+            <div class="menu-item cursor-default" title="Your subscription">
+              <svg class="w-4 h-4 text-gray-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/>
+              </svg>
+              <span id="menu-tier-label" class="font-bold">Lighting Library</span>
+            </div>
+            <a href="https://store.ies.org/" target="_blank" rel="noopener" id="menu-subscribe" class="menu-item hidden">
+              <svg class="w-4 h-4 text-gray-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.3 4.6a1 1 0 00.9 1.4H19M9 21a1 1 0 100-2 1 1 0 000 2zm8 0a1 1 0 100-2 1 1 0 000 2z"/>
+              </svg>
+              Subscribe
+            </a>
+            <a href="/logout" id="menu-signout" class="menu-item border-t border-gray-100 text-gray-500">
+              <svg class="w-4 h-4 text-gray-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/>
+              </svg>
+              Sign out
+            </a>
+          </div>
+        </div>
+      </nav>
+    </div>
+  </header>
+
+  <!-- ── Main ─────────────────────────────────────────────────────────────── -->
+  <main class="max-w-5xl mx-auto px-4 py-8">
+
+    <!-- Page title + New project button -->
+    <div class="flex items-center justify-between mb-6 no-print">
+      <div>
+        <h1 id="page-heading" class="text-2xl font-bold text-gray-900">My Bookmark Collections</h1>
+        <p id="page-subheading" class="text-sm text-gray-400 mt-0.5">Bookmark and share search result references</p>
+      </div>
+      <button id="page-actions" onclick="openNewProjectModal()"
+        class="flex items-center gap-2 px-4 py-2.5 bg-action text-action-ink rounded-xl text-sm font-semibold hover:bg-action-dark transition shadow-sm">
+        <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/>
+        </svg>
+        New Bookmark Collection
+      </button>
+    </div>
+
+    <!-- Shared-collection banner (client DO37): shown when the page is opened
+         from a share link, before anything is written to the account. -->
+    <div id="shared-banner" class="hidden"></div>
+
+    <!-- Loading state -->
+    <div id="loading-projects" class="space-y-4">
+      <div class="skeleton h-32 rounded-xl"></div>
+      <div class="skeleton h-32 rounded-xl"></div>
+      <div class="skeleton h-32 rounded-xl"></div>
+    </div>
+
+    <!-- Projects grid -->
+    <div id="projects-grid" class="hidden grid gap-4 sm:grid-cols-2 lg:grid-cols-3"></div>
+
+    <!-- Empty state -->
+    <div id="projects-empty" class="hidden text-center py-20">
+      <div class="w-20 h-20 rounded-full bg-gray-100 flex items-center justify-center mx-auto mb-5">
+        <svg class="w-10 h-10 text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.2">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/>
+        </svg>
+      </div>
+      <h2 class="text-xl font-bold text-gray-600 mb-2">No collections yet</h2>
+      <p class="text-gray-400 text-sm mb-6">Save a search result to start a collection — references only, never the excerpt text.</p>
+      <button onclick="openNewProjectModal()"
+        class="px-5 py-2.5 bg-action text-action-ink rounded-xl text-sm font-semibold hover:bg-action-dark transition">
+        Create your first collection
+      </button>
+    </div>
+
+    <!-- ── Single project view ──────────────────────────────────────────────── -->
+    <div id="project-detail" class="hidden fade-in">
+      <!-- Back button + project header -->
+      <div class="mb-6">
+        <button onclick="showProjectsList()" class="flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-700 mb-4 no-print">
+          <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7"/>
+          </svg>
+          All Collections
+        </button>
+
+        <div class="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <h2 class="text-2xl font-bold text-gray-900" id="detail-project-name"></h2>
+            <div class="flex flex-wrap gap-3 mt-2 text-sm text-gray-500" id="detail-project-meta"></div>
+          </div>
+          <!-- Collection Note (client DO37) — rendered under the header by
+               renderCollectionNote(); hidden when empty and never printed blank. -->
+          <div id="detail-collection-note" class="hidden w-full order-last"></div>
+          <!-- Owner-only actions. Hidden on a shared (read-only) view: the
+               visitor is looking at someone else's collection (client DO49). -->
+          <div id="detail-owner-actions" class="flex items-center gap-2 no-print">
+            <!-- Share link: copies the collection into the recipient's account
+                 when they open it (client DO37). -->
+            <button onclick="copyShareLink()"
+              class="flex items-center gap-1.5 px-3 py-2 border border-gray-200 rounded-lg text-sm text-gray-600 hover:border-gray-300 hover:bg-gray-50 transition"
+              title="Copy a link that lets another subscriber save this collection to their own account">
+              <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M13.828 10.172a4 4 0 010 5.656l-3 3a4 4 0 01-5.656-5.656l1.5-1.5m4.5-4.5l1.5-1.5a4 4 0 015.656 5.656l-3 3"/>
+              </svg>
+              Link
+            </button>
+            <button onclick="openEmailModal()"
+              class="flex items-center gap-1.5 px-3 py-2 border border-gray-200 rounded-lg text-sm text-gray-600 hover:border-gray-300 hover:bg-gray-50 transition"
+              title="Email these search results to someone">
+              <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/>
+              </svg>
+              Email
+            </button>
+            <button onclick="exportProjectCSV()"
+              class="flex items-center gap-1.5 px-3 py-2 border border-gray-200 rounded-lg text-sm text-gray-600 hover:border-gray-300 hover:bg-gray-50 transition">
+              <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
+              </svg>
+              Export CSV
+            </button>
+            <button onclick="window.print()"
+              class="flex items-center gap-1.5 px-3 py-2 border border-gray-200 rounded-lg text-sm text-gray-600 hover:border-gray-300 hover:bg-gray-50 transition">
+              <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"/>
+              </svg>
+              Print
+            </button>
+            <button onclick="deleteCurrentProject()"
+              class="flex items-center gap-1.5 px-3 py-2 border border-red-100 rounded-lg text-sm text-red-500 hover:border-red-200 hover:bg-red-50 transition no-print">
+              <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
+              </svg>
+              Delete
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Applications table -->
+      <div id="detail-apps-loading" class="space-y-3">
+        <div class="skeleton h-12 rounded-xl"></div>
+        <div class="skeleton h-12 rounded-xl"></div>
+        <div class="skeleton h-12 rounded-xl"></div>
+      </div>
+      <div id="detail-apps-content" class="hidden">
+        <!-- Sort + filter toolbar (client DO55): "allow users to sort cards by
+             date created / card type, and display the same dynamic 'document'
+             filter used at the top of search result pages". -->
+        <div id="detail-items-toolbar" class="hidden mb-3 no-print"></div>
+        <div id="detail-apps-table" class="space-y-2"></div>
+        <div id="detail-apps-empty" class="hidden text-center py-12 text-gray-400">
+          <p class="font-medium">No applications yet</p>
+          <p class="text-sm mt-1">Search and add applications from the <a href="/" class="text-ies-blue hover:underline">search page</a>.</p>
+        </div>
+      </div>
+    </div>
+
+  </main>
+
+  <!-- ── Footer ───────────────────────────────────────────────────────────── -->
+  <footer class="text-center text-xs text-gray-500 py-8 mt-8 no-print" style="background-color: var(--footer-band);">
+    <p><a href="https://www.ies.org" class="hover:underline">Illuminating Engineering Society</a> · <a href="mailto:Standards@ies.org" class="hover:underline">Standards@ies.org</a></p>
+  </footer>
+
+  <!-- ── Email this collection (client DO37) ───────────────────────────────────
+       IES Lens sends the message itself, so the recipient gets the templated mail
+       from the client's mockup — citations, "Save to My Bookmarks", and the
+       subscribe/purchase prompts — instead of a mailto: body. Sending also
+       shares: the claim button needs a token, so one is minted server-side. -->
+  <div id="email-modal" class="hidden fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4">
+    <div class="absolute inset-0 bg-black/40 modal-backdrop" onclick="closeEmailModal()"></div>
+    <div class="relative bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 fade-in">
+      <div class="flex items-center justify-between mb-1">
+        <h3 class="text-lg font-bold text-gray-900">Email this collection</h3>
+        <button onclick="closeEmailModal()" class="text-gray-400 hover:text-gray-600 p-1 rounded-md hover:bg-gray-100 transition">
+          <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
+          </svg>
+        </button>
+      </div>
+      <p class="text-sm text-gray-500 mb-5">
+        <span id="email-modal-topic" class="font-medium text-gray-700"></span>
+        · <span id="email-modal-count"></span>
+      </p>
+
+      <div class="space-y-4">
+        <div>
+          <label for="email-modal-to" class="block text-sm font-medium text-gray-700 mb-1">Send to <span class="text-red-400">*</span></label>
+          <input type="email" id="email-modal-to" placeholder="colleague@example.com" autocomplete="email"
+            class="w-full px-3 py-2.5 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-ies-blue focus:border-transparent"/>
+        </div>
+        <div>
+          <label for="email-modal-message" class="block text-sm font-medium text-gray-700 mb-1">Message</label>
+          <textarea id="email-modal-message" rows="3" placeholder="Why you're sending this (optional)"
+            class="w-full px-3 py-2.5 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-ies-blue focus:border-transparent"></textarea>
+        </div>
+        <!-- Says plainly what the recipient receives, because the whole point of
+             DO37 is that excerpt text does NOT travel with the citations. -->
+        <p class="text-xs text-gray-500 leading-relaxed">
+          They receive the citations and a link to each page in the IES Lighting Library,
+          plus a button to save this collection to their own IES Lens account.
+          Excerpt text is not included.
+        </p>
+        <p id="email-modal-error" class="hidden text-sm text-red-600"></p>
+      </div>
+
+      <div class="flex items-center justify-end gap-2 mt-6">
+        <button onclick="closeEmailModal()"
+          class="px-4 py-2.5 border border-gray-200 rounded-lg text-sm text-gray-600 hover:bg-gray-50 transition">Cancel</button>
+        <button id="email-modal-send" onclick="sendCollectionEmail()"
+          class="px-4 py-2.5 bg-action text-action-ink rounded-lg text-sm font-medium hover:bg-action-dark transition disabled:opacity-60">Send</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── New / Edit Project Modal ──────────────────────────────────────────── -->
+  <div id="project-modal" class="hidden fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4">
+    <div class="absolute inset-0 bg-black/40 modal-backdrop" onclick="closeProjectModal()"></div>
+    <div class="relative bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 fade-in">
+      <div class="flex items-center justify-between mb-5">
+        <h3 id="modal-title" class="text-lg font-bold text-gray-900">New Bookmark Collection</h3>
+        <button onclick="closeProjectModal()" class="text-gray-400 hover:text-gray-600 p-1 rounded-md hover:bg-gray-100 transition">
+          <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
+          </svg>
+        </button>
+      </div>
+
+      <div class="space-y-4">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">Collection Topic <span class="text-red-400">*</span></label>
+          <input type="text" id="modal-project-name" placeholder="e.g. Downtown Office Renovation"
+            class="w-full px-3 py-2.5 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-ies-blue focus:border-transparent"/>
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">Note</label>
+          <textarea id="modal-project-note" rows="3" placeholder="What is this collection for? (optional)"
+            class="w-full px-3 py-2.5 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-ies-blue focus:border-transparent"></textarea>
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">Client</label>
+            <input type="text" id="modal-project-client" placeholder="Client name"
+              class="w-full px-3 py-2.5 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-ies-blue focus:border-transparent"/>
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">Location</label>
+            <input type="text" id="modal-project-location" placeholder="City, State"
+              class="w-full px-3 py-2.5 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-ies-blue focus:border-transparent"/>
+          </div>
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">Designer</label>
+            <input type="text" id="modal-project-designer" placeholder="Designer name"
+              class="w-full px-3 py-2.5 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-ies-blue focus:border-transparent"/>
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">Project type</label>
+            <!-- "Other" is user-definable (client DO37): choosing it reveals a
+                 free-text box, and the typed value is what gets stored. -->
+            <select id="modal-project-type" onchange="toggleOtherProjectType()"
+              class="w-full px-3 py-2.5 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-ies-blue focus:border-transparent bg-white">
+              <option value="New Construction">New Construction</option>
+              <option value="Renovation">Renovation</option>
+              <option value="Addition">Addition</option>
+              <option value="Retrofit">Retrofit</option>
+              <option value="Other">Other…</option>
+            </select>
+            <input type="text" id="modal-project-type-other" placeholder="Describe the type"
+              class="hidden w-full mt-2 px-3 py-2.5 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-ies-blue focus:border-transparent"/>
+          </div>
+        </div>
+      </div>
+
+      <p id="modal-error" class="hidden text-xs text-red-600 mt-3"></p>
+
+      <div class="flex gap-3 mt-6">
+        <button onclick="closeProjectModal()" class="flex-1 py-2.5 border border-gray-200 rounded-lg text-sm text-gray-600 hover:bg-gray-50 transition">
+          Cancel
+        </button>
+        <button id="modal-save-btn" onclick="saveProject()"
+          class="flex-1 py-2.5 bg-action text-action-ink rounded-lg text-sm font-semibold hover:bg-action-dark transition">
+          Create Project
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Toast ────────────────────────────────────────────────────────────── -->
+  <div id="toast" class="fixed bottom-5 left-1/2 -translate-x-1/2 z-50 hidden">
+    <div id="toast-inner" class="flex items-center gap-3 px-4 py-3 rounded-xl shadow-lg text-sm font-medium text-white min-w-[220px] bg-gray-900">
+      <svg id="toast-icon" class="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"></svg>
+      <span id="toast-message"></span>
+    </div>
+  </div>
+
+  <script src="/utils/api.js"></script>
+  <script>
+    // ── State ────────────────────────────────────────────────────────────────
+    let allProjects = [];
+    let currentProject = null;
+    let currentApplications = [];  // the saved items of the open collection
+    let editingProjectId = null;
+    // True while showing a collection someone else shared (client DO49): the
+    // view is a preview, so nothing on it may write to the owner's data.
+    let readOnlyCollection = false;
+
+    // ── Header menus (client DO109) ──────────────────────────────────────────
+    // Recreated from the search page. The signed-in identity comes from the
+    // gate's `lensy:auth` event, and the Sign out href is copied off the chip
+    // auth-gate appends (hidden here by CSS) so there is one source for it.
+    function toggleMenu(id, btnId, otherId) {
+      const menu = document.getElementById(id);
+      const open = menu.classList.contains('hidden');
+      document.getElementById(otherId).classList.add('hidden');
+      menu.classList.toggle('hidden', !open);
+      document.getElementById(btnId).setAttribute('aria-expanded', String(open));
+    }
+    function toggleToolsMenu() { toggleMenu('tools-menu', 'tools-btn', 'account-menu'); }
+    function toggleAccountMenu() { toggleMenu('account-menu', 'account-menu-btn', 'tools-menu'); }
+
+    document.addEventListener('click', (e) => {
+      if (!e.target.closest || !e.target.closest('#tools-wrap')) document.getElementById('tools-menu').classList.add('hidden');
+      if (!e.target.closest || !e.target.closest('#account-wrap')) document.getElementById('account-menu').classList.add('hidden');
+    });
+
+    document.addEventListener('lensy:auth', (e) => {
+      // An anonymous share-link visitor (DO52) has no account to describe.
+      const menus = document.querySelector('header nav');
+      if (!e.detail) { if (menus) menus.style.display = 'none'; return; }
+      const who = e.detail.email || e.detail.name;
+      if (who) document.getElementById('menu-email').textContent = who;
+      // DO111: name the subscription, never the tool.
+      const lite = e.detail.tier === 'lite';
+      document.getElementById('menu-tier-label').textContent = lite ? 'No subscription' : 'Lighting Library';
+      document.getElementById('menu-subscribe').classList.toggle('hidden', !lite);
+      const chipLink = document.querySelector('#lensy-user-chip a');
+      const href = chipLink && chipLink.getAttribute && chipLink.getAttribute('href');
+      if (href) document.getElementById('menu-signout').setAttribute('href', href);
+    });
+
+    // ── Bootstrap ────────────────────────────────────────────────────────────
+    document.addEventListener('DOMContentLoaded', () => {
+      // A share link lands here as ?share=<token>. Show what is being shared and
+      // let the recipient decide — a link must never write to someone's account
+      // just by being opened (client DO37: the mockup's explicit "Save Search to
+      // My Bookmarks" button).
+      const token = new URLSearchParams(location.search).get('share');
+      if (!token) { loadProjects(); return; }
+
+      // Wait for the gate's verdict first (client DO52): whether this visitor
+      // has an account decides which actions the banner offers, and auth-gate.js
+      // resolves /api/auth/me asynchronously — reading window.lensyAnonymous
+      // before it settles would always look like "signed in".
+      if (window.lensyUser || window.lensyAnonymous) { showSharedCollection(token); return; }
+      document.addEventListener('lensy:auth', () => showSharedCollection(token), { once: true });
+    });
+
+    async function showSharedCollection(token) {
+      document.getElementById('loading-projects').classList.add('hidden');
+      const banner = document.getElementById('shared-banner');
+      // Without an account there are no collections of one's own to offer
+      // (client DO52) — the page is just this shared list.
+      if (window.lensyAnonymous === true) {
+        document.getElementById('page-actions').style.display = 'none';
+        document.getElementById('page-heading').textContent = 'Shared with you';
+        document.getElementById('page-subheading').textContent =
+          'A collection of IES Lighting Library references, shared from IES Lens';
+      }
+      try {
+        const data = await LensyAPI.getSharedCollection(token);
+        const collection = data.collection || data.project || {};
+        const n = (data.applications || []).length;
+
+        // A visitor with no IES Lens account can READ the collection (client DO52),
+        // but saving it needs one — so that is what the buttons offer instead.
+        const anonymous = window.lensyAnonymous === true;
+        const loginUrl = window.lensyLoginUrl || '/login';
+        const actions = anonymous
+          ? `<a href="${escapeHtml(loginUrl)}"
+                class="px-4 py-2 bg-action text-action-ink rounded-lg text-sm font-semibold hover:bg-action-dark transition">
+               Create a free IES account to save this
+             </a>
+             <a href="${escapeHtml(loginUrl)}" class="px-4 py-2 border border-gray-200 rounded-lg text-sm text-gray-600 hover:bg-gray-50 transition">
+               Sign in
+             </a>
+             <a href="https://store.ies.org/" target="_blank" rel="noopener"
+                class="px-4 py-2 border border-gray-200 rounded-lg text-sm text-gray-600 hover:bg-gray-50 transition">
+               Subscribe to the Lighting Library ↗
+             </a>`
+          : `<button onclick="claimShared('${escapeHtml(token)}')"
+                class="px-4 py-2 bg-action text-action-ink rounded-lg text-sm font-semibold hover:bg-action-dark transition">
+               Save to My Bookmarks
+             </button>
+             <a href="/bookmarks" class="px-4 py-2 border border-gray-200 rounded-lg text-sm text-gray-600 hover:bg-gray-50 transition">
+               My collections
+             </a>`;
+
+        banner.innerHTML = `
+          <div class="bg-white border border-ies-blue/30 rounded-xl p-5 mb-6">
+            <p class="text-xs uppercase tracking-wide text-gray-400">Shared collection</p>
+            <h2 class="text-xl font-bold text-gray-900 mt-0.5">${escapeHtml(collection.name || 'Saved searches')}</h2>
+            ${collection.notes ? `<p class="text-sm text-gray-600 mt-1">${escapeHtml(collection.notes)}</p>` : ''}
+            <p class="text-sm text-gray-500 mt-2">${n} saved search${n === 1 ? '' : 'es'}</p>
+            ${anonymous ? `<p class="text-xs text-gray-500 mt-3 leading-relaxed">
+              These are references into the IES Lighting Library — the citations and links, not the
+              standards' text. An IES account lets you keep this collection; a Lighting Library
+              subscription opens the documents themselves.</p>` : ''}
+            <div class="flex flex-wrap gap-2 mt-4">${actions}</div>
+          </div>`;
+        banner.classList.remove('hidden');
+        // Preview it read-only underneath, so the recipient sees what they'd get.
+        renderProjectDetail(data, { readOnly: true });
+        document.getElementById('project-detail').classList.remove('hidden');
+        document.getElementById('projects-grid').classList.add('hidden');
+      } catch (err) {
+        banner.innerHTML = `
+          <div class="bg-red-50 border border-red-200 rounded-xl p-5 text-sm text-red-600 mb-6">
+            ${escapeHtml(err.message)}
+          </div>`;
+        banner.classList.remove('hidden');
+        // A visitor without an account has no collections to fall back to.
+        if (window.lensyAnonymous !== true) loadProjects();
+      }
+    }
+
+    async function claimShared(token) {
+      try {
+        const res = await LensyAPI.claimSharedCollection(token, 1);
+        showToast(`Saved ${res.items} search${res.items === 1 ? '' : 'es'} to your collections`);
+        // Drop the token from the URL so a refresh cannot claim it twice.
+        location.href = '/bookmarks';
+      } catch (err) {
+        showToast(err.message, 'error');
+      }
+    }
+
+    async function loadProjects() {
+      try {
+        const data = await LensyAPI.listProjects(1);
+        allProjects = data.projects || [];
+        renderProjectsGrid();
+      } catch (err) {
+        document.getElementById('loading-projects').innerHTML = `
+          <div class="bg-red-50 border border-red-200 rounded-xl p-5 text-sm text-red-600">
+            Failed to load projects: ${escapeHtml(err.message)}
+          </div>
+        `;
+      }
+    }
+
+    function renderProjectsGrid() {
+      document.getElementById('loading-projects').classList.add('hidden');
+      const grid = document.getElementById('projects-grid');
+      const empty = document.getElementById('projects-empty');
+
+      if (!allProjects.length) {
+        empty.classList.remove('hidden');
+        return;
+      }
+
+      grid.classList.remove('hidden');
+      grid.innerHTML = allProjects.map(renderProjectCard).join('');
+    }
+
+    function renderProjectCard(project) {
+      const statusColors = {
+        'Active': 'bg-green-50 text-green-700 border-green-200',
+        'Archived': 'bg-gray-50 text-gray-500 border-gray-200',
+      };
+      const statusClass = statusColors[project.status] || statusColors['Active'];
+      const updated = formatDate(project.modified_at);
+      // Created date on the card, per the client's annotation (DO37) — a
+      // collection is a reference list that accumulates, so when it was STARTED
+      // is as useful as when it was last touched.
+      const created = formatDate(project.created_at);
+      // collection_type first: it is the free-text field that carries a
+      // user-defined "Other", which project_type's CHECK constraint cannot hold.
+      const type = project.collection_type || project.project_type;
+
+      return `
+        <div class="project-card bg-white rounded-xl border border-gray-100 shadow-sm p-5 cursor-pointer fade-in" onclick="openProject(${project.id})">
+          <div class="flex items-start justify-between mb-3">
+            <div class="min-w-0">
+              <h3 class="font-bold text-gray-900 truncate">${escapeHtml(project.name)}</h3>
+              ${project.client_name ? `<p class="text-xs text-gray-400 mt-0.5 truncate">${escapeHtml(project.client_name)}</p>` : ''}
+            </div>
+            <span class="text-xs px-2 py-0.5 rounded-full border ${statusClass} shrink-0 ml-2">${escapeHtml(project.status || 'Active')}</span>
+          </div>
+
+          <div class="space-y-1.5 text-xs text-gray-500">
+            ${project.location ? `
+              <div class="flex items-center gap-1.5">
+                <svg class="w-3.5 h-3.5 text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"/>
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"/>
+                </svg>
+                ${escapeHtml(project.location)}
+              </div>
+            ` : ''}
+            ${type ? `
+              <div class="flex items-center gap-1.5">
+                <svg class="w-3.5 h-3.5 text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"/>
+                </svg>
+                ${escapeHtml(type)}
+              </div>
+            ` : ''}
+            ${project.notes ? `
+              <p class="text-xs text-gray-400 italic line-clamp-2">${escapeHtml(project.notes)}</p>
+            ` : ''}
+          </div>
+
+          <div class="flex items-center justify-between mt-4 pt-3 border-t border-gray-50">
+            <span class="text-xs text-gray-300">
+              ${created ? `Created ${created}` : ''}${created && updated ? ' · ' : ''}${updated ? `Updated ${updated}` : (created ? '' : 'New')}
+            </span>
+            <svg class="w-4 h-4 text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/>
+            </svg>
+          </div>
+        </div>
+      `;
+    }
+
+    // ── Project detail view ──────────────────────────────────────────────────
+    async function openProject(projectId) {
+      document.getElementById('projects-grid').classList.add('hidden');
+      document.getElementById('projects-empty').classList.add('hidden');
+      document.getElementById('project-detail').classList.remove('hidden');
+
+      document.getElementById('detail-apps-loading').classList.remove('hidden');
+      document.getElementById('detail-apps-content').classList.add('hidden');
+
+      try {
+        const data = await LensyAPI.getProject(projectId);
+        currentProject = data.project;
+        renderProjectDetail(data);
+      } catch (err) {
+        document.getElementById('detail-apps-loading').innerHTML = `
+          <p class="text-sm text-red-600">Failed to load project: ${escapeHtml(err.message)}</p>
+        `;
+      }
+    }
+
+    /**
+     * Render one collection.
+     *
+     * `opts.readOnly` is a SHARED view (client DO49): the recipient is looking at
+     * somebody else's collection, so the owner's actions — share, email, export,
+     * delete, the editable notes and the per-item remove — are not theirs to use.
+     * Before this, the shared view rendered the full owner UI against a collection
+     * the visitor does not own.
+     */
+    function renderProjectDetail(data, opts = {}) {
+      // The share endpoint answers with `collection`, the owner endpoint with
+      // `project`. Reading only `project` is what threw "Cannot read properties
+      // of undefined (reading 'name')" on every shared link (client DO49).
+      const p = data.project || data.collection;
+      if (!p) {
+        showToast('This collection could not be opened', 'error');
+        return;
+      }
+      currentProject = p;
+      readOnlyCollection = !!opts.readOnly;
+      document.getElementById('detail-owner-actions').style.display = readOnlyCollection ? 'none' : '';
+
+      document.getElementById('detail-project-name').textContent = p.name || 'Untitled collection';
+
+      // "Hide if empty" for every collection field, per the client's mockup —
+      // an empty "Client:" label is noise on a collection that has no client.
+      const metaItems = [
+        p.client_name && `<span>Client: ${escapeHtml(p.client_name)}</span>`,
+        p.location && `<span>📍 ${escapeHtml(p.location)}</span>`,
+        (p.collection_type || p.project_type) && `<span>${escapeHtml(p.collection_type || p.project_type)}</span>`,
+        p.designer_name && `<span>Designer: ${escapeHtml(p.designer_name)}</span>`,
+        p.created_at && `<span>Created ${escapeHtml(formatDate(p.created_at))}</span>`,
+      ].filter(Boolean);
+      document.getElementById('detail-project-meta').innerHTML = metaItems.join('<span class="text-gray-200 mx-1">·</span>');
+
+      // Collection Note — the rich-text field the client asked for at collection
+      // level, editable in place so a note can be added after the fact.
+      renderCollectionNote(p);
+
+      document.getElementById('detail-apps-loading').classList.add('hidden');
+      document.getElementById('detail-apps-content').classList.remove('hidden');
+
+      const apps = data.applications || [];
+      const tableDiv = document.getElementById('detail-apps-table');
+      const emptyDiv = document.getElementById('detail-apps-empty');
+
+      if (!apps.length) {
+        emptyDiv.classList.remove('hidden');
+        tableDiv.classList.add('hidden');
+        document.getElementById('detail-items-toolbar').classList.add('hidden');
+        currentApplications = [];
+        return;
+      }
+
+      emptyDiv.classList.add('hidden');
+      tableDiv.classList.remove('hidden');
+      currentApplications = apps;
+      itemTypeFilter = null;
+      itemStandardFilter = null;
+      renderItemsToolbar();
+      renderItemList();
+    }
+
+    // ── Sorting and filtering saved items (client DO55) ──────────────────────
+    // "Allow users to sort cards by date created, card type, and — if possible —
+    //  display the same dynamic 'document' filter used at the top of search
+    //  result pages." A collection is a reference list that accumulates, so a
+    //  long one is unusable without these.
+    let itemSort = 'newest';          // 'newest' | 'oldest' | 'type'
+    let itemTypeFilter = null;        // a result_type, or null for all
+    let itemStandardFilter = null;    // a standard id, or null for all
+
+    const ITEM_TYPE_ORDER = ['body', 'tables', 'definitions', 'references'];
+
+    /** The standard a saved item belongs to, however it was saved. */
+    function itemStandard(item) {
+      if (item.standard_id) return item.standard_id;
+      const snap = item.snapshot_data ? safeParse(item.snapshot_data) : null;
+      return snap?.Standard || null;
+    }
+
+    function safeParse(raw) {
+      try { return JSON.parse(raw); } catch { return null; }
+    }
+
+    function visibleItems() {
+      const items = (currentApplications || []).filter(a => {
+        const type = a.result_type || 'tables';
+        if (itemTypeFilter && type !== itemTypeFilter) return false;
+        if (itemStandardFilter && itemStandard(a) !== itemStandardFilter) return false;
+        return true;
+      });
+      const added = (a) => new Date(String(a.added_at || '').replace(' ', 'T')).getTime() || 0;
+      const sorted = [...items];
+      if (itemSort === 'oldest') sorted.sort((a, b) => added(a) - added(b));
+      else if (itemSort === 'type') {
+        sorted.sort((a, b) =>
+          ITEM_TYPE_ORDER.indexOf(a.result_type || 'tables') - ITEM_TYPE_ORDER.indexOf(b.result_type || 'tables')
+          || added(b) - added(a));
+      } else sorted.sort((a, b) => added(b) - added(a));
+      return sorted;
+    }
+
+    function renderItemsToolbar() {
+      const wrap = document.getElementById('detail-items-toolbar');
+      const items = currentApplications || [];
+      if (items.length < 2) { wrap.classList.add('hidden'); return; }
+
+      const typeCounts = {};
+      const stdCounts = {};
+      const stdOrder = [];
+      for (const a of items) {
+        const type = a.result_type || 'tables';
+        typeCounts[type] = (typeCounts[type] || 0) + 1;
+        const std = itemStandard(a);
+        if (!std) continue;
+        if (!stdCounts[std]) { stdCounts[std] = 0; stdOrder.push(std); }
+        stdCounts[std]++;
+      }
+
+      const pill = (label, active, attrs, count) => `
+        <button class="text-xs px-2.5 py-1 rounded-full border font-medium transition ${active
+          ? 'bg-action text-action-ink border-action'
+          : 'bg-white text-gray-600 border-gray-200 hover:border-ies-blue hover:text-ies-blue'}" ${attrs}
+        >${escapeHtml(label)}${count != null ? ` <span class="${active ? 'text-blue-200' : 'text-gray-400'}">${count}</span>` : ''}</button>`;
+
+      // The card-type filter uses the SAME labels as the search filters (DO56).
+      const typePills = ITEM_TYPE_ORDER.filter(t => typeCounts[t]).map(t =>
+        pill(ITEM_TYPE_LABELS[t] || t, itemTypeFilter === t, `data-item-type="${t}"`, typeCounts[t]));
+
+      // …and the document filter mirrors the search page's "Narrow to:" chips.
+      const stdPills = stdOrder.map(std =>
+        pill(std, itemStandardFilter === std, `data-item-std="${escapeHtml(std)}"`, stdCounts[std]));
+
+      wrap.innerHTML = `
+        <div class="flex flex-wrap items-center gap-2 mb-2">
+          <span class="text-xs text-gray-400 mr-1">Sort by</span>
+          <select id="item-sort" class="text-xs px-2 py-1 border border-gray-200 rounded-lg bg-white text-gray-600">
+            <option value="newest"${itemSort === 'newest' ? ' selected' : ''}>Newest first</option>
+            <option value="oldest"${itemSort === 'oldest' ? ' selected' : ''}>Oldest first</option>
+            <option value="type"${itemSort === 'type' ? ' selected' : ''}>Card type</option>
+          </select>
+          ${typePills.length > 1 ? `<span class="text-xs text-gray-400 ml-2 mr-1">Filter</span>
+            ${pill('All types', !itemTypeFilter, 'data-item-type=""')}${typePills.join('')}` : ''}
+        </div>
+        ${stdPills.length > 1 ? `
+          <div class="flex flex-wrap items-center gap-1.5">
+            <span class="text-xs text-gray-400 mr-1">Narrow to:</span>
+            ${pill('All Documents', !itemStandardFilter, 'data-item-std=""')}${stdPills.join('')}
+          </div>` : ''}`;
+      wrap.classList.remove('hidden');
+    }
+
+    function renderItemList() {
+      const items = visibleItems();
+      const tableDiv = document.getElementById('detail-apps-table');
+      tableDiv.innerHTML = items.length
+        ? items.map(a => renderApplicationRow(a, currentProject.id)).join('')
+        : `<p class="text-sm text-gray-400 text-center py-8">No saved searches match this filter.</p>`;
+    }
+
+    document.addEventListener('change', e => {
+      if (e.target && e.target.id === 'item-sort') {
+        itemSort = e.target.value;
+        renderItemList();
+      }
+    });
+
+    document.getElementById('detail-items-toolbar').addEventListener('click', e => {
+      const btn = e.target.closest('button[data-item-type], button[data-item-std]');
+      if (!btn) return;
+      if (btn.dataset.itemType !== undefined) {
+        itemTypeFilter = btn.dataset.itemType || null;
+      } else {
+        itemStandardFilter = btn.dataset.itemStd || null;
+      }
+      renderItemsToolbar();
+      renderItemList();
+    });
+
+    // ── Saved item rows (client DO37) ────────────────────────────────────────
+    // The collection is a list of REFERENCES, not a copy of the search results:
+    //
+    //   Result Type   Documents | Illuminance Table | References | Definitions
+    //   Resource      full designation + title, plus page, with Open in Library + Buy
+    //   Application   full application name — illuminance rows ONLY
+    //   User Note     the reader's own note, rich text
+    //   Reference     the entry text in full — reference items ONLY
+    //
+    // Deliberately absent: excerpt text and illuminance VALUES. The client was
+    // explicit that a saved search must not reproduce the contents of the result,
+    // with References as the single exception.
+    // One label per kind, spelled exactly as the search filters spell it
+    // (client DO56: "Documents & Annexes" → "Documents"). Imported shape mirrors
+    // RESULT_TYPE_LABELS in src/lib/collections.js, which the CSV export uses.
+    const ITEM_TYPE_LABELS = {
+      body: 'Documents',
+      tables: 'Illuminance Table',
+      references: 'References',
+      definitions: 'Definitions',
+    };
+    const ITEM_TYPE_CHIPS = {
+      body: 'bg-sky-50 text-sky-700 border-sky-200',
+      tables: 'bg-gray-50 text-gray-600 border-gray-200',
+      references: 'bg-purple-50 text-purple-700 border-purple-200',
+      definitions: 'bg-teal-50 text-teal-700 border-teal-200',
+    };
+
+    function renderApplicationRow(appEntry, projectId) {
+      // Legacy rows (saved before DO37) carry no result_type and are illuminance
+      // rows by definition; their reference data comes from the snapshot.
+      const snap = appEntry.snapshot_data ? JSON.parse(appEntry.snapshot_data) : {};
+      const type = appEntry.result_type || 'tables';
+      const label = ITEM_TYPE_LABELS[type] || type;
+
+      const resource = appEntry.resource_title
+        || [snap.Standard_Full || snap.Standard, snap.App].filter(Boolean).join(' ')
+        || appEntry.application_code;
+      const page = appEntry.page_number;
+      const appName = type === 'tables'
+        ? (appEntry.application_name || [snap.Sub_Category, snap.App, snap.App_s1, snap.App_s2].filter(Boolean).join(' > '))
+        : null;
+
+      // A re-ingest can re-point or drop an application code; say so rather than
+      // let a saved reference drift silently.
+      const corpusNotice = appEntry.removedFromCorpus
+        ? `<p class="text-xs text-amber-700 mt-1">⚠ No longer in the current standard — showing what you saved.</p>`
+        : appEntry.reindexed
+        ? `<p class="text-xs text-amber-700 mt-1">⚠ Source table re-numbered — re-check against the standard.</p>`
+        : '';
+
+      const openBtn = appEntry.library_url ? `
+        <a href="${escapeHtml(appEntry.library_url)}" target="_blank" rel="noopener"
+           class="text-xs px-2.5 py-1 bg-action text-action-ink rounded-lg hover:bg-action-dark transition font-medium whitespace-nowrap">
+          Open in Library ↗
+        </a>` : '';
+      // "Buy" per the client's mockup — the webstore product page for this
+      // standard. Rendered only when DO35's metadata sync has supplied one.
+      const buyBtn = appEntry.buy_url ? `
+        <a href="${escapeHtml(appEntry.buy_url)}" target="_blank" rel="noopener"
+           class="text-xs px-2.5 py-1 border border-gray-200 rounded-lg text-gray-600 hover:bg-gray-50 transition font-medium whitespace-nowrap">
+          Buy
+        </a>` : '';
+
+      const field = (name, value, extraClass = '') => value
+        ? `<div class="mt-1.5">
+             <p class="text-[10px] uppercase tracking-wide text-gray-400">${name}</p>
+             <p class="text-sm text-gray-700 ${extraClass}">${escapeHtml(value)}</p>
+           </div>`
+        : '';
+
+      return `
+        <div class="bg-white rounded-xl border border-gray-100 shadow-sm p-4">
+          <div class="flex items-start justify-between gap-3 flex-wrap">
+            <span class="text-xs px-2 py-0.5 rounded-full font-medium border ${ITEM_TYPE_CHIPS[type] || ''}">${escapeHtml(label)}</span>
+            <div class="flex items-center gap-2 no-print">
+              ${openBtn}${buyBtn}
+              ${readOnlyCollection ? '' : `<button onclick="removeApplication(${projectId}, '${escapeHtml(appEntry.application_code)}')"
+                class="p-1.5 text-gray-300 hover:text-red-400 hover:bg-red-50 rounded-md transition" title="Remove from this collection">
+                <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
+                </svg>
+              </button>`}
+            </div>
+          </div>
+
+          <div class="mt-2">
+            <p class="text-[10px] uppercase tracking-wide text-gray-400">Resource</p>
+            <p class="text-sm font-semibold text-gray-900">
+              ${escapeHtml(resource)}${page != null ? `<span class="font-normal text-gray-500">, p.&nbsp;${escapeHtml(String(page))}</span>` : ''}
+            </p>
+            ${corpusNotice}
+          </div>
+
+          ${field('Application', appName)}
+          ${type === 'references' ? field('Reference', appEntry.reference_text, 'leading-relaxed') : ''}
+
+          ${readOnlyCollection
+            // A shared preview shows the sender's note but never offers to edit
+            // it — the collection belongs to them (client DO49).
+            ? field('User Note', appEntry.custom_notes, 'leading-relaxed')
+            : `<div class="mt-1.5">
+            <p class="text-[10px] uppercase tracking-wide text-gray-400">User Note</p>
+            <textarea
+              class="item-note w-full mt-0.5 px-2 py-1.5 border border-gray-100 rounded-lg text-sm text-gray-700 focus:ring-2 focus:ring-ies-blue focus:border-transparent"
+              rows="2" placeholder="Add a note (saved when you click away)"
+              data-item-id="${appEntry.id}"
+            >${escapeHtml(appEntry.custom_notes || '')}</textarea>
+          </div>`}
+
+          <p class="text-[10px] text-gray-300 mt-1">Saved ${escapeHtml(formatDate(appEntry.added_at))}</p>
+        </div>
+      `;
+    }
+
+    // Per-item notes save on blur — no explicit save button to forget.
+    document.addEventListener('focusout', async e => {
+      const box = e.target.closest?.('.item-note');
+      if (!box) return;
+      const id = box.dataset.itemId;
+      if (!id || box.dataset.saved === box.value) return;
+      try {
+        await fetch(`/api/projects/${currentProject.id}/applications/${id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ custom_notes: box.value }),
+        });
+        box.dataset.saved = box.value;
+        showToast('Note saved', 'success');
+      } catch {
+        showToast('Could not save the note', 'error');
+      }
+    });
+
+    // ── Collection note, share link, email (client DO37) ─────────────────────
+
+    function renderCollectionNote(p) {
+      const wrap = document.getElementById('detail-collection-note');
+      wrap.classList.remove('hidden');
+      // A shared preview prints the note; only the owner can edit it (DO49).
+      if (readOnlyCollection) {
+        wrap.innerHTML = p.notes
+          ? `<p class="text-[10px] uppercase tracking-wide text-gray-400 mt-3">Collection Note</p>
+             <p class="text-sm text-gray-700 mt-0.5">${escapeHtml(p.notes)}</p>`
+          : '';
+        return;
+      }
+      wrap.innerHTML = `
+        <p class="text-[10px] uppercase tracking-wide text-gray-400 mt-3">Collection Note</p>
+        <textarea id="collection-note-box" rows="2"
+          class="w-full mt-0.5 px-3 py-2 border border-gray-100 rounded-lg text-sm text-gray-700 focus:ring-2 focus:ring-ies-blue focus:border-transparent"
+          placeholder="What is this collection for? (saved when you click away)">${escapeHtml(p.notes || '')}</textarea>`;
+      const box = document.getElementById('collection-note-box');
+      box.dataset.saved = box.value;
+      box.addEventListener('blur', async () => {
+        if (box.dataset.saved === box.value) return;
+        try {
+          await fetch(`/api/projects/${p.id}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ notes: box.value }),
+          });
+          box.dataset.saved = box.value;
+          showToast('Collection note saved', 'success');
+        } catch {
+          showToast('Could not save the note', 'error');
+        }
+      });
+    }
+
+    async function copyShareLink() {
+      if (!currentProject) return;
+      try {
+        const { share_token } = await LensyAPI.shareCollection(currentProject.id);
+        const url = `${location.origin}/bookmarks?share=${share_token}`;
+        try {
+          await navigator.clipboard.writeText(url);
+          showToast('Share link copied — the recipient can save this collection to their account', 'success');
+        } catch {
+          // Clipboard is blocked in some contexts; show the link so it is still usable.
+          prompt('Copy this share link:', url);
+        }
+      } catch (err) {
+        showToast(err.message, 'error');
+      }
+    }
+
+    /**
+     * Email the collection FROM IES Lens (client DO37).
+     *
+     * Sent server-side (POST /api/projects/:id/email) so the recipient gets the
+     * templated message from the client's mockup — the citations, the "Save Search
+     * to My Bookmarks" button and the subscribe/purchase prompts — rather than
+     * whatever the sender's mail client makes of a mailto: body.
+     *
+     * The mailto composer it replaced is kept below as the fallback: if the send
+     * fails (the domain falls out of Email Sending, the address bounced before,
+     * rate limit), the sender can still get the references out by hand instead of
+     * hitting a dead end.
+     */
+    function openEmailModal() {
+      if (!currentProject) return;
+      document.getElementById('email-modal-topic').textContent = currentProject.name || 'this collection';
+      document.getElementById('email-modal-count').textContent =
+        `${(currentApplications || []).length} saved result${(currentApplications || []).length === 1 ? '' : 's'}`;
+      document.getElementById('email-modal-to').value = '';
+      document.getElementById('email-modal-message').value = '';
+      document.getElementById('email-modal-error').classList.add('hidden');
+      document.getElementById('email-modal').classList.remove('hidden');
+      document.getElementById('email-modal-to').focus();
+    }
+
+    function closeEmailModal() {
+      document.getElementById('email-modal').classList.add('hidden');
+    }
+
+    async function sendCollectionEmail() {
+      if (!currentProject) return;
+      const to = document.getElementById('email-modal-to').value.trim();
+      const message = document.getElementById('email-modal-message').value.trim();
+      const errorBox = document.getElementById('email-modal-error');
+      const button = document.getElementById('email-modal-send');
+
+      if (!/^[^\s@]+@[^\s@.]+(\.[^\s@.]+)+$/.test(to)) {
+        errorBox.textContent = 'Enter a valid email address.';
+        errorBox.classList.remove('hidden');
+        return;
+      }
+
+      errorBox.classList.add('hidden');
+      button.disabled = true;
+      const label = button.textContent;
+      button.textContent = 'Sending…';
+      try {
+        const result = await LensyAPI.emailCollection(currentProject.id, {
+          to,
+          // auth-gate.js publishes the signed-in member on window.lensyUser; the
+          // email says who shared it rather than arriving from nobody.
+          senderName: (window.lensyUser && (window.lensyUser.name || window.lensyUser.email)) || null,
+          message: message || null,
+        });
+        if (result.sent) {
+          closeEmailModal();
+          showToast(`Sent to ${to}`, 'success');
+          return;
+        }
+        // Delivery failed, not the request. Say so, and offer the fallback.
+        errorBox.innerHTML =
+          `IES Lens could not send this email (${escapeHtml(result.error || 'unknown error')}).` +
+          ' <button type="button" class="underline font-medium" onclick="composeInMailClient()">' +
+          'Compose it in your own mail app instead</button>.';
+        errorBox.classList.remove('hidden');
+      } catch (err) {
+        errorBox.textContent = err.message;
+        errorBox.classList.remove('hidden');
+      } finally {
+        button.disabled = false;
+        button.textContent = label;
+      }
+    }
+
+    /** Fallback when IES Lens cannot send: hand the message to the sender's mail app. */
+    async function composeInMailClient() {
+      if (!currentProject) return;
+      let shareUrl = '';
+      try {
+        const { share_token } = await LensyAPI.shareCollection(currentProject.id);
+        shareUrl = `${location.origin}/bookmarks?share=${share_token}`;
+      } catch { /* the email is still worth sending without a claim link */ }
+
+      const items = (currentApplications || []).map(a => {
+        const page = a.page_number != null ? `, p. ${a.page_number}` : '';
+        const ref = a.result_type === 'references' && a.reference_text ? `\n    ${a.reference_text}` : '';
+        const app = a.result_type === 'tables' && a.application_name ? `\n    ${a.application_name}` : '';
+        const note = a.custom_notes ? `\n    Note: ${a.custom_notes}` : '';
+        const link = a.library_url ? `\n    ${a.library_url}` : '';
+        return `• [${ITEM_TYPE_LABELS[a.result_type || 'tables']}] ${a.resource_title || a.application_code}${page}${app}${ref}${note}${link}`;
+      }).join('\n\n');
+
+      const body = [
+        `Search results from the IES Lighting Library, shared via IES Lens.`,
+        currentProject.notes ? `\nCollection note: ${currentProject.notes}` : '',
+        `\n${items}`,
+        shareUrl ? `\nSave this collection to your own IES Lens account:\n${shareUrl}` : '',
+        `\nThe IES Lighting Library is the Illuminating Engineering Society's authoritative collection of more than 100 ANSI-approved lighting standards. Subscribe for full access: https://store.ies.org/`,
+      ].filter(Boolean).join('\n');
+
+      const subject = `IES Lighting Library Search Results: ${currentProject.name}`;
+      location.href = `mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+    }
+
+    /** A date as the collection view prints it. */
+    function formatDate(value) {
+      if (!value) return '';
+      const d = new Date(String(value).replace(' ', 'T'));
+      return isNaN(d) ? String(value) : d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+    }
+
+    function showProjectsList() {
+      document.getElementById('project-detail').classList.add('hidden');
+      document.getElementById('projects-grid').classList.toggle('hidden', !allProjects.length);
+      document.getElementById('projects-empty').classList.toggle('hidden', allProjects.length > 0);
+      currentProject = null;
+    }
+
+    // ── Project actions ──────────────────────────────────────────────────────
+    async function removeApplication(projectId, applicationCode) {
+      if (!confirm(`Remove "${applicationCode}" from this project?`)) return;
+      try {
+        await fetch(`/api/projects/${projectId}/applications/${encodeURIComponent(applicationCode)}`, { method: 'DELETE' });
+        const data = await LensyAPI.getProject(projectId);
+        renderProjectDetail(data);
+        showToast('Application removed');
+      } catch (err) {
+        showToast('Failed to remove application', 'error');
+      }
+    }
+
+    async function deleteCurrentProject() {
+      if (!currentProject) return;
+      if (!confirm(`Delete "${currentProject.name}"? This cannot be undone.`)) return;
+      try {
+        await fetch(`/api/projects/${currentProject.id}`, { method: 'DELETE' });
+        allProjects = allProjects.filter(p => p.id !== currentProject.id);
+        showProjectsList();
+        showToast(`"${currentProject.name}" deleted`);
+      } catch (err) {
+        showToast('Failed to delete project', 'error');
+      }
+    }
+
+    // CSV export is built SERVER-SIDE (client DO37): the column order the client
+    // specified — Date Added, User, Type, Search Note, Resource, Page, Open in
+    // Library, Application, Reference, then the collection fields — is defined
+    // once in src/lib/collections.js so the export and the emailed report cannot
+    // drift apart. The old client-side builder printed illuminance VALUES, which
+    // a saved search must not reproduce.
+    function exportProjectCSV() {
+      if (!currentProject) return;
+      if (!(currentApplications || []).length) {
+        showToast('Nothing saved in this collection yet', 'error');
+        return;
+      }
+      window.location.href = LensyAPI.collectionCsvUrl(currentProject.id);
+    }
+
+    // ── New / edit project modal ─────────────────────────────────────────────
+    function openNewProjectModal() {
+      editingProjectId = null;
+      document.getElementById('modal-title').textContent = 'New Bookmark Collection';
+      document.getElementById('modal-save-btn').textContent = 'Create Collection';
+      document.getElementById('modal-project-name').value = '';
+      document.getElementById('modal-project-note').value = '';
+      document.getElementById('modal-project-client').value = '';
+      document.getElementById('modal-project-location').value = '';
+      document.getElementById('modal-project-designer').value = '';
+      document.getElementById('modal-project-type').value = 'New Construction';
+      toggleOtherProjectType();
+      document.getElementById('modal-error').classList.add('hidden');
+      document.getElementById('project-modal').classList.remove('hidden');
+      document.body.style.overflow = 'hidden';
+      setTimeout(() => document.getElementById('modal-project-name').focus(), 50);
+    }
+
+    /** Reveal the free-text box when the type is user-defined (client DO37). */
+    function toggleOtherProjectType() {
+      const isOther = document.getElementById('modal-project-type').value === 'Other';
+      const box = document.getElementById('modal-project-type-other');
+      box.classList.toggle('hidden', !isOther);
+      if (isOther) box.focus();
+      else box.value = '';
+    }
+
+    function closeProjectModal() {
+      document.getElementById('project-modal').classList.add('hidden');
+      document.body.style.overflow = '';
+    }
+
+    async function saveProject() {
+      const name = document.getElementById('modal-project-name').value.trim();
+      if (!name) {
+        document.getElementById('modal-project-name').focus();
+        return;
+      }
+      // "Other" stores what the user typed, not the literal word (client DO37).
+      // It goes to collection_type, which is free text — project_type still
+      // carries a CHECK constraint limited to the four construction categories.
+      const typeSelect = document.getElementById('modal-project-type').value;
+      const collectionType = typeSelect === 'Other'
+        ? (document.getElementById('modal-project-type-other').value.trim() || 'Other')
+        : typeSelect;
+
+      const payload = {
+        name,
+        notes: document.getElementById('modal-project-note').value.trim() || null,
+        client_name: document.getElementById('modal-project-client').value.trim() || null,
+        location: document.getElementById('modal-project-location').value.trim() || null,
+        designer_name: document.getElementById('modal-project-designer').value.trim() || null,
+        collection_type: collectionType,
+        project_type: typeSelect === 'Other' ? null : typeSelect,
+        user_id: 1,
+      };
+      try {
+        const result = await LensyAPI.createProject(payload);
+        allProjects.unshift(result.project);
+        closeProjectModal();
+        renderProjectsGrid();
+        showToast(`"${name}" created`);
+      } catch (err) {
+        document.getElementById('modal-error').textContent = err.message;
+        document.getElementById('modal-error').classList.remove('hidden');
+      }
+    }
+
+    // ── Toast ────────────────────────────────────────────────────────────────
+    let toastTimeout;
+    function showToast(message, type = 'success') {
+      const toast = document.getElementById('toast');
+      const inner = document.getElementById('toast-inner');
+      const icon = document.getElementById('toast-icon');
+      document.getElementById('toast-message').textContent = message;
+      inner.className = `flex items-center gap-3 px-4 py-3 rounded-xl shadow-lg text-sm font-medium text-white min-w-[220px] ${type === 'error' ? 'bg-red-600' : 'bg-gray-900'}`;
+      icon.innerHTML = type === 'error'
+        ? '<path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>'
+        : '<path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/>';
+      toast.classList.remove('hidden');
+      clearTimeout(toastTimeout);
+      toastTimeout = setTimeout(() => toast.classList.add('hidden'), 3000);
+    }
+
+    function escapeHtml(str) {
+      if (str == null) return '';
+      return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    document.addEventListener('keydown', e => { if (e.key === 'Escape') closeProjectModal(); });
+  </script>
+</body>
+</html>

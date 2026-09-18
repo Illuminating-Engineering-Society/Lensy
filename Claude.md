@@ -1728,6 +1728,99 @@ losing content") is answered by the alignment report, not by the model.
   `staff-ingest.test.js` (fixtures are stored-method ZIPs so they run on any
   Node ≥ 18; `src/lib/docx-fixture.js` is test-only).
 
+### The 260917 round: the product is "IES Lens", and the trial has a meter (DO999, DO107–DO112)
+
+The client's 2026-09-17 notes (`pdfs/Others/260917_Lensey Feedback.pdf`, ten
+pages). Deployed 2026-09-18 with migrations **0019** and **0020**.
+
+- **DO111 — the name.** "'Lensy' will likely need to release as 'IES Lens' for
+  trademark purposes … NOW: use 'IES Lens' only." Every user-visible string was
+  renamed; **nothing else was**. The domain stays `lensy.ies.org` (the client
+  said so), and so do `LENSY_*` env vars, the `lensy:auth` event, element ids,
+  CSS classes, localStorage keys, the `LensyAPI` global and the worker name —
+  renaming those is a data/config migration that buys no reader anything. Code
+  COMMENTS also keep the old name where they quote the client or narrate
+  history, so this file's vocabulary still resolves. The rename script skipped
+  comment lines for exactly that reason. Profile menus now name the
+  SUBSCRIPTION, never the tool: `Lighting Library` for a subscriber,
+  `No subscription` otherwise.
+- **DO999 — the tier policy changed shape, not just wording.** "No more
+  LensyLite": one product, one logo, and the tier is described as
+  Subscriber / Non-Subscriber. The substantive change is that **the AI Guide is
+  no longer locked for non-subscribers** — `LITE_BLOCKED_FILTERS` is now
+  `['tables','compare']` — because the client's own cap copy ("then AI is
+  disabled", "you have exceeded your trial AI search limit") only makes sense if
+  the trial exists. That also **settles the interpretation flagged in
+  search-cap.ts**: past 20 searches the AI stops and the SEARCH KEEPS WORKING,
+  where it used to answer 429. `handleSearch` was indeed the single place to
+  change, as that comment predicted; `decideSearchQuota` and its tests are
+  untouched, only the consequence of `allowed:false` moved. The response carries
+  `searchCap {used, cap, remaining, aiDisabled, resetAt}` outside the shared
+  cache (personal state), and `aiGuideSuppressed: 'daily_cap'`.
+  **Cost note:** every non-subscriber now gets up to 20 Guide generations +
+  reranks a day where they previously got none.
+- **DO999 — the welcome window.** Subscribers see it for their first five
+  logins, non-subscribers every login "until they become a subscriber". "Login"
+  is read as *first page load of a browser session* (`sessionStorage`), because
+  the page has no sign-in event of its own — the cookie is minted at the IdP and
+  simply arrives. The five-times allowance is additionally counted per ACCOUNT
+  (`user_preferences.welcome_seen`, no migration — 0014 was built as a JSON blob
+  for exactly this), so a second machine does not restart the five. A failed
+  preferences read treats the allowance as SPENT rather than greeting a
+  returning subscriber on every login. The three buttons (See What's New / Video
+  Overview / Tutorials) point at pages IES is still producing, so `WELCOME_LINKS`
+  holds nulls and renders them disabled — filling them in is one line.
+- **DO107/108/109 — branding.** Palette: banner `#F6F6F6`, page `#F6F6F6`
+  (`#FBF3DF` on /contents and /bookmarks), footer `#FBF3DF` (`#F6F6F6` on those
+  two), cards white, nav `#84898F` inactive → `#30363D` active, and every orange
+  button `#FFAA00`. **`#FFAA00` is a separate `action` token, not a
+  redefinition of `brand-primary`**: brand-primary is also the LINK colour, and
+  #FFAA00 as text on white is 1.9:1. For the same reason `action` only ever
+  pairs with `action-ink` (#30363D) — white on #FFAA00 is 2.1:1 and fails, dark
+  is 8.9:1 and passes. The banner stopped being dark, so every white nav colour
+  had to move with it. Logos live at `src/frontend/assets/`; both were
+  **extracted from the client's feedback PDF** at its embedded resolution
+  (790×346 and 683×335, alpha intact) — ask marketing for the originals before
+  any print use.
+- **DO109 — `/projects` became `/bookmarks`.** `projects.html` → `bookmarks.html`,
+  and the old path is a stub that **preserves the query string in JS**, because
+  collection share links already in circulation are `/projects.html?share=<token>`
+  and a meta-refresh would drop the token. `claimUrl` and the share `path` in
+  api.ts now mint `/bookmarks?share=`.
+- **DO112 — publication dates, sorts and a table view** on List Standards, plus
+  **migration 0019** (`standards.published_date`). The source is the portal's
+  `PublishDate` (271/278), synced by `sync-metadata.js`. **It contains
+  data-entry errors**: RP-3-20+E1 says 2030-07-23 and LP-4-20 says 2029-01-31,
+  which without a guard would top "Newest first" AND claim a place in the
+  "Most Recent (past 6 months)" band. A PublishDate later than the sync date is
+  stored as NULL and counted in the console; those standards fall back to the
+  edition year off the designation, sorted as mid-year and never admitted to the
+  Most Recent band. Reaffirmed printings legitimately publishing after their
+  designation year (LS-6-20+E1 (R2025) → 2025) are correct and kept. Measured
+  after the live sync: **107 of 111 Active standards carry a date**, newest
+  2026-05-27. "My Most Viewed" renders **disabled with a reason** — it needs
+  per-reader Vitrium read counts, which we cannot get; `search_events` records
+  IES Lens card opens, which is a different question.
+- **DO110 — comp access** is a RECORD and a queue, not a permission
+  (migration 0020 `comp_access_grants`, `src/workers/comp-access.ts`, a "Comp
+  access" tab). Same contract as the device-reset queue: IES Lens validates the
+  documents, computes the 90-day window, emails each recipient the list with a
+  branded deep link per standard, and staff mark it applied after doing the real
+  grant in Vitrium. **Two separate things block automating it**, and the second
+  is the surprising one: Vitrium's API answers 403 to support@ies.org (pending
+  with their rep), AND **the client's proposed "90-day document comp" GROUP
+  cannot exist** — in Vitrium External Services mode there are no groups;
+  access is decided per document by AuthIES's authorization response. The real
+  seam is a per-person, per-document, date-bounded entitlement in AuthIES, not
+  a group in Vitrium.
+
+**What the client still owes:** the original logo files; URLs for the three
+welcome buttons; a correction to the two portal PublishDate rows; and a decision
+on the Vitrium mechanism above. **Flagged back to them:** the non-subscriber
+welcome copy promises that subscribing unlocks "unlimited results" and "share
+bookmarks", neither of which is enforced today — the explicit numbered rules
+were implemented, the marketing list was not.
+
 ### /admin is THE staff page — one dashboard, seven tabs (2026-09-11)
 
 `/admin` (`src/frontend/admin/index.html`, served by Workers assets' default
@@ -2404,7 +2497,7 @@ Vitrium's document export gives each standard an opaque short code on Vitrium's 
 | Who | Tier | Gets |
 |---|---|---|
 | Lighting Library subscriber | `full` | everything |
-| IES member, no subscription | `lite` | the Lighting Science collection; Illuminance Tables, AI Guide and Document Comparison are shown locked |
+| IES member, no subscription | `lite` | the Lighting Science collection; Illuminance Tables and Document Comparison are shown locked. **The AI Guide is included as a trial, metered at 20 searches/day (DO999, 2026-09-17) — it used to be locked** |
 | invited guest | whatever `invited_users.tier` says | see below |
 | any other IES account | `none` | a collection someone shared with them, nothing else |
 

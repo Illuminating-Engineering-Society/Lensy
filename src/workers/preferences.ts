@@ -28,6 +28,16 @@ function errMsg(err: unknown): string { return err instanceof Error ? err.messag
 export interface UserPreferences {
   /** The Disable/Enable AI Guide state (client DO080). */
   ai_guide?: boolean;
+  /**
+   * How many times the welcome window has been shown to this account
+   * (client DO999: "For a user's first 5 logins (or 5 days, if easier), can you
+   * display a floating window welcoming them?").
+   *
+   * Counted per ACCOUNT rather than per browser because the client said logins,
+   * and a subscriber who signs in from a second machine has not earned five
+   * more welcomes. Non-subscribers see it every session and never consult this.
+   */
+  welcome_seen?: number;
 }
 
 const json = (data: unknown, status = 200): Response =>
@@ -52,6 +62,12 @@ export function parsePreferences(raw: string | null | undefined): UserPreference
 export function sanitizePreferences(input: Record<string, unknown>): UserPreferences {
   const out: UserPreferences = {};
   if (typeof input.ai_guide === 'boolean') out.ai_guide = input.ai_guide;
+  // A counter, so: a whole number, never negative, and bounded — the page sends
+  // its own increment and nothing should be able to store a value that makes
+  // the welcome window either permanent or impossible to retire.
+  if (typeof input.welcome_seen === 'number' && Number.isFinite(input.welcome_seen)) {
+    out.welcome_seen = Math.max(0, Math.min(99, Math.floor(input.welcome_seen)));
+  }
   return out;
 }
 

@@ -26,7 +26,7 @@ describe('buildInviteEmail', () => {
   it('always produces both an HTML and a text part', () => {
     // Some clients render only text/plain, and a missing text part costs spam score.
     const mail = buildInviteEmail(ctx());
-    expect(mail.subject).toBe('You have access to Lensy — the IES Standards Assistant');
+    expect(mail.subject).toBe('You have access to IES Lens — the IES Standards Assistant');
     expect(mail.html).toContain('<!doctype html>');
     expect(mail.text.length).toBeGreaterThan(100);
     expect(mail.text).not.toContain('<');
@@ -170,7 +170,7 @@ function shareCtx(overrides = {}) {
         reference_text: 'CIE 115:2010 Lighting of Roads for Motor and Pedestrian Traffic.', custom_notes: null,
       },
     ],
-    claimUrl: 'https://lensy.ies.org/projects.html?share=abc123',
+    claimUrl: 'https://lensy.ies.org/bookmarks?share=abc123',
     appUrl: 'https://lensy.ies.org',
     ...overrides,
   };
@@ -185,13 +185,13 @@ describe('buildCollectionShareEmail', () => {
     expect(mail.text).not.toContain('<');
   });
 
-  it('carries the "Save Search to My Lensy" button and the claim URL', () => {
+  it('carries the "Save to My Bookmarks" button and the claim URL', () => {
     // The client's mockup names this button; the recipient copies the collection
     // into their own account rather than being granted access to the sender's.
     const mail = buildCollectionShareEmail(shareCtx());
-    expect(mail.html).toContain('Save Search to My Lensy');
-    expect(mail.html).toContain('https://lensy.ies.org/projects.html?share=abc123');
-    expect(mail.text).toContain('Save Search to My Lensy: https://lensy.ies.org/projects.html?share=abc123');
+    expect(mail.html).toContain('Save to My Bookmarks');
+    expect(mail.html).toContain('https://lensy.ies.org/bookmarks?share=abc123');
+    expect(mail.text).toContain('Save to My Bookmarks: https://lensy.ies.org/bookmarks?share=abc123');
   });
 
   it('omits the claim button entirely when no token could be minted', () => {

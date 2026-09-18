@@ -41,7 +41,7 @@ function stubElement(id) {
 }
 
 beforeAll(() => {
-  const html = readFileSync(join(here, 'projects.html'), 'utf8');
+  const html = readFileSync(join(here, 'bookmarks.html'), 'utf8');
   const blocks = [...html.matchAll(/<script(?![^>]*src=)[^>]*>([\s\S]*?)<\/script>/g)].map(m => m[1]);
   const app = blocks[blocks.length - 1];
 
@@ -72,7 +72,7 @@ beforeAll(() => {
   };
   sandbox.globalThis = sandbox;
   ctx = vm.createContext(sandbox);
-  vm.runInContext(app, ctx, { filename: 'projects.html:app' });
+  vm.runInContext(app, ctx, { filename: 'bookmarks.html:app' });
   run = (expr) => vm.runInContext(expr, ctx);
 });
 

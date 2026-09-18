@@ -91,7 +91,7 @@
         ';background:#3A5068;margin-top:10px;font-size:13px;padding:9px 16px">Dev login (local only)</button></div>'
       : '';
     gateEl().innerHTML = card(
-      '<h1 style="font-size:22px;font-weight:700;margin:0 0 6px;letter-spacing:-0.01em">Lensy</h1>' +
+      '<h1 style="font-size:22px;font-weight:700;margin:0 0 6px;letter-spacing:-0.01em">IES Lens</h1>' +
       '<p style="color:#6b7280;font-size:14px;margin:0 0 4px">IES Standards Assistant</p>' +
       '<p style="color:#6b7280;font-size:14px;margin:12px 0 0">Sign in with your IES account to search the standards library.</p>' +
       '<div><a href="' + esc(loginUrl || '/login') + '" style="' + BTN + '">Sign in with IES</a></div>' +
@@ -124,7 +124,7 @@
   function showMisconfigured(data) {
     gateEl().innerHTML = card(
       '<h1 style="font-size:20px;font-weight:700;margin:0 0 10px">Sign-in unavailable</h1>' +
-      '<p style="color:#6b7280;font-size:14px;margin:0">Lensy cannot verify IES sign-in right now. ' +
+      '<p style="color:#6b7280;font-size:14px;margin:0">IES Lens cannot verify IES sign-in right now. ' +
       'This is a configuration problem on our side, not with your account.</p>' +
       '<p style="color:#9ca3af;font-size:12px;margin:12px 0 0">Please try again shortly, or contact ' +
       '<a href="mailto:Standards@ies.org" style="color:#3A5068">Standards@ies.org</a> if it persists.' +
@@ -141,20 +141,20 @@
   function showSuperseded(data) {
     gateEl().innerHTML = card(
       '<h1 style="font-size:20px;font-weight:700;margin:0 0 10px">Signed in elsewhere</h1>' +
-      '<p style="color:#6b7280;font-size:14px;margin:0">Your IES account is now using Lensy on ' +
-      'another device or browser, and Lensy allows one active session at a time.</p>' +
+      '<p style="color:#6b7280;font-size:14px;margin:0">Your IES account is now using IES Lens on ' +
+      'another device or browser, and IES Lens allows one active session at a time.</p>' +
       (data.email ? '<p style="color:#9ca3af;font-size:12px;margin:10px 0 0">Signed in as ' + esc(data.email) + '</p>' : '') +
-      '<div><a href="' + esc(data.logoutUrl || '/logout') + '" style="' + BTN + '">Use Lensy here instead</a></div>' +
+      '<div><a href="' + esc(data.logoutUrl || '/logout') + '" style="' + BTN + '">Use IES Lens here instead</a></div>' +
       '<p style="color:#9ca3af;font-size:12px;margin:14px 0 0;line-height:1.5">' +
       'This signs you out on this device and asks you to sign back in &mdash; ' +
-      'the session on the other device will then be signed out of Lensy.</p>'
+      'the session on the other device will then be signed out of IES Lens.</p>'
     );
   }
 
   var DENY_TEXT = {
-    revoked: 'Your access to Lensy has been revoked.',
-    expired: 'Your guest access to Lensy has expired.',
-    not_invited: 'Your IES account is signed in, but it does not have access to Lensy yet.',
+    revoked: 'Your access to IES Lens has been revoked.',
+    expired: 'Your guest access to IES Lens has expired.',
+    not_invited: 'Your IES account is signed in, but it does not have access to IES Lens yet.',
   };
 
   function showDenied(data) {
@@ -179,7 +179,7 @@
       (user.email
         ? '<p style="color:#9ca3af;font-size:12px;margin:10px 0 0">Signed in as ' + esc(user.email) + '</p>'
         : '') +
-      '<div><a href="/" style="' + BTN + '">Back to Lensy</a></div>' +
+      '<div><a href="/" style="' + BTN + '">Back to IES Lens</a></div>' +
       '<p style="margin:12px 0 0"><a href="' + esc(data.logoutUrl || '/logout') +
       '" style="color:#3A5068;font-size:13px">Sign in as someone else</a></p>'
     );
