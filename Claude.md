@@ -1821,6 +1821,35 @@ welcome copy promises that subscribing unlocks "unlimited results" and "share
 bookmarks", neither of which is enforced today — the explicit numbered rules
 were implemented, the marketing list was not.
 
+### A welcome panel for the Vitrium portal (client, 2026-09-18)
+
+"Are we able to add a floating window (or pop-up or equivalent) for the Content
+Portal? We're looking for a way to guide users to IES Lens and tutorials when
+they first land in Vitrium." `/embed` now carries TWO snippets for Portal
+Settings → Portal Header: the DO076 search box, and a new welcome panel.
+
+**The panel dismisses without JavaScript** — a hidden checkbox plus a `<label>`,
+not a click handler — because that header field may strip `<script>`, which is
+the same reason the search box is inline-styled throughout. It does need the
+`<style>` block: the close behaviour is a sibling selector (`:checked ~`), which
+no inline `style=` attribute can express. So the degradation ladder is: style +
+script → floating, dismissible, stays dismissed; style only → dismissible per
+visit; neither → use the search box, which needs no stylesheet at all.
+**Only JavaScript can remember a choice between page loads**, so the persistence
+script is deliberately separate and deletable rather than load-bearing. An
+iframe remains impossible (`frame-ancestors 'none'`).
+
+### Admin rights are `invited_users.role = 'admin'`, not 'staff'
+
+`decideAccess` in `src/lib/sso.ts` reads `admin: idpAdmin || row.role === 'admin'`.
+A row with role `'staff'` is NOT an administrator and cannot open /admin — the
+role column decides admin rights and nothing else (the tier is its own column
+since migration 0012). Zoe Milgram (`zmilgram@ies.org`) was moved staff → admin
+on 2026-09-18 at the client's request; the other way to grant it is the IdP's
+own `administrator` role, which is broader (it applies to every SP on the shared
+cookie), so the invite row is the narrower instrument and the one to prefer.
+Staff can do this themselves in /admin → Users → Edit → Role.
+
 ### /admin is THE staff page — one dashboard, seven tabs (2026-09-11)
 
 `/admin` (`src/frontend/admin/index.html`, served by Workers assets' default

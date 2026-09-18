@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Embed IES Lens — IES Lighting Library</title>
-  <!-- NO auth gate: this page hands staff a snippet to paste into the Vitrium
+  <!-- NO auth gate: this page hands staff snippets to paste into the Vitrium
        portal. It contains no standards content, so gating it would only make it
        harder to reach from wherever the portal is being configured. -->
   <script src="https://cdn.tailwindcss.com"></script>
@@ -13,7 +13,10 @@
       theme: { extend: { colors: {
         'brand-primary': '#D95D2B', 'brand-primary-dark': '#B84A20',
         'brand-secondary': '#3A5068', 'brand-accent': '#EFA723',
-        'surface': '#F7F7F7', 'ink': '#2C2C2C',
+        'surface': '#F6F6F6', 'ink': '#2C2C2C',
+        // Client DO107 — see the palette note in index.html.
+        'action': '#FFAA00', 'action-dark': '#E69900', 'action-ink': '#30363D',
+        'banner': '#F6F6F6', 'nav-ink': '#30363D', 'nav-muted': '#84898F',
       }, fontFamily: {
         display: ['Nohemi', 'Inter', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'sans-serif'],
         sans: ['Inter', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'sans-serif'],
@@ -26,71 +29,188 @@
     body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; color: #2C2C2C; }
     h1, h2, h3 { font-family: 'Nohemi', 'Inter', -apple-system, sans-serif; }
     pre { tab-size: 2; }
+
+    /* ── The welcome panel, exactly as the snippet below ships it ─────────────
+       Scoped to #ieslens-welcome so it cannot collide with the host page's
+       styles, and written as a stylesheet rather than inline `style=` because
+       the dismiss control is the checkbox hack, which needs a sibling selector
+       (`:checked ~`) that no inline attribute can express. That is the ONE
+       thing the no-JavaScript version needs from Vitrium's header field. */
+    #ieslens-welcome-dismiss { position: absolute; opacity: 0; pointer-events: none; }
+    #ieslens-welcome {
+      position: fixed; right: 20px; bottom: 20px; z-index: 2147483000;
+      width: 340px; max-width: calc(100vw - 32px);
+      background: #fff; border: 1px solid #e5e7eb; border-radius: 16px;
+      box-shadow: 0 12px 32px rgba(44,44,44,0.18); padding: 18px;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, sans-serif;
+      color: #2C2C2C; text-align: left; line-height: 1.5;
+    }
+    #ieslens-welcome-dismiss:checked ~ #ieslens-welcome { display: none; }
+    #ieslens-welcome .ieslens-close {
+      position: absolute; top: 10px; right: 12px; cursor: pointer;
+      font-size: 20px; line-height: 1; color: #9ca3af; padding: 2px 6px; border-radius: 6px;
+    }
+    #ieslens-welcome .ieslens-close:hover { color: #374151; background: #f3f4f6; }
+    #ieslens-welcome img { height: 42px; width: auto; display: block; margin-bottom: 10px; }
+    #ieslens-welcome p { margin: 0 0 14px; font-size: 13.5px; }
+    #ieslens-welcome .ieslens-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+    #ieslens-welcome a.ieslens-primary {
+      display: inline-block; padding: 9px 16px; border-radius: 10px;
+      background: #FFAA00; color: #30363D; font-size: 13px; font-weight: 700; text-decoration: none;
+    }
+    #ieslens-welcome a.ieslens-secondary {
+      display: inline-block; padding: 9px 16px; border-radius: 10px;
+      border: 1px solid #d1d5db; color: #30363D; font-size: 13px; font-weight: 600; text-decoration: none;
+    }
+    /* The preview on THIS page must sit in the flow, not float over it. */
+    .preview-frame #ieslens-welcome { position: static; right: auto; bottom: auto; margin: 0 auto; box-shadow: 0 4px 16px rgba(44,44,44,0.10); }
   </style>
 </head>
 <body class="bg-surface min-h-screen text-ink">
 
-  <header class="text-white shadow-md" style="background-color: #EFA723;">
+  <header class="shadow-sm" style="background-color: var(--banner, #F6F6F6); color: #30363D;">
     <div class="max-w-3xl mx-auto px-4 py-2.5 flex items-center justify-between">
-      <a href="/" class="flex items-center gap-2.5" title="IES Lens — IES Assistant">
-        <div class="w-10 h-10 rounded bg-white/25 flex items-center justify-center">
-          <span class="font-display font-extrabold text-lg tracking-tight">IES</span>
-        </div>
-        <span class="font-display text-lg font-bold tracking-tight">IES Lens</span>
+      <a href="/" class="flex items-center gap-2.5" title="Search with IES Lens">
+        <img src="/assets/ies-lens-logo.png" alt="IES Lens" class="h-9 w-auto" width="790" height="346" />
       </a>
-      <a href="/" class="text-sm px-3 py-1.5 rounded-md text-white/90 hover:text-white hover:bg-white/15 transition">← Back to search</a>
+      <a href="/" class="text-sm px-3 py-1.5 rounded-md transition" style="color:#84898F">← Back to search</a>
     </div>
   </header>
 
   <main class="max-w-3xl mx-auto px-4 py-8">
-    <h1 class="font-display text-2xl font-bold mb-1">Embed IES Lens in the Vitrium portal</h1>
+    <h1 class="font-display text-2xl font-bold mb-1">Paste IES Lens into the Vitrium portal</h1>
     <p class="text-sm text-gray-600 mb-6">
-      Client request DO076. Paste the snippet below into
-      <span class="font-medium">Portal Settings → Portal Header</span> in Vitrium Security.
-      Typing a question and pressing Search opens IES Lens in a new tab with that query
-      already run.
+      Two snippets for
+      <span class="font-medium">Portal Settings → Portal Header</span> in Vitrium Security
+      (the portal at <span class="font-mono text-xs">lighting.ies.org/portal/ies</span>).
+      Use either or both.
     </p>
 
-    <!-- ── Live preview: this IS the snippet, running ────────────────────────── -->
+    <!-- ══ 1. The welcome panel (client, 2026-09-18) ═════════════════════════ -->
     <section class="bg-white rounded-xl border border-gray-200 p-5 mb-6">
-      <h2 class="text-sm font-bold uppercase tracking-wider text-gray-500 mb-3">Preview</h2>
+      <h2 class="font-display text-lg font-bold mb-1">1 · Welcome panel</h2>
+      <p class="text-sm text-gray-600 mb-4">
+        "A way to guide users to IES Lens and tutorials when they first land in Vitrium."
+        A floating card in the bottom-right corner, dismissible, that does not cover the
+        portal's own controls.
+      </p>
 
+      <h3 class="text-xs font-bold uppercase tracking-wider text-gray-500 mb-3">Preview</h3>
+      <div class="preview-frame bg-gray-50 border border-gray-100 rounded-lg p-6 mb-5 flex justify-center">
+        <input type="checkbox" id="ieslens-welcome-dismiss">
+        <div id="ieslens-welcome">
+          <label class="ieslens-close" for="ieslens-welcome-dismiss" title="Close" aria-label="Close">&times;</label>
+          <img src="https://lensy.ies.org/assets/ies-lens-logo.png" alt="IES Lens">
+          <p>Looking for something specific? Ask a question in plain language and IES Lens
+             finds the passages, tables and citations across the whole Lighting Library.</p>
+          <div class="ieslens-actions">
+            <a class="ieslens-primary" href="https://lensy.ies.org/" target="_blank" rel="noopener">Search with IES Lens</a>
+            <a class="ieslens-secondary" href="https://www.ies.org/" target="_blank" rel="noopener">Tutorials</a>
+          </div>
+        </div>
+      </div>
+
+      <div class="flex items-center justify-between mb-2">
+        <h3 class="text-xs font-bold uppercase tracking-wider text-gray-500">HTML to paste</h3>
+        <button onclick="copySnippet('snippet-welcome', this)"
+                class="text-xs px-3 py-1.5 rounded-lg font-medium transition"
+                style="background:#FFAA00;color:#30363D">Copy</button>
+      </div>
+      <pre id="snippet-welcome" class="text-[11px] leading-relaxed bg-gray-50 border border-gray-100 rounded-lg p-3 overflow-x-auto whitespace-pre">&lt;!-- IES Lens welcome panel. Dismissible with no JavaScript; the optional
+     script at the end only makes the dismissal stick between visits. --&gt;
+&lt;style&gt;
+#ieslens-welcome-dismiss { position:absolute; opacity:0; pointer-events:none; }
+#ieslens-welcome { position:fixed; right:20px; bottom:20px; z-index:2147483000;
+  width:340px; max-width:calc(100vw - 32px); background:#fff; border:1px solid #e5e7eb;
+  border-radius:16px; box-shadow:0 12px 32px rgba(44,44,44,.18); padding:18px;
+  font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Inter,sans-serif;
+  color:#2C2C2C; text-align:left; line-height:1.5; }
+#ieslens-welcome-dismiss:checked ~ #ieslens-welcome { display:none; }
+#ieslens-welcome .ieslens-close { position:absolute; top:10px; right:12px; cursor:pointer;
+  font-size:20px; line-height:1; color:#9ca3af; padding:2px 6px; border-radius:6px; }
+#ieslens-welcome img { height:42px; width:auto; display:block; margin-bottom:10px; }
+#ieslens-welcome p { margin:0 0 14px; font-size:13.5px; }
+#ieslens-welcome .ieslens-actions { display:flex; flex-wrap:wrap; gap:8px; }
+#ieslens-welcome a.ieslens-primary { display:inline-block; padding:9px 16px; border-radius:10px;
+  background:#FFAA00; color:#30363D; font-size:13px; font-weight:700; text-decoration:none; }
+#ieslens-welcome a.ieslens-secondary { display:inline-block; padding:9px 16px; border-radius:10px;
+  border:1px solid #d1d5db; color:#30363D; font-size:13px; font-weight:600; text-decoration:none; }
+&lt;/style&gt;
+
+&lt;input type="checkbox" id="ieslens-welcome-dismiss"&gt;
+&lt;div id="ieslens-welcome"&gt;
+  &lt;label class="ieslens-close" for="ieslens-welcome-dismiss" title="Close" aria-label="Close"&gt;&amp;times;&lt;/label&gt;
+  &lt;img src="https://lensy.ies.org/assets/ies-lens-logo.png" alt="IES Lens"&gt;
+  &lt;p&gt;Looking for something specific? Ask a question in plain language and IES Lens
+     finds the passages, tables and citations across the whole Lighting Library.&lt;/p&gt;
+  &lt;div class="ieslens-actions"&gt;
+    &lt;a class="ieslens-primary" href="https://lensy.ies.org/" target="_blank" rel="noopener"&gt;Search with IES Lens&lt;/a&gt;
+    &lt;a class="ieslens-secondary" href="TUTORIALS_URL_HERE" target="_blank" rel="noopener"&gt;Tutorials&lt;/a&gt;
+  &lt;/div&gt;
+&lt;/div&gt;
+
+&lt;!-- OPTIONAL. Without it the panel returns on every visit; with it, a reader
+     who closes it stays closed. If Vitrium strips scripts, delete this block —
+     everything above still works. --&gt;
+&lt;script&gt;(function(){try{
+  var b=document.getElementById('ieslens-welcome-dismiss'); if(!b)return;
+  if(localStorage.getItem('ieslens.welcome')==='closed')b.checked=true;
+  b.addEventListener('change',function(){
+    if(b.checked){try{localStorage.setItem('ieslens.welcome','closed')}catch(e){}}
+  });
+}catch(e){}})();&lt;/script&gt;</pre>
+
+      <div class="mt-4 rounded-lg bg-amber-50 border border-amber-200 px-4 py-3 text-sm text-amber-900">
+        <p class="font-semibold mb-1">Two things to set before pasting</p>
+        <ul class="list-disc pl-5 space-y-1">
+          <li>Replace <span class="font-mono text-xs">TUTORIALS_URL_HERE</span> with the tutorials page once it exists.</li>
+          <li>To centre it as a true modal instead of a corner card, change
+              <span class="font-mono text-xs">right/bottom</span> to
+              <span class="font-mono text-xs">top:50%;left:50%;transform:translate(-50%,-50%)</span>.</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- ══ 2. The search box (client DO076) ══════════════════════════════════ -->
+    <section class="bg-white rounded-xl border border-gray-200 p-5 mb-6">
+      <h2 class="font-display text-lg font-bold mb-1">2 · Search box</h2>
+      <p class="text-sm text-gray-600 mb-4">
+        Typing a question and pressing Search opens IES Lens in a new tab with that query
+        already run.
+      </p>
+
+      <h3 class="text-xs font-bold uppercase tracking-wider text-gray-500 mb-3">Preview</h3>
       <form action="https://lensy.ies.org/" method="get" target="_blank" rel="noopener"
             style="display:flex;gap:8px;align-items:center;max-width:520px;margin:0 auto;font-family:inherit;">
         <input type="text" name="q" placeholder="Type a topic or ask a question"
                aria-label="Search the IES Lighting Library with IES Lens"
                style="flex:1 1 auto;min-width:0;padding:10px 14px;border:1px solid #D1D5DB;border-radius:10px;font-size:14px;color:#2C2C2C;background:#fff;">
         <button type="submit"
-                style="flex:none;display:inline-flex;align-items:center;gap:6px;padding:10px 18px;border:0;border-radius:10px;background:#D8930F;color:#fff;font-size:14px;font-weight:700;cursor:pointer;">
+                style="flex:none;display:inline-flex;align-items:center;gap:6px;padding:10px 18px;border:0;border-radius:10px;background:#FFAA00;color:#30363D;font-size:14px;font-weight:700;cursor:pointer;">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true">
             <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
           </svg>
           Search
         </button>
       </form>
-
       <p class="text-xs text-gray-400 text-center mt-3">
         Opens <span class="font-mono">lensy.ies.org/?q=…</span> in a new tab.
       </p>
-    </section>
 
-    <!-- ── The snippet ──────────────────────────────────────────────────────── -->
-    <section class="bg-white rounded-xl border border-gray-200 p-5 mb-6">
-      <div class="flex items-center justify-between mb-3">
-        <h2 class="text-sm font-bold uppercase tracking-wider text-gray-500">HTML to paste</h2>
-        <button id="copy-btn" onclick="copySnippet()"
-                class="text-xs px-3 py-1.5 rounded-lg bg-brand-primary text-white font-medium hover:bg-brand-primary-dark transition">
-          Copy
-        </button>
+      <div class="flex items-center justify-between mt-5 mb-2">
+        <h3 class="text-xs font-bold uppercase tracking-wider text-gray-500">HTML to paste</h3>
+        <button onclick="copySnippet('snippet-search', this)"
+                class="text-xs px-3 py-1.5 rounded-lg font-medium transition"
+                style="background:#FFAA00;color:#30363D">Copy</button>
       </div>
-      <pre id="snippet" class="text-[11px] leading-relaxed bg-gray-50 border border-gray-100 rounded-lg p-3 overflow-x-auto whitespace-pre">&lt;!-- IES Lens — IES Standards Assistant. Opens lensy.ies.org in a new tab. --&gt;
+      <pre id="snippet-search" class="text-[11px] leading-relaxed bg-gray-50 border border-gray-100 rounded-lg p-3 overflow-x-auto whitespace-pre">&lt;!-- IES Lens — IES Standards Assistant. Opens lensy.ies.org in a new tab. --&gt;
 &lt;form action="https://lensy.ies.org/" method="get" target="_blank" rel="noopener"
       style="display:flex;gap:8px;align-items:center;max-width:520px;margin:0 auto;font-family:inherit;"&gt;
   &lt;input type="text" name="q" placeholder="Type a topic or ask a question"
          aria-label="Search the IES Lighting Library with IES Lens"
          style="flex:1 1 auto;min-width:0;padding:10px 14px;border:1px solid #D1D5DB;border-radius:10px;font-size:14px;color:#2C2C2C;background:#fff;"&gt;
   &lt;button type="submit"
-          style="flex:none;display:inline-flex;align-items:center;gap:6px;padding:10px 18px;border:0;border-radius:10px;background:#D8930F;color:#fff;font-size:14px;font-weight:700;cursor:pointer;"&gt;
+          style="flex:none;display:inline-flex;align-items:center;gap:6px;padding:10px 18px;border:0;border-radius:10px;background:#FFAA00;color:#30363D;font-size:14px;font-weight:700;cursor:pointer;"&gt;
     &lt;svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"&gt;
       &lt;path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/&gt;
     &lt;/svg&gt;
@@ -99,14 +219,24 @@
 &lt;/form&gt;</pre>
     </section>
 
-    <!-- ── Why it is built this way ──────────────────────────────────────────── -->
+    <!-- ── Why they are built this way ───────────────────────────────────────── -->
     <section class="bg-white rounded-xl border border-gray-200 p-5 text-sm text-gray-600 space-y-3">
       <h2 class="text-sm font-bold uppercase tracking-wider text-gray-500">Notes</h2>
       <p>
-        <span class="font-semibold text-ink">No JavaScript.</span> It is a plain GET form, so
-        pressing Enter or the button both work, and it survives a CMS that strips
-        <span class="font-mono text-xs">&lt;script&gt;</span> tags or event-handler attributes from a
-        header field. Every style is inline for the same reason.
+        <span class="font-semibold text-ink">The panel works without JavaScript.</span> Closing it is
+        a hidden checkbox and a <span class="font-mono text-xs">&lt;label&gt;</span>, not a click handler,
+        so it survives a header field that strips <span class="font-mono text-xs">&lt;script&gt;</span>.
+        It does need the <span class="font-mono text-xs">&lt;style&gt;</span> block: the close behaviour is a
+        sibling selector, which cannot be written as an inline
+        <span class="font-mono text-xs">style=</span> attribute. If Vitrium strips
+        <span class="font-mono text-xs">&lt;style&gt;</span> too, the fallback is the search box above —
+        it is inline-styled throughout and needs neither.
+      </p>
+      <p>
+        <span class="font-semibold text-ink">Dismissal only sticks with the optional script.</span>
+        Nothing but JavaScript can remember a choice between page loads, so without it the panel
+        returns on each visit. That is the honest trade, and it is why the script is separate and
+        deletable rather than load-bearing.
       </p>
       <p>
         <span class="font-semibold text-ink">No iframe.</span> IES Lens sends
@@ -120,21 +250,21 @@
         so a reader who is not yet signed in lands on their results, not on an empty search box.
       </p>
       <p>
-        <span class="font-semibold text-ink">Staging.</span> To point the widget at
-        <span class="font-mono text-xs">lensy-staging.ies.org</span>, change the form's
-        <span class="font-mono text-xs">action</span>; nothing else depends on the host.
+        <span class="font-semibold text-ink">Staging.</span> To point either snippet at
+        <span class="font-mono text-xs">lensy-staging.ies.org</span>, change the host in the
+        <span class="font-mono text-xs">action</span>/<span class="font-mono text-xs">href</span>;
+        nothing else depends on it.
       </p>
     </section>
   </main>
 
   <footer class="max-w-3xl mx-auto px-4 py-8 text-center text-xs text-gray-400">
-    IES Lens — IES Assistant
+    IES Lens
   </footer>
 
   <script>
-    function copySnippet() {
-      const text = document.getElementById('snippet').textContent;
-      const btn = document.getElementById('copy-btn');
+    function copySnippet(id, btn) {
+      const text = document.getElementById(id).textContent;
       const done = (ok) => { btn.textContent = ok ? 'Copied' : 'Select and copy'; setTimeout(() => { btn.textContent = 'Copy'; }, 2000); };
       if (navigator.clipboard && navigator.clipboard.writeText) {
         navigator.clipboard.writeText(text).then(() => done(true)).catch(() => done(false));
