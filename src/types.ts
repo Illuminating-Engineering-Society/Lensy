@@ -643,6 +643,13 @@ export interface SearchResponse {
   /** The AHJ compliance notice for this search, if any (client DO084). */
   authorityNotice?: string | null;
   /**
+   * Supersession notices (client, 2026-09-23): a deprecated standard the query
+   * named and what replaced it, or a standard in the results that absorbed
+   * others ("RP-43-25 now includes the content of the deprecated LP-2-20 and
+   * LP-11-20"). Read from D1's superseded_by pointers; empty when none apply.
+   */
+  supersessionNotices?: string[];
+  /**
    * The question was judged not answerable from lighting standards (DO085), so
    * no cards and no AI Guide were returned.
    */

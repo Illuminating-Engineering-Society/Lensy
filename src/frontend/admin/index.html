@@ -768,7 +768,8 @@
         <div class="grid grid-cols-2 gap-3">
           <div>
             <label class="block text-xs font-medium text-gray-600 mb-1">Standard id <span class="text-gray-400">(derived from the filename)</span></label>
-            <input id="ing-id" type="text" placeholder="e.g. RP-27-26" oninput="this.dataset.edited='1'"
+            <input id="ing-id" type="text" placeholder="e.g. RP-27-26, or ASHRAE-IES-90.1-2025" oninput="this.dataset.edited='1'"
+                   title="IES ids as printed (RP-27-26, RP-8-25+E2). A joint standard uses its sponsors as the prefix: ANSI/ASHRAE/IES 90.1-2025 → ASHRAE-IES-90.1-2025 (typing the printed form works too)."
                    class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg font-mono" />
           </div>
           <div>
@@ -2064,8 +2065,19 @@
     function previewDeriveId(name) {
       const stem = String(name || '').replace(/^.*[\\/]/, '').replace(/\.[^.]*$/, '');
       const m = stem.match(/^([A-Z]{1,3}-\d+(?:\.\d+)?(?:-\d+)?)\s*(?:\+\s*(E\d+))?/i);
-      if (!m) return stem.split(/[_ ]/)[0];
-      return m[2] ? `${m[1]}+${m[2]}` : m[1];
+      if (m) return m[2] ? `${m[1]}+${m[2]}` : m[1];
+      // A joint standard ("ANSI_ASHRAE_IES 90.1-2025.pdf" → "ASHRAE-IES-90.1-2025"),
+      // mirroring normalizeJointDesignation in src/lib/standard-id.js. The
+      // server re-derives and re-validates; this only fills the field.
+      const joint = /^(?:ANSI[\s\/_-]+)?((?:[A-Z]{2,6}[\s\/_-]+){1,2}[A-Z]{2,6})[\s\/_-]+(\d+(?:\.\d+)?(?:-\d{2,4})?)(?:\s*\+\s*(E\d+))?(?=[\s_]|$)/i.exec(stem);
+      if (joint) {
+        const bodies = joint[1].split(/[\s\/_-]+/).filter(Boolean).map(b => b.toUpperCase());
+        // An IES series prefix is never a sponsoring body ("ANSI/IES/NALMCO RP-36-24").
+        if (!['RP', 'TM', 'HB', 'LM', 'LP', 'LS', 'DG', 'LEM', 'G'].includes(bodies[bodies.length - 1])) {
+          return `${bodies.join('-')}-${joint[2]}${joint[3] ? `+${joint[3].toUpperCase()}` : ''}`;
+        }
+      }
+      return stem.split(/[_ ]/)[0];
     }
 
     function onIngestFile() {

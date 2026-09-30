@@ -21,10 +21,15 @@
 # Nothing else on the page depends on these hosts, and every cover carries an
 # onerror fallback, so a blocked or missing image degrades to the "No cover"
 # placeholder rather than a broken-image icon.
+#
+# frame-src www.loom.com (2026-09-23): /tutorials embeds the Loom walkthroughs
+# IES records on its own account; cdn.loom.com serves their poster frames. The
+# ONLY page that frames anything, and frame-ancestors stays 'none' — we embed
+# Loom, nobody embeds us.
 
 /*
   X-Content-Type-Options: nosniff
   X-Frame-Options: DENY
   Referrer-Policy: strict-origin-when-cross-origin
   Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=()
-  Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://ies.org https://www.ies.org https://store.ies.org https://lighting.ies.org https://api.vitrium.com https://view.protectedpdf.com; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'
+  Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://ies.org https://www.ies.org https://store.ies.org https://lighting.ies.org https://api.vitrium.com https://view.protectedpdf.com https://cdn.loom.com; font-src 'self'; connect-src 'self'; frame-src https://www.loom.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'

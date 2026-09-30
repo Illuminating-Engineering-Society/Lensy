@@ -135,7 +135,7 @@ export function buildInviteEmail(ctx: InviteEmailContext): InviteEmailContent {
       <p style="margin:0 0 20px;font-size:13px;color:#666">If the button doesn't work, copy this address into your browser:<br><span style="color:${BRAND_SECONDARY};word-break:break-all">${escapeHtml(appUrl)}/</span></p>
       <p style="margin:0;font-size:13px;color:#666">Questions about IES standards? Contact <a href="mailto:Standards@ies.org" style="color:${BRAND_SECONDARY}">Standards@ies.org</a>.</p>
     </div>
-    <div style="padding:14px 20px;background:#f4f6f8;color:#888;font-size:12px">Sent by lensy.ies.org because you were added to IES Lens's access list${invitedBy ? ` by ${escapeHtml(invitedBy)}` : ''} — please do not reply to this message.</div>
+    <div style="padding:14px 20px;background:#f4f6f8;color:#888;font-size:12px">Sent by IES Lens because you were added to IES Lens's access list${invitedBy ? ` by ${escapeHtml(invitedBy)}` : ''} — please do not reply to this message.</div>
   </div>
 </body></html>`;
 
@@ -149,7 +149,7 @@ export function buildInviteEmail(ctx: InviteEmailContext): InviteEmailContent {
     '',
     'Questions about IES standards? Contact Standards@ies.org.',
     '',
-    `Sent by lensy.ies.org because you were added to IES Lens's access list${invitedBy ? ` by ${invitedBy}` : ''} — please do not reply.`,
+    `Sent by IES Lens because you were added to IES Lens's access list${invitedBy ? ` by ${invitedBy}` : ''} — please do not reply.`,
   ].join('\n');
 
   return { subject, html, text };
@@ -375,7 +375,7 @@ export function buildCollectionShareEmail(ctx: CollectionShareEmailContext): Inv
       ${accessHtml}
       <p style="margin:22px 0 0;font-size:13px;color:#666">Questions about IES standards? Contact <a href="mailto:Standards@ies.org" style="color:${BRAND_SECONDARY}">Standards@ies.org</a>.</p>
     </div>
-    <div style="padding:14px 20px;background:#f4f6f8;color:#888;font-size:12px">Sent by lensy.ies.org because ${sender ? escapeHtml(sender) : 'an IES Lens user'} shared these search results with you — please do not reply to this message. Excerpt text is not reproduced; each reference links to the standard in the IES Lighting Library.</div>
+    <div style="padding:14px 20px;background:#f4f6f8;color:#888;font-size:12px">Sent by IES Lens because ${sender ? escapeHtml(sender) : 'an IES Lens user'} shared these search results with you — please do not reply to this message. Excerpt text is not reproduced; each reference links to the standard in the IES Lighting Library.</div>
   </div>
 </body></html>`;
 
@@ -399,7 +399,7 @@ export function buildCollectionShareEmail(ctx: CollectionShareEmailContext): Inv
     '',
     'Questions about IES standards? Contact Standards@ies.org.',
     '',
-    `Sent by lensy.ies.org because ${sender || 'an IES Lens user'} shared these search results with you — please do not reply.`,
+    `Sent by IES Lens because ${sender || 'an IES Lens user'} shared these search results with you — please do not reply.`,
     'Excerpt text is not reproduced; each reference links to the standard in the IES Lighting Library.',
   ].join('\n');
 
@@ -488,7 +488,7 @@ export function buildDeviceResetEmail(ctx: DeviceResetEmailContext): InviteEmail
       ${paragraph('To approve: sign in to the Vitrium admin app, open the Users tab, find this user, and click "Clear Use" beside their row. Per Vitrium’s guidance, clear usage only if you do not suspect fraud or unauthorized sharing.')}
       <p style="margin:0;font-size:13px;color:#666">Reply to the requester: <a href="mailto:${escapeHtml(ctx.email)}" style="color:${BRAND_SECONDARY}">${escapeHtml(ctx.email)}</a></p>
     </div>
-    <div style="padding:14px 20px;background:#f4f6f8;color:#888;font-size:12px">Sent by lensy.ies.org from the Lighting Library error page. The full request queue is available to administrators at /api/admin/device-resets.csv.</div>
+    <div style="padding:14px 20px;background:#f4f6f8;color:#888;font-size:12px">Sent by IES Lens from the Lighting Library error page. The full request queue is available to administrators at /api/admin/device-resets.csv.</div>
   </div>
 </body></html>`;
 
@@ -626,7 +626,7 @@ export function buildCompAccessEmail(ctx: CompAccessEmailContext): InviteEmailCo
       <p style="margin:0 0 20px"><a href="${LIBRARY_URL}" style="display:inline-block;background:${BRAND_PRIMARY};color:#fff;text-decoration:none;padding:12px 22px;border-radius:6px;font-weight:600;font-size:15px">Open the IES Lighting Library</a></p>
       <p style="margin:0;font-size:13px;color:#666">Questions about IES standards? Contact <a href="mailto:Standards@ies.org" style="color:${BRAND_SECONDARY}">Standards@ies.org</a>.</p>
     </div>
-    <div style="padding:14px 20px;background:#f4f6f8;color:#888;font-size:12px">Sent by lensy.ies.org because IES granted you complimentary access to these standards${ctx.grantedBy ? ` (${escapeHtml(ctx.grantedBy)})` : ''} — please do not reply to this message.</div>
+    <div style="padding:14px 20px;background:#f4f6f8;color:#888;font-size:12px">Sent by IES Lens because IES granted you complimentary access to these standards${ctx.grantedBy ? ` (${escapeHtml(ctx.grantedBy)})` : ''} — please do not reply to this message.</div>
   </div>
 </body></html>`;
 
@@ -644,7 +644,7 @@ export function buildCompAccessEmail(ctx: CompAccessEmailContext): InviteEmailCo
     '',
     'Questions about IES standards? Contact Standards@ies.org.',
     '',
-    `Sent by lensy.ies.org because IES granted you complimentary access to these standards${ctx.grantedBy ? ` (${ctx.grantedBy})` : ''} — please do not reply.`,
+    `Sent by IES Lens because IES granted you complimentary access to these standards${ctx.grantedBy ? ` (${ctx.grantedBy})` : ''} — please do not reply.`,
   ].join('\n');
 
   return { subject, html, text };

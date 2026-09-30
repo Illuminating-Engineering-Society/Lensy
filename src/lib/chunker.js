@@ -44,8 +44,23 @@ const TABLE_PAGE_RE = /^Table\s+[A-Z0-9]-?\d*/im;
 // these "References", "Normative References", "Informative References", or
 // "Bibliography" — bare or behind a section/annex number ("10.0 References",
 // "Annex B Bibliography").
+//
+// Also "Informative Reference List" (the LM series), "References and
+// Bibliography", and the un-numbered "Additional Reading" list TM-30-24 prints
+// beside its numbered REFERENCES — bibliography by another name (client,
+// 2026-09-28: 18 current standards indexed with no reference chunks).
 const REFERENCES_HEADING_RE =
-  /^(?:(?:\d+(?:\.\d+)*|Annex\s+[A-Z]|Appendix\s+[A-Z])[\s.:—-]*)?(?:Normative\s+|Informative\s+)?(?:References?|Bibliography)\s*$/i;
+  /^(?:(?:\d+(?:\.\d+)*|Annex\s+[A-Z]|Appendix\s+[A-Z])[\s.:—-]*)?(?:Normative\s+|Informative\s+)?(?:References?(?:\s+List|\s+and\s+Bibliography)?|Reference\s+List|Bibliography(?:\s+and\s+References)?|(?:Additional|Further|Suggested)\s+Reading)\s*$/i;
+
+// Inside a References run, an entry may open with the bibliography's OWN
+// number and nothing else that reads as a citation on its first line —
+// "3 Royer MP. What is the Reference? An examination of alternatives…" — and
+// that is exactly the shape SECTION_RE calls a heading. The entry number
+// continuing the count is what tells the two apart (see the loop below).
+const BARE_REF_NUMBER_RE = /^(\d{1,3})\s+\S/;
+// How far the printed count may jump and still be read as the same list: one
+// entry whose number line the parser dropped must not end the whole run.
+const REF_NUMBER_MAX_GAP = 3;
 
 // Chunk sizing (client DO23: "possibly less aggressive 'chunking' will help
 // this?" — a broad conceptual query returned a single document-body result).
@@ -82,6 +97,13 @@ export function chunkIESDocument(pages, options = {}) {
   // see normalizeSectionNumber.
   let chapterHint = null;
   let inReferences = false;
+  // The last entry number seen in the current References run (0 = none yet).
+  let lastRefNumber = 0;
+  // The chapter number of the References heading ("2.0 Normative References"
+  // → "2"), so its sub-numbered entries ("2.1 ANSI/IES LS-1-22") are read as
+  // entries of the list rather than as headings that end it — the TM-25-20
+  // layout, one of the 18 "no reference chunks" standards (2026-09-28).
+  let refChapter = null;
   let buffer = [];
   let bufferPage = null;
   let bufferWordCount = 0;
@@ -155,7 +177,10 @@ export function chunkIESDocument(pages, options = {}) {
       const lineText = line.text.trim();
       if (!lineText) continue;
 
-      const isReferencesHeading = REFERENCES_HEADING_RE.test(lineText);
+      // A heading is set in a heading's case: the lowercase "reference" that a
+      // TM-30-24 table prints as a column header is a cell, and reading it as
+      // the References heading opened a reference run in the middle of a table.
+      const isReferencesHeading = REFERENCES_HEADING_RE.test(lineText) && !/^[a-z]/.test(lineText);
       // The space-separated form is only read on a page that is NOT a table:
       // "10 20 Task Area" is an illuminance row, and admitting it as a heading
       // would stamp §10.20 onto the rest of the page — the very failure DO071
@@ -164,11 +189,35 @@ export function chunkIESDocument(pages, options = {}) {
       let isSectionHeading = SECTION_RE.test(lineText) || spacedHeading
         || ANNEX_RE.test(lineText) || isReferencesHeading;
 
+      // An entry that continues the bibliography's own numbering. "1 Houser KW,
+      // …" straight after the REFERENCES heading, "3 Royer MP. What is the
+      // Reference?…" after entry 2: both match SECTION_RE (number, space,
+      // capital) and neither carries a comma or a year on its first line, so
+      // isCitationLike alone let them END the run — every entry from there on
+      // became body text under a section number that was really a reference
+      // number, and the dashboard reported "no reference chunks" (2026-09-28).
+      const refNumber = inReferences ? BARE_REF_NUMBER_RE.exec(lineText) : null;
+      const continuesNumbering = !!refNumber
+        && Number(refNumber[1]) > lastRefNumber
+        && Number(refNumber[1]) <= lastRefNumber + REF_NUMBER_MAX_GAP;
+
+      // A sub-numbered entry of a numbered References chapter: "2.1 ANSI/IES
+      // LS-1-22" under "2.0 Normative References". It IS a heading by shape,
+      // but it is one entry of the list, so it opens a new entry instead of
+      // ending the run. Only direct children count (2.x under 2, never 3.x).
+      let childEntry = false;
+      if (isSectionHeading && !isReferencesHeading && inReferences && refChapter) {
+        const child = readSectionNumber(lineText, { chapter: chapterHint });
+        childEntry = !!child && child.number.startsWith(`${refChapter}.`)
+          && child.number.split('.').length === 2 && !/\.0$/.test(child.number);
+      }
+
       // Inside a References section, a citation can masquerade as a section
       // heading ("10 CFR Part 430, Energy Conservation Program…"). Headings
       // don't carry citation punctuation — keep such lines in the reference
       // stream instead of falsely ending the section.
-      if (isSectionHeading && !isReferencesHeading && inReferences && isCitationLike(lineText)) {
+      if (isSectionHeading && !isReferencesHeading && inReferences
+          && (isCitationLike(lineText) || continuesNumbering || childEntry)) {
         isSectionHeading = false;
       }
 
@@ -201,6 +250,9 @@ export function chunkIESDocument(pages, options = {}) {
         }
         if (isReferencesHeading) {
           inReferences = true;
+          lastRefNumber = 0;
+          // "2.0" and "2" both head chapter 2; "Annex B" heads no numbered list.
+          refChapter = read && /^\d+(?:\.0)?$/.test(read.number) ? read.number.replace(/\.0$/, '') : null;
           currentSection = currentSection || 'References';
           bufferPage = page.number;
           continue; // the heading itself is not a reference entry
@@ -211,7 +263,8 @@ export function chunkIESDocument(pages, options = {}) {
       }
 
       if (inReferences) {
-        appendReferenceLine(refEntries, line, lineText, page.number);
+        if (continuesNumbering) lastRefNumber = Number(refNumber[1]);
+        appendReferenceLine(refEntries, line, lineText, page.number, { forceNew: childEntry });
         if (refBaseX == null && line.x != null) refBaseX = line.x;
         continue;
       }
@@ -526,8 +579,12 @@ export function parseHeadingLine(line) {
  * Falls back to fixed-size grouping (~80 words) when no signal is available,
  * so unsegmentable reference blocks still index as 'reference' chunks.
  */
-function appendReferenceLine(refEntries, line, lineText, pageNumber) {
-  const NUMBERED_START = /^\[?\d{1,3}\]?[.)]\s+\S/;
+function appendReferenceLine(refEntries, line, lineText, pageNumber, { forceNew = false } = {}) {
+  // "1. Smith" / "[1] Smith" / "1) Smith" — and the bare Vancouver "1 Smith"
+  // that TM-30-24 prints (a number, a space, then an author's capital). The
+  // bare form is admitted only in front of a capital so that a continuation
+  // line beginning with a page range or a year is never read as a new entry.
+  const NUMBERED_START = /^\[?\d{1,3}\]?(?:[.)]\s+\S|\s+[A-Z][a-z])/;
   // "Smith, J." | "Rea MS," (medical style) | "NFPA." / org acronyms
   const AUTHOR_START = /^(?:[A-Z][A-Za-z'’-]+,\s|[A-Z][a-z'’-]+\s+[A-Z]{1,3}[.,\s]|[A-Z]{2,}[.,\s]|(?:ANSI|IES|BSR|CIE|ISO|IEC|ASHRAE|IEEE)\b)/;
   const FALLBACK_MAX_WORDS = 80;
@@ -537,7 +594,7 @@ function appendReferenceLine(refEntries, line, lineText, pageNumber) {
   const lastComplete = /[.)\]]\s*$|\d{4}[.,]?\s*$|https?:\/\/\S+$/i.test(lastText.trim());
 
   let startsNew = false;
-  if (!last) {
+  if (!last || forceNew) {
     startsNew = true;
   } else if (NUMBERED_START.test(lineText)) {
     startsNew = true;

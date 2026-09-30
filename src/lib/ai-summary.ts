@@ -204,6 +204,15 @@ export interface AIRequestOptions {
    * the same text.
    */
   authorityNotice?: string | null;
+  /**
+   * Catalogue facts about supersession that bear on this search (client,
+   * 2026-09-23): "LP-2-20 is DEPRECATED and has been replaced by RP-43-25",
+   * "RP-43-25 supersedes LP-2-20, LP-11-20 and RP-43-22: their content was
+   * merged into it". Read from D1's superseded_by pointers by the search
+   * worker, never from the model's memory — the model is told to state them
+   * when the question touches the documents concerned.
+   */
+  facts?: string[];
 }
 
 /**
@@ -222,7 +231,7 @@ export async function generateResponse(
 ): Promise<AISummary> {
   const mode: AIMode = opts.mode || 'guide';
   const answerStyle: AnswerStyle = opts.answerStyle || 'auto';
-  const userPrompt = buildPrompt(query, searchResults, mode, opts.comparison, answerStyle, opts.authorityNotice);
+  const userPrompt = buildPrompt(query, searchResults, mode, opts.comparison, answerStyle, opts.authorityNotice, opts.facts);
 
   // Invoke through `ai` — NEVER a detached reference.
   //
@@ -496,6 +505,7 @@ function buildPrompt(
   comparison?: ComparisonContext,
   answerStyle: AnswerStyle = 'auto',
   authorityNotice?: string | null,
+  facts?: string[],
 ): string {
   const picked = pickResults(searchResults, mode, comparison);
   const resultsSummary = picked.map((r, idx) => describeResult(r, idx)).join('\n\n');
@@ -508,10 +518,18 @@ function buildPrompt(
     ? `\nA compliance notice is already displayed above your answer, in these words: "${authorityNotice}"\n`
       + 'Do NOT repeat it or paraphrase it. You may refer to coordinating with the AHJ in one short clause if it genuinely bears on the guidance.\n'
     : '';
+  // Client, 2026-09-23: supersession is a catalogue fact the model cannot see
+  // in the excerpts (LP-2-20's own pages say nothing about RP-43-25 absorbing
+  // them). Stated as facts it MAY use, under the same grounding rule as the
+  // excerpts: name only the designations given, describe nothing else.
+  const factsBlock = facts && facts.length > 0
+    ? '\nCATALOGUE FACTS (from the IES Lighting Library catalogue — authoritative; state the relevant one in one sentence when the question or the results touch these documents):\n'
+      + facts.map(f => `- ${f}`).join('\n') + '\n'
+    : '';
 
-  if (mode === 'comparison') return header + notice + comparisonInstructions(comparison);
-  if (mode === 'references') return header + notice + referencesInstructions();
-  return header + notice + guideInstructions(answerStyle);
+  if (mode === 'comparison') return header + notice + factsBlock + comparisonInstructions(comparison);
+  if (mode === 'references') return header + notice + factsBlock + referencesInstructions();
+  return header + notice + factsBlock + guideInstructions(answerStyle);
 }
 
 /**

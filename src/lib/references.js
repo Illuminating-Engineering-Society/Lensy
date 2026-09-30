@@ -22,10 +22,26 @@ const PROSE_OPENER_RE =
 
 // Author / organization openers used by IES bibliographies:
 //   "Smith, J." · "Rea MS," (medical style) · "NFPA." · "Illuminating Engineering…"
+//
+// The optional numbered prefix accepts "1." and "1)" AND the bare "1 " that
+// TM-30-24 (and the other Vancouver-style IES bibliographies) print: "1 Houser
+// KW, Wei M, …". Before this, a bare number failed BOTH the numbered test and
+// the author test — the entry "started with a digit" — so every entry of those
+// standards was demoted to body text and the staff dashboard reported "no
+// reference chunks" for 18 current standards (client, 2026-09-28). The bare
+// form is only admitted when a CAPITAL follows, so "10 20 Task Area" (a table
+// row) and "3 lux minimum" (prose) still read as nothing bibliographic.
 const AUTHOR_START_RE =
-  /^(?:\[?\d{1,3}\]?[.)]\s*)?(?:[A-Z][A-Za-z'’-]+,\s|[A-Z][a-z'’-]+\s+[A-Z]{1,3}[.,\s]|[A-Z]{2,}[.,\s]|(?:ANSI|BSR|IES|CIE|ISO|IEC|ASHRAE|IEEE|NFPA|ASTM|NEMA|UL|DOE|EPA|WELL|Illuminating)\b)/;
+  /^(?:\[?\d{1,3}\]?(?:[.)]\s*|\s+(?=[A-Z])))?(?:[A-Z][A-Za-z'’-]+,\s|[A-Z][a-z'’-]+\s+[A-Z]{1,3}[.,\s]|[A-Z]{2,}[.,\s]|(?:ANSI|BSR|IES|CIE|ISO|IEC|ASHRAE|IEEE|NFPA|ASTM|NEMA|UL|DOE|EPA|WELL|Illuminating)\b)/;
 
+// "1. Smith…", "[1] Smith…", "1) Smith…" — an explicit reference number. The
+// bare "1 Smith…" form is deliberately NOT here: on its own a number followed
+// by a capitalised word is also how a regulation ("10 CFR Part 430") or a
+// heading starts, so it counts only in combination — see AUTHOR_START_RE.
 const NUMBERED_START_RE = /^\[?\d{1,3}\]?[.)]\s+\S/;
+/** The Vancouver form: "12 Marszalec E, …" — a bare number, then an author. */
+const BARE_NUMBERED_AUTHOR_RE =
+  /^\d{1,3}\s+(?:[A-Z][A-Za-z'’-]+,\s|[A-Z][a-z'’-]+\s+[A-Z]{1,3}[.,\s]|[A-Z][a-z'’-]+\s+(?:and|&)\s+[A-Z])/;
 
 // Standards-body designation with a document number ("ANSI/IES RP-8-25",
 // "CIE 191:2010", "10 CFR Part 430").
@@ -73,6 +89,12 @@ export function looksLikeFormalReference(text) {
   const hasDesignation = DESIGNATION_RE.test(t);
   const startsWithAuthor = AUTHOR_START_RE.test(t);
   const hasPublisher = PUBLISHER_RE.test(t);
+
+  // "12 Marszalec E, Martinkauppi B, … J Electronic Imaging. 2000;9:32-8." — a
+  // bare reference number in front of an author list, with a year: the shape of
+  // every entry in TM-30-24's REFERENCES chapter. A journal citation with no
+  // year at all is still refused, as before.
+  if (hasYear && BARE_NUMBERED_AUTHOR_RE.test(t)) return true;
 
   if (hasYear && (startsWithAuthor || hasDesignation || hasPublisher)) return true;
   if (hasDesignation && startsWithAuthor) return true;

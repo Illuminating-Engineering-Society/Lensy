@@ -19,6 +19,23 @@ describe('looksLikeFormalReference', () => {
     )).toBe(true);
   });
 
+  it('accepts a Vancouver-numbered entry — a bare number, then the authors', () => {
+    // TM-30-24's REFERENCES chapter (2026-09-28): "1 Houser KW, …", no period.
+    expect(looksLikeFormalReference(
+      '1 Houser KW, Wei M, David A, Krames MR, Shen XS. Review of measures for light-source color rendition. Opt Express. 2013;21:10393-411.'
+    )).toBe(true);
+    expect(looksLikeFormalReference(
+      '12 Marszalec E, Martinkauppi B, Soriano M, Petikainen M. A physics-based face database for color research. J Electronic Imaging. 2000;9:32-8.'
+    )).toBe(true);
+    // Still a citation without a comma after the first author.
+    expect(looksLikeFormalReference(
+      '3 Royer MP. What is the Reference? An examination of alternatives to the reference sources used in IES TM-30-15. Leukos. 2016;13:71-89.'
+    )).toBe(true);
+    // A numbered table row or a measurement is not.
+    expect(looksLikeFormalReference('10 20 Task Area 300 0.76 lux maintained on the plane')).toBe(false);
+    expect(looksLikeFormalReference('3 lux minimum shall be maintained at the walkway surface')).toBe(false);
+  });
+
   it('accepts an entry located only by DOI or URL', () => {
     expect(looksLikeFormalReference('Boyce PR. Human Factors in Lighting. doi:10.1201/9781439874950')).toBe(true);
     expect(looksLikeFormalReference('IES Standards Toolbox. https://www.ies.org/standards/toolbox/')).toBe(true);

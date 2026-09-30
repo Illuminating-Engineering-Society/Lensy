@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tutorials — IES Lighting Library | IES Lens</title>
+  <!--
+    The tutorials table of contents (client, 2026-09-23): "'Tutorials' will link
+    to a table of contents type page with links to detailed videos for all
+    aspects of Vitrium and IES Lens. Each tutorial will have a video available
+    (Loom), as well as a step-by-step document version of the same (AI-generated
+    by Loom)."
+
+    PUBLIC on purpose — no auth-gate. A non-subscriber sees the welcome window's
+    Tutorials button on every login, and a reader who has not signed in yet is
+    exactly who a "how do I get in" tutorial is for.
+
+    HOW TO FILL IT IN: edit the TUTORIALS array at the bottom of this file. One
+    entry per tutorial: title, one-line summary, the Loom share URL (any
+    https://www.loom.com/share/… link) and, when Loom has generated it, the URL
+    of the step-by-step document. An entry with neither URL renders as "coming
+    soon" rather than a dead link, so the outline can be written before the
+    videos exist. Sections group the entries (Vitrium first, IES Lens second).
+  -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: { extend: { colors: {
+        'brand-primary': '#D95D2B', 'brand-primary-dark': '#B84A20',
+        'brand-secondary': '#3A5068', 'ink': '#2C2C2C',
+        'ies-blue': '#D95D2B',
+        'lens-bar': '#f6f6f6', 'lens-page': '#F6F6F6', 'lens-amber': '#FFAA00',
+        'lens-ink': '#30363D', 'lens-muted': '#84898f', 'footer-band': '#FBF3DF',
+      }, fontFamily: {
+        display: ['Nohemi', 'Inter', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'sans-serif'],
+        sans: ['Inter', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'sans-serif'],
+      } } }
+    }
+  </script>
+  <style>
+    @font-face { font-family: 'Nohemi'; font-style: normal; font-weight: 400 700; font-display: swap; src: url('/fonts/Nohemi-Variable.woff2') format('woff2'); }
+    @font-face { font-family: 'Inter'; font-style: normal; font-weight: 100 900; font-display: swap; src: url('/fonts/Inter-Variable.woff2') format('woff2'); }
+    body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; color: #2C2C2C; }
+    h1, h2, h3 { font-family: 'Nohemi', 'Inter', -apple-system, sans-serif; }
+    .nav-item { color: #84898f; }
+    .nav-item:hover { color: #30363D; background: rgba(48,54,61,0.07); }
+    /* A Loom embed keeps the 16:9 frame Loom exports. */
+    .video-frame { position: relative; padding-bottom: 56.25%; height: 0; }
+    .video-frame iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
+  </style>
+</head>
+<body class="bg-lens-page min-h-screen text-ink">
+
+  <header class="bg-lens-bar border-b border-gray-200 shadow-sm sticky top-0 z-40">
+    <div class="max-w-5xl mx-auto px-4 py-2.5 flex items-center justify-between gap-3">
+      <a href="/" class="shrink-0" title="The IES Lighting Library">
+        <img src="/assets/ies-lighting-library-horizontal.png" alt="The IES Lighting Library" class="h-12 sm:h-14 w-auto"/>
+      </a>
+      <nav class="flex items-center gap-1 text-sm">
+        <a href="/" class="nav-item flex items-center gap-2 px-3 py-1.5 rounded-md transition" title="Search the IES standards with IES Lens">
+          <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+          </svg>
+          <span class="font-medium">Search with IES Lens</span>
+        </a>
+        <a href="https://lighting.ies.org" target="_blank" rel="noopener" class="nav-item flex items-center gap-2 px-3 py-1.5 rounded-md transition" title="Open the IES Lighting Library in a new browser tab">
+          <span class="font-medium hidden sm:inline">Browse Lighting Library</span>
+        </a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="max-w-5xl mx-auto px-4 py-8">
+    <div class="mb-8">
+      <h1 class="text-2xl font-bold text-gray-900">Tutorials</h1>
+      <p class="text-sm text-gray-500 mt-1">
+        Short walkthroughs of the IES Lighting Library and IES Lens. Every tutorial comes as a video and,
+        where available, as a step-by-step written guide.
+      </p>
+    </div>
+
+    <nav id="toc" class="mb-8 bg-white rounded-xl border border-gray-100 p-4 text-sm" aria-label="Contents"></nav>
+
+    <div id="sections" class="space-y-10"></div>
+  </main>
+
+  <footer class="bg-footer-band text-center text-xs py-8 mt-8">
+    <p class="font-bold text-sm text-ink">IES Lens</p>
+    <p class="mt-1 text-gray-600">
+      <a href="https://www.ies.org" class="hover:underline">Illuminating Engineering Society</a>
+      <span class="mx-1.5">·</span>
+      <a href="mailto:Standards@ies.org" class="underline underline-offset-2 hover:text-ink">Standards@ies.org</a>
+    </p>
+  </footer>
+
+  <script>
+    // ── The table of contents ─────────────────────────────────────────────────
+    // Fill in `video` (a Loom share URL) and `doc` (the Loom-generated
+    // step-by-step document) as they are produced. Leave either null until then.
+    const TUTORIALS = [
+      {
+        section: 'Getting started',
+        items: [
+          { title: 'Signing in with your IES account', summary: 'One IES sign-in for the Lighting Library and IES Lens.', video: null, doc: null },
+          { title: 'What a Lighting Library subscription includes', summary: 'Subscriber and non-subscriber access, and how to subscribe.', video: null, doc: null },
+        ],
+      },
+      {
+        section: 'The IES Lighting Library (Vitrium)',
+        items: [
+          { title: 'Opening and reading a standard', summary: 'The viewer, page navigation and bookmarks.', video: null, doc: null },
+          { title: 'Annotations and highlights', summary: 'Marking up a standard and exporting your notes.', video: null, doc: null },
+          { title: 'Reading offline and on more than one device', summary: 'Device limits and what to do when you hit one.', video: null, doc: null },
+        ],
+      },
+      {
+        section: 'IES Lens',
+        items: [
+          { title: 'Asking a question', summary: 'Natural-language search, the AI Guide and the result cards.', video: null, doc: null },
+          { title: 'Illuminance tables', summary: 'Reading an Illuminance Table card and its notes.', video: null, doc: null },
+          { title: 'Filtering and sorting results', summary: 'Contents filters, Interior/Exterior, and the Documents lists.', video: null, doc: null },
+          { title: 'Comparing versions of a standard', summary: 'What changed between the current edition and the one it replaced.', video: null, doc: null },
+          { title: 'Bookmarks and sharing', summary: 'Saving results into collections and sharing them.', video: null, doc: null },
+          { title: 'List Standards', summary: 'Every current standard, its table of contents and where to buy it.', video: null, doc: null },
+        ],
+      },
+    ];
+
+    function escapeHtml(str) {
+      if (str == null) return '';
+      return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    /** A Loom share URL → its embed URL; anything else → null (never framed). */
+    function loomEmbedUrl(url) {
+      const m = /^https:\/\/(?:www\.)?loom\.com\/(?:share|embed)\/([A-Za-z0-9]+)/.exec(String(url || ''));
+      return m ? `https://www.loom.com/embed/${m[1]}` : null;
+    }
+
+    function slug(text) {
+      return String(text).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+    }
+
+    function renderItem(item, sectionSlug, i) {
+      const id = `${sectionSlug}-${i + 1}`;
+      const embed = loomEmbedUrl(item.video);
+      const ready = !!(embed || item.doc);
+      const links = [
+        embed ? `<a href="${escapeHtml(item.video)}" target="_blank" rel="noopener" class="text-ies-blue hover:underline font-medium">Watch on Loom ↗</a>` : '',
+        item.doc ? `<a href="${escapeHtml(item.doc)}" target="_blank" rel="noopener" class="text-ies-blue hover:underline font-medium">Step-by-step guide ↗</a>` : '',
+      ].filter(Boolean).join('<span class="mx-2 text-gray-300">·</span>');
+
+      return `
+        <article id="${escapeHtml(id)}" class="bg-white rounded-xl border border-gray-100 p-4 sm:p-5">
+          <div class="flex items-start justify-between gap-3 flex-wrap">
+            <div class="min-w-0">
+              <h3 class="text-base font-bold text-gray-900">${escapeHtml(item.title)}</h3>
+              ${item.summary ? `<p class="text-sm text-gray-600 mt-0.5">${escapeHtml(item.summary)}</p>` : ''}
+            </div>
+            ${ready ? '' : '<span class="text-[11px] font-semibold uppercase tracking-wide text-gray-400 border border-gray-200 rounded-full px-2 py-0.5 shrink-0">Coming soon</span>'}
+          </div>
+          ${embed ? `<div class="video-frame mt-4 rounded-lg overflow-hidden bg-gray-100"><iframe src="${escapeHtml(embed)}" title="${escapeHtml(item.title)}" allowfullscreen loading="lazy"></iframe></div>` : ''}
+          ${links ? `<p class="mt-3 text-sm">${links}</p>` : ''}
+        </article>`;
+    }
+
+    function render() {
+      const sections = TUTORIALS.filter(s => s && s.section && Array.isArray(s.items) && s.items.length > 0);
+      document.getElementById('toc').innerHTML = `
+        <p class="text-[10px] uppercase tracking-wide text-gray-400 mb-2">Contents</p>
+        <ol class="grid sm:grid-cols-2 gap-x-6 gap-y-1">
+          ${sections.map(s => `
+            <li><a href="#${escapeHtml(slug(s.section))}" class="font-semibold text-gray-800 hover:text-ies-blue hover:underline">${escapeHtml(s.section)}</a>
+              <ol class="ml-4 mt-0.5 space-y-0.5">
+                ${s.items.map((it, i) => `<li><a href="#${escapeHtml(slug(s.section))}-${i + 1}" class="text-gray-600 hover:text-ies-blue hover:underline">${escapeHtml(it.title)}</a>${(loomEmbedUrl(it.video) || it.doc) ? '' : ' <span class="text-[10px] text-gray-400">(soon)</span>'}</li>`).join('')}
+              </ol>
+            </li>`).join('')}
+        </ol>`;
+      document.getElementById('sections').innerHTML = sections.map(s => `
+        <section id="${escapeHtml(slug(s.section))}">
+          <h2 class="text-lg font-bold text-gray-900 mb-3">${escapeHtml(s.section)}</h2>
+          <div class="space-y-3">${s.items.map((it, i) => renderItem(it, slug(s.section), i)).join('')}</div>
+        </section>`).join('');
+    }
+
+    render();
+  </script>
+</body>
+</html>

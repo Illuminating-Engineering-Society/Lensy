@@ -1644,6 +1644,10 @@ backed by `/api/admin/ingest-jobs` (`src/workers/staff-ingest.ts`, migration
   chunk vectors (`deleteVectorRange`, now exported), application rows + their
   vectors, the standards row and the PDF. Same-id upload = in-place re-ingest,
   disposition forced `none`.
+- **Joint standards (2026-09-28):** an id may carry up to three letter
+  segments — "ANSI/ASHRAE/IES 90.1-2025" is entered (or derived) as
+  `ASHRAE-IES-90.1-2025`; see `STANDARD_ID_RE` / `normalizeStandardIdInput` in
+  `src/lib/standard-id.js`.
 - **Vitrium push is designed, NOT built** — the client's longer-term "one
   upload updates everywhere" needs the Vitrium API privileges that are still
   pending with Tom (everything 403s today). The seam is a `vitrium` finalize
@@ -1727,6 +1731,111 @@ losing content") is answered by the alignment report, not by the model.
   `src/lib/page-align.test.js`, the dual-upload cases in
   `staff-ingest.test.js` (fixtures are stored-method ZIPs so they run on any
   Node ≥ 18; `src/lib/docx-fixture.js` is test-only).
+
+### The 260923–260928 Teams notes: a comparison needs a standard, and 18 standards had no references (2026-09-30)
+
+The client switched from curated batches to short daily Teams notes. Five days'
+worth, deployed 2026-09-30; `SEARCH_CACHE_SCHEMA` → **v17**. No migration.
+
+- **"Difference between illuminance and luminance" was answered as an "AI
+  Document Comparison" of RP-2-20 (9/28 DO#3).** `VERSION_COMPARE_PATTERNS`
+  includes "difference between" and "compared to", so the phrasing alone made
+  the search a version comparison of NO standard; `comparisonFamily` found
+  none, and the fallback ("first non-deprecated result") named whichever
+  standard ranked first as "the current edition". `hasComparisonIntent` now
+  requires the phrasing AND a named family (`namedStandardFamily`), or the
+  Compare Versions pill — one rule, used by handleSearch and by the front-matter
+  filter inside `runSingleSearch`. "What changed in the latest sports lighting
+  standard" is therefore a question now, not a comparison; that is the right
+  failure, since a comparison with no family produced garbage anyway.
+- **18 current standards had "no reference chunks" (9/28 DO#1) — three ingest
+  bugs, all in how a References list is READ, none in the PDFs.** Measured
+  with the local copies: (1) TM-30-24 numbers its bibliography Vancouver-style,
+  "1 Houser KW, …" with no period, which `looksLikeFormalReference` refused
+  (it starts with a digit, so neither the numbered nor the author test matched)
+  and which the chunker's own `SECTION_RE` read as a HEADING when the first
+  line carried no comma or year ("3 Royer MP. What is the Reference?…") — so
+  the run ENDED at entry 3 and every later entry became body text under §4,
+  §11, §24. The chunker now tracks the running entry number (`lastRefNumber`,
+  a jump of ≤3 allowed) and a line continuing the count is an entry, never a
+  heading; `BARE_NUMBERED_AUTHOR_RE` admits the bare-number form when a year is
+  present. (2) TM-25-20 lists each normative reference as a SUB-HEADING of
+  "2.0 Normative References" ("2.1 ANSI/IES LS-1-22"); direct children of the
+  References chapter are now entries (`refChapter`). (3) LM-40-20 heads its
+  list "INFORMATIVE REFERENCE LIST", and TM-30 has an un-numbered "ADDITIONAL
+  READING"; `REFERENCES_HEADING_RE` accepts both, and a lowercase "reference"
+  (a TM-30 table cell) no longer opens a run. Before → after on the local
+  copies: TM-30-24 0 → 122, RP-29-25 0 → 115, LP-10-20 1 → 54, TM-40-24
+  0 → 43, RP-47-23 0 → 26, LM-77-20 4 → 26, LS-3-20 0 → 21, TM-25-20 0 → 5.
+  **Re-ingested the same day** from the production PDFs (R2 copies; five whose
+  R2 object was missing from the repo's copy with `--id`), RP-4-26 and
+  TM-30-24+E1 included — the fix is in the Node chunker, so the dashboard's
+  next upload gets it too.
+- **LP-2-20 and LP-11-20 are Deprecated, replaced by RP-43-25 (9/23 DO#3).**
+  D1 flipped the same day (status + `superseded_by`), PDFs moved to
+  `pdfs/Deprecated Standards/`, both re-ingested into the DEPRECATED index. The
+  "inform users in AI Guide" half is `collectSupersessionContext` in search.ts,
+  data-driven from `superseded_by` so it is not hardcoded to these two: (a) a
+  deprecated designation the QUERY names whose family has no current edition
+  → a banner + a Guide fact naming the successor; (b) a standard IN THE RESULTS
+  that supersedes editions of OTHER families (RP-43-25 ← LP-2-20, LP-11-20;
+  same-family predecessors are ordinary edition history) → a Guide fact that
+  their content was merged into it, and a banner when the query did not name
+  them. Facts reach the prompt as a `CATALOGUE FACTS` block (`facts` in
+  `AIRequestOptions`); the payload carries `supersessionNotices`. Also:
+  `resolveSuccessorEdition` makes "what's new in LP-2?" compare LP-2-20
+  against RP-43-25, and a bare "LP-2-20" lookup answers with the RP-43-25 card.
+- **Non-subscribers get the AI Guide, Reference and Definition cards only
+  (Teams "#2 Welcome copy").** `LITE_BLOCKED_FILTERS` gained `body`, but
+  `liteContentTypes` deliberately KEEPS body for retrieval: the passages ground
+  the Guide (and the whole-document lookup is gated on them); `handleSearch`
+  strips `resultType === 'excerpt'` from the response after the Guide ran and
+  the link maps were built. A whole-document card survives ("you may search
+  for standards"). The UI padlocks Documents and falls back to
+  Definitions+References when nothing is selected. Flagged to the client: the
+  welcome copy's "share bookmarks" is still not gated.
+- **Joint standards can be uploaded (9/28 DO#2B).** "ANSI/ASHRAE/IES
+  90.1-2025" fails every IES-shaped regex; `STANDARD_ID_RE` moved to
+  `src/lib/standard-id.js` and admits up to three letter segments, and
+  `normalizeStandardIdInput` turns the printed joint form into the id form
+  **`ASHRAE-IES-90.1-2025`** (the ANSI approval prefix dropped exactly as in
+  "ANSI/IES RP-1-24" → "RP-1-24"; a slash cannot travel in R2 keys and URL
+  segments). `deriveStandardId` reads "ANSI_ASHRAE_IES 90.1-2025.pdf" the same
+  way; `inferFullDesignation` prints it back as "ANSI/ASHRAE/IES 90.1-2025".
+  Untested against the real cover (no file yet) — the cover reader's
+  `DESIGNATION_LINE_RE` expects an IES series prefix, so the full designation
+  will likely come from `inferFullDesignation`, which is what it is for.
+- **lens.ies.org (9/25 DO#1) is prepared, not cut over.** A second custom
+  domain route in wrangler.toml, `LENSY_CANONICAL_HOST` (unset today) that
+  makes every other production host 301/308 to it (`canonicalRedirect` in
+  api.ts; staging, localhost and workers.dev exempt), `lens-staging.ies.org`
+  recognized as a staging host, both origins allowed on the `lensy` SP in
+  AuthIES `scripts/seed-sps.ts` (needs a re-seed), and the email footers now
+  say "Sent by IES Lens" instead of naming the host. The four-step order is in
+  wrangler.toml beside the route. `FROM_ADDRESS` stays noreply@lensy.ies.org
+  until Email Sending onboards the new subdomain; the /embed snippets and the
+  Vitrium error-page URL keep working through the redirect.
+- **Smaller items.** Header logo 72/84px with py-1.5 (9/23 DO#1, "25% shorter
+  than the IES Lens height"); "Browse Lighting Library" everywhere (9/25 DO#2);
+  "Display as Table (includes deprecated standards)" and switching it on moves
+  the sort to Designation (9/23 DO#2); every current standard on List Standards
+  has an **Add to Cart** button (9/25 DO#3) — `buy_url` when synced (0 of 111
+  today), else a store search for the designation, since the export has never
+  carried the store URL; every "Buy" is now "Add to Cart" (9/25 DO#5: only
+  Subscribe and the 3-year lease exist), the error page says "3-year lease"
+  instead of "document loan"; LS-1 prints as **ANSI/IES LS-1-25** (D1) and has
+  no table of contents (9/25 DO#4 — its Library link and the LS-1.png thumbnail
+  are still owed by the client: the portal export has no LS-1-25 row);
+  `/tutorials` (`src/frontend/tutorials.html`, public, Loom embeds via a new
+  `frame-src`) is the table-of-contents page the welcome window's "Tutorials"
+  button opens, filled in by editing its `TUTORIALS` array — the other two
+  welcome buttons still await their Loom URLs.
+- **Answered rather than built (see the 2026-09-30 reply):** TC member/chair
+  auto-entitlements from Wicket groups (feasible in AuthIES's membership sync;
+  the $174 discount is a webstore matter), the Lighting Science access options
+  A/B/C (B is the programmatic one — per-document authorization in AuthIES's
+  Vitrium webhook, tag-driven), and why the trial's "share bookmarks" promise
+  is not enforced.
 
 ### The 260917 round: the product is "IES Lens", and the trial has a meter (DO999, DO107–DO112)
 

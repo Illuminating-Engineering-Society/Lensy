@@ -34,7 +34,7 @@ import { handleEvent } from './events';
 import { handlePreferences } from './preferences';
 import { handleAdminUsers } from './users';
 import { handleAuthMe, handleDevLogin, requireReadAccess, requireCorpusAccess } from './session';
-import { buildLoginUrl, buildLogoutUrl } from '../lib/sso';
+import { buildLoginUrl, buildLogoutUrl, isStagingRequest } from '../lib/sso';
 import {
   normalizeSavedItem, savedItemCodes, newShareToken, CSV_COLUMNS, csvCell, csvRowFor,
 } from '../lib/collections.js';
@@ -68,6 +68,15 @@ export default {
 
     const url = new URL(request.url);
     const path = url.pathname;
+
+    // ── Canonical hostname (client 9/25/26 DO#1: lensy.ies.org → lens.ies.org) ──
+    // Once LENSY_CANONICAL_HOST is set, the old hostname redirects to the new
+    // one with path and query intact, so every share link, portal snippet and
+    // Vitrium error-page URL minted with the old host keeps working. Staging
+    // and local hosts are exempt; a GET/HEAD gets the 301, anything else a 308
+    // so a POST is replayed as a POST. Nothing happens while the var is unset.
+    const canonical = canonicalRedirect(url, request.method, env);
+    if (canonical) return canonical;
 
     try {
       // ── Auth (SSO against auth.ies.org — lib/sso.ts) ─────────────────────
@@ -237,6 +246,29 @@ export default {
     }
   },
 };
+
+/**
+ * The redirect to the canonical hostname, or null when this request already is
+ * canonical, the var is unset, or the host is one that must never redirect
+ * (staging, localhost, the *.workers.dev preview).
+ */
+export function canonicalRedirect(url: URL, method: string, env: Env): Response | null {
+  const canonical = String(env.LENSY_CANONICAL_HOST ?? '').trim().toLowerCase();
+  if (!canonical) return null;
+  const host = url.hostname.toLowerCase();
+  if (host === canonical) return null;
+  if (isStagingRequest(url.toString())) return null;
+  if (host === 'localhost' || host === '127.0.0.1' || host.endsWith('.workers.dev')) return null;
+  const target = new URL(url.toString());
+  target.hostname = canonical;
+  target.protocol = 'https:';
+  target.port = '';
+  const status = (method === 'GET' || method === 'HEAD') ? 301 : 308;
+  return new Response(null, {
+    status,
+    headers: { Location: target.toString(), 'Cache-Control': 'public, max-age=3600' },
+  });
+}
 
 /**
  * Decode one percent-encoded path segment.

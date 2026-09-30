@@ -242,6 +242,21 @@ describe('stripFormulasFromAnswer (DO072a)', () => {
   });
 });
 
+// ─── Catalogue facts about supersession reach the prompt (client, 2026-09-23) ──
+
+describe('supersession facts in the Guide prompt', () => {
+  it('lists the facts the search worker read from D1, and nothing when there are none', async () => {
+    const facts = [
+      'ANSI/IES LP-2-20 is DEPRECATED and has been replaced by ANSI/IES RP-43-25.',
+    ];
+    const { prompt } = await capturePrompt([RESULT], { mode: 'guide', facts });
+    expect(prompt).toContain('CATALOGUE FACTS');
+    expect(prompt).toContain('LP-2-20 is DEPRECATED');
+    const { prompt: bare } = await capturePrompt([RESULT], { mode: 'guide', facts: [] });
+    expect(bare).not.toContain('CATALOGUE FACTS');
+  });
+});
+
 // ─── The prompts: what the model is actually told ─────────────────────────────
 
 /** Capture the user prompt generateResponse builds, without a real model. */

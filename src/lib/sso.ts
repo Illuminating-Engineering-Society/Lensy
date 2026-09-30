@@ -235,11 +235,15 @@ function toSsoUser(v: unknown): SsoUser | null {
 // auth.ies.org would have its redirect_uri rejected outright.
 
 export const STAGING_HOST = 'lensy-staging.ies.org';
+// The product's new hostname is lens.ies.org (client 9/25/26 DO#1); its staging
+// twin is recognized alongside the old one so the cutover can happen host by
+// host. Both are allowed on the staging IdP's `lensy` SP (AuthIES seed-sps.ts).
+const STAGING_HOSTS = new Set([STAGING_HOST, 'lens-staging.ies.org']);
 const STAGING_IDP_BASE_URL = 'https://auth-staging.ies.org';
 
-/** Did this request arrive via the staging hostname? */
+/** Did this request arrive via a staging hostname? */
 export function isStagingRequest(requestUrl: string): boolean {
-  return new URL(requestUrl).hostname === STAGING_HOST;
+  return STAGING_HOSTS.has(new URL(requestUrl).hostname.toLowerCase());
 }
 
 /** The IdP this request's visitor belongs to (staging host → staging IdP). */

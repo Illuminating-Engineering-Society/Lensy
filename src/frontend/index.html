@@ -289,13 +289,17 @@
        non-subscribers, Sign out). -->
   <header class="shadow-sm no-print sticky top-0 z-40"
           style="background-color: var(--banner); color: var(--nav-ink);">
-    <div class="max-w-6xl mx-auto px-4 py-2.5 flex items-center justify-between gap-3">
+    <div class="max-w-6xl mx-auto px-4 py-1.5 flex items-center justify-between gap-3">
       <a href="/" class="flex items-center gap-2.5 shrink-0" title="The IES Lighting Library">
         <!-- DO107 #1: the client's "IES Lighting Library Logo 2026 - Horizontal".
              Extracted from their feedback document at its embedded resolution —
-             ask marketing for the original before print use. -->
+             ask marketing for the original before print use.
+             9/23/26 DO#1: "make the Lighting Library logo at top left taller
+             (perhaps 25% shorter than the IES Lens height)" — the hero mark is
+             h-24 / sm:h-28 (96 / 112px), so this is three quarters of that, and
+             the header padding shrank from py-2.5 to py-1.5 to pay for it. -->
         <img src="/assets/ies-lighting-library-horizontal.png" alt="The IES Lighting Library"
-             class="h-9 w-auto" width="683" height="335" />
+             class="h-[72px] sm:h-[84px] w-auto" width="683" height="335" />
       </a>
       <nav class="flex items-center gap-1 text-sm">
 
@@ -324,7 +328,7 @@
               <svg class="w-4 h-4 text-gray-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                 <path stroke-linecap="round" stroke-linejoin="round" d="M4 19.5V5a1 1 0 011-1h2a1 1 0 011 1v14.5M10 19.5V5a1 1 0 011-1h2a1 1 0 011 1v14.5M16.5 19.5l-2-14 2.5-.5 2.5 14z"/>
               </svg>
-              Browse Your Lighting Library
+              Browse Lighting Library
             </a>
             <button id="nav-compare" data-filter="compare" aria-pressed="false"
                     onclick="openCompareOverlay()" class="menu-item"
@@ -931,6 +935,17 @@
         <p id="authority-banner-text" class="text-sm text-red-900 leading-relaxed"></p>
       </div>
 
+      <!-- Supersession notice (client, 2026-09-23): the query named a deprecated
+           standard, or a standard in the results absorbed others — "LP-2-20 is
+           deprecated and has been replaced by RP-43-25". One line per fact,
+           plain text from the catalogue, never the model's words. -->
+      <div id="supersession-banner" class="hidden mb-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 flex gap-3 no-print" role="status">
+        <svg class="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+        </svg>
+        <div id="supersession-banner-text" class="text-sm text-amber-900 leading-relaxed space-y-1"></div>
+      </div>
+
       <!-- Result cards list -->
       <div id="results-list" class="space-y-3"></div>
 
@@ -1324,9 +1339,11 @@
     //  this is signposting, not the boundary.
     //
     // 'guide' left this list with DO999: the AI Guide is now a metered trial
-    // for non-subscribers, so it is not locked — it runs out. Keep in step with
-    // LITE_BLOCKED_FILTERS in src/lib/tiers.ts.
-    const LITE_LOCKED_FILTERS = ['tables', 'compare'];
+    // for non-subscribers, so it is not locked — it runs out. 'body' joined on
+    // 2026-09-23 ("AI Guide, reference cards and definition cards only") — the
+    // Worker strips Document passage cards for the tier; this is the padlock.
+    // Keep in step with LITE_BLOCKED_FILTERS in src/lib/tiers.ts.
+    const LITE_LOCKED_FILTERS = ['tables', 'body', 'compare'];
     let accessTier = 'full';
 
     function isLite() { return accessTier === 'lite'; }
@@ -1369,10 +1386,17 @@
     // producing ("in process"), so the URLs live HERE, in one place: a null
     // renders a disabled button rather than a dead link, and filling them in is
     // a one-line change.
+    //
+    // 2026-09-23: "See What's New" and "Video Overview" will each be ONE Loom
+    // video on the IES account — paste the share URL when it exists.
+    // "Tutorials" is the table-of-contents page; /tutorials is the one hosted
+    // here (src/frontend/tutorials.html, filled in as the Loom videos and their
+    // step-by-step documents are produced). If IES prefers a WordPress page on
+    // ies.org, swap the URL — nothing else references it.
     const WELCOME_LINKS = [
       { label: "See What's New", url: null },
       { label: 'Video Overview', url: null },
-      { label: 'Tutorials',      url: null },
+      { label: 'Tutorials',      url: '/tutorials' },
     ];
     const WELCOME_SESSION_KEY = 'lensy.welcome.shownThisSession';
     const SUBSCRIBER_WELCOME_LIMIT = 5;
@@ -1688,7 +1712,12 @@
       // never shows two ticks behind a padlocked pill.
       out.interior = false;
       out.exterior = false;
-      if (!out.body && !out.definitions && !out.references) out.body = true;
+      // Never leave nothing selected. Documents is locked for the tier, so the
+      // fallback is the two kinds a non-subscriber does get.
+      if (!out.body && !out.definitions && !out.references) {
+        out.definitions = true;
+        out.references = true;
+      }
       return out;
     }
 
@@ -2939,6 +2968,17 @@
         const show = !!data.authorityNotice && !(data.aiSummary && data.aiSummary.authorityNotice);
         document.getElementById('authority-banner-text').textContent = data.authorityNotice || '';
         authorityBanner.classList.toggle('hidden', !show);
+      }
+
+      // What replaced a deprecated standard the reader named (client,
+      // 2026-09-23). Designations are hyperlinked like the Guide's own prose,
+      // so "RP-43-25" in the notice opens the document.
+      const supersessionBanner = document.getElementById('supersession-banner');
+      if (supersessionBanner) {
+        const notices = Array.isArray(data.supersessionNotices) ? data.supersessionNotices.filter(Boolean) : [];
+        document.getElementById('supersession-banner-text').innerHTML =
+          notices.map(n => `<p>${linkifyStandards(escapeHtml(n))}</p>`).join('');
+        supersessionBanner.classList.toggle('hidden', notices.length === 0);
       }
 
       if (data.aiSummary) {
@@ -4296,9 +4336,13 @@
       const description = doc.description ? `
         <p class="text-xs text-gray-600 leading-relaxed">${escapeHtml(doc.description)}</p>` : '';
 
+      // "Add to Cart" (client 9/25/26 DO#3 + DO#5): a standard is bought one
+      // way only — a 3-year lease in the webstore — so the button says what it
+      // does. Rendered only when the metadata sync supplied the store URL.
       const buy = doc.buyUrl ? `
         <a href="${escapeHtml(doc.buyUrl)}" target="_blank" rel="noopener"
-           class="text-xs px-2.5 py-1 border border-gray-200 rounded-lg text-gray-600 hover:bg-gray-50 transition font-medium">Buy</a>` : '';
+           title="Add the 3-year lease of this standard to your IES webstore cart"
+           class="text-xs px-2.5 py-1 border border-gray-200 rounded-lg text-gray-600 hover:bg-gray-50 transition font-medium">Add to Cart</a>` : '';
 
       return `
         <article class="result-card copy-guard bg-white rounded-xl border border-gray-100 shadow-sm p-3 relative overflow-hidden"

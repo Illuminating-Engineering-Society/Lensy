@@ -165,7 +165,7 @@ describe('saved item rows', () => {
 
   it('shows the Buy button only when a webstore URL exists', () => {
     expect(run(`renderApplicationRow(${item()}, 1)`)).not.toContain('>Buy<');
-    expect(run(`renderApplicationRow(${item({ buy_url: 'https://store.ies.org/p/1' })}, 1)`)).toContain('Buy');
+    expect(run(`renderApplicationRow(${item({ buy_url: 'https://store.ies.org/p/1' })}, 1)`)).toContain('Add to Cart');
   });
 
   it('warns when a re-ingest moved or removed the underlying row', () => {

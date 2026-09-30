@@ -833,15 +833,16 @@ describe('Non-Subscriber (DO53, revised DO999)', () => {
 
   it('locks the tools a subscription unlocks — and no longer the AI Guide', () => {
     run(`applyTier('lite')`);
-    for (const name of ['tables', 'compare']) {
+    // Documents joined the locked list on 2026-09-23: "Lensy for non-subscribers
+    // should show AI Guide, reference cards and definition cards only."
+    for (const name of ['tables', 'body', 'compare']) {
       expect(pills.get(name).disabled).toBe(true);
       expect(pills.get(name).title).toContain('Lighting Library subscription');
     }
     // The Guide is a metered trial now, not a locked tool: the daily cap ends
     // it, so the control stays live.
     expect(pills.get('guide').disabled).toBe(false);
-    // …and the rest of the tools are left alone.
-    expect(pills.get('body').disabled).toBe(false);
+    // …and the two kinds a non-subscriber does get are left alone.
     expect(pills.get('definitions').disabled).toBe(false);
     expect(pills.get('references').disabled).toBe(false);
   });
@@ -860,8 +861,10 @@ describe('Non-Subscriber (DO53, revised DO999)', () => {
     // A demo search that asks for them is normalized too.
     run(`applyFilterState({ tables: true, compare: true })`);
     const demo = JSON.parse(run('JSON.stringify(filterState)'));
-    expect(demo.tables || demo.compare).toBe(false);
-    expect(demo.body).toBe(true);   // never left with nothing selected
+    expect(demo.tables || demo.compare || demo.body).toBe(false);
+    // Never left with nothing selected — and Documents is locked, so the
+    // fallback is the two kinds the tier includes.
+    expect(demo.definitions && demo.references).toBe(true);
   });
 
   it('never DISPLAYS a blocked kind, and never arms compare (the Worker is the boundary)', () => {

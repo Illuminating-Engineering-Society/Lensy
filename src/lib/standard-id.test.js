@@ -6,7 +6,10 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { deriveStandardId, inferFullDesignation, standardFamilyOf } from './standard-id.js';
+import {
+  deriveStandardId, inferFullDesignation, standardFamilyOf,
+  normalizeJointDesignation, normalizeStandardIdInput, STANDARD_ID_RE,
+} from './standard-id.js';
 
 describe('deriveStandardId', () => {
   it('handles the documented prototype-filename shapes', () => {
@@ -28,6 +31,38 @@ describe('deriveStandardId', () => {
   it('keeps a reaffirmation marker out of the id (it is not part of the edition)', () => {
     expect(deriveStandardId('LM-47-20(R2023).pdf')).toBe('LM-47-20');
   });
+
+  it('derives a joint standard published under another body\'s numbering', () => {
+    // ANSI/ASHRAE/IES 90.1-2025 — the uploader refused it (client, 2026-09-28).
+    expect(deriveStandardId('ANSI_ASHRAE_IES 90.1-2025.pdf')).toBe('ASHRAE-IES-90.1-2025');
+    expect(deriveStandardId('ANSI-ASHRAE-IES-90.1-2025_final.pdf')).toBe('ASHRAE-IES-90.1-2025');
+    expect(deriveStandardId('ASHRAE IES 90.1-2025.pdf')).toBe('ASHRAE-IES-90.1-2025');
+  });
+});
+
+describe('joint designations and the shared id shape', () => {
+  it('turns the printed form into the id form, dropping the ANSI approval prefix', () => {
+    expect(normalizeJointDesignation('ANSI/ASHRAE/IES 90.1-2025')).toBe('ASHRAE-IES-90.1-2025');
+    expect(normalizeJointDesignation('ANSI/ASHRAE/IES-90.1-2025')).toBe('ASHRAE-IES-90.1-2025');
+    expect(normalizeJointDesignation('ANSI/IES/NALMCO RP-36-24')).toBe(null);   // an IES id, not a joint number
+    expect(normalizeJointDesignation('meeting notes v3')).toBe(null);
+  });
+
+  it('normalizes what the dashboard field accepts', () => {
+    expect(normalizeStandardIdInput(' RP-27-26 ')).toBe('RP-27-26');
+    expect(normalizeStandardIdInput('ANSI/ASHRAE/IES 90.1-2025')).toBe('ASHRAE-IES-90.1-2025');
+    expect(normalizeStandardIdInput('ASHRAE-IES-90.1-2025')).toBe('ASHRAE-IES-90.1-2025');
+    expect(normalizeStandardIdInput('nonsense')).toBe('nonsense');
+  });
+
+  it('STANDARD_ID_RE admits the catalogue\'s ids and the joint form, nothing looser', () => {
+    for (const ok of ['RP-43-25', 'LM-63-19', 'RP-8-25+E2', 'RP-27.1-22', 'LS-1', 'ASHRAE-IES-90.1-2025']) {
+      expect(STANDARD_ID_RE.test(ok), ok).toBe(true);
+    }
+    for (const bad of ['ANSI/ASHRAE/IES 90.1-2025', 'meeting', 'RP 43 25', '90.1-2025', 'A-B-C-D-1']) {
+      expect(STANDARD_ID_RE.test(bad), bad).toBe(false);
+    }
+  });
 });
 
 describe('inferFullDesignation', () => {
@@ -38,6 +73,9 @@ describe('inferFullDesignation', () => {
   it('leaves an already-prefixed id and fishes a designation out of the title', () => {
     expect(inferFullDesignation('ANSI/IES LS-1-25', '')).toBe('ANSI/IES LS-1-25');
     expect(inferFullDesignation('LS-1-25', 'ANSI/IES LS-1-25 Lighting Science')).toBe('ANSI/IES LS-1-25');
+  });
+  it('prints a joint id the way its cover does', () => {
+    expect(inferFullDesignation('ASHRAE-IES-90.1-2025', '')).toBe('ANSI/ASHRAE/IES 90.1-2025');
   });
 });
 

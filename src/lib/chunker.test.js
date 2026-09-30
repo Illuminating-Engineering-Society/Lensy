@@ -55,6 +55,73 @@ describe('chunkIESDocument — References section', () => {
     }
   });
 
+  // The 18 "no reference chunks" standards of 2026-09-28, in three shapes.
+  it('keeps a Vancouver-numbered list ("1 Houser KW, …") inside the run', () => {
+    // TM-30-24 p. 47: bare entry numbers, no period, first lines with no
+    // comma or year — "3 Royer MP. What is the Reference?…" reads exactly
+    // like a "3 Scope" heading. Every entry after it used to become body text.
+    const chunks = chunkIESDocument([
+      page(47, [
+        l('REFERENCES', 63, 12),
+        l('1 Houser KW, Wei M, David A, Krames MR, Shen XS. Review of measures for light-source color rendition and', 63),
+        l('considerations for a two-measure system for characterizing color rendition. Opt Express. 2013;21:10393-411.', 81),
+        l('2 Smet K, Ryckaert WR, Pointer MR, Deconinck G, Hanselaer P. Correlation between color quality metric predictions', 63),
+        l('and visual appreciation of light sources. Opt Express. 2011;19:8151-66.', 81),
+        l('3 Royer MP. What is the Reference? An examination of alternatives to the reference sources used in IES TM-30-15.', 63),
+        l('Leukos. 2016;13:71-89.', 81),
+        l('4 International Organization for Standardization (ISO). Graphic Technology – Standard Object Colour Spectra', 63),
+        l('Database for Colour Reproduction Evaluation (SOCS). Geneva: ISO; 2003.', 81),
+      ]),
+    ], { minWords: 5 });
+    const refs = chunks.filter(c => c.type === 'reference');
+    expect(refs.map(r => r.text.slice(0, 12))).toEqual(['1 Houser KW,', '2 Smet K, Ry', '3 Royer MP. ', '4 Internatio']);
+    expect(chunks.filter(c => c.type === 'text')).toEqual([]);
+  });
+
+  it('reads sub-numbered normative references ("2.1 ANSI/IES LS-1-22") as entries', () => {
+    // TM-25-20 p. 11: each normative reference is its own sub-heading of the
+    // "2.0 Normative References" chapter, and the next chapter ends the list.
+    const chunks = chunkIESDocument([
+      page(11, [
+        l('2.0 Normative References', 63, 15),
+        l('2.1 ANSI/IES LS-1-22', 63, 11),
+        l('Lighting Science: Nomenclature and Definitions for Illuminating Engineering. New York: IES; 2022.', 63),
+        l('2.2 ISO 8601', 63, 11),
+        l('Date and Time Format, Parts 1 and 2. Geneva: International Organization for Standardization, 2019.', 63),
+        l('3.0 Definitions and Nomenclature', 63, 15),
+        l('3.1 ASCII', 63, 11),
+        l(PROSE_40),
+      ]),
+    ], { minWords: 10 });
+    const refs = chunks.filter(c => c.type === 'reference');
+    expect(refs.length).toBe(2);
+    expect(refs[0].text).toContain('LS-1-22');
+    expect(refs[1].text).toContain('ISO 8601');
+    expect(chunks.some(c => c.type === 'text' && c.section === '3.1')).toBe(true);
+  });
+
+  it('recognises "Informative Reference List" and "Additional Reading" as bibliography headings', () => {
+    const chunks = chunkIESDocument([
+      page(15, [
+        l('INFORMATIVE REFERENCE LIST', 63, 12),
+        l('1 Illuminating Engineering Society. ANSI/IES LM-9-20/R23, Approved Method: Electrical and Photometric', 63),
+        l('Measurement of Fluorescent Lamps. New York: IES; 2020.', 81),
+        l('ADDITIONAL READING', 63, 12),
+        l('Jerome CW. The flattery index. J Illumin Engineering Soc. 1973;2:351-4. DOI: 10.1080/00994480.1973.10747727.', 63),
+      ]),
+    ], { minWords: 5 });
+    const refs = chunks.filter(c => c.type === 'reference');
+    expect(refs.length).toBe(2);
+  });
+
+  it('does not open a reference run on a lowercase table cell reading "reference"', () => {
+    const chunks = chunkIESDocument([
+      page(26, [l('1.0 Scope'), l('reference'), l(PROSE_40)]),
+    ]);
+    expect(chunks.every(c => c.type !== 'reference')).toBe(true);
+    expect(chunks[0].section).toBe('1.0');
+  });
+
   it('returns to body chunking after the References section ends', () => {
     const chunks = chunkIESDocument([refPage], { minWords: 10 });
     const bodyAfter = chunks.filter(c => c.type === 'text');

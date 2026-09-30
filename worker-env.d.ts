@@ -44,6 +44,11 @@ declare global {
     // overrides (src/lib/search-cap.ts). Subscribers and the staff bearer are
     // never metered.
     LENSY_DAILY_SEARCH_CAP?: string;
+    // ── Canonical hostname (client 9/25/26 DO#1) ────────────────────────────
+    // "lens.ies.org" once the new custom domain and the IdP allowlist are live:
+    // every other production hostname 301s to it (src/workers/api.ts). Unset →
+    // every hostname on the Worker serves the app.
+    LENSY_CANONICAL_HOST?: string;
     // ── Lighting Library error page (2026-09-04) ────────────────────────────
     // Staff inbox for device-limit reset requests submitted from
     // library-error.html. Unset → requests are still stored in

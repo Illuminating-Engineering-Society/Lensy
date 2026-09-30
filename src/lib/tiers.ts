@@ -90,8 +90,15 @@ export const LITE_FALLBACK_PREFIX = 'LS-';
  * metered trial for non-subscribers, cut off by the daily cap rather than by
  * tier. Everything the client still sells as a subscriber unlock — "browse
  * illuminance table values", "compare versions" — stays.
+ *
+ * 'body' joined on 2026-09-23: "Lensy for non-subscribers should show AI
+ * Guide, reference cards and definition cards only." Document passages are
+ * still RETRIEVED for a non-subscriber — they ground the Guide's answer — but
+ * their cards are stripped from the response (search.ts) and the Documents
+ * checkbox is locked; only a whole-document card survives, because the same
+ * copy says a non-subscriber "may search for standards".
  */
-export const LITE_BLOCKED_FILTERS = ['tables', 'compare'] as const;
+export const LITE_BLOCKED_FILTERS = ['tables', 'body', 'compare'] as const;
 
 /**
  * Role slugs that mean "has a Lighting Library subscription", by default.
@@ -189,12 +196,18 @@ function earnedTier(input: TierInput, env: { LENSY_SUBSCRIBER_ROLES?: string }):
 }
 
 /**
- * The content types a Non-Subscriber search may use.
+ * The content types a Non-Subscriber search RETRIEVES.
  *
  * Illuminance Tables are blocked outright, and `compare` (Document Comparison)
  * with them. Documents, Definitions and References stay — the client's own
  * wording is "You may search for standards, references and definitions" —
  * inside the Lighting Science collection, which is where the tier is scoped.
+ *
+ * 'body' is deliberately NOT removed here although it is in
+ * LITE_BLOCKED_FILTERS: the passages are what the AI Guide answers from, and
+ * what the whole-document lookup is gated on. What a non-subscriber does not
+ * get is the passage CARDS, which search.ts strips from the response after the
+ * Guide has read them (client, 2026-09-23).
  */
 export function liteContentTypes(contentTypes: Set<ContentType>): Set<ContentType> {
   const allowed = new Set<ContentType>(

@@ -96,7 +96,14 @@ const DATA_VERSION_KEY = 'cache:data-version';
 //     and stored v15 responses may still cite it as current. The comparison
 //     PROMPT changed too (DO109: page counts + merger evidence + a scope probe
 //     feeding it), and the payload's comparison context gained `pages`.
-const SEARCH_CACHE_SCHEMA = 'v16';
+// v17: the 260923–260928 notes. INTENT changed: a comparison now needs a named
+//     standard, so "what is the difference between illuminance and luminance?"
+//     — cached under v16 as an "AI Document Comparison" of RP-2-20 — must be
+//     answered afresh as a question. RESULTS changed for non-subscribers (no
+//     Document passage cards), LP-2-20 and LP-11-20 are Deprecated in D1
+//     (replaced by RP-43-25), and the payload gained `supersessionNotices`
+//     with matching catalogue facts in the Guide prompt.
+const SEARCH_CACHE_SCHEMA = 'v17';
 
 function errMsg(err: unknown): string {
   return err instanceof Error ? err.message : String(err);

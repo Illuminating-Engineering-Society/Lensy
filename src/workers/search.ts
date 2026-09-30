@@ -430,6 +430,7 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
       aiSummary: null,
       aiGuideSuppressed: 'out_of_scope',
       authorityNotice: null,
+      supersessionNotices: [] as string[],
       outOfScope: true,
       refused: true,
       noResultsGuidance: buildNoResultsGuidance({
@@ -523,8 +524,15 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
   // ── Version-comparison intent ("what's new", "what changed") ─────────────────
   // Signals to the UI that ADDED/REVISED should be auto-shown and REMOVED gated.
   // The "Compare Versions" filter checkbox forces the same handling.
-  const isVersionComparison = !isLite
-    && (isVersionComparisonQuery(searchQuery) || contentTypes.has('compare'));
+  //
+  // The PHRASING alone is not enough (client, 2026-09-28): "What is the
+  // difference between illuminance and luminance?" matched the "difference
+  // between" pattern, ran as a version comparison of no standard at all, and
+  // the reader got an "AI Document Comparison" of whichever standard happened
+  // to rank first (RP-2-20) instead of an answer. A comparison needs a
+  // standard to compare — the query has to name one, or the reader has to have
+  // armed Compare Versions, which supplies the family through the filters.
+  const isVersionComparison = !isLite && hasComparisonIntent(searchQuery, contentTypes);
 
   // ── Structural filter inference from query ───────────────────────────────────
   // A bare "LZ1 walkways" in the query string should narrow results to that
@@ -609,9 +617,19 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
     const editions = family ? await loadFamilyEditions(env, family) : [];
     familyEditions = editions;
     currentEdition = editions.find(e => e.status !== 'Deprecated') || null;
+    // A family with no current edition was merged into another standard
+    // ("what's new in LP-2?" → LP-2-20 is deprecated, replaced by RP-43-25;
+    // client, 2026-09-23). The successor is the current side of the comparison.
+    if (!currentEdition) {
+      const successor = await resolveSuccessorEdition(env, editions);
+      if (successor) {
+        currentEdition = successor;
+        familyEditions = [successor, ...editions];
+      }
+    }
     if (depDbg) {
       depDbg.family = family;
-      depDbg.editions = editions.map(e => `${e.id}${e.status === 'Deprecated' ? ' (dep)' : ''}`);
+      depDbg.editions = familyEditions.map(e => `${e.id}${e.status === 'Deprecated' ? ' (dep)' : ''}`);
     }
 
     // The current edition has to be ON SCREEN, with real content — the client's
@@ -640,7 +658,7 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
     // its pages: "return cards for the current standard (first) followed by all
     // subsequent deprecated standards" (client DO42). A card with no passage is
     // still the fastest route to opening that edition for a manual comparison.
-    allResults.results = addMissingEditionCards(allResults.results, editions);
+    allResults.results = addMissingEditionCards(allResults.results, familyEditions);
     // Current edition first, then prior editions newest → oldest (client DO27).
     allResults.results = orderComparisonResults(allResults.results);
   }
@@ -720,6 +738,17 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
     ? AUTHORITY_NOTICE
     : null;
 
+  // ── Supersession facts (client, 2026-09-23) ──────────────────────────────────
+  // "LP-2-20 is deprecated, and replaced by RP-43-25 … RP-43-25 contains the
+  //  merged contents of LP-2-20, LP-11-20 and RP-43-22." Read from D1's
+  //  superseded_by pointers — a deprecated designation the query names, or a
+  //  merger among the standards in the results — and handed to BOTH the reader
+  //  (a banner) and the Guide (catalogue facts it may state). Skipped on a
+  //  comparison, whose advisory already says which edition replaced which.
+  const supersession = (!outOfScope && !isVersionComparison)
+    ? await collectSupersessionContext(env, searchQuery, allResults.results)
+    : { notices: [] as string[], facts: [] as string[] };
+
   // ── Related applications + optional AI summary (run concurrently) ────────────
   // Related apps: top result only, and only for true application rows — chunk
   // results have no D1 identity to find siblings for. Exclude only the seed
@@ -778,6 +807,7 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
             comparison: comparisonContext,
             answerStyle,
             authorityNotice,
+            facts: supersession.facts,
           });
           const localized = await localizeSummary(env.AI, generated, queryLang) ?? generated;
           // Degraded summaries (every model errored) are never cached — the
@@ -916,6 +946,17 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
     if (documentCardsOnly.length > 0) allResults.results = documentCardsOnly;
   }
 
+  // ── Non-subscriber cards (client, 2026-09-23) ────────────────────────────────
+  // "Lensy for non-subscribers should show AI Guide, reference cards and
+  //  definition cards only." The body passages were RETRIEVED — they are what
+  //  grounds the Guide's answer, and the link maps above were built from them so
+  //  its citations still open the Library — but they leave the response here.
+  //  A whole-document card stays: the client's own copy says a non-subscriber
+  //  "may search for standards", and the card is the standard, not its text.
+  if (isLite) {
+    allResults.results = allResults.results.filter(r => r.resultType !== 'excerpt');
+  }
+
   // ── Confidence flag ──────────────────────────────────────────────────────────
   // The UI uses noStrongMatch to render a yellow advisory banner above the
   // results. We never filter the list itself — the user still sees the closest
@@ -1000,6 +1041,10 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
     // (client DO084). At the top level as well as on the summary, so it is shown
     // even when the reader has the AI Guide switched off.
     authorityNotice,
+    // What replaced a deprecated standard the query named, and which standards
+    // in these results absorbed others (client, 2026-09-23). Empty when nothing
+    // in the catalogue bears on this search.
+    supersessionNotices: supersession.notices,
     outOfScope,
     // Ways out of an empty result set (client DO077).
     noResultsGuidance,
@@ -1453,6 +1498,28 @@ async function selectStandardRows(env: Env, where: string, bindings: unknown[]):
   });
 }
 
+/** A standard FAMILY named in prose: "RP-8", "TM-30", "RP-27.1" (no edition). */
+const NAMED_FAMILY_RE = /\b((?:RP|TM|HB|LM|LP|LS|DG|LEM|G)-\d+(?:\.\d+)?)\b/i;
+/** Every designation named in prose, edition and errata included when printed. */
+const NAMED_DESIGNATION_RE = /\b((?:RP|TM|HB|LM|LP|LS|DG|LEM|G)-\d+(?:\.\d+)?(?:-\d{2}(?:\+E\d+)?)?)\b/gi;
+
+/** The first standard family a query names, or null. */
+export function namedStandardFamily(rawQuery: string): string | null {
+  const m = NAMED_FAMILY_RE.exec(normalizeTypography(rawQuery || ''));
+  return m ? m[1].toUpperCase() : null;
+}
+
+/**
+ * Is this search a VERSION COMPARISON? Either the reader armed Compare Versions
+ * (the `compare` modifier), or the query is phrased as one AND names a standard
+ * to compare. "What is the difference between illuminance and luminance?" is
+ * phrased like one and names nothing — it is a question, and it gets the Guide.
+ */
+export function hasComparisonIntent(rawQuery: string, contentTypes: Set<ContentType>): boolean {
+  if (contentTypes.has('compare')) return true;
+  return isVersionComparisonQuery(rawQuery) && !!namedStandardFamily(rawQuery);
+}
+
 /**
  * Which standard family a comparison is about: the filter if one was inferred,
  * otherwise the designation named in the query ("what's new in RP-8?" → RP-8).
@@ -1460,8 +1527,133 @@ async function selectStandardRows(env: Env, where: string, bindings: unknown[]):
 export function comparisonFamily(filters: SearchFilters, rawQuery: string): string | null {
   if (filters.standard_prefix) return String(filters.standard_prefix).toUpperCase();
   if (filters.standard) return standardFamily(filters.standard);
-  const m = /\b((?:RP|TM|HB|LM|LP|LS|DG|LEM|G)-\d+(?:\.\d+)?)\b/i.exec(normalizeTypography(rawQuery));
-  return m ? m[1].toUpperCase() : null;
+  return namedStandardFamily(rawQuery);
+}
+
+/**
+ * The edition a deprecated-only family points at. "What's new in LP-2?" names a
+ * family with NO current edition: LP-2-20 was merged into RP-43-25 (client,
+ * 2026-09-23). Its `superseded_by` is the current edition the comparison — and
+ * the reader — should be handed, so the successor is loaded as the "current"
+ * side and gets a card. Null when the family has no successor on record.
+ */
+async function resolveSuccessorEdition(env: Env, editions: FamilyEdition[]): Promise<FamilyEdition | null> {
+  if (editions.some(e => e.status !== 'Deprecated')) return null;
+  const successorId = editions
+    .slice()
+    .sort((a, b) => b.year - a.year)
+    .map(e => e.supersededBy)
+    .find((id): id is string => !!id);
+  if (!successorId) return null;
+  try {
+    const rows = await selectStandardRows(env, 'WHERE UPPER(id) = ?', [successorId.toUpperCase()]);
+    return rows.find(r => r.status !== 'Deprecated') || null;
+  } catch (err) {
+    console.error(`could not load the successor ${successorId} (non-fatal):`, errMsg(err));
+    return null;
+  }
+}
+
+/**
+ * What the catalogue knows about SUPERSESSION that bears on this search
+ * (client, 2026-09-23: "LP-2-20 is deprecated, and replaced by RP-43-25 …
+ * RP-43-25 contains the merged contents of LP-2-20, LP-11-20 and RP-43-22 …
+ * Can you train AI Guide for a discrepancy? Inform users of this in AI Guide").
+ *
+ * Two sources, both read from D1 so nothing here is hardcoded to one standard:
+ *
+ *   1. A deprecated designation the QUERY names — "LP-2 requirements for
+ *      pedestrian areas" — whose family has no current edition. The reader is
+ *      told what replaced it, in a banner and in the Guide.
+ *   2. A standard IN THE RESULTS that supersedes editions of OTHER families —
+ *      RP-43-25 supersedes LP-2-20 and LP-11-20 as well as RP-43-22. A same-
+ *      family predecessor is ordinary edition history and says nothing new; a
+ *      cross-family one is a merger, which is exactly the fact a reader
+ *      searching for "LP-11" content needs.
+ *
+ * `notices` are printed by the UI; `facts` are handed to the Guide as catalogue
+ * facts it may state. Fail-open: any error yields nothing, and the search is
+ * exactly what it was before.
+ */
+export async function collectSupersessionContext(
+  env: Env, rawQuery: string, results: SearchResult[],
+): Promise<{ notices: string[]; facts: string[] }> {
+  const notices: string[] = [];
+  const facts: string[] = [];
+  const nameOf = (e: { id: string; fullDesignation: string | null; title: string | null }) =>
+    composeStandardName(e.fullDesignation || e.id, e.title);
+  try {
+    // 1. Deprecated designations named in the query.
+    const named = new Set<string>();
+    for (const m of normalizeTypography(rawQuery || '').matchAll(NAMED_DESIGNATION_RE)) {
+      named.add(standardFamily(m[1].toUpperCase()) || m[1].toUpperCase());
+    }
+    const successorIds = new Set<string>();
+    for (const family of [...named].slice(0, 4)) {
+      const editions = await loadFamilyEditions(env, family);
+      if (editions.length === 0 || editions.some(e => e.status !== 'Deprecated')) continue;
+      const successor = await resolveSuccessorEdition(env, editions);
+      if (!successor) continue;
+      const latest = editions.slice().sort((a, b) => b.year - a.year)[0];
+      notices.push(`${nameOf(latest)} is deprecated and has been replaced by ${nameOf(successor)}. Only the current standard is recommended for guidance.`);
+      facts.push(`${latest.fullDesignation || latest.id} is DEPRECATED and has been replaced by ${successor.fullDesignation || successor.id}. Never cite ${latest.id} as current guidance; direct the reader to ${successor.fullDesignation || successor.id}.`);
+      successorIds.add(successor.id);
+    }
+
+    // 2. Mergers among the standards in the results.
+    const resultIds = new Set<string>();
+    for (const r of results.slice(0, 12)) {
+      const id = r.application?.standard;
+      if (id && !r.isDeprecated) resultIds.add(id);
+    }
+    for (const id of successorIds) resultIds.add(id);
+    if (resultIds.size > 0) {
+      const ids = [...resultIds].slice(0, 20);
+      const rows = await env.DB.prepare(
+        `SELECT id, full_designation, title, superseded_by FROM standards ` +
+        `WHERE status = 'Deprecated' AND superseded_by IN (${ids.map(() => '?').join(',')})`
+      ).bind(...ids).all<{ id: string; full_designation: string | null; title: string | null; superseded_by: string }>();
+      const bySuccessor = new Map<string, Array<{ id: string; full_designation: string | null; title: string | null }>>();
+      for (const row of rows.results || []) {
+        const successor = row.superseded_by;
+        if (standardFamily(row.id) === standardFamily(successor)) continue; // ordinary edition history
+        if (!bySuccessor.has(successor)) bySuccessor.set(successor, []);
+        bySuccessor.get(successor)!.push(row);
+      }
+      if (bySuccessor.size > 0) {
+        const successors = await selectStandardRows(
+          env, `WHERE id IN (${[...bySuccessor.keys()].map(() => '?').join(',')})`, [...bySuccessor.keys()],
+        );
+        for (const successor of successors) {
+          const merged = bySuccessor.get(successor.id) || [];
+          if (merged.length === 0) continue;
+          const mergedNames = merged.map(m => m.full_designation || m.id);
+          const sameFamilyPrior = (rows.results || [])
+            .filter(r => r.superseded_by === successor.id && standardFamily(r.id) === standardFamily(successor.id))
+            .map(r => r.full_designation || r.id);
+          const list = [...mergedNames, ...sameFamilyPrior];
+          facts.push(
+            `${successor.fullDesignation || successor.id} is the current standard and supersedes ${joinNames(list)}: ` +
+            `the content of ${joinNames(mergedNames)} was merged into it, with revisions and new material. ` +
+            `Those earlier documents are deprecated — cite ${successor.fullDesignation || successor.id} for their subject matter.`,
+          );
+          const successorNamed = successorIds.has(successor.id);
+          if (!successorNamed) {
+            notices.push(`${nameOf(successor)} now includes the content of the deprecated ${joinNames(mergedNames)}.`);
+          }
+        }
+      }
+    }
+  } catch (err) {
+    console.error('supersession context failed (non-fatal):', errMsg(err));
+  }
+  return { notices: [...new Set(notices)], facts: [...new Set(facts)] };
+}
+
+function joinNames(names: string[]): string {
+  const list = [...new Set(names)];
+  if (list.length <= 1) return list.join('');
+  return `${list.slice(0, -1).join(', ')} and ${list[list.length - 1]}`;
 }
 
 /**
@@ -1885,7 +2077,7 @@ async function runSingleSearch(rawQuery: string, filters: SearchFilters, limit: 
     // On a version comparison, packaging pages (errata, reference lists, TOC)
     // are worse than useless: they crowd out the provisions the comparison is
     // supposed to be about. Ordinary searches keep them.
-    const comparisonIntent = contentTypes.has('compare') || isVersionComparisonQuery(rawQuery);
+    const comparisonIntent = hasComparisonIntent(rawQuery, contentTypes);
     // Content-level dedupe: the harvested backfill chunks and the shared pool
     // legitimately overlap (same vector reached both ways) but carry different
     // ids, so identity alone would print the same passage twice.
@@ -3902,8 +4094,15 @@ export async function findStandardLookupResults(env: Env, rawQuery: string, limi
   try {
     const parsed = parseDesignationQuery(query);
     if (parsed) {
-      const editions = (await loadFamilyEditions(env, parsed.family))
-        .filter(e => e.status !== 'Deprecated');
+      const family = await loadFamilyEditions(env, parsed.family);
+      let editions = family.filter(e => e.status !== 'Deprecated');
+      // A family with no current edition was merged into another standard:
+      // "LP-2-20" answers with RP-43-25, the edition that replaced it (client,
+      // 2026-09-23). The payload's supersessionNotices say why.
+      if (editions.length === 0) {
+        const successor = await resolveSuccessorEdition(env, family);
+        if (successor) return [buildDocumentResult(successor, 0.9, 'designation')];
+      }
       if (editions.length === 0) return [];
 
       if (parsed.id) {

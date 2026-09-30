@@ -141,7 +141,7 @@
               <svg class="w-4 h-4 text-gray-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                 <path stroke-linecap="round" stroke-linejoin="round" d="M4 19.5V5a1 1 0 011-1h2a1 1 0 011 1v14.5M10 19.5V5a1 1 0 011-1h2a1 1 0 011 1v14.5M16.5 19.5l-2-14 2.5-.5 2.5 14z"/>
               </svg>
-              Browse Your Lighting Library
+              Browse Lighting Library
             </a>
             <a href="/contents" target="_blank" rel="noopener" class="menu-item">
               <svg class="w-4 h-4 text-gray-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
@@ -948,12 +948,14 @@
            class="text-xs px-2.5 py-1 bg-action text-action-ink rounded-lg hover:bg-action-dark transition font-medium whitespace-nowrap">
           Open in Library ↗
         </a>` : '';
-      // "Buy" per the client's mockup — the webstore product page for this
+      // "Add to Cart" (client 9/25/26 DO#3 + DO#5: a standard is bought as a
+      // 3-year lease in the webstore, nothing else) — the store URL for this
       // standard. Rendered only when DO35's metadata sync has supplied one.
       const buyBtn = appEntry.buy_url ? `
         <a href="${escapeHtml(appEntry.buy_url)}" target="_blank" rel="noopener"
+           title="Add the 3-year lease of this standard to your IES webstore cart"
            class="text-xs px-2.5 py-1 border border-gray-200 rounded-lg text-gray-600 hover:bg-gray-50 transition font-medium whitespace-nowrap">
-          Buy
+          Add to Cart
         </a>` : '';
 
       const field = (name, value, extraClass = '') => value

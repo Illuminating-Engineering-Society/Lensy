@@ -84,7 +84,9 @@ import {
 import {
   buildPageFromRaw, cleanDocMeta, detectHeadersFootersFromRaw,
 } from '../lib/pdf-pages.js';
-import { deriveStandardId, inferFullDesignation, standardFamilyOf } from '../lib/standard-id.js';
+import {
+  deriveStandardId, inferFullDesignation, standardFamilyOf, normalizeStandardIdInput, STANDARD_ID_RE,
+} from '../lib/standard-id.js';
 import { extractIESTables, extractGeneralNotes } from '../lib/table-extractor.js';
 import { chunkIESDocument, extractOutline } from '../lib/chunker.js';
 import { extractDocumentAssets } from '../lib/document-assets.js';
@@ -104,7 +106,10 @@ const JOB_R2_PREFIX = 'ingest-jobs/';
 const MAX_PAGES_PER_BATCH = 50;
 // `${id}-chunk-<n>` must stay inside Vectorize's 64-byte vector-id limit.
 const MAX_STANDARD_ID_LENGTH = 40;
-const STANDARD_ID_RE = /^[A-Za-z]{1,3}-[0-9][0-9A-Za-z.+-]*$/;
+// STANDARD_ID_RE lives in src/lib/standard-id.js since 2026-09-28, when it
+// grew to admit a joint standard's sponsor segments ("ASHRAE-IES-90.1-2025"):
+// the dashboard preview and this check must agree, and the id shape is a fact
+// about the catalogue, not about this handler.
 const APP_DELETE_BATCH = 50;   // D1 bound-param budget (same as ingest prune)
 const VEC_DELETE_BATCH = 100;  // Vectorize deleteByIds cap (measured, admin.ts)
 
@@ -210,11 +215,15 @@ async function createJob(request: Request, env: Env): Promise<Response> {
   const filename = typeof body.filename === 'string' ? body.filename.trim().slice(0, 300) : '';
   if (!filename) return jsonResponse({ error: 'filename is required' }, 400);
 
-  const standardId = String(body.standardId || deriveStandardId(filename)).trim();
+  // A typed override may be a joint designation as PRINTED — "ANSI/ASHRAE/IES
+  // 90.1-2025" (Zoe's upload, 2026-09-28) — which becomes the id form
+  // "ASHRAE-IES-90.1-2025": slashes cannot travel in R2 keys and URL segments
+  // the way the rest of the catalogue's ids do.
+  const standardId = normalizeStandardIdInput(body.standardId || deriveStandardId(filename));
   if (!STANDARD_ID_RE.test(standardId) || standardId.length > MAX_STANDARD_ID_LENGTH) {
     return jsonResponse({
-      error: `"${standardId}" does not look like an IES standard id (e.g. RP-43-25, LM-63-19, RP-8-25+E2). ` +
-             'Override it explicitly if the filename cannot be parsed.',
+      error: `"${standardId}" does not look like a standard id (e.g. RP-43-25, LM-63-19, RP-8-25+E2, ` +
+             'or ASHRAE-IES-90.1-2025 for a joint standard). Override it explicitly if the filename cannot be parsed.',
     }, 400);
   }
 

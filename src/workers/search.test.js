@@ -5,7 +5,39 @@ import {
   editionYear, orderComparisonResults, requestedDeprecatedEdition, spreadAcrossSections,
   isResolvableDoi, isBrokenDoiUrl, definitionSearchTerm, buildSectionLinkMap,
   isProceduralBoilerplate, cleanReferenceEntryText,
+  hasComparisonIntent, namedStandardFamily,
 } from './search';
+
+// ─── A comparison needs a standard to compare (client, 2026-09-28) ───────────
+
+describe('hasComparisonIntent', () => {
+  const none = new Set(['tables', 'body']);
+  const armed = new Set(['tables', 'body', 'compare']);
+
+  it('is a comparison when the phrasing names a standard', () => {
+    expect(hasComparisonIntent("What's new in the latest version of RP-8?", none)).toBe(true);
+    expect(hasComparisonIntent('what changed between RP-8-25 and RP-8-18?', none)).toBe(true);
+    expect(hasComparisonIntent('difference between TM-30-24 and the prior edition', none)).toBe(true);
+  });
+
+  it('is a QUESTION when the phrasing names nothing — the screenshot the client sent', () => {
+    // Ran as an "AI Document Comparison" of RP-2-20, a standard the query
+    // never mentioned, because "difference between" matched the pattern.
+    expect(hasComparisonIntent('What is the difference between illuminance and luminance?', none)).toBe(false);
+    expect(hasComparisonIntent('how does LZ2 compare to LZ3 for parking lots', none)).toBe(false);
+    expect(hasComparisonIntent('what is new in sports lighting', none)).toBe(false);
+  });
+
+  it('is always a comparison when Compare Versions is armed', () => {
+    expect(hasComparisonIntent('roadway lighting', armed)).toBe(true);
+  });
+
+  it('reads the family out of prose, however the designation is printed', () => {
+    expect(namedStandardFamily('what is new in RP-8?')).toBe('RP-8');
+    expect(namedStandardFamily('compare rp–27.1-22 with the previous edition')).toBe('RP-27.1');
+    expect(namedStandardFamily('illuminance vs luminance')).toBe(null);
+  });
+});
 
 // ─── Content-type normalization ───────────────────────────────────────────────
 

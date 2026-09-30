@@ -218,6 +218,12 @@ LENSY_SESSION_CAP = "on"
 # be tuned once usage data exists. Enforced in src/lib/search-cap.ts (which
 # also documents the interpretation choices), fails OPEN on KV trouble.
 LENSY_DAILY_SEARCH_CAP = "20"
+# ── Canonical hostname (client 9/25/26 DO#1: lensy.ies.org → lens.ies.org) ─────
+# When set, a request arriving on any OTHER production hostname of this Worker
+# is answered 301 to the same path + query on this host. Unset (today) both
+# hostnames serve the app. The staging hostname and localhost are never
+# redirected. Set it in step 3 of the cutover described at [[routes]] below.
+# LENSY_CANONICAL_HOST = "lens.ies.org"
 
 # Secrets set via `wrangler secret put`:
 # VITRIUM_API_KEY
@@ -241,6 +247,30 @@ LENSY_DAILY_SEARCH_CAP = "20"
 # here. Removing this block does not affect the *.workers.dev URL.
 [[routes]]
 pattern = "lensy.ies.org"
+custom_domain = true
+
+# lens.ies.org — the product's new home (client 9/25/26 DO#1: "Can it move from
+# lensy.ies.org to lens.ies.org?"). Same Worker, same bindings; both hostnames
+# serve the app until the cutover, then LENSY_CANONICAL_HOST (below) turns the
+# old one into a 301. Provisioning this route needs the ies.org zone in this
+# account, exactly as the first route did — see the note above it.
+#
+# The cutover is FOUR steps, in this order, and only the first is code:
+#   1. Deploy with this route (creates the lens.ies.org custom domain + cert).
+#   2. AuthIES: add https://lens.ies.org to the `lensy` SP's allowed_redirect_uris
+#      (scripts/seed-sps.ts in that repo, then re-seed) — without it the IdP
+#      rejects the sign-in bounce back to the new host.
+#   3. Set LENSY_CANONICAL_HOST = "lens.ies.org" and redeploy: lensy.ies.org
+#      answers 301 to the same path on lens.ies.org (share links, the Vitrium
+#      portal snippets and the error-page URL keep working through it).
+#   4. Vitrium admin (client's side): Web Viewer Settings → Custom URL for Error
+#      Page → https://lens.ies.org/library-error.html; Portal Header snippets
+#      from /embed re-pasted with the new host. Email Sending: onboard
+#      lens.ies.org as a sender domain and switch FROM_ADDRESS in
+#      src/lib/email.ts — until then mail still goes out from
+#      noreply@lensy.ies.org, which stays valid.
+[[routes]]
+pattern = "lens.ies.org"
 custom_domain = true
 
 [triggers]

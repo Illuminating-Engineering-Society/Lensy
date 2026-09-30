@@ -174,9 +174,16 @@ describe('liteContentTypes', () => {
 describe('the locked tools', () => {
   // DO999 turned the AI Guide into a metered trial for non-subscribers, so it
   // left this list: what remains is what the client still sells as a
-  // subscriber unlock ("browse illuminance table values", "compare versions").
+  // subscriber unlock ("browse illuminance table values", "compare versions"),
+  // plus Documents since 2026-09-23 ("AI Guide, reference cards and definition
+  // cards only").
   it('are exactly the ones the client named', () => {
-    expect([...LITE_BLOCKED_FILTERS]).toEqual(['tables', 'compare']);
+    expect([...LITE_BLOCKED_FILTERS]).toEqual(['tables', 'body', 'compare']);
+  });
+
+  it('still RETRIEVES document passages for the Guide to answer from', () => {
+    // The lock is on the cards, applied in search.ts after the Guide ran.
+    expect(liteContentTypes(new Set(['body', 'definitions'])).has('body')).toBe(true);
   });
 
   it('never blocks the AI Guide, which the daily cap meters instead', () => {
