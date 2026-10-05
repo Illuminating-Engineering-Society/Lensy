@@ -1732,6 +1732,86 @@ losing content") is answered by the alignment report, not by the model.
   `staff-ingest.test.js` (fixtures are stored-method ZIPs so they run on any
   Node ≥ 18; `src/lib/docx-fixture.js` is test-only).
 
+### The 260928–261002 Teams notes: IES Lens identity, lens.ies.org, and a lot of chrome (2026-10-05)
+
+Deployed 2026-10-05; `SEARCH_CACHE_SCHEMA` → **v18**. No migration in Lensy.
+
+- **lens.ies.org is live and canonical.** `LENSY_CANONICAL_HOST = "lens.ies.org"`;
+  every other production host 301s (308 for non-GET) with path + query kept.
+  That needed `[assets] run_worker_first = true` + `binding = "ASSETS"`:
+  static assets are otherwise served BEFORE the Worker, so only /api/* would
+  redirect. api.ts hands every non-/api path to `env.ASSETS.fetch` at the end
+  of the router; `_headers` and html_handling behave as before (checked live).
+  AuthIES `lensy` SP allows both origins (re-seeded 2026-09-30).
+- **Identity + voice (9/30 DO#3).** `src/lib/product.ts` holds the client's
+  product definitions (`pdfs/Others/Lens definitions.pdf`, "Version 1 for
+  review") — fed to the Guide's system prompt, to the FAQ on /tutorials, and to
+  the canned answer for a question ABOUT the product (`isProductQuestion`:
+  "what are you?", "what is IES Lens?"), returned before the cache with no
+  model call and `productAnswer: true`. The prompt now writes in the third
+  person and never calls the product "Lensy".
+- **No "contact Standards@ies.org" anywhere (9/30 DO#4).** Prompts, no-results
+  button, footers, emails, auth gate and the Vitrium error page point at the
+  IES contact form `https://ies.org/contact-us/` (`SUPPORT_FORM_URL`) — it has
+  a "The Lighting Library" department. Same URL is "Share feedback" (9/29 DO#3).
+- **Searches about specific things.** A deprecated edition named exactly
+  ("RP-43-22", "LP-2-20") returns the CURRENT card first, then the deprecated
+  card, and the Guide card carries a fixed catalogue note
+  (`deprecatedLookupNote`, shown even with the Guide off). "Handbook" queries
+  get a banner (`isHandbookQuery`; link from the `HANDBOOK_URL` var — unset, so
+  the portal home until IES sends the WebViewer link); a BARE handbook query
+  gets no cards and no Guide. Symbols typed without subscripts are expanded
+  case-sensitively (`SYMBOL_GLOSSARY` in query-expander: Rf, Rg, Ev, Eh, Duv…;
+  "EV" and "rf" untouched) and a definition printed "Fidelity Index (Rf)" is an
+  exact term hit. RP-10 rows are probed per search (`currentCommonApplicationsStandard`,
+  admitted within 0.08 of the best application score, ≥0.6) and an RP-1
+  illuminance answer always ends with the client's RP-10 sentence (`rp1IlluminanceNote`).
+- **Comparisons.** Excerpts reach the prompt at 520 chars (was 320), 24 results,
+  more current-edition passages incl. ONE PER CHAPTER of the indexed outline
+  (`COMPARISON_CHAPTER_PROBES`), word/finding minimums, and `mergedFrom`
+  (deprecated standards of OTHER families superseded by the current one —
+  RP-43-25 ← LP-2-20, LP-11-20) named in prompt, advisory and fallback.
+  Locators link: bare bold section numbers, "Chapter N", any page (front link
+  + #page=N), resolved from each edition's outline (`withOutlineSectionLinks`).
+  **Measured limit:** RP-43 went 8 → 11 findings but stays ~550 words — the
+  70B model's own length habit; a per-chapter two-pass generation is the next
+  step if the client wants more.
+- **Cards.** "From the Standard" never holds table content (table/general_notes
+  chunks, table-like text, the row's own page). Each passage has its own
+  Bookmark (`passageBookmarkButton`, same save flow). Class of Play / Lighting
+  Zone variants of one application merge into ONE card with tabs, wherever
+  they rank (`variantGroupKey`, tab label = the printed level, e.g. "LZ3 (and
+  LZ4 curfew)") — supersedes DO090's filters. `sciNotate` restores E_v/E_h and
+  un-glues "Evin" → "E_v in" (notes included).
+- **Chrome.** IES Lens logo top-left on the search page (hero logo gone),
+  Lighting Library logo (→ lighting.ies.org) on List Standards, bigger Lens logo
+  on Bookmarks; "Lighting Library Tools" with Tutorials + FAQ; one profile menu
+  on all three pages (List Standards and Bookmarks render it from
+  `utils/site-menu.js`): email, "Subscribed until …" (cookie field
+  `subscriptionExpiresAt` from AuthIES — not live yet), Subscribe, AI Guide with
+  an on/off switch, Preferred units SI/USCS (DO091, `user_preferences.units`,
+  display-only swap), My Bookmarks "(this page)", Share feedback, Sign out, Log
+  in for an anonymous share visitor. "Only" on Contents and Publication Type.
+  List Standards subtitle per 9/29 DO#2, "Lease Standard" (was Add to Cart).
+  Bookmark collections editable after creation; "Reference" is the default type
+  (collection_type only — project_type keeps its 4-value CHECK).
+- **LS-1 (D1, 2026-10-05):** title "Lighting Science: Nomenclature and
+  Definitions…", link https://ies.org/standards/definitions/, cover
+  `/assets/ls-1-cover.png`, no ToC, no Lease button.
+- **Lighting Science by tag.** `sync-metadata.js --portal` reads Vitrium tags;
+  a doc tagged Current + "Lighting Science" gets "… · Lighting Science
+  Collection" appended to `collection`, and `liteAllowedStandards` prefers that
+  marker over the folder name once any document carries it.
+- **TC chairs (DO111):** `tc-chair` added to `LENSY_SUBSCRIBER_ROLES`; inert
+  until AuthIES branch `feat/tc-roles-subscription-expiry` (TC role + subscription
+  end date sync, `TC_ROLE_SYNC` off by default, Wicket field names to verify in
+  dry-run) is merged and deployed.
+- **Not changed, explained instead:** the "page link opened the portal home"
+  report (9/30 DO#5) — 2 of the last 400 Vitrium SSO hops arrived without a
+  return URL and defaulted to the portal home (AuthIES auth_log,
+  `returnUrlDefaulted`). Candidate fix: route Library links through the AuthIES
+  hop with an explicit returnUrl; needs a staging test before it touches every link.
+
 ### The 260923–260928 Teams notes: a comparison needs a standard, and 18 standards had no references (2026-09-30)
 
 The client switched from curated batches to short daily Teams notes. Five days'
