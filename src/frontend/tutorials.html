@@ -82,6 +82,30 @@
     <nav id="toc" class="mb-8 bg-white rounded-xl border border-gray-100 p-4 text-sm" aria-label="Contents"></nav>
 
     <div id="sections" class="space-y-10"></div>
+
+    <!-- FAQ (client 9/29/26 DO#4: "FAQ" in every tools menu). The answers are
+         the IES's own product definitions (pdfs/Others/Lens definitions.pdf,
+         "Version 1 for review") — the same text src/lib/product.ts gives the
+         AI Guide — so the page and the Guide describe the product alike. -->
+    <section id="faq" class="mt-12">
+      <h2 class="text-lg font-bold text-gray-900 mb-3">Frequently asked questions</h2>
+      <div class="space-y-2">
+        <details class="bg-white rounded-xl border border-gray-100 p-4"><summary class="font-semibold cursor-pointer">What is IES Lens?</summary>
+          <p class="text-sm text-gray-600 mt-2">An AI-assisted guide to navigate IES resources. Ask IES Lens to find standards excerpts, references, definitions, illuminance recommendations, and more. It interprets a question written in everyday language and links directly to the most relevant excerpts and to the source within the Lighting Library.</p></details>
+        <details class="bg-white rounded-xl border border-gray-100 p-4"><summary class="font-semibold cursor-pointer">What is the IES Lighting Library?</summary>
+          <p class="text-sm text-gray-600 mt-2">The complete library of IES standards and guidelines. Subscriptions and leases come together in one browser-based collection, available on two personal devices: view, bookmark, and annotate standards on a computer, tablet, or phone, with offline browser access when needed.</p></details>
+        <details class="bg-white rounded-xl border border-gray-100 p-4"><summary class="font-semibold cursor-pointer">Where do the answers come from?</summary>
+          <p class="text-sm text-gray-600 mt-2">IES Lens searches exclusively within IES technical content. Results display as referenced excerpts and link directly to the relevant pages of IES standards, so the source and its full context can always be reviewed.</p></details>
+        <details class="bg-white rounded-xl border border-gray-100 p-4"><summary class="font-semibold cursor-pointer">Is the AI optional?</summary>
+          <p class="text-sm text-gray-600 mt-2">Yes. IES Lens is included with a Lighting Library subscription at no additional cost. The AI-assisted semantic search adds curation, and the AI Guide can be disabled from the profile menu to use IES Lens for keyword search only.</p></details>
+        <details class="bg-white rounded-xl border border-gray-100 p-4"><summary class="font-semibold cursor-pointer">How can standards be purchased?</summary>
+          <p class="text-sm text-gray-600 mt-2">Two ways: subscribe to the complete Lighting Library (with IES Lens), or lease individual documents for three years. Both use the same browser-based tools (bookmarks and annotations) and support offline browser access.</p></details>
+        <details class="bg-white rounded-xl border border-gray-100 p-4"><summary class="font-semibold cursor-pointer">Can IES Lens show what changed between editions?</summary>
+          <p class="text-sm text-gray-600 mt-2">Yes. Compare Versions explores differences between editions, including summaries of changes and additions. Subscribers receive access to deprecated standards for historical reference.</p></details>
+        <details class="bg-white rounded-xl border border-gray-100 p-4"><summary class="font-semibold cursor-pointer">Where can I learn more?</summary>
+          <p class="text-sm text-gray-600 mt-2"><a href="https://elearning.ies.org/" target="_blank" rel="noopener" class="text-ies-blue hover:underline">IES eLearning</a> is the education hub for IES expertise: in-depth courses, archived webinars and symposia, and more. For technical support, please complete the <a href="https://ies.org/contact-us/" target="_blank" rel="noopener" class="text-ies-blue hover:underline">IES support form</a>.</p></details>
+      </div>
+    </section>
   </main>
 
   <footer class="bg-footer-band text-center text-xs py-8 mt-8">
@@ -89,7 +113,7 @@
     <p class="mt-1 text-gray-600">
       <a href="https://www.ies.org" class="hover:underline">Illuminating Engineering Society</a>
       <span class="mx-1.5">·</span>
-      <a href="mailto:Standards@ies.org" class="underline underline-offset-2 hover:text-ink">Standards@ies.org</a>
+      <a href="https://ies.org/contact-us/" target="_blank" rel="noopener" class="underline underline-offset-2 hover:text-ink">Technical support</a>
     </p>
   </footer>
 
@@ -101,6 +125,7 @@
       {
         section: 'Getting started',
         items: [
+          { title: 'Video overview: the Lighting Library with IES Lens', summary: 'A short tour of reading, asking and learning with IES resources.', video: 'https://www.loom.com/share/7fc113be55b04f3588d0f549809c3028', doc: null },
           { title: 'Signing in with your IES account', summary: 'One IES sign-in for the Lighting Library and IES Lens.', video: null, doc: null },
           { title: 'What a Lighting Library subscription includes', summary: 'Subscriber and non-subscriber access, and how to subscribe.', video: null, doc: null },
         ],

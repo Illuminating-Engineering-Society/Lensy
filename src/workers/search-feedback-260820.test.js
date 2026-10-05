@@ -331,7 +331,9 @@ describe('adaptive guide prompt (the client\'s "Note": responses must not ramble
   it('permits — and shapes — an "the standards do not cover this" answer', async () => {
     const { prompt } = await capturePrompt([RESULT], { mode: 'guide' });
     expect(prompt).toMatch(/IF YOU CANNOT ANSWER/);
-    expect(prompt).toMatch(/Standards@ies\.org/);
+    // Client 9/30/26 DO#4: the support form, never "contact Standards@ies.org".
+    expect(prompt).toMatch(/ies\.org\/contact-us/);
+    expect(prompt).not.toMatch(/Standards@ies\.org/);
     expect(prompt).toMatch(/Do not assemble an answer out of adjacent material/);
   });
 
@@ -492,8 +494,9 @@ describe('comparison prompt — extent of the changes (DO083)', () => {
       mode: 'comparison',
       comparison: { current: null, deprecated: [] },
     });
-    expect(prompt).toMatch(/800–1200 words; never exceed ~1500/);
-    expect(prompt).toMatch(/500–1000 words; never exceed ~1200/);
+    // Raised for client 9/29/26 DO#1 ("far too cursory and broad").
+    expect(prompt).toMatch(/Target 1500–2500 words/);
+    expect(prompt).toMatch(/Target 900–1500 words/);
     expect(prompt).toMatch(/100–300 words; never exceed ~500/);
     expect(prompt).toMatch(/Do NOT pad a Minimal comparison/);
   });

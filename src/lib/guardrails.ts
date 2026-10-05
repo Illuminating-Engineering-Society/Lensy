@@ -115,7 +115,7 @@ const REFUSED_PATTERNS: RegExp[] = [
 ];
 
 export const REFUSAL_MESSAGE =
-  'Lensy answers questions about IES lighting standards. This question is outside that scope '
+  'IES Lens answers questions about IES lighting standards. This question is outside that scope '
   + 'and no IES standard addresses it, so no results are shown. Please ask about a lighting '
   + 'application, a metric, or a standard.';
 

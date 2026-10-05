@@ -510,6 +510,14 @@ export interface ComparisonContext {
    * because it judged only from the retrieved excerpts.
    */
   pages?: { current: number | null; prior: number | null };
+  /**
+   * Deprecated documents of OTHER families whose superseded_by is the current
+   * edition — the standards merged into it (client 10/01/26 #1: "state that
+   * ANSI/IES RP-43-22 and ANSI/IES LP-2-20 and ANSI/IES LP-11-20 have been
+   * replaced by ANSI/IES RP-43-25"). Named in the advisory and the prompt; not
+   * compared against.
+   */
+  mergedFrom?: Array<{ id: string; name: string; url: string | null }>;
 }
 
 export interface AISummary {
@@ -596,7 +604,7 @@ export interface NoResultsSuggestion {
    *   'clear_filters'       — reset every filter to the defaults
    *   'search'              — run `value` as a new query (a spelling correction)
    *   'rephrase'            — put the caret back in the search box
-   *   'contact'             — mail Standards@ies.org
+   *   'contact'             — open the IES technical-support form (ies.org/contact-us)
    */
   action: 'enable_content_type' | 'clear_location' | 'clear_filters' | 'search' | 'rephrase' | 'contact';
   value?: string;

@@ -17,8 +17,8 @@
 
     Deliberately self-contained — no auth gate (the visitor is by definition
     someone the viewer refused), no Tailwind CDN, no imports — so it keeps
-    working if IES later hosts it somewhere other than lensy.ies.org. If it IS
-    re-hosted, set API_BASE in the script below to https://lensy.ies.org so the
+    working if IES later hosts it somewhere other than lens.ies.org. If it IS
+    re-hosted, set API_BASE in the script below to https://lens.ies.org so the
     document lookup and the device-reset form still reach their endpoints
     (the API's CORS policy already allows it).
 
@@ -181,14 +181,14 @@
     'use strict';
 
     // ── Configuration ─────────────────────────────────────────────────────────
-    // Same-origin when served from lensy.ies.org; set to 'https://lensy.ies.org'
+    // Same-origin when served from lens.ies.org; set to 'https://lens.ies.org'
     // if this page is ever hosted elsewhere.
     var API_BASE = '';
     var STORE_URL = 'https://store.ies.org/';
     var SUBSCRIBE_URL = 'https://store.ies.org/ies/subscriptions/';
     var LIBRARY_URL = 'https://lighting.ies.org/';
-    // PENDING CLIENT CONFIRMATION: the right inbox for Library access questions.
-    var SUPPORT_EMAIL = 'Standards@ies.org';
+    // Client 9/30/26 DO#4: support is the IES contact form, not a staff inbox.
+    var SUPPORT_FORM_URL = 'https://ies.org/contact-us/';
 
     // ── Parsers (mirrors src/lib/vitrium-support.js — this page must not import) ─
     function errorCodeFromMessage(message) {
@@ -395,12 +395,14 @@
       });
 
       var supportEl = document.getElementById('ve-support');
-      supportEl.textContent = 'Need help? Contact ';
+      supportEl.textContent = 'Need help? Complete the ';
       var mail = document.createElement('a');
-      mail.href = 'mailto:' + SUPPORT_EMAIL;
-      mail.textContent = SUPPORT_EMAIL;
+      mail.href = SUPPORT_FORM_URL;
+      mail.target = '_blank';
+      mail.rel = 'noopener';
+      mail.textContent = 'IES technical support form';
       supportEl.appendChild(mail);
-      supportEl.appendChild(document.createTextNode(' and include the technical details below.'));
+      supportEl.appendChild(document.createTextNode(' (department: The Lighting Library) and include the technical details below.'));
 
       // Technical details — untrusted values, textContent only.
       document.getElementById('ve-d-message').textContent = params.message || '—';
@@ -510,7 +512,7 @@
             submit.disabled = false;
             submit.textContent = 'Send request to IES staff';
             errorEl.textContent = (err && err.message ? err.message : 'Your request could not be sent.') +
-              ' You can also email ' + SUPPORT_EMAIL + ' directly.';
+              ' You can also use the IES technical support form at ' + SUPPORT_FORM_URL + '.';
             errorEl.style.display = 'block';
           });
       });

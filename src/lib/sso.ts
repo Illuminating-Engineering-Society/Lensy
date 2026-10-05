@@ -56,6 +56,14 @@ export interface SsoUser {
    * is acted on (see decideAccess); the rest are informational.
    */
   roles: string[];
+  /**
+   * End date of the Lighting Library Full Access subscription, 'YYYY-MM-DD',
+   * or null/absent (AuthIES branch feat/tc-roles-subscription-expiry; cookies
+   * minted before it carry no field). Shown in the profile menu as
+   * "Subscribed until …" (client 9/29/26 DO#4). Informational only — the tier
+   * still comes from `roles`.
+   */
+  subscriptionExpiresAt?: string | null;
   exp: number; // unix seconds
   iat: number;
   sid: string; // IdP session id

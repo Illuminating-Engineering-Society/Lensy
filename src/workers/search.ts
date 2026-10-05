@@ -93,6 +93,7 @@ import { buildNoResultsGuidance } from '../lib/no-results';
 import {
   AUTHORITY_NOTICE, needsAuthorityNotice, isRefusedQuery, isOutOfScope, REFUSAL_MESSAGE,
 } from '../lib/guardrails';
+import { isProductQuestion, productAnswerText } from '../lib/product';
 import { resolveQueryLanguage, localizeSummary } from '../lib/language';
 import { hasEnvConsiderationColumns, parseLightingZoneLabel } from '../lib/illuminance-fields.js';
 import {
@@ -108,7 +109,7 @@ import {
 } from '../lib/cache';
 import standardsSchema from '../config/standards-schema.json';
 import type {
-  AIMode, AnswerStyle, ApplicationRow, ComparisonContext, ContentType, CurationInfo,
+  AIMode, AISummary, AnswerStyle, ApplicationRow, ComparisonContext, ContentType, CurationInfo,
   DocumentAsset, Excerpt, FootnoteMarks, FormattedApplication, NoResultsGuidance,
   OutdoorGuidance, ReferenceLink, ReferenceMarker, RelatedApplication, SearchFilters,
   SearchResult, StandardIndexEntry, StandardRow, StandardsIndex, VectorMetadata,
@@ -300,7 +301,7 @@ export function applyTypeFloors(results: SearchResult[], keepAtLeast = 3): Searc
 const NO_STRONG_MATCH_MESSAGE =
   "There may not be explicit lighting recommendations for that application within the current body of IES Standards. " +
   "Please review the monthly IES Ignite Newsletter for upcoming public review periods and publications. " +
-  "The results below are the closest matches we found — review them for related guidance, or contact Standards@ies.org for authoritative assistance.";
+  "The results below are the closest matches found — review them for related guidance. For technical support, please complete the IES support form (ies.org/contact-us).";
 
 // ─── Entry Point ──────────────────────────────────────────────────────────────
 
@@ -452,6 +453,50 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
   };
   if (isRefusedQuery(rawQuery)) return refuse();
 
+  // ── A question about IES Lens itself (client 9/30/26 DO#3) ──────────────────
+  // "If asked 'what are you?' it should respond like 'This is IES Lens…'". No
+  // standard answers that, so retrieval would only return noise and the
+  // out-of-scope check would refuse it. The answer is the client's own product
+  // definitions (src/lib/product.ts), written in the third person, and costs
+  // no model call.
+  if (isProductQuestion(rawQuery)) {
+    const productPayload = {
+      query: rawQuery,
+      queryLanguage: null,
+      queryEnglish: null,
+      isMultiQuery: false,
+      isVersionComparison: false,
+      contentTypes: [...normalizeContentTypes(filters, rawQuery)],
+      tier,
+      liteNotice: null,
+      noStrongMatch: false,
+      noStrongMatchMessage: null,
+      aiGuideRequiredNotice: null,
+      results: [] as SearchResult[],
+      aiSummary: {
+        text: productAnswerText(),
+        watermark: null,
+        disclaimer: 'About IES Lens and the IES Lighting Library.',
+        mode: 'guide',
+      } as AISummary,
+      aiGuideSuppressed: null,
+      authorityNotice: null,
+      supersessionNotices: [] as string[],
+      productAnswer: true,
+      outOfScope: false,
+      noResultsGuidance: null,
+      curation: null,
+      refinePrompt: null,
+      confidenceThreshold: STRONG_MATCH_THRESHOLD,
+      standardLinks: {},
+      sectionLinks: {},
+      timestamp: new Date().toISOString(),
+    };
+    const logWrite = logSearch(env, productPayload, false);
+    if (ctx?.waitUntil) ctx.waitUntil(logWrite); else await logWrite;
+    return jsonResponse({ ...productPayload, cached: false });
+  }
+
   // ── Response cache ───────────────────────────────────────────────────────────
   // Identical searches skip the entire pipeline (Workers AI embedding,
   // Vectorize query, D1 lookups, and the optional 70B AI summary — the
@@ -593,6 +638,11 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
     includeAISummary = false;
     aiGuideSuppressed = 'standard_lookup';
   }
+  // The reader named a DEPRECATED edition (client 9/30/26 DO#2: "always display
+  // an AI Guide note indicating it is deprecated and what the current standard
+  // is"). Not a model answer — a catalogue fact, worded as the Compare Versions
+  // advisory words it — so it is shown even with the Guide off or capped.
+  const deprecatedNote = deprecatedLookupNote(documentCards);
 
   // ── Deprecated content (version-comparison queries ONLY) ─────────────────────
   // "what's new in RP-6?" may cite the deprecated edition alongside the
@@ -714,7 +764,18 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
     // A search that resolved to a DOCUMENT — by designation or by title — is not
     // a question, so it is neither out of scope nor in need of refinement.
     && documentCards.length === 0
+    // A Handbook search is answered by its own notice (client 9/30/26 DO#1);
+    // the scope check must not refuse it before the notice is attached.
+    && !isHandbookQuery(searchQuery)
     && !parseDesignationQuery(searchQuery) && allResults.results.length > 0;
+  // A search that is ONLY the Handbook's name ("handbook", "lighting handbook",
+  // "10th edition handbook") wants the Handbook, which IES Lens does not index:
+  // the notice is the whole answer, so no Guide essay is written over junk.
+  const bareHandbook = isBareHandbookQuery(searchQuery);
+  if (bareHandbook) {
+    includeAISummary = false;
+    aiGuideSuppressed = 'handbook';
+  }
   let outOfScope = false;
   if (weakSearch) {
     outOfScope = await isOutOfScope(env.AI, searchQuery, allResults.results);
@@ -749,6 +810,29 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
     ? await collectSupersessionContext(env, searchQuery, allResults.results)
     : { notices: [] as string[], facts: [] as string[] };
 
+  // ── RP-10 for common applications (client 9/30/26 DO#10) ─────────────────────
+  // "Always refer users to it as one option … if contextually applicable", and
+  // for an RP-1 illuminance question, "always provide an AI note" pointing to
+  // RP-10. The first is a catalogue fact the Guide weighs; the second is
+  // appended to the Guide's text verbatim (or shown as a notice when there is no
+  // Guide), because "always" is not something a model can be trusted with.
+  let rp1Note: string | null = null;
+  if (!outOfScope && !isVersionComparison) {
+    const rp10Card = allResults.results.find(r => /^RP-10-\d{2}/i.test(String(r.application?.standard || '')));
+    const rp10Id = rp10Card?.application?.standard
+      || (isIlluminanceQuery(searchQuery) ? await currentCommonApplicationsStandard(env) : null);
+    const rp10Name = rp10Card?.application?.standardFull || (rp10Id ? `ANSI/IES ${rp10Id}` : null);
+    if (rp10Card && rp10Name) {
+      supersession.facts.push(
+        `${rp10Name} gives illuminance recommendations for COMMON applications found across building types `
+        + '(e.g. reading and writing, filing, transition and circulation spaces). Its rows are in the results: '
+        + 'name it as one option alongside the application-specific standard.',
+      );
+    }
+    rp1Note = rp1IlluminanceNote(searchQuery, allResults.results, rp10Name);
+    if (rp1Note && !includeAISummary) supersession.notices.push(rp1Note);
+  }
+
   // ── Related applications + optional AI summary (run concurrently) ────────────
   // Related apps: top result only, and only for true application rows — chunk
   // results have no D1 identity to find siblings for. Exclude only the seed
@@ -779,6 +863,12 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
         familyEditions,
       )
     : undefined;
+  // The standards of OTHER families merged into the current edition (client
+  // 10/01/26 #1) — RP-43-25 replaced RP-43-22 AND LP-2-20 AND LP-11-20.
+  if (comparisonContext && currentEdition) {
+    const merged = await loadMergedPredecessors(env, currentEdition.id);
+    if (merged.length > 0) comparisonContext.mergedFrom = merged;
+  }
 
   const aiPromise = (includeAISummary && allResults.results.length > 0)
     ? (async () => {
@@ -809,6 +899,10 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
             authorityNotice,
             facts: supersession.facts,
           });
+          // The RP-1 → RP-10 note, verbatim, unless the Guide already said it.
+          if (rp1Note && !generated.degraded && !/\bRP-10\b/.test(generated.text || '')) {
+            generated.text = `${generated.text}\n\n${rp1Note}`;
+          }
           const localized = await localizeSummary(env.AI, generated, queryLang) ?? generated;
           // Degraded summaries (every model errored) are never cached — the
           // next identical search retries the models instead of pinning the
@@ -946,6 +1040,10 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
     if (documentCardsOnly.length > 0) allResults.results = documentCardsOnly;
   }
 
+  // A bare Handbook search: the notice is the answer, and anything retrieval
+  // found for the word "handbook" is noise (client 9/30/26 DO#1).
+  if (bareHandbook) allResults.results = [];
+
   // ── Non-subscriber cards (client, 2026-09-23) ────────────────────────────────
   // "Lensy for non-subscribers should show AI Guide, reference cards and
   //  definition cards only." The body passages were RETRIEVED — they are what
@@ -1011,6 +1109,17 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
     });
   }
 
+  // A comparison names chapters and sections the retrieval never reached, so
+  // its locators are also resolved against each edition's indexed table of
+  // contents (client 9/29/26 DO#1: "can we hyperlink to referenced chapters?").
+  const comparisonSectionLinks = isVersionComparison
+    ? await withOutlineSectionLinks(
+        env,
+        buildSectionLinkMap(linkSourceResults),
+        [currentEdition?.id, ...(comparisonContext?.deprecated || []).map(d => d.id)].filter((x): x is string => !!x),
+      )
+    : null;
+
   const payload = {
     query: rawQuery,
     // The query's language and the English interpretation the search actually
@@ -1031,7 +1140,9 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
     noStrongMatchMessage: noStrongMatch ? NO_STRONG_MATCH_MESSAGE : null,
     aiGuideRequiredNotice,
     results: applyUnits(allResults.results, units),
-    aiSummary,
+    // A deprecated-edition lookup carries its catalogue note in the Guide card
+    // (client 9/30/26 DO#2); otherwise the Guide's own answer.
+    aiSummary: aiSummary ?? deprecatedNote,
     // Why there is no Guide above these results (client DO075, and DO085 when
     // the question was not about lighting at all). The UI reads it to stay
     // silent instead of printing "the AI Guide could not generate a response",
@@ -1064,7 +1175,7 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
     // Per-standard section/page → Library URL, so the UI can also hyperlink the
     // LOCATORS the Guide names ("§4.2", "p. 21") and not just the designations
     // (client, 2026-08-20: the comparison Guide needs "links to chapters").
-    sectionLinks: buildSectionLinkMap(linkSourceResults),
+    sectionLinks: comparisonSectionLinks ?? buildSectionLinkMap(linkSourceResults),
     timestamp: new Date().toISOString(),
     _depDbg: depDbg || undefined,
   };
@@ -1163,6 +1274,46 @@ export function buildSectionLinkMap(
   // A standard that yielded no locator at all would only bloat the payload.
   for (const [id, entry] of Object.entries(map)) {
     if (Object.keys(entry.sections).length === 0 && Object.keys(entry.pages).length === 0) delete map[id];
+  }
+  return map;
+}
+
+/**
+ * Add every heading of the named standards' indexed outlines (outline_json —
+ * number, title, page) to a section-link map, without overwriting a link the
+ * retrieval produced. A chapter is keyed both as printed ("6.0") and bare
+ * ("6"), because the Guide writes either.
+ */
+export async function withOutlineSectionLinks(
+  env: Env,
+  map: Record<string, { sections: Record<string, string>; pages: Record<string, string> }>,
+  ids: string[],
+): Promise<Record<string, { sections: Record<string, string>; pages: Record<string, string> }>> {
+  const wanted = [...new Set(ids)].slice(0, 6);
+  if (wanted.length === 0) return map;
+  try {
+    const rows = await env.DB.prepare(
+      `SELECT id, outline_json, vitrium_web_url FROM standards WHERE id IN (${wanted.map(() => '?').join(',')})`
+    ).bind(...wanted).all<{ id: string; outline_json: string | null; vitrium_web_url: string | null }>();
+    for (const row of rows.results || []) {
+      const base = toLibraryUrlOrNull(row.vitrium_web_url);
+      if (!base || !row.outline_json) continue;
+      let outline: Array<{ number?: unknown; page?: unknown }> = [];
+      try { outline = JSON.parse(row.outline_json); } catch { continue; }
+      if (!Array.isArray(outline)) continue;
+      const entry = map[row.id] || (map[row.id] = { sections: {}, pages: {} });
+      for (const o of outline) {
+        const number = typeof o?.number === 'string' ? o.number.trim() : '';
+        const page = typeof o?.page === 'number' ? o.page : null;
+        if (!number || page == null) continue;
+        const url = `${base.replace(/#.*$/, '')}#page=${page}`;
+        for (const key of new Set([number, number.replace(/\.0$/, '')])) {
+          if (key && !entry.sections[key]) entry.sections[key] = url;
+        }
+      }
+    }
+  } catch (err) {
+    console.error('outline section links failed (non-fatal):', errMsg(err));
   }
   return map;
 }
@@ -1400,6 +1551,17 @@ export function requestedDeprecatedEdition(rawQuery: string, currentId?: string 
  */
 async function liteAllowedStandards(env: Env): Promise<Set<string>> {
   const ids = new Set<string>();
+  // The Vitrium TAG wins once it exists (client 9/24/26: the collection is
+  // "identified by tags 'Current' + 'Lighting Science'"); sync-metadata marks
+  // tagged documents "Lighting Science Collection". Until any document carries
+  // the marker, the folder name below is the rule, exactly as before.
+  try {
+    const tagged = await env.DB.prepare(
+      "SELECT id FROM standards WHERE status = 'Active' AND collection LIKE ?"
+    ).bind(`%${LITE_COLLECTION} Collection%`).all<{ id: string }>();
+    for (const r of tagged.results || []) ids.add(r.id);
+  } catch { /* pre-0010 database */ }
+  if (ids.size > 0) return ids;
   try {
     const byCollection = await env.DB.prepare(
       "SELECT id FROM standards WHERE status = 'Active' AND collection LIKE ?"
@@ -1582,6 +1744,26 @@ export async function collectSupersessionContext(
   const facts: string[] = [];
   const nameOf = (e: { id: string; fullDesignation: string | null; title: string | null }) =>
     composeStandardName(e.fullDesignation || e.id, e.title);
+
+  // 0. The Lighting Handbook (client 9/30/26 DO#1): "if anyone searches for
+  //    'Handbook' or 'Lighting Handbook' or '10th edition Handbook', display the
+  //    following prompt". Its content is never indexed, so it can never reach a
+  //    card or the Guide — this notice and its historical-reference link are
+  //    the only trace. The link is the reader's `[here](url)` markup, which the
+  //    banner renders; HANDBOOK_URL is the Library's WebViewer link for it.
+  if (isHandbookQuery(rawQuery)) {
+    const url = handbookUrl(env);
+    notices.push(
+      'The Lighting Handbook was last published in 2011 and its content is now deprecated. '
+      + `The 10th edition is available for historical reference [here](${url}). `
+      + 'Search the Lighting Library for current standards.',
+    );
+    facts.push(
+      'The IES Lighting Handbook (10th edition, 2011) is DEPRECATED and is not indexed in IES Lens. '
+      + 'Never cite it or describe its contents; direct the reader to the current IES standards in the results.',
+    );
+  }
+
   try {
     // 1. Deprecated designations named in the query.
     const named = new Set<string>();
@@ -1650,6 +1832,54 @@ export async function collectSupersessionContext(
   return { notices: [...new Set(notices)], facts: [...new Set(facts)] };
 }
 
+/**
+ * Deprecated standards of OTHER families whose superseded_by is `currentId`:
+ * the documents merged into it. Same-family predecessors are ordinary edition
+ * history and are left to the comparison's own edition list. Fail-open.
+ */
+export async function loadMergedPredecessors(
+  env: Env, currentId: string,
+): Promise<Array<{ id: string; name: string; url: string | null }>> {
+  try {
+    const rows = await selectStandardRows(
+      env, "WHERE status = 'Deprecated' AND UPPER(superseded_by) = ?", [currentId.toUpperCase()],
+    );
+    return rows
+      .filter(r => standardFamily(r.id) !== standardFamily(currentId))
+      .sort((a, b) => a.id.localeCompare(b.id))
+      .map(r => ({ id: r.id, name: r.fullDesignation || r.id, url: r.webUrl }));
+  } catch (err) {
+    console.error('merged-predecessor lookup failed (non-fatal):', errMsg(err));
+    return [];
+  }
+}
+
+/** "handbook", "lighting handbook", "10th edition handbook", "IES Handbook 10th edition". */
+export function isHandbookQuery(query: string): boolean {
+  const q = normalizeTypography(query || '');
+  return /\bhandbooks?\b/i.test(q) || /\b10th\s+edition\b/i.test(q);
+}
+
+/** The query names the Handbook and nothing else worth searching for. */
+export function isBareHandbookQuery(query: string): boolean {
+  if (!isHandbookQuery(query)) return false;
+  const rest = normalizeTypography(query || '').toLowerCase()
+    .replace(/\b(?:the|ies|iesna|lighting|handbooks?|10th|tenth|edition|ed|of|latest|current|new|find|open|show|where|is|what|search)\b/g, ' ')
+    .replace(/[^a-z0-9]+/g, ' ').trim();
+  return rest.length === 0;
+}
+
+/**
+ * Where the 10th edition can be read for historical reference. The client
+ * uploaded it to the Library ("The Lighting Handbook 10th Edition |
+ * WebViewer"); its short-code link goes in the HANDBOOK_URL var. Until then the
+ * notice points at the Library portal rather than at nothing.
+ */
+function handbookUrl(env: Env): string {
+  const configured = String((env as { HANDBOOK_URL?: string }).HANDBOOK_URL || '').trim();
+  return /^https:\/\/[^\s)]+$/.test(configured) ? configured : 'https://lighting.ies.org/';
+}
+
 function joinNames(names: string[]): string {
   const list = [...new Set(names)];
   if (list.length <= 1) return list.join('');
@@ -1677,8 +1907,13 @@ async function loadFamilyEditions(env: Env, family: string): Promise<FamilyEditi
 
 // How many current-edition passages a comparison needs before it can say
 // anything about what changed, and how many the direct probe fetches.
-const COMPARISON_CURRENT_EXCERPTS = 6;
+// 6 → 12 (client 9/29/26 DO#1: comparisons "far too cursory").
+const COMPARISON_CURRENT_EXCERPTS = 12;
+// 20 is Vectorize's ceiling for a query with returnMetadata: 'all' (measured
+// 2026-08-29) — a larger value throws and the probe silently yields nothing.
 const COMPARISON_CURRENT_TOP_K = 20;
+// Chapters of the current edition sampled one passage each (9/29/26 DO#1).
+const COMPARISON_CHAPTER_PROBES = 12;
 
 /**
  * Guarantee the CURRENT edition contributes real passages to a comparison.
@@ -1774,7 +2009,39 @@ async function ensureCurrentEditionExcerpts(
         build(usable), Math.max(1, COMPARISON_CURRENT_EXCERPTS - existing.length));
     }
 
-    return [...scopeResults, ...general];
+    // 3. One passage from EACH CHAPTER of the current edition (client 9/29/26
+    //    DO#1: comparisons were "far too cursory and broad" and "missed many of
+    //    the updates"). Measured on RP-43: the topical probe yielded 7 usable
+    //    passages from a 99-page document, so the analysis had 8 findings to
+    //    give however hard the prompt asked. The indexed outline names every
+    //    chapter; a probe anchored on each chapter's own title, kept to that
+    //    chapter's sections, samples the whole document. Fail-open.
+    let chapters: SearchResult[] = [];
+    try {
+      const row = await env.DB.prepare('SELECT outline_json FROM standards WHERE id = ?')
+        .bind(edition.id).first<{ outline_json: string | null }>();
+      const outline: Array<{ number?: string; title?: string }> = row?.outline_json ? JSON.parse(row.outline_json) : [];
+      const top = (Array.isArray(outline) ? outline : [])
+        .filter(o => typeof o?.number === 'string' && /^\d{1,2}(?:\.0)?$/.test(o.number) && o.title)
+        .filter((o, i, all) => all.findIndex(x => x.number === o.number) === i)
+        .slice(0, COMPARISON_CHAPTER_PROBES);
+      const perChapter = await Promise.all(top.map(async o => {
+        const chapter = String(o.number).replace(/\.0$/, '');
+        try {
+          const matches = (await probe(`${edition.fullDesignation || edition.id} ${o.number} ${o.title}`))
+            .filter(m => String(m.metadata?.section || '').split('.')[0] === chapter);
+          return build(matches).slice(0, 1);
+        } catch {
+          return [];
+        }
+      }));
+      chapters = perChapter.flat();
+      if (D) D.currentChapterSamples = chapters.length;
+    } catch (err) {
+      console.error('chapter sampling failed (non-fatal):', errMsg(err));
+    }
+
+    return [...scopeResults, ...general, ...chapters];
   } catch (err) {
     if (D) D.currentProbeError = errMsg(err);
     console.error('current-edition comparison probe failed (non-fatal):', errMsg(err));
@@ -1809,20 +2076,46 @@ export function addMissingEditionCards(results: SearchResult[], editions: Family
     // because the family has it. The UI hides the "Match: N%" badge at 0 rather
     // than printing a relevance figure that means nothing.
     const card = buildDocumentResult(e, 0, 'designation');
-    if (e.status !== 'Deprecated') return card;
-    const name = card.citationName || e.id;
-    return {
-      ...card,
-      isDeprecated: true,
-      supersededBy: e.supersededBy,
-      deprecationNotice: e.supersededBy
-        ? `${name} is deprecated and has been replaced by ${e.supersededBy}.`
-        : `${name} is deprecated.`,
-      citation: `${card.citation} (deprecated)`,
-      citationName: `${name} (deprecated)`,
-    };
+    return e.status === 'Deprecated' ? markDeprecatedCard(card, e) : card;
   });
   return [...results, ...cards];
+}
+
+/**
+ * The AI Guide note for a lookup of a DEPRECATED edition (client 9/30/26 DO#2),
+ * in the words the client quoted from the Compare Versions advisory: "ANSI/IES
+ * RP-43-22 has been replaced by ANSI/IES RP-43-25, and for the most accurate
+ * and up-to-date information, readers should consult the current edition."
+ * Null unless the lookup cards hold a deprecated edition AND a current one.
+ */
+export function deprecatedLookupNote(cards: SearchResult[]): AISummary | null {
+  const dep = cards.find(c => c.isDeprecated && c.resultType === 'standard');
+  const cur = cards.find(c => !c.isDeprecated && c.resultType === 'standard');
+  if (!dep || !cur) return null;
+  const depName = dep.document?.designation || dep.application?.standard || '';
+  const curName = cur.document?.designation || cur.application?.standard || '';
+  if (!depName || !curName) return null;
+  return {
+    text: `${depName} has been replaced by ${curName}, and for the most accurate and up-to-date information, readers should consult the current edition.`,
+    watermark: null,
+    disclaimer: 'Lighting Library catalogue note.',
+    mode: 'guide',
+  };
+}
+
+/** A whole-document card for a DEPRECATED edition: flagged, and says what replaced it. */
+export function markDeprecatedCard(card: SearchResult, e: FamilyEdition): SearchResult {
+  const name = card.citationName || e.id;
+  return {
+    ...card,
+    isDeprecated: true,
+    supersededBy: e.supersededBy,
+    deprecationNotice: e.supersededBy
+      ? `${name} is deprecated and has been replaced by ${e.supersededBy}.`
+      : `${name} is deprecated.`,
+    citation: `${card.citation} (deprecated)`,
+    citationName: `${name} (deprecated)`,
+  };
 }
 
 /** Embed one text, reusing the KV embedding cache. */
@@ -1882,6 +2175,43 @@ async function logSearch(env: Env, payload: { query: string; results?: SearchRes
 }
 
 // ─── Single Search ────────────────────────────────────────────────────────────
+
+// ─── RP-10: illuminance for common applications (client 9/30/26 DO#10) ───────
+
+const COMMON_APPLICATIONS_FAMILY = 'RP-10';
+const RP10_MIN_SCORE = 0.6;      // never admit an RP-10 row that is a poor match on its own
+const RP10_SCORE_MARGIN = 0.08;  // …nor one far below the best application match
+const RP10_MAX_ROWS = 4;
+
+/** The current edition of RP-10 (RP-10-20+E2 today), read from D1. Fail-open. */
+async function currentCommonApplicationsStandard(env: Env): Promise<string | null> {
+  try {
+    const row = await env.DB.prepare(
+      "SELECT id FROM standards WHERE status = 'Active' AND id LIKE ? ORDER BY id DESC LIMIT 1"
+    ).bind(`${COMMON_APPLICATIONS_FAMILY}-%`).first<{ id: string }>();
+    return row?.id || null;
+  } catch {
+    return null;
+  }
+}
+
+/** A question about illuminance levels / light levels for an application. */
+export function isIlluminanceQuery(query: string): boolean {
+  return /\b(?:illuminance|lux|lx|foot-?candles?|fc|light(?:ing)?\s+levels?|how\s+(?:bright|much\s+light)|recommended\s+light(?:ing)?)\b/i
+    .test(normalizeTypography(query || ''));
+}
+
+/**
+ * The note the client asked to accompany every RP-1 illuminance answer (9/30/26
+ * DO#10: "Specific to RP-1 illuminance queries, always provide an AI note").
+ * Appended deterministically, so it cannot be forgotten by the model.
+ */
+export function rp1IlluminanceNote(query: string, results: SearchResult[], rp10Name: string | null): string | null {
+  if (!isIlluminanceQuery(query)) return null;
+  const hasRp1 = results.some(r => /^RP-1-\d{2}/i.test(String(r.application?.standard || '')) && !r.isDeprecated);
+  if (!hasRp1) return null;
+  return `Illuminance recommendations for common applications including office spaces can be found in ${rp10Name || 'ANSI/IES RP-10'}.`;
+}
 
 async function runSingleSearch(rawQuery: string, filters: SearchFilters, limit: number, env: Env, contentTypes: Set<ContentType> = new Set(DEFAULT_CONTENT_TYPES)): Promise<SearchOutput> {
   const expandedQuery = prepareQueryForEmbedding(rawQuery);
@@ -1948,6 +2278,37 @@ async function runSingleSearch(rawQuery: string, filters: SearchFilters, limit: 
       chunkMatches = [...dedupe.values()];
     } catch (err) {
       console.error('body-scoped vector query failed, using main pool (non-fatal):', errMsg(err));
+    }
+  }
+
+  // 3c. RP-10, the "common applications" standard (client 9/30/26 DO#10: "RP-10
+  //     is sort of a 'catch-all' standard for providing illuminance values for
+  //     'common applications.' Can you train Lens to review the applications
+  //     listed in its illuminance table, and always refer users to it as one
+  //     option … if contextually applicable?"). Its rows — Filing, Reading and
+  //     writing, Transition and circulation — rarely win the shared top-K pool
+  //     against the application-specific standards, so they are probed
+  //     directly and admitted when they score within reach of the best
+  //     application match ("contextually applicable"). Fail-open.
+  if (includeTables && !filters.standard && !filters.standard_prefix) {
+    try {
+      const rp10 = await currentCommonApplicationsStandard(env);
+      if (rp10) {
+        const probe = await env.VECTORIZE.query(queryVector, {
+          topK: 20,
+          returnMetadata: 'all',
+          filter: { standard_code: rp10, chunk_type: 'application' },
+        });
+        const best = appMatches.reduce((m, a) => Math.max(m, a.score || 0), 0);
+        const floor = Math.max(RP10_MIN_SCORE, best - RP10_SCORE_MARGIN);
+        const have = new Set(appMatches.map(m => m.metadata?.application_code));
+        const admitted = ((probe.matches || []) as unknown as VMatch[])
+          .filter(m => m.metadata?.application_code && !have.has(m.metadata.application_code) && m.score >= floor)
+          .slice(0, RP10_MAX_ROWS);
+        appMatches.push(...admitted);
+      }
+    } catch (err) {
+      console.error('RP-10 common-applications probe failed (non-fatal):', errMsg(err));
     }
   }
 
@@ -2260,11 +2621,15 @@ export async function searchDefinitions(
   if (term) {
     const rows = await env.DB.prepare(`
       SELECT slug, term FROM definitions
-      WHERE LOWER(term) = ?1 OR LOWER(term) LIKE ?2 OR LOWER(term) LIKE ?3
+      WHERE LOWER(term) = ?1 OR LOWER(term) LIKE ?2 OR LOWER(term) LIKE ?3 OR LOWER(term) LIKE ?4
       LIMIT 25
-    `).bind(term, `${term}, %`, `${term} %`).all<{ slug: string; term: string }>();
+    `).bind(term, `${term}, %`, `${term} %`, `%(${term})`).all<{ slug: string; term: string }>();
     for (const r of rows.results || []) {
-      const exact = r.term.toLowerCase() === term;
+      // A term printed WITH its symbol — "Fidelity Index (Rf)" — is an exact
+      // hit for a search of the symbol alone (client 9/30/26 DO#9: "Rf" must
+      // return the Fidelity Index definition card first).
+      const lowerTerm = r.term.toLowerCase();
+      const exact = lowerTerm === term || lowerTerm.endsWith(`(${term})`);
       scores.set(r.slug, exact ? DEFINITION_EXACT_SCORE : DEFINITION_PREFIX_SCORE);
     }
   }
@@ -2328,6 +2693,8 @@ export function definitionSearchTerm(rawQuery: string): string | null {
     .replace(/\s+(?:in|per|according\s+to)\s+(?:ansi\/ies\s+)?ls-?1(?:-\d{2})?\s*\??$/i, '')
     .replace(/[?.!]+$/, '')
     .replace(/^(?:a|an|the)\s+/i, '')
+    // A subscript typed as an underscore — "R_f", "E_v" — is the same symbol.
+    .replace(/(?<=[a-z])_(?=[a-z])/g, '')
     .trim();
   if (!q || q.length < 2) return null;
   if (q.split(/\s+/).length > 6) return null;
@@ -2828,11 +3195,11 @@ const DEPRECATED_TOP_K = 100;       // ids+scores pool from the deprecated index
 // Raised 3→6 (client DO25), then 6→12 (client DO28: "indexing may be too shallow
 // for the level of detail needed"): a long standard like RP-8 needs prior-edition
 // passages from several chapters before the comparison can say anything concrete.
-const MAX_DEPRECATED_RESULTS = 12;  // flagged excerpts appended to the response
+const MAX_DEPRECATED_RESULTS = 16;  // flagged excerpts appended to the response
 // Distinct anchors used to sample the prior edition. Each is a top current
 // excerpt from a different page, so the probes spread across the document
 // instead of all landing in one chapter (client DO28).
-const DEPRECATED_TOPIC_HINTS = 3;
+const DEPRECATED_TOPIC_HINTS = 8;
 // Chapter diversity: no more than this many prior-edition excerpts from the same
 // section. Without it, one dense chapter fills the whole comparison window.
 const MAX_DEPRECATED_PER_SECTION = 3;
@@ -3712,10 +4079,18 @@ function pickExcerptsForApp(excerptIndex: ExcerptIndex, app: ApplicationRow, max
   // procedural pages are boilerplate in every document (client DO102).
   const usable = bucket.filter(c =>
     c.excerpt_text && c.chunk_type !== 'reference' && !isProceduralBoilerplate(c.excerpt_text));
-  const prose = usable.filter(c => !isTable(c) && !isTableLike(c.excerpt_text));
-  const pool = prose.length > 0 ? prose : usable;
-
   const appPage = app.Page_Number;
+  // "From the Standard" holds the standard's PROSE, never the illuminance table
+  // itself (client 10/01/26 #3: "exclude Illuminance Tables content from
+  // appearing there"). Out: table chunks, table-shaped text, the table's own
+  // general notes (the card already prints them under "Application Task/Area
+  // Notes"), and anything on the page the row is printed on — that page IS the
+  // criteria table. No fallback to table text when no prose survives: an empty
+  // disclosure is right, a grid dump is what the client asked to remove.
+  const pool = usable.filter(c =>
+    !isTable(c) && c.chunk_type !== 'general_notes' && !isTableLike(c.excerpt_text)
+    && !(appPage != null && c.page_number === appPage));
+
   const NEAR_RADIUS = 5;
   const near: Array<{ c: ExcerptChunk; dist: number }> = [];
   const far: ExcerptChunk[] = [];
@@ -4095,13 +4470,49 @@ export async function findStandardLookupResults(env: Env, rawQuery: string, limi
     const parsed = parseDesignationQuery(query);
     if (parsed) {
       const family = await loadFamilyEditions(env, parsed.family);
-      let editions = family.filter(e => e.status !== 'Deprecated');
+      const editions = family.filter(e => e.status !== 'Deprecated');
+
+      // A DEPRECATED edition named exactly (client 9/30/26 DO#2: "In search
+      // result cards, display the current version first, followed by the
+      // Deprecated copy they searched for (marked deprecated)"). The current
+      // edition is the family's own Active one, or — for a family merged into
+      // another standard, LP-2-20 → RP-43-25 — the edition its superseded_by
+      // names. The AI Guide note that goes with these cards is built in
+      // handleSearch from the same pair (deprecatedLookupNote).
+      if (parsed.id) {
+        const wanted = baseEditionId(parsed.id);
+        const namedDeprecated = family.find(e => e.status === 'Deprecated' && baseEditionId(e.id) === wanted);
+        const exactActive = editions.some(e => baseEditionId(e.id) === wanted);
+        if (namedDeprecated && !exactActive) {
+          const current = editions[0] || await resolveSuccessorEdition(env, family)
+            || (namedDeprecated.supersededBy
+              ? (await selectStandardRows(env, 'WHERE UPPER(id) = ?', [namedDeprecated.supersededBy.toUpperCase()]))
+                .find(r => r.status !== 'Deprecated') || null
+              : null);
+          const deprecatedCard = markDeprecatedCard(buildDocumentResult(namedDeprecated, 0.9, 'designation'), {
+            ...namedDeprecated,
+            supersededBy: current?.id || namedDeprecated.supersededBy,
+          });
+          return current
+            ? [buildDocumentResult(current, 1, 'designation'), deprecatedCard]
+            : [deprecatedCard];
+        }
+      }
+
       // A family with no current edition was merged into another standard:
-      // "LP-2-20" answers with RP-43-25, the edition that replaced it (client,
+      // "LP-2" answers with RP-43-25, the edition that replaced it (client,
       // 2026-09-23). The payload's supersessionNotices say why.
       if (editions.length === 0) {
         const successor = await resolveSuccessorEdition(env, family);
-        if (successor) return [buildDocumentResult(successor, 0.9, 'designation')];
+        if (successor) {
+          // Current first, then the deprecated edition the reader named (9/30/26 DO#2).
+          const latest = family.slice().sort((a, b) => b.year - a.year)[0];
+          return [
+            buildDocumentResult(successor, 0.95, 'designation'),
+            ...(latest ? [markDeprecatedCard(buildDocumentResult(latest, 0.9, 'designation'),
+              { ...latest, supersededBy: successor.id })] : []),
+          ];
+        }
       }
       if (editions.length === 0) return [];
 

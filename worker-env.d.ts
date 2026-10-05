@@ -49,6 +49,12 @@ declare global {
     // every other production hostname 301s to it (src/workers/api.ts). Unset →
     // every hostname on the Worker serves the app.
     LENSY_CANONICAL_HOST?: string;
+    // The static-assets binding ([assets] in wrangler.toml). The Worker runs
+    // first and hands every non-API path to it.
+    ASSETS?: Fetcher;
+    // The Lighting Library WebViewer link for the Lighting Handbook 10th edition
+    // (client 9/30/26 DO#1). Unset → the Handbook notice links the portal home.
+    HANDBOOK_URL?: string;
     // ── Lighting Library error page (2026-09-04) ────────────────────────────
     // Staff inbox for device-limit reset requests submitted from
     // library-error.html. Unset → requests are still stored in

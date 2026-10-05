@@ -676,7 +676,7 @@ async function preflight() {
   const urlHint = process.env.LUCIUS_API_URL
     ? ''
     : `\n   LUCIUS_API_URL is not set, so the target defaulted to ${CONFIG.apiUrl}.` +
-      '\n   Export it (e.g. LUCIUS_API_URL=https://lensy.ies.org) or pass --local for wrangler dev.';
+      '\n   Export it (e.g. LUCIUS_API_URL=https://lens.ies.org) or pass --local for wrangler dev.';
 
   try {
     await postToWorker('/api/ingest/r2-upload-url', { standardId: '__preflight__' });

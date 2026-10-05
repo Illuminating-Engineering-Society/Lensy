@@ -272,6 +272,42 @@ export function cleanQuery(query: string): string {
 // ─── Query Expansion ──────────────────────────────────────────────────────────
 
 /**
+ * Photometric and colorimetric SYMBOLS, as a reader types them without the
+ * subscript (client 9/30/26 DO#9: "Train Lens to treat 'subscript' the same as
+ * normal character in a search prompt … Assume the intent to be the version
+ * more prevalent in IES Standards … Searching for 'Rf' … should display the
+ * 'Fidelity Index' definition card, followed by results in TM-30 … Instead, it
+ * sometimes assumes 'radio frequency'").
+ *
+ * Each pattern is CASE-SENSITIVE and whole-token, and accepts the forms a
+ * keyboard produces for a subscript: "Rf", "R_f", "R f" is NOT accepted (two
+ * words), "Rf,hj"/"Rf hj" are. The meaning is the one IES standards use; the
+ * AI Guide's system prompt carries the same glossary.
+ */
+export const SYMBOL_GLOSSARY: Array<{ re: RegExp; symbol: string; meaning: string; expand: string }> = [
+  { re: /(?<![A-Za-z])R_?f(?![A-Za-z])/, symbol: 'Rf', meaning: 'Fidelity Index (TM-30)', expand: 'fidelity index color fidelity color rendition TM-30' },
+  { re: /(?<![A-Za-z])R_?g(?![A-Za-z])/, symbol: 'Rg', meaning: 'Gamut Index (TM-30)', expand: 'gamut index color gamut color rendition TM-30' },
+  { re: /(?<![A-Za-z])R_?cs(?![A-Za-z])/, symbol: 'Rcs', meaning: 'Local Chroma Shift (TM-30)', expand: 'local chroma shift color rendition TM-30' },
+  { re: /(?<![A-Za-z])R_?hs(?![A-Za-z])/, symbol: 'Rhs', meaning: 'Local Hue Shift (TM-30)', expand: 'local hue shift color rendition TM-30' },
+  { re: /(?<![A-Za-z])R_?a(?![A-Za-z])/, symbol: 'Ra', meaning: 'CIE General Colour Rendering Index', expand: 'color rendering index CRI general' },
+  { re: /(?<![A-Za-z])D_?uv(?![A-Za-z])/, symbol: 'Duv', meaning: 'distance from the Planckian locus', expand: 'Duv chromaticity distance planckian locus correlated color temperature' },
+  { re: /(?<![A-Za-z])E_?v(?![A-Za-z])/, symbol: 'Ev', meaning: 'vertical illuminance', expand: 'vertical illuminance' },
+  { re: /(?<![A-Za-z])E_?h(?![A-Za-z])/, symbol: 'Eh', meaning: 'horizontal illuminance', expand: 'horizontal illuminance' },
+  { re: /(?<![A-Za-z])E_?sc(?![A-Za-z])/, symbol: 'Esc', meaning: 'semicylindrical illuminance', expand: 'semicylindrical illuminance' },
+  { re: /(?<![A-Za-z])L_?v(?![A-Za-z])/, symbol: 'Lv', meaning: 'luminance', expand: 'luminance' },
+  { re: /(?<![A-Za-z])T_?cp(?![A-Za-z])/, symbol: 'Tcp', meaning: 'correlated color temperature', expand: 'correlated color temperature CCT' },
+];
+
+/** The expansion words for every symbol the (cased) query contains. */
+export function symbolExpansions(query: string): string[] {
+  const out: string[] = [];
+  for (const g of SYMBOL_GLOSSARY) {
+    if (g.re.test(String(query || ''))) out.push(...g.expand.split(/\s+/));
+  }
+  return out;
+}
+
+/**
  * Expand a cleaned query with IES-specific synonyms.
  * Returns the expanded string for embedding.
  *
@@ -283,6 +319,11 @@ export function expandQuery(query: string): string {
   const lower = cleaned.toLowerCase();
 
   const expansions = new Set<string>();
+
+  // Symbols that lost their subscript in the search box (client 9/30/26 DO#9).
+  // Matched on the CASED text: "Ev" is vertical illuminance, "EV" is an
+  // electric vehicle; "Rf" is the TM-30 Fidelity Index, not radio frequency.
+  for (const word of symbolExpansions(cleaned)) expansions.add(word.toLowerCase());
 
   for (const [term, synonymText] of Object.entries(SYNONYMS)) {
     // Match on whole-word boundary to avoid "spa" matching "space"

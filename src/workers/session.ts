@@ -152,6 +152,10 @@ export async function handleAuthMe(request: Request, env: Env): Promise<Response
       isAdmin: decision.admin,
       // Full IdP role slug list, informational.
       idpRoles: user.roles,
+      // "Subscribed until ### ##, ####" in the profile menu (client 9/29/26
+      // DO#4). Only a well-formed date is passed on.
+      subscriptionExpiresAt: /^\d{4}-\d{2}-\d{2}$/.test(String(user.subscriptionExpiresAt ?? ''))
+        ? user.subscriptionExpiresAt : null,
     },
     logoutUrl: buildLogoutUrl(env, request.url),
   });

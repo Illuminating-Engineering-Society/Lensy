@@ -1023,7 +1023,9 @@ describe('comparison notice', () => {
       ],
     })`);
     expect(notice).toContain('ANSI/IES RP-8-22');
-    expect(notice).toContain('replaced by the current');
+    // Client 9/30/26 DO#2 wording: "… has been replaced by … readers should consult the current edition."
+    expect(notice).toContain('has been replaced by');
+    expect(notice).toContain('readers should consult the current edition');
     expect(notice).toContain('between those two editions only');
     expect(notice).toContain('Earlier deprecated editions');
     expect(notice).toContain('ANSI/IES RP-8-18');
@@ -1405,7 +1407,9 @@ describe('AI comparison rendering (DO062)', () => {
   it('still hyperlinks the locator it bolded (DO062: "hyperlink to the page")', () => {
     run(`setSectionLinks({ 'RP-43-25': { sections: { '6.2': 'https://lighting.ies.org/x#page=34' }, pages: {} } })`);
     const html = run(`renderAIText('ANSI/IES RP-43-25 changed.\\n\\n- 6.2 Outdoor Lighting Requirements: new in this edition, see Section 6.2.')`);
-    expect(html).toContain('<strong>6.2 Outdoor Lighting Requirements</strong>');
+    // The bold locator stays bold, and its leading number is now itself a link
+    // (client 9/29/26 DO#1: "hyperlink to referenced chapters").
+    expect(html).toMatch(/<strong><a [^>]*#page=34[^>]*>6\.2<\/a> Outdoor Lighting Requirements<\/strong>/);
     expect(html).toContain('#page=34');
     run(`setSectionLinks(null)`);
   });
@@ -1459,7 +1463,9 @@ describe('guided empty state (DO077)', () => {
     const html = elements.get('no-results-guidance').innerHTML;
     expect(html).toContain('only looked inside the Illuminance Tables');
     expect((html.match(/no-results-action/g) || []).length).toBe(3);   // 'contact' is a mailto
-    expect(html).toContain('mailto:Standards@ies.org');
+    // Client 9/30/26 DO#4: technical support is the IES contact form.
+    expect(html).toContain('https://ies.org/contact-us/');
+    expect(html).not.toContain('mailto:Standards@ies.org');
     expect(elements.get('no-results-guidance').classList.contains('hidden')).toBe(false);
   });
 
@@ -1965,5 +1971,78 @@ describe('comparable families (DO107)', () => {
     expect(run(`compareBaseOf('LM-10-20(R2023)') === compareBaseOf('LM-10-20')`)).toBe(true);
     // RP-43-25 beside a deprecated RP-43-22 IS comparable.
     expect(run(`compareBaseOf('RP-43-25') === compareBaseOf('RP-43-22')`)).toBe(false);
+  });
+});
+
+// ─── The 260928–261002 notes ──────────────────────────────────────────────────
+
+describe('subscripts the extraction glued to the next word (client 10/02/26 #4)', () => {
+  const s = (t) => run(`sciNotate(${JSON.stringify(t)})`);
+  it('restores "Evin two opposing views" as E_v in two opposing views', () => {
+    expect(s('Evin two opposing views')).toBe('E<sub>v</sub> in two opposing views');
+    expect(s('Eh at the task plane')).toBe('E<sub>h</sub> at the task plane');
+  });
+  it('leaves real words and electric vehicles alone', () => {
+    expect(s('Evening events')).toBe('Evening events');
+    expect(s('EV charging stations')).toBe('EV charging stations');
+  });
+});
+
+describe('Class of Play / Lighting Zone tabs (client 9/30/26 DO#11)', () => {
+  const row = (code, s1, cls, zone) => ({
+    resultType: 'application', relevanceScore: 0.8, excerpt: null, excerpts: [],
+    citation: 'ANSI/IES RP-6-24, p. 40',
+    application: {
+      code, standard: 'RP-6-24', subCategory: 'EXTERIOR - SPORTS', category: 'Soccer',
+      sub1: s1, sub2: 'Area of play', rowRef: code, classOfPlay: cls,
+      outdoor: zone ? { lightingZone: zone } : null, indoorOutdoor: 'Outdoor',
+      horizontal: { lux: 300, fc: 30, heightM: 0, heightFt: 0 },
+    },
+  });
+
+  it('merges the classes of one application into ONE group, even when not adjacent', () => {
+    const groups = JSON.parse(run(`JSON.stringify(groupSiblingResults(${JSON.stringify([
+      row('a1', 'Class I', 'I'), { resultType: 'excerpt', application: { standard: 'RP-43-25' }, excerpt: { section: '6.2', chapter: { number: '6' } } },
+      row('a3', 'Class III', 'III'), row('a2', 'Class II', 'II'),
+    ])}).map(g => ({ n: g.members.length, v: !!g.variantKey })))`));
+    expect(groups).toEqual([{ n: 3, v: true }, { n: 1, v: false }]);
+  });
+
+  it('labels each tab by the level the table prints, in order', () => {
+    expect(run(`variantLabelOf(${JSON.stringify(row('x', 'Class III', 'III'))})`)).toBe('Class III');
+    const zone = { application: { sub1: 'Automotive Building Facades', sub2: 'High activity', sub3: 'Lz3 (and Lz4 curfew)', outdoor: { lightingZone: 'LZ3' } } };
+    expect(run(`variantLabelOf(${JSON.stringify(zone)})`)).toBe('LZ3 (and LZ4 curfew)');
+    expect(run(`variantOrder('Class IV') > variantOrder('Class I')`)).toBe(true);
+  });
+
+  it('renders one card with one tab per class, the first open', () => {
+    const groups = run(`JSON.stringify(groupSiblingResults(${JSON.stringify([
+      row('a2', 'Class II', 'II'), row('a1', 'Class I', 'I'),
+    ])}))`);
+    const html = run(`renderResultCard(JSON.parse(${JSON.stringify(groups)})[0], 0)`);
+    expect((html.match(/class="variant-tab /g) || []).length).toBe(2);
+    expect(html.indexOf('Class I\n')).toBeLessThan(html.indexOf('Class II\n'));
+    expect((html.match(/variant-panel hidden/g) || []).length).toBe(1);
+  });
+});
+
+describe('notice links (client 9/30/26 DO#1 — the Handbook notice)', () => {
+  it('turns [label](https://…) into a link and nothing else', () => {
+    expect(run(`noticeLinks('available [here](https://lighting.ies.org/abc). Search')`))
+      .toContain('<a href="https://lighting.ies.org/abc"');
+    expect(run(`noticeLinks('[x](javascript:alert(1))')`)).not.toContain('<a ');
+  });
+});
+
+describe('comparison locators link to chapters (client 9/29/26 DO#1)', () => {
+  it('links a bullet\'s bare leading section number and a "Chapter N" to the compared edition', () => {
+    run(`setSectionLinks({ 'RP-43-25': { sections: { '8.7.2.4': 'https://lighting.ies.org/x#page=61', '6': 'https://lighting.ies.org/x#page=30' }, pages: {} } })`);
+    run(`setStandardLinks({ 'RP-43-25': 'https://lighting.ies.org/x' })`);
+    run(`aiCurrentStandard = 'RP-43-25'`);
+    expect(run(`linkifyLocators('8.7.2.4 Color – Hue and Saturation')`)).toContain('#page=61');
+    expect(run(`linkifyLocators('see Chapter 6.0 for the process')`)).toContain('#page=30');
+    // A page retrieval never reached still links, as front link + #page=N.
+    expect(run(`linkifyLocators('(p. 99)')`)).toContain('https://lighting.ies.org/x#page=99');
+    run(`setSectionLinks(null); setStandardLinks(null)`);
   });
 });

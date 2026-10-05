@@ -247,7 +247,7 @@ function loadPortalDocuments(filePath) {
   }
 
   const byCode = new Map();
-  let covers = 0, descriptions = 0, authors = 0, published = 0, future = 0;
+  let covers = 0, descriptions = 0, authors = 0, published = 0, future = 0, lightingScienceTagged = 0;
   for (const d of docs) {
     const code = String(d.DocCode || '').trim();
     if (!code) continue;
@@ -266,12 +266,16 @@ function loadPortalDocuments(filePath) {
     // refused for being in the future — worth naming, since it is a portal
     // record IES may want to correct at the source.
     else if (/^\d{4}-\d{2}-\d{2}/.test(String(d.PublishDate || '').trim())) future++;
-    byCode.set(code, { thumbnailUrl, description, author, publishedDate });
+    // Vitrium tags (client 9/24/26: the Lighting Science Collection is "currently
+    // identified by tags 'Current' + 'Lighting Science'").
+    const tags = Array.isArray(d.Tags) ? d.Tags.map(t => String(t).trim()).filter(Boolean) : [];
+    if (isLightingScienceTagged(tags)) lightingScienceTagged++;
+    byCode.set(code, { thumbnailUrl, description, author, publishedDate, tags });
   }
 
   console.log(`  Portal documents: ${byCode.size} — ${covers} cover image(s), `
     + `${descriptions} description(s), ${authors} committee credit(s), `
-    + `${published} publication date(s).`);
+    + `${published} publication date(s), ${lightingScienceTagged} tagged Current + Lighting Science.`);
   if (future > 0) {
     console.log(`  NOTE: ${future} PublishDate value(s) are in the future and were refused as `
       + 'data-entry errors — those standards keep whatever date is already stored.');
@@ -400,7 +404,13 @@ function loadCsvExport(filePath, portalByCode = null) {
       // LensyLite (client DO53): the tier searches standards whose collection
       // matches "Lighting Science", with the LS- series prefix as the fallback
       // only while this field is empty.
-      collection: cell(iCollection) || collectionFromFolderPath(iFolder !== -1 ? row[iFolder] : null),
+      // A document TAGGED Current + Lighting Science is in the free member
+      // collection wherever its folder is (client 9/24/26 option B): the tag
+      // is marked into the collection so search.ts can scope the tier by it.
+      collection: withLightingScienceTag(
+        cell(iCollection) || collectionFromFolderPath(iFolder !== -1 ? row[iFolder] : null),
+        portal ? portal.tags : null,
+      ),
       author: cell(iAuthor) || (portal ? portal.author : null),
       description: cell(iDescription) || (portal ? portal.description : null),
       // The portal is the only source for the publication date (client DO112) —
@@ -482,6 +492,27 @@ function parseElearningCell(raw) {
  * The deprecated archive and the library's root/container folders are not
  * collections — those rows return null so the stored value is left untouched.
  */
+/**
+ * The Lighting Science Collection marker. Once IES tags documents "Current" +
+ * "Lighting Science" in Vitrium, the TAG is the authority (client 9/24/26:
+ * "Member/non-subscribers automatically receive file-level access to documents
+ * in the collection (currently identified by tags 'Current' + 'Lighting
+ * Science')"), and search.ts scopes the non-subscriber tier to this marker in
+ * preference to the folder name.
+ */
+const LIGHTING_SCIENCE_MARKER = 'Lighting Science Collection';
+
+function isLightingScienceTagged(tags) {
+  const set = new Set((tags || []).map(t => String(t).toLowerCase()));
+  return set.has('current') && set.has('lighting science');
+}
+
+function withLightingScienceTag(collection, tags) {
+  if (!isLightingScienceTagged(tags)) return collection;
+  if (collection && collection.includes(LIGHTING_SCIENCE_MARKER)) return collection;
+  return collection ? `${collection} · ${LIGHTING_SCIENCE_MARKER}` : LIGHTING_SCIENCE_MARKER;
+}
+
 function collectionFromFolderPath(folderPath) {
   const leaf = String(folderPath || '').split('/').map(s => s.trim()).filter(Boolean).pop() || '';
   if (!leaf) return null;

@@ -7,13 +7,13 @@
 > Vitrium platform."
 
 Yes. Paste the snippet below into **Portal Settings → Portal Header** in Vitrium
-Security. A live preview, and a copy button, are at **<https://lensy.ies.org/embed.html>**.
+Security. A live preview, and a copy button, are at **<https://lens.ies.org/embed.html>**.
 
 ## The snippet
 
 ```html
-<!-- Lensy — IES Standards Assistant. Opens lensy.ies.org in a new tab. -->
-<form action="https://lensy.ies.org/" method="get" target="_blank" rel="noopener"
+<!-- Lensy — IES Standards Assistant. Opens lens.ies.org in a new tab. -->
+<form action="https://lens.ies.org/" method="get" target="_blank" rel="noopener"
       style="display:flex;gap:8px;align-items:center;max-width:520px;margin:0 auto;font-family:inherit;">
   <input type="text" name="q" placeholder="Type a topic or ask a question"
          aria-label="Search the IES Lighting Library with Lensy"
@@ -30,10 +30,10 @@ Security. A live preview, and a copy button, are at **<https://lensy.ies.org/emb
 
 ## How it works
 
-The form is a plain `GET` to `https://lensy.ies.org/`, so submitting it opens
+The form is a plain `GET` to `https://lens.ies.org/`, so submitting it opens
 
 ```
-https://lensy.ies.org/?q=how+bright+should+a+skating+rink+be
+https://lens.ies.org/?q=how+bright+should+a+skating+rink+be
 ```
 
 in a new tab. Lensy already reads `?q=` on load and runs that search — the same

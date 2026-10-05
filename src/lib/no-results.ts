@@ -53,8 +53,9 @@ const STOPWORDS = new Set([
   'show', 'find', 'search', 'tell', 'need', 'want', 'used', 'using', 'recommendations',
 ]);
 
+// Client 9/30/26 DO#4: no "ask IES staff" — a technical-support form instead.
 const CONTACT: NoResultsSuggestion = {
-  label: 'Ask Standards@ies.org',
+  label: 'Technical support form',
   action: 'contact',
 };
 
@@ -250,7 +251,7 @@ export function buildNoResultsGuidance(input: NoResultsInput): NoResultsGuidance
   });
 
   if (input.tier === 'lite') {
-    message = 'LensyLite searches the Lighting Science collection only, which may not cover this topic.';
+    message = 'Without a subscription, IES Lens searches the Lighting Science Collection only, which may not cover this topic.';
   }
 
   suggestions.push(CONTACT);

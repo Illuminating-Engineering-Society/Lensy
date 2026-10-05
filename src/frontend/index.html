@@ -290,16 +290,13 @@
   <header class="shadow-sm no-print sticky top-0 z-40"
           style="background-color: var(--banner); color: var(--nav-ink);">
     <div class="max-w-6xl mx-auto px-4 py-1.5 flex items-center justify-between gap-3">
-      <a href="/" class="flex items-center gap-2.5 shrink-0" title="The IES Lighting Library">
-        <!-- DO107 #1: the client's "IES Lighting Library Logo 2026 - Horizontal".
-             Extracted from their feedback document at its embedded resolution —
-             ask marketing for the original before print use.
-             9/23/26 DO#1: "make the Lighting Library logo at top left taller
-             (perhaps 25% shorter than the IES Lens height)" — the hero mark is
-             h-24 / sm:h-28 (96 / 112px), so this is three quarters of that, and
-             the header padding shrank from py-2.5 to py-1.5 to pay for it. -->
-        <img src="/assets/ies-lighting-library-horizontal.png" alt="The IES Lighting Library"
-             class="h-[72px] sm:h-[84px] w-auto" width="683" height="335" />
+      <a href="/" class="flex items-center gap-2.5 shrink-0" title="Search with IES Lens">
+        <!-- 9/30/26 DO#6: "IES Lens pages: Top left logo changes to 'Search with
+             IES Lens' (keep larger size); link to Lens null page" — the size the
+             Lighting Library logo had here (9/23/26 DO#1). The centred hero
+             logo is gone; this is now the only one on the page. -->
+        <img id="wordmark" src="/assets/ies-lens-logo.png" alt="Search with IES Lens"
+             class="h-[72px] sm:h-[84px] w-auto" width="790" height="346" />
       </a>
       <nav class="flex items-center gap-1 text-sm">
 
@@ -316,7 +313,7 @@
             <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8">
               <path stroke-linecap="round" stroke-linejoin="round" d="M12 6.5c-2.2-1.5-4.8-1.5-7.5-.7v12c2.7-.8 5.3-.8 7.5.7 2.2-1.5 4.8-1.5 7.5-.7v-12c-2.7-.8-5.3-.8-7.5.7zm0 0v12"/>
             </svg>
-            <span class="font-medium">Library Tools</span>
+            <span class="font-medium">Lighting Library Tools</span>
             <svg class="w-3 h-3 opacity-80" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3">
               <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/>
             </svg>
@@ -346,6 +343,22 @@
               </svg>
               List Standards
             </a>
+            <!-- 10/02/26 #1 + 9/29/26 DO#4: Tutorials and FAQ in every tools menu.
+                 Both open the tutorials page until IES hosts its own. -->
+            <a href="/tutorials" target="_blank" rel="noopener" class="menu-item border-t border-gray-100"
+               title="Video tutorials for the IES Lighting Library and IES Lens">
+              <svg class="w-4 h-4 text-gray-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M15 10l4.55-2.28A1 1 0 0121 8.62v6.76a1 1 0 01-1.45.9L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"/>
+              </svg>
+              Tutorials
+            </a>
+            <a href="/tutorials#faq" target="_blank" rel="noopener" class="menu-item"
+               title="Frequently asked questions">
+              <svg class="w-4 h-4 text-gray-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M8.2 9a4 4 0 017.6 1.5c0 2-3 2.75-3 4.5M12 18h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+              </svg>
+              FAQ
+            </a>
           </div>
         </div>
 
@@ -365,13 +378,20 @@
           </button>
           <div id="account-menu"
                class="hidden absolute right-0 top-[calc(100%+8px)] w-72 bg-white text-ink rounded-xl shadow-xl border border-gray-200 py-1 z-50 text-left">
+            <!-- Profile menu, harmonized across IES Lens, My Bookmarks and List
+                 Standards (client 9/29/26 DO#4): email · subscription (with its
+                 end date) · Subscribe · AI Guide · preferred units · My
+                 Bookmarks · Share feedback · Sign out. -->
             <p id="menu-email" class="px-4 py-2.5 text-sm font-medium text-gray-700 border-b border-gray-100 truncate">Signed in</p>
             <!-- The subscription product (client DO111) — set by applyTier. -->
             <div class="menu-item cursor-default" title="Your access tier">
               <svg class="w-4 h-4 text-gray-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                 <path stroke-linecap="round" stroke-linejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/>
               </svg>
-              <span id="menu-tier-label" class="font-bold">Lighting Library</span>
+              <span class="min-w-0">
+                <span id="menu-tier-label" class="font-bold">Lighting Library</span>
+                <span id="menu-sub-until" class="hidden block text-[11px] text-gray-500"></span>
+              </span>
             </div>
             <!-- The AI Guide toggle lives here now (wireframe: "Toggles AI Guide
                  'on' or 'off' for user account"). Still data-filter="guide": the
@@ -384,6 +404,19 @@
                 <path stroke-linecap="round" stroke-linejoin="round" d="M15.5 8.5l-2 5-5 2 2-5 5-2z"/>
               </svg>
               <span id="menu-guide-label">Disable AI Guide</span><span class="lock-label"></span>
+              <!-- The state, not just the action (9/29/26 DO#4: "something to
+                   indicate toggled on"): a switch, filled while the Guide is on. -->
+              <span id="menu-guide-switch" class="ml-auto relative inline-block w-8 h-[18px] rounded-full shrink-0 transition" style="background-color: #FFAA00;">
+                <span class="absolute top-[3px] left-[3px] w-3 h-3 rounded-full bg-white shadow transition" style="transform: translateX(14px);"></span>
+              </span>
+            </button>
+            <!-- Preferred units (client DO091). Saved to the account. -->
+            <button id="menu-units" onclick="togglePreferredUnits()" class="menu-item"
+                    title="Choose which units illuminance values show first">
+              <svg class="w-4 h-4 text-gray-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M4 7h16M4 12h10M4 17h6M17 14l3 3-3 3"/>
+              </svg>
+              <span id="menu-units-label">Preferred units: <strong>SI</strong> (lux / m)</span>
             </button>
             <a href="/bookmarks" id="nav-projects" class="menu-item"
                title="Your bookmark collections">
@@ -398,6 +431,15 @@
                 <path stroke-linecap="round" stroke-linejoin="round" d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.3 4.6a1 1 0 00.9 1.4H19M9 21a1 1 0 100-2 1 1 0 000 2zm8 0a1 1 0 100-2 1 1 0 000 2z"/>
               </svg>
               Subscribe
+            </a>
+            <!-- 9/29/26 DO#3: "Share feedback" — the IES contact form, which has
+                 a "The Lighting Library" department. -->
+            <a href="https://ies.org/contact-us/" target="_blank" rel="noopener" class="menu-item"
+               title="Send feedback about the IES Lighting Library and IES Lens">
+              <svg class="w-4 h-4 text-gray-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M8 10h8M8 14h5M21 12a8.5 8.5 0 01-12.6 7.4L3 21l1.6-5.4A8.5 8.5 0 1121 12z"/>
+              </svg>
+              Share feedback
             </a>
             <a href="/logout" id="menu-signout" class="menu-item border-t border-gray-100 text-gray-500">
               <svg class="w-4 h-4 text-gray-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
@@ -422,10 +464,10 @@
            mark is gone with the tier branding it carried ("Only 1 logo — no more
            LensyLite"); a non-subscriber now sees the same product, with fewer
            tools unlocked. -->
-      <div id="hero-logo" class="mx-auto mb-8 flex items-center justify-center">
-        <img id="wordmark" src="/assets/ies-lens-logo.png" alt="Search with IES Lens"
-             class="h-24 sm:h-28 w-auto" width="790" height="346" />
-      </div>
+      <!-- 9/30/26 DO#6: "the one centered above search bar goes away" — the IES
+           Lens logo moved to the banner's top left. The empty element stays
+           because the post-search layout code still addresses it. -->
+      <div id="hero-logo" class="hidden"></div>
 
       <div class="relative text-left">
         <div id="hero-search-box" class="border-2 border-gray-300 rounded-2xl bg-white p-1.5 flex items-center gap-2 search-glow transition">
@@ -667,6 +709,7 @@
                 <path stroke-linecap="round" stroke-linejoin="round" d="M12 6.25c-2.4-1.6-5.2-1.6-8-.75v13c2.8-.85 5.6-.85 8 .75 2.4-1.6 5.2-1.6 8-.75v-13c-2.8-.85-5.6-.85-8 .75zm0 0v13"/>
               </svg>
               <span class="font-semibold">Document Body</span>
+              <button type="button" class="doc-only-btn no-print text-[11px] font-semibold text-ies-blue hover:underline px-1 shrink-0" data-content-only="body" title="Show only document passages">Only</button>
               <span class="side-count ml-auto" data-count-for="body"></span>
             </label>
             <label class="side-check">
@@ -674,6 +717,7 @@
                      title="Search within ANSI/IES LS-1 Definitions"/>
               <span class="w-4 mt-0.5 shrink-0 font-mono text-[9px] font-bold text-gray-400 leading-4 text-center">A-Z</span>
               <span class="font-semibold">Definitions <span class="font-normal text-gray-400">(ANSI/IES LS-1)</span></span>
+              <button type="button" class="doc-only-btn no-print text-[11px] font-semibold text-ies-blue hover:underline px-1 shrink-0" data-content-only="definitions" title="Show only definitions">Only</button>
               <span class="side-count ml-auto" data-count-for="definitions"></span>
             </label>
             <label class="side-check">
@@ -681,6 +725,7 @@
                      title="Search within the References sections of the standards"/>
               <span class="w-4 mt-0.5 shrink-0 font-mono text-[9px] font-bold text-gray-400 leading-4 text-center">T¹</span>
               <span class="font-semibold">References</span>
+              <button type="button" class="doc-only-btn no-print text-[11px] font-semibold text-ies-blue hover:underline px-1 shrink-0" data-content-only="references" title="Show only references">Only</button>
               <span class="side-count ml-auto" data-count-for="references"></span>
             </label>
             <label class="side-check">
@@ -690,18 +735,21 @@
                 <path stroke-linecap="round" stroke-linejoin="round" d="M12 3v1.5m0 15V21m9-9h-1.5m-15 0H3m14.7-5.7l-1 1m-9.4 9.4l-1 1m11.4 0l-1-1M7.3 6.3l-1-1M12 8a4 4 0 100 8 4 4 0 000-8z"/>
               </svg>
               <span class="font-semibold">Illuminance Tables<span class="lock-label"></span></span>
+              <button type="button" class="doc-only-btn no-print text-[11px] font-semibold text-ies-blue hover:underline px-1 shrink-0" data-content-only="tables" title="Show only illuminance tables">Only</button>
               <span class="side-count ml-auto" data-count-for="tables"></span>
             </label>
             <div class="pl-10 space-y-0.5">
               <label class="side-check">
                 <input type="checkbox" data-loc="interior" checked class="mt-0.5 rounded accent-ies-blue shrink-0"/>
                 <span>Interior</span>
-                <span class="side-count ml-auto" data-count-for="interior"></span>
+                <button type="button" class="doc-only-btn no-print text-[11px] font-semibold text-ies-blue hover:underline px-1 shrink-0" data-content-only="interior" title="Show only interior illuminance tables">Only</button>
+              <span class="side-count ml-auto" data-count-for="interior"></span>
               </label>
               <label class="side-check">
                 <input type="checkbox" data-loc="exterior" checked class="mt-0.5 rounded accent-ies-blue shrink-0"/>
                 <span>Exterior</span>
-                <span class="side-count ml-auto" data-count-for="exterior"></span>
+                <button type="button" class="doc-only-btn no-print text-[11px] font-semibold text-ies-blue hover:underline px-1 shrink-0" data-content-only="exterior" title="Show only exterior illuminance tables">Only</button>
+              <span class="side-count ml-auto" data-count-for="exterior"></span>
               </label>
             </div>
           </div>
@@ -1019,7 +1067,7 @@
     <p class="mt-1 text-gray-600">
       <a href="https://www.ies.org" class="hover:underline">Illuminating Engineering Society</a>
       <span class="mx-1.5">·</span>
-      <a href="mailto:Standards@ies.org" class="underline underline-offset-2 hover:text-ink">Standards@ies.org</a>
+      <a href="https://ies.org/contact-us/" target="_blank" rel="noopener" class="underline underline-offset-2 hover:text-ink">Technical support</a>
     </p>
     <p class="mt-3 text-gray-500">Always refer to the full IES Standards for authoritative guidance</p>
   </footer>
@@ -1395,7 +1443,8 @@
     // ies.org, swap the URL — nothing else references it.
     const WELCOME_LINKS = [
       { label: "See What's New", url: null },
-      { label: 'Video Overview', url: null },
+      // 10/05: the client's draft overview ("Overview: draft at …").
+      { label: 'Video Overview', url: 'https://www.loom.com/share/7fc113be55b04f3588d0f549809c3028' },
       { label: 'Tutorials',      url: '/tutorials' },
     ];
     const WELCOME_SESSION_KEY = 'lensy.welcome.shownThisSession';
@@ -1463,6 +1512,9 @@
     // shared cache, so a subscriber never sees either.
     const SEARCH_CAP_WARN_REMAINING = 5;
     const SUBSCRIBE_URL = 'https://store.ies.org/ies/subscriptions/';
+    // Client 9/30/26 DO#4: technical support is the IES contact form (it has a
+    // "The Lighting Library" department), never "contact Standards@ies.org".
+    const SUPPORT_FORM_URL = 'https://ies.org/contact-us/';
 
     function setSearchCapBanner(cap) {
       const banner = document.getElementById('search-cap-banner');
@@ -1495,6 +1547,7 @@
       if (e.detail && e.detail.tier) applyTier(e.detail.tier);
       const who = e.detail && (e.detail.email || e.detail.name);
       if (who) document.getElementById('menu-email').textContent = who;
+      paintSubscriptionUntil(e.detail && e.detail.subscriptionExpiresAt);
       const chipLink = document.querySelector('#lensy-user-chip a');
       if (chipLink && chipLink.getAttribute) {
         const href = chipLink.getAttribute('href');
@@ -1570,6 +1623,8 @@
       // AI Guide (or) Enable AI Guide").
       const guideLabel = document.getElementById('menu-guide-label');
       if (guideLabel) guideLabel.textContent = filterState.guide ? 'Disable AI Guide' : 'Enable AI Guide';
+      paintGuideSwitch(document.getElementById('menu-guide-switch'), !!filterState.guide);
+      paintUnitsToggle();
 
       // Non-Subscriber: the tools a subscription unlocks stay visible, locked
       // (client DO53). Applied LAST so nothing above can re-enable them, and the
@@ -1679,12 +1734,65 @@
       LensyAPI.savePreferences({ ai_guide: !!value });
     }
 
+    // ── Preferred units (client DO091) ───────────────────────────────────────
+    // "Add feature in user profile drop-down to toggle primary units in
+    //  illuminance table results … This should save to their account until
+    //  changed again. Default should remain SI (lux/meters)." Display only: the
+    //  cards always carry both units, so switching re-renders, never re-searches.
+    const UNITS_PREF_KEY = 'lensy.pref.units';
+    // `var`, not `let`: renderFilterPills paints this toggle and may run before
+    // this line during start-up, where a `let` would throw (temporal dead zone).
+    var preferredUnits = (() => {
+      try { return localStorage.getItem(UNITS_PREF_KEY) === 'uscs' ? 'uscs' : 'si'; } catch { return 'si'; }
+    })();
+
+    function paintUnitsToggle() {
+      const label = document.getElementById('menu-units-label');
+      if (label) label.innerHTML = preferredUnits === 'uscs'
+        ? 'Preferred units: <strong>USCS</strong> (fc / ft)'
+        : 'Preferred units: <strong>SI</strong> (lux / m)';
+    }
+
+    function setPreferredUnits(value, { save = true } = {}) {
+      preferredUnits = value === 'uscs' ? 'uscs' : 'si';
+      try { localStorage.setItem(UNITS_PREF_KEY, preferredUnits); } catch { /* private mode */ }
+      if (save) LensyAPI.savePreferences({ units: preferredUnits });
+      paintUnitsToggle();
+      if (Array.isArray(allResults) && allResults.length > 0) renderResultsPage();
+    }
+
+    /** The on/off switch beside "Enable/Disable AI Guide" (9/29/26 DO#4). */
+    function paintGuideSwitch(el, on) {
+      if (!el || !el.style) return;
+      el.style.backgroundColor = on ? '#FFAA00' : '#D1D5DB';
+      const knob = el.firstElementChild;
+      if (knob && knob.style) knob.style.transform = on ? 'translateX(14px)' : 'translateX(0)';
+    }
+
+    /** "Subscribed until Oct 31, 2027" under the tier (9/29/26 DO#4). */
+    function paintSubscriptionUntil(iso) {
+      const el = document.getElementById('menu-sub-until');
+      if (!el) return;
+      const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(iso || ''));
+      if (!m || isLite()) { el.classList.add('hidden'); el.textContent = ''; return; }
+      const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+      el.textContent = `Subscribed until ${months[Number(m[2]) - 1]} ${Number(m[3])}, ${m[1]}`;
+      el.classList.remove('hidden');
+    }
+
+    function togglePreferredUnits() {
+      setPreferredUnits(preferredUnits === 'uscs' ? 'si' : 'uscs');
+    }
+
     async function loadPreferences() {
       try {
         const prefs = await LensyAPI.getPreferences();
         if (typeof prefs.ai_guide === 'boolean') {
           applyGuidePreference(prefs.ai_guide);
           try { localStorage.setItem(GUIDE_PREF_KEY, String(prefs.ai_guide)); } catch { /* ignore */ }
+        }
+        if (prefs.units === 'si' || prefs.units === 'uscs') {
+          if (prefs.units !== preferredUnits) setPreferredUnits(prefs.units, { save: false });
         }
         // A subscriber's welcome allowance lives on the account (DO999), so the
         // window cannot be decided until this answers. An account that has never
@@ -1794,6 +1902,8 @@
       if (!only) return;
       e.preventDefault();
       e.stopPropagation();
+      // Contents rows carry data-content-only (client 9/30/26 DO#8).
+      if (only.dataset.contentOnly) { setOnlyContentKind(only.dataset.contentOnly); return; }
       setOnlyDocFilter(only.dataset.docOnly, only.dataset.onlyValue);
     });
 
@@ -2158,10 +2268,11 @@
       // narrows the group to that single entry, instead of unselect-all plus
       // one re-tick. A <button> inside the <label> would toggle the checkbox
       // too, so the handler preventDefaults (see the delegated click below).
-      const onlyBtn = (group === 'title' || group === 'committee')
+      // Publication Type joined Title and Committee (client 9/30/26 DO#8).
+      const onlyBtn = (group === 'title' || group === 'committee' || group === 'pubtype')
         ? (i) => `<button type="button" class="doc-only-btn no-print text-[11px] font-semibold text-ies-blue hover:underline px-1 shrink-0"
                    data-doc-only="${group}" data-only-value="${escapeHtml(i.value)}"
-                   title="Show only this ${group === 'title' ? 'document' : 'committee'}">Only</button>`
+                   title="Show only this ${group === 'title' ? 'document' : group === 'pubtype' ? 'publication type' : 'committee'}">Only</button>`
         : () => '';
       return items.map(i => `
         <label class="side-check">
@@ -2216,6 +2327,26 @@
       if (!DOC_FILTER_GROUPS.includes(group)) return;
       docFilterSelected[group] = new Set(on ? docFilterUniverse[group].map(i => i.value) : []);
       renderDocFilterLists(group);
+    }
+
+    /**
+     * "Only" on a Contents row (client 9/30/26 DO#8: "Incorporate the 'only'
+     * selection filter … into 'Contents' and 'Documents' also"). Interior and
+     * Exterior are children of Illuminance Tables, so 'Only Interior' is the
+     * tables kind narrowed to that location. A kind locked for the tier is left
+     * off whatever is pressed.
+     */
+    function setOnlyContentKind(kind) {
+      const location = kind === 'interior' || kind === 'exterior';
+      for (const name of CONTENT_PILLS) {
+        if (lockedForTier(name)) continue;
+        filterState[name] = location ? name === 'tables' : name === kind;
+      }
+      if (!lockedForTier('tables')) {
+        filterState.interior = kind === 'tables' || kind === 'interior';
+        filterState.exterior = kind === 'tables' || kind === 'exterior';
+      }
+      renderFilterPills();
     }
 
     /** "Only" (client DO103): the group narrows to exactly this entry. */
@@ -2977,7 +3108,7 @@
       if (supersessionBanner) {
         const notices = Array.isArray(data.supersessionNotices) ? data.supersessionNotices.filter(Boolean) : [];
         document.getElementById('supersession-banner-text').innerHTML =
-          notices.map(n => `<p>${linkifyStandards(escapeHtml(n))}</p>`).join('');
+          notices.map(n => `<p>${noticeLinks(linkifyStandards(escapeHtml(n)))}</p>`).join('');
         supersessionBanner.classList.toggle('hidden', notices.length === 0);
       }
 
@@ -3001,6 +3132,15 @@
       if (!allResults.length) {
         document.getElementById('results-heading').textContent = 'Results';
         document.getElementById('results-list').innerHTML = '';
+        // A question about IES Lens itself is answered by the Guide card alone
+        // (client 9/30/26 DO#3) — "No results found" under it would read as a
+        // failure. Same for a bare Handbook search, whose notice is the answer.
+        if (data.productAnswer || data.aiGuideSuppressed === 'handbook') {
+          renderNoResultsGuidance(null);
+          document.getElementById('no-results').classList.add('hidden');
+          document.getElementById('results-heading').textContent = '';
+          return;
+        }
         renderNoResultsGuidance(data.noResultsGuidance);
         document.getElementById('no-results').classList.remove('hidden');
         return;
@@ -3054,7 +3194,7 @@
 
       const button = (s, i) => {
         if (s.action === 'contact') {
-          return `<a href="mailto:Standards@ies.org"
+          return `<a href="${SUPPORT_FORM_URL}" target="_blank" rel="noopener"
                      class="text-sm px-3 py-1.5 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 transition">
                     ${escapeHtml(s.label)}
                   </a>`;
@@ -3313,7 +3453,22 @@
 
       const groups = [];
       const bySection = new Map();
+      const byVariant = new Map();
       for (const r of results) {
+        // Rows of one application that differ only by Class of Play or Lighting
+        // Zone join ONE card, wherever they rank (client 9/30/26 DO#11: "a lot
+        // of scrolling … when someone searches for an application with listings
+        // for multiple Lighting Zones or Classes of Play … Could 'Class
+        // I/II/III/IV/V' be clickable tabs?"). The card renders them as tabs.
+        const variantKey = isAppRow(r) && variantLabelOf(r) ? variantGroupKey(r) : null;
+        if (variantKey) {
+          const existing = byVariant.get(variantKey);
+          if (existing) { existing.members.push(r); continue; }
+          const group = { key: keyOf(r), variantKey, members: [r] };
+          byVariant.set(variantKey, group);
+          groups.push(group);
+          continue;
+        }
         const sectionKey = sectionKeyOf(r);
         if (sectionKey) {
           const existing = bySection.get(sectionKey);
@@ -3326,7 +3481,7 @@
 
         const key = keyOf(r);
         const last = groups[groups.length - 1];
-        if (last && last.key === key && isAppRow(r) && isAppRow(last.members[0])) {
+        if (last && !last.variantKey && last.key === key && isAppRow(r) && isAppRow(last.members[0])) {
           last.members.push(r);
         } else {
           groups.push({ key, members: [r] });
@@ -3334,6 +3489,106 @@
       }
       return groups;
     }
+
+    // ── Class of Play / Lighting Zone variants (client 9/30/26 DO#11) ────────
+    // A hierarchy level that names the variant itself ("Class I", "LZ3",
+    // "Lighting Zone 2") is the one thing that differs between the rows of a
+    // variant group, so it is dropped from the group key and from the tab's
+    // own breadcrumb — the tab label says it instead.
+    const VARIANT_CRUMB_RE = /^(?:class\s+(?:of\s+play\s+)?[ivx]+|l\s*z\s*[0-4]\b.*|lighting\s+zone\s+[0-4]\b.*)$/i;
+
+    /**
+     * The tab label: the variant LEVEL as the table prints it — "Class II",
+     * "LZ3 (and LZ4 curfew)", "LZ1 curfew" — so two rows of one zone that
+     * differ by curfew stay distinguishable. Falls back to the class/zone
+     * columns when no level names it. Null for a row with no variant.
+     */
+    function variantLabelOf(r) {
+      const a = (r && r.application) || {};
+      if (!a.classOfPlay && !(a.outdoor && a.outdoor.lightingZone)) return null;
+      const level = [a.sub1, a.sub2, a.sub3, a.sub4, a.sub5, a.sub6]
+        .find(t => t && VARIANT_CRUMB_RE.test(String(t).trim()));
+      if (level) return String(level).trim().replace(/\bl\s*z\s*([0-4])\b/gi, 'LZ$1');
+      if (a.classOfPlay) return `Class ${a.classOfPlay}`;
+      return String(a.outdoor.lightingZone);
+    }
+
+    function variantCrumbs(a) {
+      return [a.sub1, a.sub2, a.sub3, a.sub4, a.sub5, a.sub6]
+        .filter(Boolean)
+        .filter(t => !VARIANT_CRUMB_RE.test(String(t).trim()));
+    }
+
+    function variantGroupKey(r) {
+      const a = r.application || {};
+      const kind = a.classOfPlay ? 'class' : 'zone';
+      return `variant|${kind}|${a.standard || ''}|${a.subCategory || ''}|${a.category || ''}|${variantCrumbs(a).join('›')}`;
+    }
+
+    /** Sort key for a tab: Class I < II < … and LZ0 < LZ1 < …. */
+    function variantOrder(label) {
+      const roman = { I: 1, II: 2, III: 3, IV: 4, V: 5, VI: 6 };
+      const cls = /^Class\s+([IVX]+)/i.exec(label);
+      if (cls) return roman[cls[1].toUpperCase()] || 9;
+      const z = /(\d)/.exec(label);
+      return z ? Number(z[1]) : 9;
+    }
+
+    /**
+     * The tabbed body of a variant card: one tab per Class / Zone, the first
+     * open. Panels are all in the DOM (print, copy guard and the save flow see
+     * every row); the tab only toggles which one is visible.
+     */
+    function variantTabsHtml(members, prefixLen, appName, crumbSep, seenExcerpts, crumbsOf) {
+      const byLabel = new Map();
+      for (const m of members) {
+        const label = variantLabelOf(m) || 'Other';
+        if (!byLabel.has(label)) byLabel.set(label, []);
+        byLabel.get(label).push(m);
+      }
+      const labels = [...byLabel.keys()].sort((a, b) => variantOrder(a) - variantOrder(b) || a.localeCompare(b));
+      const tabs = labels.map((label, i) => `
+        <button type="button" class="variant-tab text-xs font-semibold px-2.5 py-1 rounded-md border transition"
+                data-variant-tab="${i}" aria-selected="${i === 0 ? 'true' : 'false'}"
+                style="${i === 0 ? 'background-color:#30363D;color:#fff;border-color:#30363D' : 'background-color:#fff;color:#30363D;border-color:#D1D5DB'}">
+          ${escapeHtml(label)}
+        </button>`).join('');
+      const panels = labels.map((label, i) => `
+        <div class="variant-panel ${i === 0 ? '' : 'hidden'}" data-variant-panel="${i}">
+          ${byLabel.get(label).map((m, j) => {
+            const tail = crumbsOf(m.application || {})
+              .filter(c => !VARIANT_CRUMB_RE.test(String(c.text).trim()))
+              .slice(prefixLen);
+            return renderMemberSection(m, tail, j, appName, crumbSep, seenExcerpts);
+          }).join('')}
+        </div>`).join('');
+      return `
+        <div class="flex flex-wrap items-center gap-1.5 mt-2 pl-[26px] no-print" role="tablist"
+             aria-label="${escapeHtml(members[0]?.application?.classOfPlay ? 'Class of Play' : 'Lighting Zone')}">
+          ${tabs}
+        </div>
+        ${panels}`;
+    }
+
+    // One click handler for every variant card on the page (card markup stays
+    // free of inline handlers).
+    document.addEventListener('click', e => {
+      const tab = e.target.closest ? e.target.closest('.variant-tab') : null;
+      if (!tab) return;
+      const card = tab.closest('article');
+      if (!card) return;
+      const n = tab.dataset.variantTab;
+      for (const t of card.querySelectorAll('.variant-tab')) {
+        const on = t.dataset.variantTab === n;
+        t.setAttribute('aria-selected', on ? 'true' : 'false');
+        t.style.backgroundColor = on ? '#30363D' : '#fff';
+        t.style.color = on ? '#fff' : '#30363D';
+        t.style.borderColor = on ? '#30363D' : '#D1D5DB';
+      }
+      for (const p of card.querySelectorAll('.variant-panel')) {
+        p.classList.toggle('hidden', p.dataset.variantPanel !== n);
+      }
+    });
 
     // Every passage of one CHAPTER becomes ONE Document card whose "From the
     // Standard" list holds them all (client DO40, restructured by DO73).
@@ -3489,7 +3744,14 @@
       // Structured rendering (headings, bullets) with the standards the AI
       // names hyperlinked to the Lighting Library (client DO24).
       const textEl = document.getElementById('ai-summary-text');
-      aiCurrentStandard = null;   // the running locator context starts fresh
+      // The running locator context starts fresh — or, on a version comparison,
+      // at the CURRENT edition: its bullets open on a bare section number and
+      // rarely repeat the designation (client 9/29/26 DO#1). "Possible
+      // deletions" switches it to the prior edition (see linkifyLocators).
+      aiCurrentStandard = summary.comparison?.current?.id
+        ? sectionLinkKeyFor(summary.comparison.current.id) : null;
+      aiPriorStandard = summary.comparison?.deprecated?.[0]?.id
+        ? sectionLinkKeyFor(summary.comparison.deprecated[0].id) : null;
       // sciNotate LAST (client DO070): it only touches text between tags, so
       // the links renderAIText built are untouched and "Rf" reads R-sub-f.
       textEl.innerHTML = sciNotate(renderAIText(summary.text || ''));
@@ -3512,6 +3774,9 @@
       const current = comparison.current;
       const deprecated = Array.isArray(comparison.deprecated) ? comparison.deprecated : [];
       const older = Array.isArray(comparison.alsoDeprecated) ? comparison.alsoDeprecated : [];
+      // Other standards merged into the current edition (client 10/01/26 #1):
+      // RP-43-25 replaced RP-43-22 and LP-2-20 and LP-11-20.
+      const merged = Array.isArray(comparison.mergedFrom) ? comparison.mergedFrom : [];
       if (!current && deprecated.length === 0) return '';
 
       // Every other printing is this same edition reaffirmed (client DO083):
@@ -3535,8 +3800,13 @@
 
       const parts = ['If you need a verified comparison, please perform a manual review of both documents.'];
       if (deprecated.length > 0 && current) {
-        parts.push(`${deprecated.map(d => link(d)).join(', ')} ${deprecated.length > 1 ? 'are' : 'is'} deprecated and ${deprecated.length > 1 ? 'have' : 'has'} been replaced by the current ${link(current, true)}.`);
-        parts.push(`This comparison is between those two editions only.`);
+        const replaced = [...deprecated, ...merged];
+        const names = replaced.map(d => link(d));
+        const list = names.length > 1 ? `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}` : names[0];
+        parts.push(`${list} ${replaced.length > 1 ? 'have' : 'has'} been replaced by ${link(current, true)}, and for the most accurate and up-to-date information, readers should consult the current edition.`);
+        parts.push(merged.length > 0
+          ? `This comparison is between ${link(current, true)} and ${link(deprecated[0])} only.`
+          : `This comparison is between those two editions only.`);
       } else if (current) {
         parts.push(`${link(current, true)} is the current edition; only it is recommended for further reading.`);
       }
@@ -3768,6 +4038,8 @@
     // Fail-closed: a locator with no retrieved page stays plain text, exactly
     // like a designation that is not in the link map.
     let aiCurrentStandard = null;
+    // The prior edition of a comparison: the context for "Possible deletions".
+    let aiPriorStandard = null;
 
     // The designation tail has to admit the edition and errata suffixes the
     // corpus actually uses — "RP-8-25+E2", "LM-63-19R25" — while stopping short
@@ -3781,30 +4053,81 @@
     // exclude a following digit, or a dot that a digit follows.
     const LOCATOR_SCAN_RE = new RegExp(
       '(?<![\\w-])((?:ANSI|BSR|IES)?(?:\\/[A-Z]+)*\\s*(?:RP|LP|LS|LEM|LM|TM|DG|HB|WP|G)-\\d+(?:[\\w.+-]*[\\w+])?)(?![\\w-])'
-      + '|(§\\s*|Section\\s+)(\\d+(?:\\.\\d+)*)(?!\\d|\\.\\d)'
+      + '|(§\\s*|Section\\s+|Chapter\\s+|Ch\\.\\s*)(\\d+(?:\\.\\d+)*)(?!\\d|\\.\\d)'
       + '|(p\\.\\s*|pp\\.\\s*|page\\s+)(\\d{1,4})(?!\\d)',
       'gi',
     );
 
     function linkifyLocators(segment) {
       if (!sectionLinks || Object.keys(sectionLinks).length === 0) return segment;
+      // A deletion is a finding about the PRIOR edition's pages.
+      if (aiPriorStandard && /^\s*possible deletions\b/i.test(segment)) aiCurrentStandard = aiPriorStandard;
+      // A comparison bullet opens with its bare section number, bolded:
+      // "<strong>8.7.2.4 Color – Hue and Saturation</strong>" — the text node
+      // STARTS with the number (client 9/29/26 DO#1: "hyperlink to referenced
+      // chapters"). Linked here, before the prefixed forms.
+      const lead = /^(\s*)(\d{1,2}(?:\.\d+)+)(?=\s+[A-Z(])/.exec(segment);
+      if (lead) {
+        const url = locatorUrl(lead[2], null);
+        if (url) {
+          return `${lead[1]}${locatorAnchor(url, lead[2], `section ${lead[2]}`)}`
+            + linkifyLocatorTail(segment.slice(lead[0].length));
+        }
+      }
+      return linkifyLocatorTail(segment);
+    }
+
+    function linkifyLocatorTail(segment) {
       return segment.replace(LOCATOR_SCAN_RE, (match, designation, secPrefix, section, pagePrefix, page) => {
         if (designation) {
           const key = sectionLinkKeyFor(designation);
           if (key) aiCurrentStandard = key;
           return match;   // linkifyStandards handles designations
         }
-        const entry = aiCurrentStandard ? sectionLinks[aiCurrentStandard] : null;
-        if (!entry) return match;
-
-        const url = section ? entry.sections?.[section] : entry.pages?.[page];
+        const url = locatorUrl(section, page);
         if (!url) return match;
         const label = section ? `${secPrefix}${section}` : `${pagePrefix}${page}`;
         const what = section ? `section ${section}` : `page ${page}`;
-        return `<a href="${escapeHtml(url)}" target="_blank" rel="noopener"
+        return locatorAnchor(url, label, what);
+      });
+    }
+
+    /**
+     * The Library URL for a section or page of the standard in context. A
+     * section is tried as printed and with/without a trailing ".0" ("Chapter
+     * 6.0" vs the outline's "6"); a page the retrieval never reached still
+     * links, since any page of a document is its front link plus #page=N.
+     */
+    function locatorUrl(section, page) {
+      if (!aiCurrentStandard) return null;
+      const entry = sectionLinks[aiCurrentStandard] || null;
+      if (section) {
+        const s = String(section);
+        return entry?.sections?.[s] || entry?.sections?.[s.replace(/\.0$/, '')]
+          || entry?.sections?.[`${s}.0`] || null;
+      }
+      if (page) {
+        if (entry?.pages?.[page]) return entry.pages[page];
+        const front = standardLinks[aiCurrentStandard];
+        return front ? `${String(front).replace(/#.*$/, '')}#page=${page}` : null;
+      }
+      return null;
+    }
+
+    function locatorAnchor(url, label, what) {
+      return `<a href="${escapeHtml(url)}" target="_blank" rel="noopener"
           class="text-ies-blue hover:underline"
           title="Open ${escapeHtml(what)} of ${escapeHtml(aiCurrentStandard)} in the IES Lighting Library">${label}</a>`;
-      });
+    }
+
+    /**
+     * `[label](https://…)` in an ESCAPED server notice → a link. Only https URLs
+     * are honoured, and the notices are fixed server strings (the Handbook
+     * notice's historical-reference link, client 9/30/26 DO#1).
+     */
+    function noticeLinks(escaped) {
+      return String(escaped).replace(/\[([^\]]{1,60})\]\((https:\/\/[^\s)"<>]+)\)/g,
+        (m, label, url) => `<a href="${url}" target="_blank" rel="noopener" class="underline font-semibold hover:no-underline">${label}</a>`);
     }
 
     /** Which sectionLinks key a designation in the prose refers to, if any. */
@@ -4045,7 +4368,14 @@
         [a.sub1, 'App_s1'], [a.sub2, 'App_s2'], [a.sub3, 'App_s3'],
         [a.sub4, 'App_s4'], [a.sub5, 'App_s5'], [a.sub6, 'App_s6'],
       ].filter(([v]) => v).map(([text, col]) => ({ text, col }));
-      const memberCrumbs = members.map(m => crumbsOf(m.application || {}));
+      // A Class / Zone variant card (9/30/26 DO#11) compares its rows WITHOUT
+      // the variant level, so the shared breadcrumb is the application itself.
+      const variantCard = isGrouped && !!group.variantKey
+        && new Set(members.map(variantLabelOf)).size > 1;
+      const memberCrumbs = members.map(m => {
+        const crumbs = crumbsOf(m.application || {});
+        return variantCard ? crumbs.filter(c => !VARIANT_CRUMB_RE.test(String(c.text).trim())) : crumbs;
+      });
       let prefixLen = memberCrumbs[0].length;
       if (isGrouped) {
         for (const crumbs of memberCrumbs) {
@@ -4132,9 +4462,11 @@
             ${breadcrumb ? `<span class="text-sm text-gray-600 font-medium">${breadcrumb}</span>` : ''}
           </div>
           ${committeeHtml(primary).replace('pl-[26px]', '')}
-          ${members.map((m, i) =>
-            renderMemberSection(m, crumbsOf(m.application || {}).slice(prefixLen), i, appName, crumbSep, seenExcerpts)
-          ).join('')}
+          ${variantCard
+            ? variantTabsHtml(members, prefixLen, appName, crumbSep, seenExcerpts, crumbsOf)
+            : members.map((m, i) =>
+                renderMemberSection(m, crumbsOf(m.application || {}).slice(prefixLen), i, appName, crumbSep, seenExcerpts)
+              ).join('')}
           <div class="pl-[26px]">
             ${buildNotesBlock(collectNoteLines(members.map(m => m.application || {})))}
           </div>
@@ -4342,7 +4674,7 @@
       const buy = doc.buyUrl ? `
         <a href="${escapeHtml(doc.buyUrl)}" target="_blank" rel="noopener"
            title="Add the 3-year lease of this standard to your IES webstore cart"
-           class="text-xs px-2.5 py-1 border border-gray-200 rounded-lg text-gray-600 hover:bg-gray-50 transition font-medium">Add to Cart</a>` : '';
+           class="text-xs px-2.5 py-1 border border-gray-200 rounded-lg text-gray-600 hover:bg-gray-50 transition font-medium">Lease Standard</a>` : '';
 
       return `
         <article class="result-card copy-guard bg-white rounded-xl border border-gray-100 shadow-sm p-3 relative overflow-hidden"
@@ -4634,6 +4966,51 @@
           </button>`;
     }
 
+    /**
+     * A bookmark for ONE passage inside "From the Standard" (client 10/01/26
+     * #2: "Allow each individual excerpt to be 'bookmarked'"). It rides the
+     * card's own save flow — the same .save-search-btn class, modal and
+     * "Bookmark Again" state — with a Document payload for that passage: the
+     * citation with its section, the passage's page and its page-targeted
+     * Library link. Like every saved item it holds no passage text (DO37).
+     */
+    function passageBookmarkButton(result, e) {
+      if (!e || result.isDeprecated || !SAVEABLE_RESULT_TYPES[result.resultType]) return '';
+      if (e.pageNumber == null && !e.vitriumLink) return '';
+      const app = result.application || {};
+      const base = result.citationName || result.citation || saveDisplayName(result);
+      const where = [e.section ? `Section ${e.section}${e.sectionTitle ? ` ${e.sectionTitle}` : ''}` : '',
+        e.pageNumber != null ? `p. ${e.pageNumber}` : ''].filter(Boolean).join(', ');
+      const name = where ? `${base}, ${where}` : base;
+      const payload = {
+        result_type: 'body',
+        standard_id: app.standard || null,
+        resource_title: name,
+        page_number: e.pageNumber ?? null,
+        library_url: e.vitriumLink || result.vitriumLink || result.standardLink || null,
+        application_code: null,
+        application_name: null,
+        reference_text: null,
+        definition_slug: null,
+      };
+      const key = ['passage', app.standard || '', e.pageNumber ?? '', e.section || '', payload.library_url || ''].join('|');
+      const already = savedResultKeys.has(key);
+      return `
+        <button class="save-search-btn text-[11px] px-1.5 py-0.5 rounded font-medium flex items-center gap-1 text-white transition ${already ? 'hover:opacity-90' : 'hover:bg-brand-secondary-dark'}"
+                style="background-color: ${already ? SAVED_AGAIN_FILL : 'var(--brand-secondary)'};"
+                data-payload="${escapeHtml(JSON.stringify(payload))}"
+                data-name="${escapeHtml(name)}"
+                data-citation="${escapeHtml(name)}"
+                data-save-key="${escapeHtml(key)}"
+                data-saved="${already ? '1' : '0'}"
+                title="Bookmark this passage (its section, page and Library link) in one of your Bookmark Collections">
+          <svg class="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z"/>
+          </svg>
+          <span class="save-label">${already ? 'Bookmark Again' : 'Bookmark'}</span>
+        </button>`;
+    }
+
     // Desaturated slate for a result already filed away — "greyed out or less
     // saturated", in the client's words (DO61).
     const SAVED_AGAIN_FILL = '#8FA3B4';
@@ -4796,10 +5173,10 @@
         if (m) {
           return `<div class="flex gap-2 mb-1">
             <span class="font-bold text-ies-blue shrink-0 w-4 text-right">${m[1]}</span>
-            <span>${escapeHtml(m[2])}</span>
+            <span>${sciNotate(escapeHtml(m[2]))}</span>
           </div>`;
         }
-        return `<div class="mb-1">${escapeHtml(line)}</div>`;
+        return `<div class="mb-1">${sciNotate(escapeHtml(line))}</div>`;
       }).join('');
       return `
         <details class="notes-disclosure mt-2 pt-2 border-t border-gray-100 group">
@@ -4946,6 +5323,7 @@
              data-page="${escapeHtml(String(e.pageNumber ?? ''))}"
              data-section="${escapeHtml(String(e.section || ''))}"
              title="Open this passage in the IES Lighting Library">Open in Library ↗</a>` : '';
+        const bookmark = isReference ? '' : passageBookmarkButton(result, e);
         // print-withhold on the quoted text only: the locator (§ / page) and the
         // Library link still print, so a printed page is a reference list rather
         // than a copy of the standard (client DO36).
@@ -4954,10 +5332,11 @@
             ${heading}
             ${clipped.trim() ? `<p class="print-withhold">"${sciNotate(linkifyText(clipped))}"</p>` : ''}
             ${formulaNote}
-            ${(locator || link) ? `
+            ${(locator || link || bookmark) ? `
               <div class="mt-0.5 flex items-center gap-2 flex-wrap">
                 ${locator ? `<span class="text-[11px] text-gray-400">${locator}</span>` : ''}
                 ${link}
+                ${bookmark}
               </div>` : ''}
           </div>`;
       };
@@ -5192,6 +5571,13 @@
           // in prose ("Ra values" is CRI; "Ra" alone could be anything).
           .replace(/\bRa\b(?=[\s,.;:)]*(?:value|index|of|=|\d|\())/g, 'R<sub>a</sub>')
           .replace(/\bDuv\b/g, 'D<sub>uv</sub>')
+          // Illuminance on a plane: E_v, E_h, E_sc. The extraction also eats the
+          // space AFTER the subscript, so the table note "E_v in two opposing
+          // views" arrives as "Evin two opposing views" (client 10/02/26 #4).
+          // The glued form is only undone before a short function word, so a
+          // real word starting "Ev…"/"Eh…" ("Evening", "Event") is never split.
+          .replace(/\bE(v|h|sc)(in|at|on|of|and|for|to|is|are|with|from|shall|should)\b/g, 'E<sub>$1</sub> $2')
+          .replace(/\bE(v|h|sc)\b(?![-'’])/g, 'E<sub>$1</sub>')
           .replace(/([a-zA-Z])\/(m|cm|mm|ft)2\b/g, '$1/$2<sup>2</sup>');
       }).join('');
     }
@@ -5240,13 +5626,19 @@
         const catLabel = plane.category != null && plane.category !== ''
           ? ` <span class="font-bold">Cat. ${escapeHtml(String(plane.category))}</span>` : '';
 
+        // Preferred units (client DO091): SI by default; USCS swaps which unit
+        // is the primary figure and which the sub-line. Both are always shown.
+        const siMain = `${plane.lux ?? '—'}<span class="text-[11px] font-normal text-gray-400 ml-0.5">lx</span>`
+          + `<span class="font-normal text-gray-500">${escapeHtml(hSuffix(plane.heightM, 'm'))}</span>`;
+        const usMain = `${plane.fc ?? '—'}<span class="text-[11px] font-normal text-gray-400 ml-0.5">fc</span>`
+          + `<span class="font-normal text-gray-500">${escapeHtml(hSuffix(plane.heightFt, 'ft'))}</span>`;
+        const uscs = preferredUnits === 'uscs' && plane.fc != null;
         const maintMain = plane.lux != null || plane.fc != null
-          ? `${plane.lux ?? '—'}<span class="text-[11px] font-normal text-gray-400 ml-0.5">lx</span>`
-            + `<span class="font-normal text-gray-500">${escapeHtml(hSuffix(plane.heightM, 'm'))}</span>`
+          ? (uscs ? usMain : siMain)
           : null;
-        const maintSub = plane.fc != null
-          ? `${plane.fc} fc${hSuffix(plane.heightFt, 'ft')}`
-          : null;
+        const maintSub = uscs
+          ? (plane.lux != null ? `${plane.lux} lx${hSuffix(plane.heightM, 'm')}` : null)
+          : (plane.fc != null ? `${plane.fc} fc${hSuffix(plane.heightFt, 'ft')}` : null);
 
         // Uniformity: if there's no ratio value, promote the ratio basis to the
         // main slot; otherwise the basis (e.g. "Avg:Min") sits underneath as the

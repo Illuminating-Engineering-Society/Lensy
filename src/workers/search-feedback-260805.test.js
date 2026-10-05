@@ -387,10 +387,14 @@ describe('findStandardLookupResults (DO47)', () => {
       .toBe('ANSI/IES RP-3-20+E1 Recommended Practice: Lighting Educational Facilities');
   });
 
-  it('never answers with a deprecated edition', async () => {
+  // Client 9/30/26 DO#2: a deprecated edition named exactly answers with the
+  // CURRENT edition first, then the deprecated copy, marked deprecated.
+  it('answers a deprecated edition with the current one first, then the deprecated copy', async () => {
     const out = await findStandardLookupResults(env, 'RP-8-22');
-    expect(out.map(r => r.document.id)).toEqual(['RP-8-25+E2']);
-    expect(out[0].relevanceScore).toBeLessThan(1);   // a close match, not an exact one
+    expect(out.map(r => r.document.id)).toEqual(['RP-8-25+E2', 'RP-8-22']);
+    expect(out[0].isDeprecated).toBeFalsy();
+    expect(out[1].isDeprecated).toBe(true);
+    expect(out[1].deprecationNotice).toContain('replaced by RP-8-25+E2');
   });
 
   it('matches a document title', async () => {

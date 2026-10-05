@@ -236,6 +236,9 @@ export default {
         return withCors(await handleProjects(request, env, url));
       }
 
+      // Everything that is not an API route is a page or an asset (the Worker
+      // runs first only so the canonical-host redirect above covers them).
+      if (!path.startsWith('/api/') && env.ASSETS) return env.ASSETS.fetch(request);
       return withCors(json({ error: 'Not found' }, 404));
     } catch (err) {
       console.error('API error:', err);
@@ -636,11 +639,19 @@ async function createProject(request: Request, env: Env): Promise<Response> {
   return json({ project }, 201);
 }
 
+const PROJECT_TYPES = new Set(['New Construction', 'Renovation', 'Addition', 'Retrofit']);
+
 async function updateProject(request: Request, env: Env, projectId: string): Promise<Response> {
   const body: any = await request.json();
+  // collection_type joined the list for client 10/02/26 #2 ("allow the
+  // collection details to be editable after creation") — it is the free-text
+  // type that holds 'Reference' and a user-defined 'Other'.
   const allowed = ['name', 'location', 'client_name', 'client_company',
-                   'project_type', 'designer_name', 'designer_company',
+                   'project_type', 'collection_type', 'designer_name', 'designer_company',
                    'target_codes', 'status', 'notes'];
+  // project_type keeps its SQL CHECK (the four construction categories);
+  // anything else lands in collection_type alone instead of failing the update.
+  if ('project_type' in body && !PROJECT_TYPES.has(body.project_type)) body.project_type = null;
 
   const fields = Object.keys(body).filter(k => allowed.includes(k));
   if (fields.length === 0) return json({ error: 'No valid fields to update' }, 400);

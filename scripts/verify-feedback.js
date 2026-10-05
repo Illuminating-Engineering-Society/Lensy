@@ -22,7 +22,7 @@
  * data blocking it.
  *
  * Usage:
- *   LUCIUS_API_URL=https://lensy.ies.org LUCIUS_API_SECRET=… \
+ *   LUCIUS_API_URL=https://lens.ies.org LUCIUS_API_SECRET=… \
  *     node scripts/verify-feedback.js
  *
  *   node scripts/verify-feedback.js --local           # http://localhost:8787

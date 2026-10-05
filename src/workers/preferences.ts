@@ -38,6 +38,12 @@ export interface UserPreferences {
    * more welcomes. Non-subscribers see it every session and never consult this.
    */
   welcome_seen?: number;
+  /**
+   * Primary units on illuminance cards (client DO091: "Preferred units: SI or
+   * USCS … This should save to their account until changed again. Default
+   * should remain SI").
+   */
+  units?: 'si' | 'uscs';
 }
 
 const json = (data: unknown, status = 200): Response =>
@@ -68,6 +74,7 @@ export function sanitizePreferences(input: Record<string, unknown>): UserPrefere
   if (typeof input.welcome_seen === 'number' && Number.isFinite(input.welcome_seen)) {
     out.welcome_seen = Math.max(0, Math.min(99, Math.floor(input.welcome_seen)));
   }
+  if (input.units === 'si' || input.units === 'uscs') out.units = input.units;
   return out;
 }
 

@@ -19,7 +19,7 @@
  *   DO40  Section titles    standards.sections_json is populated
  *
  * Usage:
- *   LUCIUS_API_URL=https://lensy.ies.org LUCIUS_API_SECRET=… node scripts/verify-ingest.js
+ *   LUCIUS_API_URL=https://lens.ies.org LUCIUS_API_SECRET=… node scripts/verify-ingest.js
  *
  * Read-only: it issues GETs and never writes.
  */

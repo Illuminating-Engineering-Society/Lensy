@@ -35,7 +35,7 @@ and its *Error Code Reference Guide*
 
 | Piece | Where |
 |---|---|
-| The error page (public — no auth gate) | `src/frontend/library-error.html` → `https://lensy.ies.org/library-error.html` |
+| The error page (public — no auth gate) | `src/frontend/library-error.html` → `https://lens.ies.org/library-error.html` |
 | Document lookup (short code → designation, title, buy link, successor) | `GET /api/library/document?code=…` (public; `src/workers/library-support.ts`) |
 | Device-limit reset request | `POST /api/library/device-reset` (public, narrow; same file) |
 | Request queue | `device_reset_requests` (migration 0016) |
@@ -88,7 +88,7 @@ typed.
    work.)
 2. `npm run deploy` — ships the Worker, the page, and the endpoints together.
 3. Vitrium admin app → **Settings → Web Viewer Settings → "Custom URL for Error
-   Page"** → `https://lensy.ies.org/library-error.html`. (Client/IES staff —
+   Page"** → `https://lens.ies.org/library-error.html`. (Client/IES staff —
    we have no Vitrium admin credentials.)
 4. When IES names the staff inbox: uncomment `DEVICE_RESET_NOTIFY_EMAIL` in
    `wrangler.toml` and redeploy. Until then requests queue silently in D1.

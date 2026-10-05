@@ -103,7 +103,13 @@ const DATA_VERSION_KEY = 'cache:data-version';
 //     Document passage cards), LP-2-20 and LP-11-20 are Deprecated in D1
 //     (replaced by RP-43-25), and the payload gained `supersessionNotices`
 //     with matching catalogue facts in the Guide prompt.
-const SEARCH_CACHE_SCHEMA = 'v17';
+// v18: the 260928–261002 notes. The Guide PROMPT changed (IES Lens identity,
+//     third-person voice, the support form instead of Standards@ies.org, the
+//     subscript symbol glossary, deeper comparisons with longer excerpts and
+//     the merged-predecessor fact), and RESULTS changed (RP-10 common-
+//     application rows, deprecated-edition lookups returning current +
+//     deprecated cards with a catalogue note, Handbook notice, product answers).
+const SEARCH_CACHE_SCHEMA = 'v18';
 
 function errMsg(err: unknown): string {
   return err instanceof Error ? err.message : String(err);

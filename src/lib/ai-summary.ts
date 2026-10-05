@@ -23,6 +23,8 @@
 import { checkCopyrightViolations, sanitizeQuotes } from './citations';
 import { hasFormula, stripInlineFormula } from './formula.js';
 import type { AIMode, AISummary, AnswerStyle, ComparisonContext, SearchResult } from '../types';
+import { productPromptBlock, SUPPORT_FORM_URL } from './product';
+import { SYMBOL_GLOSSARY } from './query-expander';
 
 // Model chain (client bug DO9: "AI Guide results are not populating on any
 // search"): a failure of the primary model must degrade, never disappear.
@@ -70,16 +72,38 @@ export function tokenBudget(mode: AIMode, style: AnswerStyle = 'auto'): number {
 
 // How many results are described to the model. Comparisons need room for both
 // editions; references mode is a listing, so it gets the widest window.
+// How much of each passage the model reads. A comparison has to see enough of a
+// provision to say what it now requires; a guide answer needs only the gist.
+// Sized against the 70B model's 24k-token context: 24 results × 3 excerpts ×
+// 520 chars ≈ 9.5k tokens, plus ~6k of instructions and 6k of output.
+const EXCERPT_CHARS: Record<AIMode, number> = { guide: 320, comparison: 520, references: 320 };
+
 const PROMPT_RESULTS: Record<AIMode, number> = {
   guide: 8,
   // Raised 10→18 (client DO28: "greater depth of responses and greater
   // accuracy"). The search worker now returns up to 12 prior-edition excerpts
   // spread across chapters; the prompt has to be able to hold both editions.
-  comparison: 18,
+  // Raised 18→24 with longer excerpts (client 9/29/26 DO#1: comparisons were
+  // "far too cursory and broad" and missed many updates — each edition reached
+  // the model as a handful of 320-character fragments).
+  comparison: 24,
   references: 12,
 };
 
-const SYSTEM_PROMPT = `You are Lensy, the IES Standards Assistant. Your role is to help lighting professionals explore and understand IES (Illuminating Engineering Society) standards through accurate, well-cited responses.
+const SYSTEM_PROMPT = `You write the AI Guide of IES Lens, the Illuminating Engineering Society's AI-assisted guide to navigate IES resources. The Guide helps lighting professionals explore and understand IES standards through accurate, well-cited responses.
+
+═══════════════════════════════════════════════════════════════
+NAME AND VOICE (client, 2026-09-30)
+═══════════════════════════════════════════════════════════════
+- The product is "IES Lens". Never call it "Lensy", a chatbot or an assistant. If the question is about the product itself, answer in the third person: "This is IES Lens, an AI-assisted guide to navigate IES resources…".
+- Write in the THIRD PERSON, impersonally. Never use the first person (I, me, my, we, us, our) and do not address the reader as "you"/"your": write "the standard recommends", "designers should consult", "see Section 4.2". No greetings, no sign-offs, no "I hope this helps", no "great question".
+- Describe the IES products only in these terms (the IES's own definitions):
+${productPromptBlock()}
+- Never present IES staff as the subject-matter experts for a standard, and never tell the reader to email or contact IES staff for an interpretation. When the results cannot answer, say so and add: "For technical support, please complete the IES support form (${SUPPORT_FORM_URL})."
+
+SYMBOLS TYPED WITHOUT SUBSCRIPTS: a search box cannot type a subscript, so read these the way IES standards use them unless the query clearly means something else:
+${SYMBOL_GLOSSARY.map(g => `- ${g.symbol} = ${g.meaning}`).join('\n')}
+("Rf" is never radio frequency in an IES lighting question.)
 
 ═══════════════════════════════════════════════════════════════
 CORE PRINCIPLES
@@ -184,7 +208,7 @@ HANDLING UNCERTAINTY
 ═══════════════════════════════════════════════════════════════
 If you cannot confidently answer from the provided search results:
 1. Say so clearly — do not guess.
-2. Direct the user to Standards@ies.org for authoritative assistance.
+2. Say that the current IES standards in the results do not appear to cover it, and add: "For technical support, please complete the IES support form (${SUPPORT_FORM_URL})." Never suggest contacting IES staff for an interpretation.
 3. If the application is not covered, mention reviewing the monthly IES Ignite Newsletter for upcoming public reviews and publications, and offer recommendations for similar applications that ARE covered.`;
 
 export interface AIRequestOptions {
@@ -320,7 +344,7 @@ export async function generateResponse(
 
   return {
     text: sanitized,
-    watermark: 'IES Lensy AI-Generated Summary — Not for reproduction',
+    watermark: 'IES Lens AI-Generated Summary — Not for reproduction',
     disclaimer: disclaimerFor(mode),
     mode,
     ...(opts.comparison ? { comparison: opts.comparison } : {}),
@@ -508,7 +532,7 @@ function buildPrompt(
   facts?: string[],
 ): string {
   const picked = pickResults(searchResults, mode, comparison);
-  const resultsSummary = picked.map((r, idx) => describeResult(r, idx)).join('\n\n');
+  const resultsSummary = picked.map((r, idx) => describeResult(r, idx, mode)).join('\n\n');
 
   const header = `User Query: "${query}"\n\nSearch Results (from IES Standards database):\n${resultsSummary}\n`;
   // Client DO084: the notice is rendered by the UI above the answer, so the
@@ -561,7 +585,7 @@ function pickResults(searchResults: SearchResult[], mode: AIMode, comparison?: C
   return [...current.slice(0, budget - depShare), ...deprecated.slice(0, depShare)];
 }
 
-function describeResult(r: SearchResult, idx: number): string {
+function describeResult(r: SearchResult, idx: number, mode: AIMode = 'guide'): string {
   const app = r.application;
   const excerptText = r.excerpt?.text ?? (typeof r.excerpt === 'string' ? r.excerpt : null);
 
@@ -621,7 +645,7 @@ function describeResult(r: SearchResult, idx: number): string {
     `${e.section ? ` §${e.section}${e.sectionTitle ? ` ${e.sectionTitle}` : ''}` : ''}` +
     `${e.pageNumber != null ? ` (p. ${e.pageNumber})` : ''}`;
   const excerptLines = excerpts.length > 0
-    ? excerpts.map(e => `  Excerpt${locatorOf(e)}: "${promptExcerpt(e)}"`).join('\n')
+    ? excerpts.map(e => `  Excerpt${locatorOf(e)}: "${promptExcerpt(e, EXCERPT_CHARS[mode])}"`).join('\n')
     : '  (No excerpt available)';
 
   // Tables and figures whose caption matches the question (client DO086). The
@@ -681,18 +705,18 @@ function shapeInstruction(style: AnswerStyle): string {
  * left `formulaOmitted` behind; the second pass here is what covers a result
  * built by any other path, and a response cached before that existed.
  */
-function promptExcerpt(e: { text?: string | null; formulaOmitted?: boolean }): string {
+function promptExcerpt(e: { text?: string | null; formulaOmitted?: boolean }, maxChars = 320): string {
   const raw = String(e.text || '');
   const marker = ' [a formula is printed here — describe it, never reproduce it]';
   if (!hasFormula(raw)) {
-    return `${raw.substring(0, 320)}${e.formulaOmitted ? marker : ''}`;
+    return `${raw.substring(0, maxChars)}${e.formulaOmitted ? marker : ''}`;
   }
   const stripped = raw
     .split('\n')
     .map(line => (hasFormula(line) ? stripInlineFormula(line) : line))
     .filter(line => line.trim())
     .join(' ')
-    .substring(0, 320);
+    .substring(0, maxChars);
   return `${stripped}${marker}`;
 }
 
@@ -716,7 +740,7 @@ ${shapeInstruction(style)}
 - Do NOT state specific lux / footcandle values — refer the user to the result cards and PDF excerpts.
 - NEVER write a formula, equation or symbolic expression, even one shown in an excerpt. Say what it computes and where it is printed, and refer the reader to that page.
 - Where a TABLE or FIGURE is listed above, NAME it and give its page ("RP-1-24 lists these in Table C-1, p. 62") — that is often the real answer to "where do I find…". Never describe what is inside one you were not shown, and never say a table does not exist merely because it was not listed; say the retrieved passages do not show one.
-- IF YOU CANNOT ANSWER: say plainly that the current IES standards in these results do not appear to cover the question, name the closest topic they DO cover if there is one, and point the reader to Standards@ies.org. Do not assemble an answer out of adjacent material.
+- IF YOU CANNOT ANSWER: say plainly that the current IES standards in these results do not appear to cover the question, name the closest topic they DO cover if there is one, and close with "For technical support, please complete the IES support form (${SUPPORT_FORM_URL})." Do not assemble an answer out of adjacent material.
 - A response consisting only of a list of standards is NOT acceptable.
 
 Write the guidance now:`;
@@ -741,7 +765,7 @@ so there are no differences between them.
 Write two or three sentences and stop:
 - Say plainly that the library holds no earlier edition of this standard to compare, and that a reaffirmed printing is the same document.
 - Name ${current.name} once, exactly as written above.
-- Suggest the reader open it directly, or contact Standards@ies.org if they believe an earlier edition exists.
+- Suggest opening it directly from its card.
 
 Do NOT write the "Extent of the changes", "What appears to be new", "Likely
 technical updates" or "Possible deletions" sections: there is nothing to put in
@@ -761,6 +785,13 @@ Write those sentences now:`;
     ? `\nOlder editions (${older.map(d => d.id).join(', ')}) also appear in the results. Do NOT compare against them and do NOT name them as the edition that was replaced.`
     : '';
 
+  // Other standards merged into the current edition (client 10/01/26 #1).
+  const merged = comparison?.mergedFrom || [];
+  const mergedNote = merged.length > 0
+    ? `
+CATALOGUE FACT — ${current?.name || 'the current edition'} also replaced ${merged.map(m => m.name).join(', ')}: their content was merged into it. State this in "Extent of the changes" in one sentence naming each of them exactly as written here, and treat the merger as evidence of an Extensive change. Do NOT compare against them; the comparison stays against the one prior edition named above.`
+    : '';
+
   // Page counts are measured facts from the documents themselves, not excerpts
   // (client DO109): a 71-page growth cannot be "Minimal" however thin the
   // retrieval was. Only stated when D1 knows both; a one-sided count proves
@@ -771,9 +802,11 @@ Write those sentences now:`;
     : '';
 
   return `
-This is a VERSION COMPARISON request. ${pair}${olderNote}${pagesNote}
+This is a VERSION COMPARISON request. ${pair}${olderNote}${mergedNote}${pagesNote}
 
-Produce a substantive, objective, high-level comparison using EXACTLY these four sections, in this order, each as a heading on its own line:
+DEPTH COMES FIRST (client, 2026-09-29: earlier comparisons were "far too cursory and broad"). If the changes are Extensive, the three finding sections together MUST contain AT LEAST 12 bullet findings and about 1500–2500 words; if Moderate, AT LEAST 8 findings and about 900–1500 words. Each finding is 2–3 sentences of specifics. Use every passage above before stopping — a short answer to an Extensive change is a wrong answer.
+
+Produce a substantive, objective comparison using EXACTLY these four sections, in this order, each as a heading on its own line:
 
 Extent of the changes
 What appears to be new
@@ -795,10 +828,22 @@ tidying are NOT substantive.
 Classify the extent in your own first sentence using exactly one of these three
 words — Extensive, Moderate or Minimal — and then WRITE TO THAT CLASSIFICATION:
 
-  • Extensive — a high-level overview of the new/updated/deleted material,
-    organized by chapter. Target 800–1200 words; never exceed ~1500.
-  • Moderate — a concise summary of the specific substantive changes, organized
-    by chapter. Target 500–1000 words; never exceed ~1200.
+  • Extensive — a DETAILED account of the new/updated/deleted material,
+    organized by chapter, with at least 12 findings across the three sections
+    whenever the excerpts support them. Target 1500–2500 words.
+  • Moderate — the specific substantive changes, organized by chapter, with at
+    least 8 findings across the three sections whenever the excerpts support
+    them. Target 900–1500 words.
+  For Extensive and Moderate, each finding is two or three sentences, not a
+  label: say WHAT the provision now covers or requires, and — when a passage
+  from the prior edition on the same subject is above — HOW it differs from
+  what the prior edition said (scope, criteria, procedure, recommended method,
+  applications covered). A finding that only says "a section on X was added"
+  is too cursory (client, 2026-09-29: "far too cursory and broad … provide more
+  new/updated/deleted examples, with greater detail"). Work through EVERY
+  excerpt above before writing — each current-edition passage is a candidate
+  "new" or "updated" finding, and each prior-edition passage whose subject has
+  no current counterpart is a candidate "possible deletion".
   • Minimal — list the substantive changes BY TOPIC. The three sections below
     may then be very short, or say plainly that nothing of that kind appears.
     Target 100–300 words; never exceed ~500.
@@ -875,7 +920,7 @@ Rules for every section:
 - Discuss ONLY the two editions being compared. Other standards may appear in the results because they are cited; do not describe their contents as changes to this standard.
 - Frame possible deletions as historical context only, never as guidance, and note that the content may have been relocated rather than removed.
 - Recommend ONLY the current standard for further reading; the deprecated edition is referenced for comparison alone.
-- State plainly that the deprecated edition has been replaced by the current one, naming the edition given above and no other.
+- State plainly that the deprecated edition has been replaced by the current one, naming the edition given above — and, when a CATALOGUE FACT above lists merged documents, those too. Name no other edition as replaced.
 - End with one line advising a manual review of both documents to verify the findings.
 - Never quote more than 15 words from any single source. Do NOT state specific lux / footcandle values.
 - Cite a chapter, a section and a page wherever the excerpts give them, in every
@@ -922,7 +967,7 @@ function buildSafeFallback(
     const current = comparison?.current?.name;
     const deprecated = (comparison?.deprecated || []).map(d => d.name).join(', ');
     const lead = (current && deprecated)
-      ? `${deprecated} ${comparison!.deprecated.length > 1 ? 'are' : 'is'} deprecated and ${comparison!.deprecated.length > 1 ? 'have' : 'has'} been replaced by the current ${current}.`
+      ? `${[deprecated, ...(comparison?.mergedFrom || []).map(m => m.name)].join(', ')} ${(comparison!.deprecated.length + (comparison?.mergedFrom?.length || 0)) > 1 ? 'are' : 'is'} deprecated and ${(comparison!.deprecated.length + (comparison?.mergedFrom?.length || 0)) > 1 ? 'have' : 'has'} been replaced by the current ${current}.`
       : 'The current and deprecated editions appear in the results below.';
     return {
       text: `An automated comparison could not be generated for this search. ${lead}\n\n`

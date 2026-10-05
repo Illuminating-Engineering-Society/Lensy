@@ -181,7 +181,15 @@ LENSY_LITE = "on"
 # subscriptions (Practice / Applications / Roadway / Testing & Measurements) and
 # "The Illuminance Selector" (205 people). See the note in src/lib/tiers.ts:
 # what those cohorts should get is an open product question.
-LENSY_SUBSCRIBER_ROLES = "lighting-library-full-access"
+#
+# tc-chair (client DO111, 2026-10-05): Technical Committee Chairs/Co-Chairs
+# (Chair-Advisory, Chair-Voting, Co-Chair-Advisory, Co-Chair-Voting in an active
+# technical group) get free full access. The slug is minted by the AuthIES
+# membership sync (branch feat/tc-roles-subscription-expiry, TC_ROLE_SYNC) and
+# is removed by the same sync when the role or status changes. Inert until that
+# ships — no cookie carries it before then. TC members (tc-member) are NOT
+# here: theirs is a webstore discount, not free access.
+LENSY_SUBSCRIBER_ROLES = "lighting-library-full-access,tc-chair"
 # ── Lighting Library error page (2026-09-04) ──────────────────────────────────
 # Staff inbox for device-limit reset requests submitted from
 # /library-error.html (the page Vitrium's WebViewer redirects refused readers
@@ -223,7 +231,10 @@ LENSY_DAILY_SEARCH_CAP = "20"
 # is answered 301 to the same path + query on this host. Unset (today) both
 # hostnames serve the app. The staging hostname and localhost are never
 # redirected. Set it in step 3 of the cutover described at [[routes]] below.
-# LENSY_CANONICAL_HOST = "lens.ies.org"
+# Cut over 2026-10-05 at the client's go-ahead ("Lens.ies.org: go ahead and
+# move over. I just updated the Vitrium error page url & logo hyperlink."); the
+# AuthIES `lensy` SP already allows both origins.
+LENSY_CANONICAL_HOST = "lens.ies.org"
 
 # Secrets set via `wrangler secret put`:
 # VITRIUM_API_KEY
@@ -283,3 +294,11 @@ local_protocol = "http"
 
 [assets]
 directory = "src/frontend"
+# The Worker runs FIRST for every request (2026-10-05), so the lensy.ies.org →
+# lens.ies.org redirect (LENSY_CANONICAL_HOST) also covers the pages and assets.
+# Without it, static assets are served before the Worker runs and only /api/*
+# would redirect. The Worker hands every non-API path straight to this binding
+# (end of the router in src/workers/api.ts), so pages, _headers and
+# html_handling behave exactly as before.
+binding = "ASSETS"
+run_worker_first = true

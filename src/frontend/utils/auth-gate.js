@@ -126,8 +126,8 @@
       '<h1 style="font-size:20px;font-weight:700;margin:0 0 10px">Sign-in unavailable</h1>' +
       '<p style="color:#6b7280;font-size:14px;margin:0">IES Lens cannot verify IES sign-in right now. ' +
       'This is a configuration problem on our side, not with your account.</p>' +
-      '<p style="color:#9ca3af;font-size:12px;margin:12px 0 0">Please try again shortly, or contact ' +
-      '<a href="mailto:Standards@ies.org" style="color:#3A5068">Standards@ies.org</a> if it persists.' +
+      '<p style="color:#9ca3af;font-size:12px;margin:12px 0 0">Please try again shortly, or use the ' +
+      '<a href="https://ies.org/contact-us/" target="_blank" rel="noopener" style="color:#3A5068">IES support form</a> if it persists.' +
       (data && data.detail ? ' (' + esc(data.detail) + ')' : '') + '</p>' +
       '<div><button onclick="location.reload()" style="' + BTN + '">Retry</button></div>'
     );
