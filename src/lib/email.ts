@@ -34,6 +34,21 @@ const FROM_NAME = 'IES Lens';
 const BRAND_SECONDARY = '#3A5068';
 const BRAND_PRIMARY = '#D95D2B';
 
+// The Lighting Library logo every email opens with (client 10/06/26 #2: the
+// 2026 artwork with the TM mark). The Neg variant — white lettering — because
+// it sits on the BRAND_SECONDARY band. An absolute URL on the canonical host:
+// a mail client has no origin to resolve a relative path against, and a
+// client that blocks images still shows the alt text in the band.
+const EMAIL_LOGO_URL = 'https://lens.ies.org/assets/ies-lighting-library-2026-neg.png';
+
+/** The dark header band with the Lighting Library logo, plus an optional label. */
+function emailBanner(label?: string): string {
+  return `<div style="background:${BRAND_SECONDARY};color:#fff;padding:10px 20px;font-size:15px;font-weight:700">`
+    + `<img src="${EMAIL_LOGO_URL}" alt="The IES Lighting Library" width="160" height="78" style="display:block;border:0;height:78px;width:160px">`
+    + (label ? `<div style="padding:2px 0 6px;font-size:13px;font-weight:600;opacity:.9">${label}</div>` : '')
+    + `</div>`;
+}
+
 /** Longest error string stored in invited_users.invite_send_error. */
 const MAX_ERROR_LEN = 300;
 
@@ -126,7 +141,7 @@ export function buildInviteEmail(ctx: InviteEmailContext): InviteEmailContent {
 
   const html = `<!doctype html><html><body style="margin:0;background:#f4f6f8;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif">
   <div style="max-width:560px;margin:24px auto;background:#fff;border:1px solid #e2e6ea;border-radius:8px;overflow:hidden">
-    <div style="background:${BRAND_SECONDARY};color:#fff;padding:16px 20px;font-size:15px;font-weight:700">Illuminating Engineering Society</div>
+    ${emailBanner()}
     <div style="padding:24px 20px">
       <h1 style="margin:0 0 14px;font-size:19px;color:${BRAND_SECONDARY}">Your access to IES Lens is ready</h1>
       ${paragraph(greeting(ctx.name))}
@@ -360,7 +375,7 @@ export function buildCollectionShareEmail(ctx: CollectionShareEmailContext): Inv
 
   const html = `<!doctype html><html><body style="margin:0;background:#f4f6f8;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif">
   <div style="max-width:600px;margin:24px auto;background:#fff;border:1px solid #e2e6ea;border-radius:8px;overflow:hidden">
-    <div style="background:${BRAND_SECONDARY};color:#fff;padding:16px 20px;font-size:15px;font-weight:700">Illuminating Engineering Society</div>
+    ${emailBanner()}
     <div style="padding:24px 20px">
       <h1 style="margin:0 0 14px;font-size:19px;color:${BRAND_SECONDARY}">${escapeHtml(topic)}</h1>
       ${paragraph(intro)}
@@ -474,7 +489,7 @@ export function buildDeviceResetEmail(ctx: DeviceResetEmailContext): InviteEmail
 
   const html = `<!doctype html><html><body style="margin:0;background:#f4f6f8;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif">
   <div style="max-width:560px;margin:24px auto;background:#fff;border:1px solid #e2e6ea;border-radius:8px;overflow:hidden">
-    <div style="background:${BRAND_SECONDARY};color:#fff;padding:16px 20px;font-size:15px;font-weight:700">IES Lighting Library — staff notification</div>
+    ${emailBanner('Staff notification')}
     <div style="padding:24px 20px">
       <h1 style="margin:0 0 14px;font-size:19px;color:${BRAND_SECONDARY}">Device limit reset requested</h1>
       ${paragraph('A reader hit a usage limit in the Lighting Library viewer and asked for it to be reset. Details below.')}
@@ -614,7 +629,7 @@ export function buildCompAccessEmail(ctx: CompAccessEmailContext): InviteEmailCo
 
   const html = `<!doctype html><html><body style="margin:0;background:#f4f6f8;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif">
   <div style="max-width:600px;margin:24px auto;background:#fff;border:1px solid #e2e6ea;border-radius:8px;overflow:hidden">
-    <div style="background:${BRAND_SECONDARY};color:#fff;padding:16px 20px;font-size:15px;font-weight:700">Illuminating Engineering Society</div>
+    ${emailBanner()}
     <div style="padding:24px 20px">
       <h1 style="margin:0 0 14px;font-size:19px;color:${BRAND_SECONDARY}">Your complimentary ${escapeHtml(String(ctx.days))}-day access</h1>
       ${paragraph(greeting(ctx.name))}

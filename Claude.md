@@ -1732,6 +1732,23 @@ losing content") is answered by the alignment report, not by the model.
   `staff-ingest.test.js` (fixtures are stored-method ZIPs so they run on any
   Node ≥ 18; `src/lib/docx-fixture.js` is test-only).
 
+### Logos and favicon, 2026 artwork (Teams notes 10/05–10/06/26)
+
+- **Which top-left logo is which.** IES Lens pages (search, Bookmarks) carry
+  "Search with IES Lens" (`assets/ies-lens-logo.png`); Lighting Library pages
+  (List Standards, Tutorials, the Vitrium error page) carry the Lighting Library
+  logo. #1 (Lens top-left on the search page, no hero logo) was already live;
+  #2 is read as the Lighting Library pages, since #1 and #2 came in one message.
+- **Lighting Library logo = the 2026 artwork with ™**:
+  `assets/ies-lighting-library-2026.png` (light backgrounds) and
+  `…-2026-neg.png` (white lettering — used in the dark band every email opens
+  with, `emailBanner()` in `src/lib/email.ts`, absolute lens.ies.org URL). The
+  old `ies-lighting-library-horizontal.png` is deleted. Sources (2018×989) live
+  in `pdfs/Others/`; the web copies are 768×376 with the same padding.
+- **Favicon** = the Lighting Library mark, cropped to the circle:
+  `/favicon.ico` (16+32), `/favicon-32.png`, `/favicon-192.png`,
+  `/apple-touch-icon.png` (white background), linked from every page's `<head>`.
+
 ### The 260928–261002 Teams notes: IES Lens identity, lens.ies.org, and a lot of chrome (2026-10-05)
 
 Deployed 2026-10-05; `SEARCH_CACHE_SCHEMA` → **v18**. No migration in Lensy.

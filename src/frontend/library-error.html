@@ -5,6 +5,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="robots" content="noindex">
   <title>IES Lighting Library — Access</title>
+  <link rel="icon" href="/favicon.ico" sizes="any">
+  <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png">
+  <link rel="icon" type="image/png" sizes="192x192" href="/favicon-192.png">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
   <!--
     Lighting Library custom error page (client note, 2026-09-04).
 
@@ -20,7 +24,8 @@
     working if IES later hosts it somewhere other than lens.ies.org. If it IS
     re-hosted, set API_BASE in the script below to https://lens.ies.org so the
     document lookup and the device-reset form still reach their endpoints
-    (the API's CORS policy already allows it).
+    (the API's CORS policy already allows it), and point the banner logo and
+    favicon links at https://lens.ies.org/… as well.
 
     Rendering rule the Vitrium sample gets wrong and this page must never copy:
     every query-string value is untrusted and is only ever assigned via
@@ -40,17 +45,13 @@
       font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
       font-size: 15px; line-height: 1.55;
     }
+    /* The Lighting Library banner (10/06/26 #2): the 2026 logo, with its TM
+       mark, on the light bar every other Lighting Library page uses (DO107). */
     .banner {
-      background: var(--ies-gold); color: #3b2a05;
-      padding: 14px 20px; display: flex; align-items: center; gap: 12px;
+      background: #F6F6F6; border-bottom: 1px solid var(--line);
+      padding: 6px 20px; display: flex; align-items: center;
     }
-    .banner .mark {
-      width: 34px; height: 34px; border-radius: 9px; background: var(--blue);
-      display: flex; align-items: center; justify-content: center; flex: none;
-    }
-    .banner .mark svg { width: 20px; height: 20px; color: #fff; }
-    .banner .name { font-weight: 700; font-size: 15px; }
-    .banner .sub { font-size: 12.5px; opacity: .85; }
+    .banner img { display: block; height: 64px; width: auto; }
     .wrap { max-width: 640px; margin: 32px auto 48px; padding: 0 16px; }
     .card {
       background: #fff; border: 1px solid var(--line); border-radius: 14px;
@@ -109,15 +110,9 @@
 </head>
 <body>
   <header class="banner">
-    <div class="mark" aria-hidden="true">
-      <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8">
-        <path stroke-linecap="round" stroke-linejoin="round" d="M12 3v1m0 16v1M4.22 4.22l.707.707M18.364 18.364l.707.707M3 12H2m20 0h-1M4.927 19.073l.707-.707M18.364 5.636l.707-.707M12 8a4 4 0 100 8 4 4 0 000-8z"/>
-      </svg>
-    </div>
-    <div>
-      <div class="name">Illuminating Engineering Society</div>
-      <div class="sub">Lighting Library</div>
-    </div>
+    <a href="https://lighting.ies.org/" title="The IES Lighting Library">
+      <img src="/assets/ies-lighting-library-2026.png" alt="The IES Lighting Library" width="768" height="376">
+    </a>
   </header>
 
   <main class="wrap">

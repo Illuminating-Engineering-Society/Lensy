@@ -330,3 +330,24 @@ describe('buildDeviceResetEmail (Vitrium error page, 2026-09-04)', () => {
     expect(mail.html).toContain('&lt;script&gt;');
   });
 });
+
+describe('the Lighting Library logo in every email (client 10/06/26 #2)', () => {
+  const LOGO = 'https://lens.ies.org/assets/ies-lighting-library-2026-neg.png';
+  const deviceCtx = {
+    to: 'library-staff@ies.org', requestId: 1, email: 'reader@firm.com', name: null,
+    documentTitle: null, documentCode: null, errorCode: 'vc3', errorLabel: null,
+    userNote: null, rawMessage: null,
+  };
+
+  it('opens each template with the 2026 artwork, absolute and with alt text', () => {
+    for (const mail of [
+      buildInviteEmail(ctx()),
+      buildCollectionShareEmail(shareCtx()),
+      buildDeviceResetEmail(deviceCtx),
+    ]) {
+      expect(mail.html).toContain(`src="${LOGO}"`);
+      expect(mail.html).toContain('alt="The IES Lighting Library"');
+      expect(mail.text).not.toContain(LOGO);
+    }
+  });
+});
