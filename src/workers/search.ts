@@ -2244,7 +2244,7 @@ async function runSingleSearch(rawQuery: string, filters: SearchFilters, limit: 
   // 3. Split matches by type. Reference-section chunks are handled by their
   //    own step (11) and never join the general body-chunk pool: they are
   //    bibliography entries, useful when asked for but noise as excerpts.
-  const appMatches = includeTables
+  let appMatches = includeTables
     ? matches.filter(m => m.metadata?.chunk_type === 'application' && m.metadata?.application_code)
     : [];
   let chunkMatches = matches.filter(m =>
@@ -2329,13 +2329,19 @@ async function runSingleSearch(rawQuery: string, filters: SearchFilters, limit: 
   //     'deprecated' or D1 rows flipped to Deprecated after ingestion.
   //     Version-comparison queries pull deprecated content through the
   //     dedicated searchDeprecatedForComparison() path instead.
-  const notDeprecated = (m: VMatch) => {
-    if (m.metadata?.status === 'deprecated') return false;
-    const entry = standardsIndex.get((m.metadata?.standard_id || m.metadata?.standard_code) ?? '');
-    return !entry || entry.status !== 'Deprecated';
-  };
+  //
+  //     APPLICATION matches too (RP-4-26 replacement, 2026-10-06). A demoted
+  //     edition's illuminance rows and their vectors used to stay behind, and
+  //     this filter only ever ran on chunks — so RP-4-20+E1's 40 rows kept
+  //     surfacing as Illuminance Table cards, the excerpt backfill they
+  //     triggered pulled the deprecated edition's prose into the pool, and the
+  //     AI Guide cited "RP-4-20" as current beside RP-4-26. The demotion now
+  //     also removes those rows (staff-ingest finalize, runDocumentIngest), but
+  //     the search must not depend on that having happened.
+  const notDeprecated = (m: VMatch) => isCurrentStandardMatch(m.metadata, standardsIndex);
   chunkMatches = chunkMatches.filter(notDeprecated);
   referenceMatches = referenceMatches.filter(notDeprecated);
+  appMatches = appMatches.filter(notDeprecated);
 
   // 4c. Honour a standard/family filter on CHUNK results too. Vectorize has no
   //     LIKE operator, so `standard_prefix` was only ever applied in D1 — to
@@ -2375,7 +2381,7 @@ async function runSingleSearch(rawQuery: string, filters: SearchFilters, limit: 
   //     rooms exist in RP-2 pp. 29-31 but no excerpt was shown). For each top
   //     standard missing prose, run one narrow chunk query pinned to that
   //     standard and merge the hits into the excerpt index.
-  await backfillExcerpts(env, queryVector, top.map(t => t.app), excerptIndex);
+  await backfillExcerpts(env, queryVector, top.map(t => t.app), excerptIndex, standardsIndex);
 
   let results = top.map(({ score, app, chunkMeta }) =>
     buildResult(app, score, chunkMeta, excerptIndex, linkCtx)
@@ -2429,7 +2435,10 @@ async function runSingleSearch(rawQuery: string, filters: SearchFilters, limit: 
 
     const liveChunks = bodyPool.filter(m => {
       const id = m.metadata?.standard_id || m.metadata?.standard_code;
-      return id && standardsIndex.has(id);
+      // Known to the catalogue AND current: the harvested backfill chunks did
+      // not pass through the 4b filter, and a deprecated edition's prose must
+      // not become a Document card (the RP-4-20+E1 leak, 2026-10-06).
+      return id && standardsIndex.has(id) && notDeprecated(m);
     });
     // A chunk-only result has no structured illuminance data — its excerpt IS
     // the card. Raw table dumps and heading stubs render as an empty card
@@ -3122,6 +3131,36 @@ export function isBrokenDoiUrl(url: string): boolean {
  *
  * Runs once per request (small set: ~dozens of rows).
  */
+/**
+ * Is this vector (or standard id) one of a CURRENT standard?
+ *
+ * The one rule the regular search applies to every kind of match — chunks,
+ * reference entries, application rows and excerpt-backfill targets — so that a
+ * deprecated edition can never reach a card or the AI Guide's prompt through
+ * one path when another has shut it out. Reads the ingest-time `status` tag
+ * first (defense in depth), then the live standards row. A standard the index
+ * does not know is admitted here: orphan handling belongs to the callers,
+ * which already drop vectors with no catalogue row.
+ *
+ * Application vectors carry `standard_code` only (`standard_id` is null), which
+ * is why both are consulted.
+ */
+export function isCurrentStandardMatch(
+  target: Partial<VectorMetadata> | string | null | undefined,
+  standardsIndex: StandardsIndex,
+): boolean {
+  if (target == null) return true;
+  if (typeof target === 'string') {
+    const entry = standardsIndex.get(target);
+    return !entry || entry.status !== 'Deprecated';
+  }
+  if (target.status === 'deprecated') return false;
+  const id = target.standard_id || target.standard_code;
+  if (!id) return true;
+  const entry = standardsIndex.get(id);
+  return !entry || entry.status !== 'Deprecated';
+}
+
 async function fetchStandardsIndex(db: D1Database): Promise<StandardsIndex> {
   const result = await db.prepare(
     'SELECT id, title, full_designation, status, superseded_by, author, vitrium_doc_id, vitrium_web_url, reference_markers_json FROM standards'
@@ -3758,7 +3797,10 @@ async function textFallback(db: D1Database, query: string, filters: SearchFilter
   ).join(' AND ');
   const likeBindings = terms.flatMap(t => cols.map(() => `%${t}%`));
 
-  let sql = `SELECT * FROM applications WHERE Active = 1 AND (${likeClause})`;
+  // A demoted edition's rows are removed at demotion time, but the fallback
+  // must not serve them if they are still there (RP-4-20+E1, 2026-10-06).
+  let sql = `SELECT * FROM applications WHERE Active = 1 AND (${likeClause})` +
+    " AND Standard NOT IN (SELECT id FROM standards WHERE status = 'Deprecated')";
   const bindings: (string | number)[] = [...likeBindings];
 
   if (filters.indoor_outdoor && filters.indoor_outdoor !== 'Both') {
@@ -3920,13 +3962,16 @@ const EXCERPT_BACKFILL_MIN_PROSE = 6;
  * standard's vectors. Fail-open per standard: on error the result simply
  * renders without an excerpt, as before.
  */
-async function backfillExcerpts(env: Env, queryVector: number[], apps: ApplicationRow[], excerptIndex: ExcerptIndex): Promise<void> {
+async function backfillExcerpts(env: Env, queryVector: number[], apps: ApplicationRow[], excerptIndex: ExcerptIndex, standardsIndex?: StandardsIndex): Promise<void> {
   const targets: string[] = [];
   const seen = new Set<string>();
   for (const app of apps) {
     const std = app.Standard;
     if (!std || seen.has(std)) continue;
     seen.add(std);
+    // Never pin a query to a deprecated edition: its prose would enter the
+    // excerpt index unfiltered and surface as cards (RP-4-20+E1, 2026-10-06).
+    if (standardsIndex && !isCurrentStandardMatch(std, standardsIndex)) continue;
     const bucket = excerptIndex[std] || [];
     const proseCount = bucket.filter(c =>
       c.chunk_type !== 'table' && c.chunk_type !== 'reference' && !isTableLike(c.excerpt_text)

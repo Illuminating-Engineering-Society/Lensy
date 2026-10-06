@@ -6,8 +6,10 @@
  * shapes that would corrupt the catalog (unknown replacesId, pages before the
  * header/footer batch), rebuilds pages with the shared pdf-pages code, and the
  * two dispositions do exactly what they claim — 'deprecate' is the RP-27/RP-8
- * demotion shape (status flip + superseded_by + PDF move, vectors left to the
- * live status filter), 'delete' actually removes vectors, rows and PDF.
+ * demotion shape (status flip + superseded_by + PDF move, chunk vectors left
+ * to the live status filter, illuminance rows + their vectors REMOVED — a
+ * deprecated edition never carries application records), 'delete' actually
+ * removes vectors, rows and PDF.
  */
 
 import { describe, it, expect, beforeAll } from 'vitest';
@@ -448,8 +450,25 @@ describe('finalize — deprecate', () => {
     // Staging is gone; the moved library copy is not staging.
     expect([...env.PDFS.store.keys()].some(k => k.startsWith('ingest-jobs/j1/'))).toBe(false);
     expect(state.job.status).toBe('complete');
-    // The demotion posture: no vector deletions — the status filter handles it.
-    expect(env.VECTORIZE.deleted).toHaveLength(0);
+    // The demotion posture: chunk vectors stay — the status filter handles them.
+    expect(env.VECTORIZE.deleted.some(id => /-chunk-/.test(id))).toBe(false);
+  });
+
+  it('removes the old edition\'s illuminance rows and their vectors (RP-4-26 replacement, 2026-10-06)', async () => {
+    // RP-4-20+E1 kept its 40 application rows after demotion; the search's
+    // application path read no status, so the deprecated edition kept
+    // surfacing as Illuminance Table cards and reached the AI Guide as current.
+    const { env, calls } = makeEnv({
+      standards: { 'RP-9-20': { status: 'Active', chunk_count: 10, appCodes: ['RP920_0000', 'RP920_0001'] } },
+      job: indexedJob(),
+      r2seed: { 'standards/RP-9-20.pdf': 'old-pdf-bytes' },
+    });
+    const { status, body } = await call(env, 'POST', '/api/admin/ingest-jobs/j1/finalize', {});
+    expect(status).toBe(200);
+    const removed = body.actions.find(a => a.action === 'applications_removed');
+    expect(removed).toMatchObject({ id: 'RP-9-20', count: 2 });
+    expect(calls.some(c => /DELETE FROM applications WHERE code IN/.test(c.sql))).toBe(true);
+    expect(env.VECTORIZE.deleted).toEqual(['RP920_0000', 'RP920_0001']);
   });
 
   it('creates the comparison follow-up job pointing at the moved PDF', async () => {

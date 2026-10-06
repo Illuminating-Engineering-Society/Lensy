@@ -531,6 +531,22 @@ export async function runDocumentIngest(
                '(wrangler vectorize create ies-standards-deprecated-vectors --dimensions=768 --metric=cosine).',
       } };
     }
+    // An edition that was Active before (a demotion, or a follow-up job
+    // indexing the just-replaced edition for comparison) may still own
+    // illuminance rows and their main-index vectors from its Active days.
+    // Those rows are served as CURRENT by the application path, so remove
+    // them here as well as at finalize — whichever path demotes the edition
+    // (RP-4-20+E1 kept its 40 rows for eleven days, 2026-10-06).
+    if (existing) {
+      try {
+        const removed = await pruneApplicationRowsCore(env, standardId, new Set<string>());
+        if (removed.deleted > 0) {
+          console.log(`ingest: removed ${removed.deleted} application rows of deprecated ${standardId}`);
+        }
+      } catch (err) {
+        console.error(`ingest: application cleanup for deprecated ${standardId} failed (non-fatal):`, errMsg(err));
+      }
+    }
   }
 
   // ── 1. Generate embeddings for all chunks (skip if none) ──────────────────

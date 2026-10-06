@@ -871,9 +871,9 @@ async function finalizeJob(env: Env, job: IngestJobRow): Promise<Response> {
     if (!old) {
       actions.push({ action: 'skipped', note: `"${job.replaces_id}" has no standards row any more — nothing to do.` });
     } else if (job.disposition === 'deprecate') {
-      // The RP-27/RP-8 demotion shape. The old edition's main-index vectors
-      // stay put: search reads status live from D1 (notDeprecated) and stops
-      // surfacing them the moment this UPDATE lands.
+      // The RP-27/RP-8 demotion shape. The old edition's main-index CHUNK
+      // vectors stay put: search reads status live from D1 (notDeprecated) and
+      // stops surfacing them the moment this UPDATE lands.
       if (old.status !== 'Deprecated') {
         await env.DB.prepare(`
           UPDATE standards SET status = 'Deprecated', superseded_by = ?, updated_at = CURRENT_TIMESTAMP
@@ -882,6 +882,25 @@ async function finalizeJob(env: Env, job: IngestJobRow): Promise<Response> {
         actions.push({ action: 'deprecated', id: job.replaces_id, supersededBy: job.standard_id });
       } else {
         actions.push({ action: 'already_deprecated', id: job.replaces_id });
+      }
+
+      // Its ILLUMINANCE rows and their vectors do not stay (RP-4-26
+      // replacement, 2026-10-06): a deprecated edition never carries
+      // application records — the deprecated ingest refuses them outright —
+      // yet the demotion left RP-4-20+E1's 40 rows behind, where the search's
+      // application path (which read only `applications.Active`) kept serving
+      // them as current and the AI Guide cited RP-4-20 beside RP-4-26. Same
+      // helper as the re-parse prune; an empty keep-set removes every row.
+      try {
+        const removed = await pruneApplicationRowsCore(env, job.replaces_id, new Set<string>());
+        if (removed.deleted > 0) {
+          actions.push({
+            action: 'applications_removed', id: job.replaces_id,
+            count: removed.deleted, vectorsDeleted: removed.vectorsDeleted,
+          });
+        }
+      } catch (err) {
+        actions.push({ action: 'applications_remove_failed', id: job.replaces_id, error: errMsg(err) });
       }
 
       // Move the PDF to the deprecated/ prefix (fail-soft: a leftover object
