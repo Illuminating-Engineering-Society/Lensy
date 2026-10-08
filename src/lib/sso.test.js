@@ -374,3 +374,45 @@ describe('decideAccess — admin rights', () => {
     return payload({ isMember: false, email: 'guest@example.com', roles: [] });
   }
 });
+
+// The dashboard's lockdown switch (lib/access-mode.ts).
+describe('decideAccess — staff only', () => {
+  const STAFF_ONLY = true;
+  const denied = { authorized: false, reason: 'staff_only', admin: false, firstLogin: false };
+  const member = payload({ isMember: true });
+  const visitor = payload({ isMember: false, email: 'guest@example.com', roles: [] });
+  const subscriber = payload({ isMember: true, roles: ['member', 'lighting-library-full-access'] });
+  const idpAdmin = payload({ isMember: false, roles: ['administrator'] });
+  const row = (role, extra = {}) => ({ status: 'active', expires_at: null, role, person_uuid: 'x', ...extra });
+
+  it('denies members, subscribers and visitors with no invite row', () => {
+    expect(decideAccess(member, null, true, NOW, STAFF_ONLY)).toEqual(denied);
+    expect(decideAccess(subscriber, null, true, NOW, STAFF_ONLY)).toEqual(denied);
+    expect(decideAccess(visitor, null, true, NOW, STAFF_ONLY)).toEqual(denied);
+  });
+
+  it('denies an invited guest, whatever tier the invite grants', () => {
+    expect(decideAccess(visitor, row('guest', { tier: 'full' }), true, NOW, STAFF_ONLY)).toEqual(denied);
+  });
+
+  it('admits staff and admin invite rows', () => {
+    expect(decideAccess(visitor, row('staff'), true, NOW, STAFF_ONLY).authorized).toBe(true);
+    const admin = decideAccess(visitor, row('admin'), true, NOW, STAFF_ONLY);
+    expect(admin.authorized).toBe(true);
+    expect(admin.admin).toBe(true);
+  });
+
+  it('admits an IdP administrator with or without a row', () => {
+    expect(decideAccess(idpAdmin, null, false, NOW, STAFF_ONLY).admin).toBe(true);
+    expect(decideAccess(idpAdmin, row('guest'), true, NOW, STAFF_ONLY).authorized).toBe(true);
+  });
+
+  it('a revoked staff row is still revoked', () => {
+    expect(decideAccess(visitor, row('staff', { status: 'revoked' }), true, NOW, STAFF_ONLY).reason)
+      .toBe('revoked');
+  });
+
+  it('off by default — the ordinary door is unchanged', () => {
+    expect(decideAccess(member, null, true, NOW).authorized).toBe(true);
+  });
+});

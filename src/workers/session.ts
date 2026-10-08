@@ -37,6 +37,7 @@ import {
   type SsoUser,
 } from '../lib/sso';
 import { sessionCapEnabled, enforceSessionCap } from '../lib/session-cap';
+import { readAccessMode } from '../lib/access-mode';
 import type { InvitedUserRow } from '../types';
 
 function allowMembersWithoutInvite(env: Env): boolean {
@@ -50,6 +51,22 @@ function allowMembersWithoutInvite(env: Env): boolean {
 async function findInvite(env: Env, email: string): Promise<InvitedUserRow | null> {
   return env.DB.prepare('SELECT * FROM invited_users WHERE email = ?')
     .bind(email.toLowerCase()).first<InvitedUserRow>();
+}
+
+/** Is the dashboard's staff-only lockdown on for this host (lib/access-mode.ts)? */
+export async function staffOnlyActive(request: Request, env: Env): Promise<boolean> {
+  const scope = isStagingRequest(request.url) ? 'stg' : 'prod';
+  return (await readAccessMode(env, scope)).mode === 'staff_only';
+}
+
+/** The invite row + access decision for one signed-in user. */
+async function decideFor(request: Request, env: Env, user: SsoUser) {
+  const [row, staffOnly] = await Promise.all([
+    findInvite(env, user.email),
+    staffOnlyActive(request, env),
+  ]);
+  const decision = decideAccess(user, row, allowMembersWithoutInvite(env), Date.now(), staffOnly);
+  return { row, decision };
 }
 
 /** Activate the invite on first SSO login; refresh last_login_at once a day. */
@@ -100,8 +117,7 @@ export async function handleAuthMe(request: Request, env: Env): Promise<Response
   }
 
   const user = sso.user;
-  const row = await findInvite(env, user.email);
-  const decision = decideAccess(user, row, allowMembersWithoutInvite(env), Date.now());
+  const { row, decision } = await decideFor(request, env, user);
 
   if (!decision.authorized) {
     return json({
@@ -272,8 +288,7 @@ async function evaluateSession(request: Request, env: Env): Promise<SessionGate>
     };
   }
 
-  const row = await findInvite(env, sso.user.email);
-  const decision = decideAccess(sso.user, row, allowMembersWithoutInvite(env), Date.now());
+  const { decision } = await decideFor(request, env, sso.user);
   if (!decision.authorized) {
     return {
       ok: false,

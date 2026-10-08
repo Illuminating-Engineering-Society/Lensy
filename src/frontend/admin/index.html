@@ -133,6 +133,25 @@
 
     <!-- ══ Users (formerly /admin/users) ════════════════════════════════════ -->
     <section id="panel-users" class="hidden fade-in">
+      <!-- Who may sign in (lib/access-mode.ts) -->
+      <div id="am-card" class="bg-white rounded-xl shadow p-5 mb-6 border-l-4 border-gray-300">
+        <div class="flex flex-wrap items-start justify-between gap-4">
+          <div class="max-w-2xl">
+            <h3 class="font-display font-bold mb-1">Who can sign in to IES Lens</h3>
+            <p id="am-status" class="text-sm text-gray-600">Loading…</p>
+            <p id="am-meta" class="text-xs text-gray-400 mt-1"></p>
+          </div>
+          <label class="inline-flex items-center gap-3 cursor-pointer select-none">
+            <span class="text-sm font-medium text-gray-700">Staff only</span>
+            <input id="am-toggle" type="checkbox" class="sr-only peer" onchange="setAccessMode(this.checked)" disabled />
+            <span class="relative w-11 h-6 rounded-full bg-gray-300 peer-checked:bg-red-600 transition
+                         after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:w-5 after:h-5
+                         after:rounded-full after:bg-white after:shadow after:transition peer-checked:after:translate-x-5
+                         peer-disabled:opacity-50"></span>
+          </label>
+        </div>
+      </div>
+
       <div class="flex flex-wrap items-center justify-between gap-3 mb-5">
         <h2 class="font-display text-xl font-bold">Invited users</h2>
         <div class="flex items-center gap-2">
@@ -887,7 +906,7 @@
         // fires `lensy:auth`, so they exist by the time a tab can be opened).
         ({
           overview: loadOverview,
-          users: loadUsers,
+          users: () => { loadAccessMode(); loadUsers(); },
           standards: () => { window.loadStandards(); window.loadJobs(); },
           analytics: loadAnalytics,
           resets: loadResets,
@@ -1018,6 +1037,53 @@
     let userCounts = { all: 0, invited: 0, active: 0, revoked: 0, expired: 0 };
     let userStatusFilter = 'all';
     let userSearchTimer = null;
+
+    // ── Access mode: the staff-only lockdown switch ───────────────────────
+    function renderAccessMode(s) {
+      const staffOnly = s.mode === 'staff_only';
+      const toggle = document.getElementById('am-toggle');
+      toggle.checked = staffOnly;
+      toggle.disabled = false;
+      const cardEl = document.getElementById('am-card');
+      cardEl.classList.toggle('border-red-600', staffOnly);
+      cardEl.classList.toggle('border-green-600', !staffOnly);
+      cardEl.classList.remove('border-gray-300');
+      document.getElementById('am-status').innerHTML = staffOnly
+        ? '<strong class="text-red-700">Staff only.</strong> Only IES administrators and invited users with role <em>admin</em> or <em>staff</em> can sign in. Everyone else — members, subscribers, guests — sees “IES Lens is currently open to IES staff only”, and shared bookmark links need a staff sign-in too.'
+        : '<strong class="text-green-700">Open.</strong> The normal rules apply: IES members, subscribers and invited guests can sign in, each with their own tier.';
+      const meta = [];
+      meta.push(s.scope === 'stg' ? 'Staging' : 'Production');
+      meta.push(s.source === 'dashboard' && s.updatedAt
+        ? `last changed ${day(s.updatedAt)} ${String(s.updatedAt).slice(11, 16)} UTC by ${esc(s.updatedBy || '—')}`
+        : `deployment default (${s.defaultMode === 'staff_only' ? 'staff only' : 'open'})`);
+      meta.push('changes take up to a minute to reach every server');
+      document.getElementById('am-meta').innerHTML = meta.join(' · ');
+    }
+
+    async function loadAccessMode() {
+      const { status, data } = await api('/api/admin/access-mode');
+      if (status < 400) renderAccessMode(data);
+      else document.getElementById('am-status').textContent = `Could not read the access mode (${data.error || status}).`;
+    }
+
+    async function setAccessMode(staffOnly) {
+      const toggle = document.getElementById('am-toggle');
+      const msg = staffOnly
+        ? 'Restrict IES Lens to staff only? Everyone else will be signed out of it within about a minute.'
+        : 'Open IES Lens to everyone again (members, subscribers and invited guests)?';
+      if (!confirm(msg)) { toggle.checked = !staffOnly; return; }
+      toggle.disabled = true;
+      try {
+        const { status, data } = await api('/api/admin/access-mode', {
+          method: 'POST',
+          body: JSON.stringify({ mode: staffOnly ? 'staff_only' : 'open' }),
+        });
+        if (status < 400) renderAccessMode(data);
+        else { toggle.checked = !staffOnly; alert(`Could not change the access mode: ${data.error || status}`); }
+      } finally {
+        toggle.disabled = false;
+      }
+    }
 
     async function loadUsers() {
       const { data } = await api('/api/admin/users');

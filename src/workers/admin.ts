@@ -45,6 +45,8 @@
 
 import { bumpDataVersion, getDataVersion } from '../lib/cache';
 import { requireAdminAccess } from './session';
+import { readAccessMode, writeAccessMode, parseAccessMode } from '../lib/access-mode';
+import { getSsoState, isStagingRequest } from '../lib/sso';
 import type { StandardRow, SearchLogRow } from '../types';
 
 interface IndexStatusRow {
@@ -489,6 +491,38 @@ export async function handleAdminFlushCache(request: Request, env: Env): Promise
   const dataVersion = await getDataVersion(env.SESSIONS);
 
   return jsonResponse({ success: true, dataVersion });
+}
+
+/**
+ * The staff-only lockdown switch (lib/access-mode.ts).
+ *
+ * GET  /api/admin/access-mode            → AccessModeState + scope
+ * POST /api/admin/access-mode {mode}     → the same, after writing
+ *
+ * Scoped to the host the dashboard was opened on: toggling on staging never
+ * touches production. Takes effect within ~60s (KV edge propagation).
+ */
+export async function handleAdminAccessMode(request: Request, env: Env): Promise<Response> {
+  const denied = await requireAuth(request, env);
+  if (denied) return denied;
+
+  const scope = isStagingRequest(request.url) ? 'stg' : 'prod';
+
+  if (request.method === 'POST') {
+    let body: { mode?: unknown } = {};
+    try { body = await request.json() as { mode?: unknown }; } catch { /* validated below */ }
+    const mode = parseAccessMode(body.mode);
+    if (!mode) {
+      return jsonResponse({ error: "mode must be 'open' or 'staff_only'" }, 400);
+    }
+    const sso = await getSsoState(request, env);
+    const by = sso.state === 'ok' ? sso.user.email : 'script';
+    await writeAccessMode(env, scope, mode, by);
+    console.log('access_mode_changed', { scope, mode, by });
+  }
+
+  const state = await readAccessMode(env, scope, { fresh: true });
+  return jsonResponse({ ...state, scope });
 }
 
 /**

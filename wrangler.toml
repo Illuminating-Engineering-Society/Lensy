@@ -151,6 +151,11 @@ AUTH_IDP_BASE_URL = "https://auth.ies.org"
 # IES members (isMember in the cookie) get in without an invite; the
 # invited_users allowlist adds guests and can still revoke anyone.
 ALLOW_MEMBERS_WITHOUT_INVITE = "true"
+# Staff-only lockdown (2026-10-08): "staff_only" admits only IdP administrators
+# and invite rows with role admin/staff; "open" is the ordinary door above.
+# This is only the DEFAULT — the switch on /admin → Users (KV
+# `access-mode:<prod|stg>`) overrides it once used. See src/lib/access-mode.ts.
+LENSY_ACCESS_MODE = "staff_only"
 # LensyLite (client DO53). "on" → IES members WITHOUT a Lighting Library
 # subscription get the limited tier: the Lighting Science collection only, with
 # Illuminance Tables, the AI Guide and Document Comparison locked.

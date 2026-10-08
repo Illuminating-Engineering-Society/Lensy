@@ -26,14 +26,14 @@
 
 import { handleSearch } from './search';
 import { handleIngest } from './ingest';
-import { handleAdminScanOrphans, handleAdminEnumerateIds, handleAdminDeleteOrphans, handleAdminFlushCache, handleAdminSearchLog, handleAdminSearchEvents, handleAdminR2Multipart, handleAdminIndexStatus, handleAdminAnalytics, handleAdminDeviceResets, handleAdminDeviceResetsList, handleAdminDeviceResetUpdate } from './admin';
+import { handleAdminAccessMode, handleAdminScanOrphans, handleAdminEnumerateIds, handleAdminDeleteOrphans, handleAdminFlushCache, handleAdminSearchLog, handleAdminSearchEvents, handleAdminR2Multipart, handleAdminIndexStatus, handleAdminAnalytics, handleAdminDeviceResets, handleAdminDeviceResetsList, handleAdminDeviceResetUpdate } from './admin';
 import { handleLibraryDocumentLookup, handleDeviceResetRequest } from './library-support';
 import { handleAdminCompAccess, handleAdminCompAccessCsv } from './comp-access';
 import { handleIngestJobs } from './staff-ingest';
 import { handleEvent } from './events';
 import { handlePreferences } from './preferences';
 import { handleAdminUsers } from './users';
-import { handleAuthMe, handleDevLogin, requireReadAccess, requireCorpusAccess } from './session';
+import { handleAuthMe, handleDevLogin, requireReadAccess, requireCorpusAccess, staffOnlyActive } from './session';
 import { buildLoginUrl, buildLogoutUrl, isStagingRequest } from '../lib/sso';
 import {
   normalizeSavedItem, savedItemCodes, newShareToken, CSV_COLUMNS, csvCell, csvRowFor,
@@ -150,6 +150,9 @@ export default {
       if (path === '/api/admin/delete-orphans' && request.method === 'POST') {
         return withCors(await handleAdminDeleteOrphans(request, env));
       }
+      if (path === '/api/admin/access-mode' && (request.method === 'GET' || request.method === 'POST')) {
+        return withCors(await handleAdminAccessMode(request, env));
+      }
       if (path === '/api/admin/flush-cache' && request.method === 'POST') {
         return withCors(await handleAdminFlushCache(request, env));
       }
@@ -203,8 +206,11 @@ export default {
       // enforces that at save time), so the link discloses references, which is
       // the point of sharing it. Claiming it into an account still needs a
       // session, and so does everything else under /api/projects.
+      // Under the staff-only lockdown (lib/access-mode.ts) even this read
+      // needs a session — which then has to be a staff one.
       const isPublicSharedRead =
-        request.method === 'GET' && /^\/api\/projects\/shared\/[^/]+$/.test(path);
+        request.method === 'GET' && /^\/api\/projects\/shared\/[^/]+$/.test(path) &&
+        !(await staffOnlyActive(request, env));
 
       // ── Applications / Standards / Projects (same session gate as search) ─
       if (

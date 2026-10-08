@@ -2046,6 +2046,26 @@ visit; neither → use the search box, which needs no stylesheet at all.
 script is deliberately separate and deletable rather than load-bearing. An
 iframe remains impossible (`frame-ancestors 'none'`).
 
+### Staff-only lockdown switch (2026-10-08)
+
+"Leave access to staff and admin only — nobody else gets in for now, or an
+option in the dashboard to turn it on and off." `src/lib/access-mode.ts`;
+the switch is at the top of /admin → Users (`GET|POST /api/admin/access-mode`).
+
+- **`staff_only`** admits only IdP `administrator`s and invite rows with role
+  `admin` or `staff` (`STAFF_INVITE_ROLES`); everyone else — members,
+  subscribers, `guest` invites, visitors — gets 403 `staff_only` from both gates
+  and `/api/auth/me`, and the auth gate says "IES Lens is currently open to IES
+  staff only". Revoked/expired rows still deny first. The anonymous shared-
+  collection read (DO52) needs a session too while it is on.
+- **Storage:** KV `access-mode:<prod|stg>` (scoped like session seats, so staging
+  toggles apart), read with `cacheTtl: 60` per gated request → a change takes up
+  to ~1 min. No KV record → `LENSY_ACCESS_MODE` var (wrangler.toml ships
+  `"staff_only"`) → `open`. A KV read error keeps the var's default rather than
+  reopening — unlike the session cap, this is an access boundary.
+- Untouched: the staff bearer (never reaches decideAccess), the public Vitrium
+  error-page endpoints (`/api/library/*`), `/api/events`.
+
 ### Admin rights are `invited_users.role = 'admin'`, not 'staff'
 
 `decideAccess` in `src/lib/sso.ts` reads `admin: idpAdmin || row.role === 'admin'`.

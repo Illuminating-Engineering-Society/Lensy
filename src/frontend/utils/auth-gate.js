@@ -155,15 +155,17 @@
     revoked: 'Your access to IES Lens has been revoked.',
     expired: 'Your guest access to IES Lens has expired.',
     not_invited: 'Your IES account is signed in, but it does not have access to IES Lens yet.',
+    staff_only: 'IES Lens is currently open to IES staff only. Please check back soon.',
   };
 
   function showDenied(data) {
     var msg = DENY_TEXT[data.reason] || DENY_TEXT.not_invited;
+    var staffOnly = data.reason === 'staff_only';
     gateEl().innerHTML = card(
-      '<h1 style="font-size:20px;font-weight:700;margin:0 0 10px">No access</h1>' +
+      '<h1 style="font-size:20px;font-weight:700;margin:0 0 10px">' + (staffOnly ? 'Not available yet' : 'No access') + '</h1>' +
       '<p style="color:#6b7280;font-size:14px;margin:0">' + esc(msg) + '</p>' +
       (data.email ? '<p style="color:#9ca3af;font-size:12px;margin:10px 0 0">Signed in as ' + esc(data.email) + '</p>' : '') +
-      '<p style="color:#6b7280;font-size:13px;margin:14px 0 0">Contact IES staff to request an invitation.</p>' +
+      (staffOnly ? '' : '<p style="color:#6b7280;font-size:13px;margin:14px 0 0">Contact IES staff to request an invitation.</p>') +
       '<div><a href="' + esc(data.logoutUrl || '/logout') + '" style="' + BTN + ';background:#3A5068">Sign out</a></div>'
     );
   }

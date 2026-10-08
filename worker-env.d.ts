@@ -38,6 +38,10 @@ declare global {
     LENSY_SESSION_CAP?: string;
     // Idle minutes before an unused seat frees itself. Unset → 30.
     LENSY_SESSION_CAP_IDLE_MINUTES?: string;
+    // ── Staff-only lockdown (2026-10-08) ────────────────────────────────────
+    // "staff_only" | "open". The DEFAULT door when the /admin Users-tab switch
+    // has never been used on this host; the switch (KV) overrides it.
+    LENSY_ACCESS_MODE?: string;
     // ── Daily search cap for non-subscribers (client, 2026-09-08) ───────────
     // Searches per rolling 24h window for tiers below `full`. Unset → 20 (the
     // client's number); "off" or "0" disables metering; any positive integer

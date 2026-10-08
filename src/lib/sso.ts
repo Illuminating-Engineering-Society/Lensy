@@ -34,6 +34,7 @@
  */
 
 import { effectiveStatus, type InviteAccessRow } from './invites';
+import { STAFF_INVITE_ROLES } from './access-mode';
 
 export const AUTH_COOKIE_NAME = 'ies_auth';
 
@@ -374,7 +375,7 @@ export interface InviteDecisionRow extends InviteAccessRow {
 export interface AccessDecision {
   authorized: boolean;
   /** Set when denied. */
-  reason?: 'revoked' | 'expired' | 'not_invited';
+  reason?: 'revoked' | 'expired' | 'not_invited' | 'staff_only';
   /**
    * invited_users.role, or 'member' for the members-without-invite path.
    * Decides ADMIN RIGHTS only — see `tier` for what the invitation grants.
@@ -432,12 +433,17 @@ export function hasIdpAdminRole(user: SsoUser): boolean {
  *
  * Note admins are still ordinary members of the corpus gate — an administrator
  * whose invite row is revoked is denied outright, admin flag included.
+ *
+ * `staffOnly` (lib/access-mode.ts — the dashboard's lockdown switch) admits
+ * only IdP administrators and invite rows with role 'admin' or 'staff';
+ * everyone else is denied `staff_only`. Revoked/expired rows still deny first.
  */
 export function decideAccess(
   user: SsoUser,
   row: InviteDecisionRow | null,
   allowMembersWithoutInvite: boolean,
   nowMs: number,
+  staffOnly = false,
 ): AccessDecision {
   const idpAdmin = hasIdpAdminRole(user);
 
@@ -448,6 +454,9 @@ export function decideAccess(
     }
     if (status === 'expired') {
       return { authorized: false, reason: 'expired', admin: false, firstLogin: false };
+    }
+    if (staffOnly && !idpAdmin && !STAFF_INVITE_ROLES.includes(row.role)) {
+      return { authorized: false, reason: 'staff_only', admin: false, firstLogin: false };
     }
     return {
       authorized: true,
@@ -463,6 +472,9 @@ export function decideAccess(
     // IES staff reach the dashboard on their IdP role alone — no invite row,
     // and no dependency on whether they hold a membership.
     return { authorized: true, role: 'admin', admin: true, firstLogin: false };
+  }
+  if (staffOnly) {
+    return { authorized: false, reason: 'staff_only', admin: false, firstLogin: false };
   }
   if (allowMembersWithoutInvite && user.isMember) {
     return { authorized: true, role: 'member', admin: false, firstLogin: false };
