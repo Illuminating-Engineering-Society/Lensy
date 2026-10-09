@@ -93,6 +93,13 @@ const SYNONYMS = {
   'parking':         'parking garage surface lot covered uncovered',
 
   // ── Outdoor / Pedestrian (RP-43-25 vocabulary) ──
+  // "How do I light the exterior of a downtown store?" (client 10/06/26 #6):
+  // the exterior OF a building is its façade, which is the RP-43-25 row the
+  // client expected and the embedding never reached from "exterior" alone.
+  'exterior of':     'façade facade building exterior outdoor',
+  'building exterior': 'façade facade building exterior outdoor',
+  'store exterior':  'façade facade storefront building exterior outdoor',
+  'storefront':      'storefront façade facade building exterior outdoor',
   'walkway':         'walkway pedestrian path sidewalk footpath promenade common pedestrian',
   'outdoor dining':  'outdoor dining restaurant patio terrace alfresco features perimeters',
   'plaza':           'plaza outdoor public space pedestrian gathering features perimeters',

@@ -114,6 +114,16 @@ async function main() {
   // particular never wipes the hand-curated eLearning list.
   const statements = entries.map((e) => {
     const { standardId, docId, webUrl } = e;
+    // Vitrium titles an errata printing by its BASE designation — "TM-30-24,
+    // Technical Memorandum…" for the PDF ingested as TM-30-24+E1 — so an exact
+    // id match missed it and that standard never received a link, cover or
+    // description (client 10/06/26 #8). A CURRENT export row with no exact D1
+    // row falls back to the newest +E# printing of that designation. A
+    // deprecated row matches exactly or not at all: it must never land on a
+    // current edition.
+    const target = e.deprecated
+      ? `'${sqlEsc(standardId)}'`
+      : `(SELECT id FROM standards WHERE id = '${sqlEsc(standardId)}' OR id LIKE '${sqlEsc(standardId)}+E%' ORDER BY (id = '${sqlEsc(standardId)}') DESC, id DESC LIMIT 1)`;
     const col = (name, value) => `${name} = ${value != null ? `'${sqlEsc(value)}'` : name}`;
     // Fill-only-if-empty. The authoring committee is read off each PDF's cover
     // during ingest ("Prepared by the … Committee", client DO29/DO46) for 110 of
@@ -134,11 +144,11 @@ SET vitrium_doc_id = '${sqlEsc(docId)}',
     ${col('buy_url', e.buyUrl)},
     ${col('elearning_json', e.elearning ? JSON.stringify(e.elearning) : null)},
     updated_at = CURRENT_TIMESTAMP
-WHERE id = '${sqlEsc(standardId)}';
+WHERE id = ${target};
 
 UPDATE applications
 SET Vitrium_Doc_ID = '${sqlEsc(docId)}'
-WHERE Standard = '${sqlEsc(standardId)}';
+WHERE Standard = ${target};
 `;
   }).join('\n');
 
@@ -441,7 +451,7 @@ function loadCsvExport(filePath, portalByCode = null) {
   }
 
   if (skipped > 0) console.log(`  (${skipped} rows skipped)\n`);
-  return [...byStandard.values()].map(v => v.entry);
+  return [...byStandard.values()].map(v => ({ ...v.entry, deprecated: v.deprecated }));
 }
 
 /**

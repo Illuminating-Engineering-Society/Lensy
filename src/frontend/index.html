@@ -839,7 +839,7 @@
        box is off screen — two bars carrying the same text read as a bug — and
        drawn in the hero bar's style (same border, radius, gold button and icon)
        so it reads as that bar following the reader down, not as a second one. -->
-  <div id="compact-search" class="hidden no-print bg-white/95 backdrop-blur border-b border-gray-100 sticky top-[61px] z-30 shadow-sm">
+  <div id="compact-search" class="hidden no-print bg-white/95 backdrop-blur border-b border-gray-100 sticky z-30 shadow-sm" style="top: var(--header-h, 61px);">
     <div class="max-w-3xl mx-auto px-4 py-2.5">
       <div class="border-2 border-gray-300 rounded-2xl bg-white p-1 flex items-center gap-2 search-glow transition">
         <input
@@ -1306,6 +1306,19 @@
     // top hides it again, which is the third case the client drew.
     let compactSearchArmed = false;
     let heroSearchVisible = true;
+
+    // The bar sticks directly under the banner, whose height is the LOGO's
+    // (the 9/23 and 9/30 rounds made it taller) — a hard-coded 61px left the
+    // bar's top half under the header (client 10/06/26 #5). Measured, and
+    // re-measured whenever the header resizes (logo load, wrap when narrow).
+    (function trackHeaderHeight() {
+      const headerEl = document.querySelector('header');
+      if (!headerEl || !document.documentElement.style) return;
+      const apply = () => document.documentElement.style.setProperty('--header-h', headerEl.offsetHeight + 'px');
+      apply();
+      if (typeof ResizeObserver === 'function') new ResizeObserver(apply).observe(headerEl);
+      else window.addEventListener('resize', apply);
+    })();
 
     function syncCompactSearchBar() {
       const compact = document.getElementById('compact-search');
@@ -2200,6 +2213,15 @@
       return docGroupActive(group) ? docFilterSelected[group].size : 0;
     }
 
+    // The number beside a Documents group heading (client 10/06/26 #4: "display
+    // the sum of unique sub-filter counts — (2) RP-1 + (3) RP-7 results would
+    // display (2) for Title"): how many distinct entries the results hold, or
+    // the chosen subset while the group is narrowing. A permanent "(0)" read
+    // as "nothing here". The FILTER badge still counts only APPLIED narrowings.
+    function docGroupHeaderCount(group) {
+      return docGroupActive(group) ? docFilterSelected[group].size : docFilterUniverse[group].length;
+    }
+
     function contentSelectedCount() {
       return CONTENT_PILLS.filter(name => filterState[name]).length;
     }
@@ -2240,9 +2262,9 @@
       };
       set('contents-count', `(${contentSelectedCount()})`);
       set('hero-contents-count', `(${contentSelectedCount()})`);
-      set('pubtype-count', `(${docGroupAppliedCount('pubtype')})`);
-      set('title-count', `(${docGroupAppliedCount('title')})`);
-      set('committee-count', `(${docGroupAppliedCount('committee')})`);
+      set('pubtype-count', `(${docGroupHeaderCount('pubtype')})`);
+      set('title-count', `(${docGroupHeaderCount('title')})`);
+      set('committee-count', `(${docGroupHeaderCount('committee')})`);
       set('filter-count', `(${filterAppliedTotal()})`);
       set('filter-trigger-count', `(${filterAppliedTotal()})`);
 
@@ -2962,7 +2984,7 @@
       // they overlap (same z-index, later in the DOM) — which hid the trigger's
       // Sort half behind the white bar. The bar ranges between its flow
       // position (unscrolled: below the shrunken hero) and its stuck position
-      // (61px, under the header), so the trigger moves below the LOWEST of
+      // (--header-h, under the header), so the trigger moves below the LOWEST of
       // those — the flow bottom, summed from scroll-independent flow heights.
       const trigger = document.getElementById('sortfilter-trigger');
       const compact = document.getElementById('compact-search');
@@ -3557,15 +3579,25 @@
                 style="${i === 0 ? 'background-color:#30363D;color:#fff;border-color:#30363D' : 'background-color:#fff;color:#30363D;border-color:#D1D5DB'}">
           ${escapeHtml(label)}
         </button>`).join('');
-      const panels = labels.map((label, i) => `
+      // Each tab de-duplicates passages against its OWN copy of the card's
+      // seen-set: the zones of one application retrieve the same passages, so
+      // a shared set let the first tab claim them all and every other tab
+      // rendered with no "From the Standard" at all (client 10/06/26 #1).
+      const panelSeens = [];
+      const panels = labels.map((label, i) => {
+        const panelSeen = new Set(seenExcerpts || []);
+        panelSeens.push(panelSeen);
+        return `
         <div class="variant-panel ${i === 0 ? '' : 'hidden'}" data-variant-panel="${i}">
           ${byLabel.get(label).map((m, j) => {
             const tail = crumbsOf(m.application || {})
               .filter(c => !VARIANT_CRUMB_RE.test(String(c.text).trim()))
               .slice(prefixLen);
-            return renderMemberSection(m, tail, j, appName, crumbSep, seenExcerpts);
+            return renderMemberSection(m, tail, j, appName, crumbSep, panelSeen);
           }).join('')}
-        </div>`).join('');
+        </div>`;
+      }).join('');
+      if (seenExcerpts) for (const s of panelSeens) for (const t of s) seenExcerpts.add(t);
       return `
         <div class="flex flex-wrap items-center gap-1.5 mt-2 pl-[26px] no-print" role="tablist"
              aria-label="${escapeHtml(members[0]?.application?.classOfPlay ? 'Class of Play' : 'Lighting Zone')}">
@@ -5632,17 +5664,23 @@
 
         // Preferred units (client DO091): SI by default; USCS swaps which unit
         // is the primary figure and which the sub-line. Both are always shown.
-        const siMain = `${plane.lux ?? '—'}<span class="text-[11px] font-normal text-gray-400 ml-0.5">lx</span>`
+        // A merged RP-43 lower/upper-limit pair carries luxMax/fcMax and reads
+        // as a range, "2–4 lx" (client 10/06/26 #1; src/lib/limit-ranges.ts).
+        const span = (lo, hi) => (lo != null && hi != null && hi !== lo ? `${lo}–${hi}` : lo);
+        const luxVal = span(plane.lux, plane.luxMax);
+        const fcVal = span(plane.fc, plane.fcMax);
+        const isRange = (plane.luxMax != null && plane.luxMax !== plane.lux) || (plane.fcMax != null && plane.fcMax !== plane.fc);
+        const siMain = `${luxVal ?? '—'}<span class="text-[11px] font-normal text-gray-400 ml-0.5">lx</span>`
           + `<span class="font-normal text-gray-500">${escapeHtml(hSuffix(plane.heightM, 'm'))}</span>`;
-        const usMain = `${plane.fc ?? '—'}<span class="text-[11px] font-normal text-gray-400 ml-0.5">fc</span>`
+        const usMain = `${fcVal ?? '—'}<span class="text-[11px] font-normal text-gray-400 ml-0.5">fc</span>`
           + `<span class="font-normal text-gray-500">${escapeHtml(hSuffix(plane.heightFt, 'ft'))}</span>`;
         const uscs = preferredUnits === 'uscs' && plane.fc != null;
         const maintMain = plane.lux != null || plane.fc != null
           ? (uscs ? usMain : siMain)
           : null;
         const maintSub = uscs
-          ? (plane.lux != null ? `${plane.lux} lx${hSuffix(plane.heightM, 'm')}` : null)
-          : (plane.fc != null ? `${plane.fc} fc${hSuffix(plane.heightFt, 'ft')}` : null);
+          ? (plane.lux != null ? `${luxVal} lx${hSuffix(plane.heightM, 'm')}` : null)
+          : (plane.fc != null ? `${fcVal} fc${hSuffix(plane.heightFt, 'ft')}` : null);
 
         // Uniformity: if there's no ratio value, promote the ratio basis to the
         // main slot; otherwise the basis (e.g. "Avg:Min") sits underneath as the
@@ -5653,7 +5691,7 @@
         // Cell order: Maintained → Uniformity → Basis. Client feedback requires
         // "Basis" to always display after (to the right of) "Uniformity".
         const cells = [];
-        if (maintMain != null) cells.push(cell('Maintained', maintMain, maintSub));
+        if (maintMain != null) cells.push(cell(isRange ? 'Lower–Upper Limit' : 'Maintained', maintMain, maintSub));
         if (uniMain != null) cells.push(cell('Uniformity', escapeHtml(String(uniMain)), uniSub));
         if (plane.avgMaxMin != null) cells.push(cell('Basis', escapeHtml(String(plane.avgMaxMin)), null));
         if (plane.cv != null) cells.push(cell('CV', escapeHtml(String(plane.cv)), null));

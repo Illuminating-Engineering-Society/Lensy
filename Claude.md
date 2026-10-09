@@ -1733,6 +1733,50 @@ losing content") is answered by the alignment report, not by the model.
   `staff-ingest.test.js` (fixtures are stored-method ZIPs so they run on any
   Node ≥ 18; `src/lib/docx-fixture.js` is test-only).
 
+### The 10/06/26 Teams notes: ranges, the exterior default, and catalogue gaps (2026-10-09)
+
+`SEARCH_CACHE_SCHEMA` → **v19**. No migration.
+
+- **RP-43 lower/upper limits are one row with a range (#1).** All 226 RP-43-25
+  rows are limit rows; within a pair only the lux values differ (measured over
+  100 pairs). `src/lib/limit-ranges.ts` merges each complete pair into the
+  better-ranked half: planes gain `luxMax`/`fcMax`, the "Lower/Upper limit
+  (avg.)" level leaves the hierarchy (so the zones fall into ONE tabbed card),
+  and `application.limitRange` records both codes. A half whose partner missed
+  the pool is completed from D1 (`mergeLimitRanges`, step 7b of
+  `runSingleSearch`, fail-soft); a lone half with no partner stays as it was.
+  The card prints "2–4 lx" under a "Lower–Upper Limit" label. `applyUnits`
+  strips the maxima with their unit.
+- **Class/LZ tabs keep "From the Standard" (#1).** Each tab de-duplicates
+  passages against its own copy of the card's seen-set; the shared set let the
+  first tab claim every passage.
+- **RP-43 is the default for exterior questions (#6).** `isExteriorQuery`
+  gates a probe shaped like RP-10's (step 3d: current RP-43 edition, admitted
+  within 0.12 of the best application match, ≥0.55, up to 16 rows) and a
+  CATALOGUE FACT telling the Guide to lead with RP-43 unless an
+  application-specific standard in the results explicitly covers the exterior
+  application. "exterior of" / "building exterior" / "storefront" expand to
+  façade vocabulary — without it "exterior of a downtown store" never reached
+  RP-43's Façades rows (RP-47 Landscape and RP-2 retail led).
+- **Documents group counts (#4)** show the number of distinct entries in the
+  results (or the narrowed subset), not the old always-"(0)". The FILTER badge
+  still counts applied narrowings only.
+- **The compact search bar sticks under the MEASURED header (#5)**
+  (`--header-h`, ResizeObserver) — the hard-coded 61px predated the taller logo.
+- **Catalogue (#8/#9).** TM-30-24+E1 never got a link/cover because Vitrium
+  titles it "TM-30-24": `sync-metadata.js` now falls back from an exact id to
+  the newest `+E#` printing for CURRENT export rows (deprecated rows match
+  exactly or not at all). LP-6-25's stored cover key 404s (a new Vitrium
+  version since the 2026-08-24 portal snapshot) and RP-4-26 is not in that
+  snapshot — both need a fresh PortalDocuments export (the endpoint is 403
+  without a portal session). LS-1 → IES Nomenclature Committee + the client's
+  Vitrium placeholder `https://lighting.ies.org/d6VY6j` (Definition cards keep
+  ies.org/standards/definitions — hard-coded in the card). The "↗" after
+  fallback committee links on List Standards is gone. The committee registry
+  now reads "Lighting for the Aged and the Partially Sighted Committee", and all
+  three RP-28 rows carry that name (RP-28-25 said "Seniors", which matched no
+  registry entry).
+
 ### Logos and favicon, 2026 artwork (Teams notes 10/05–10/06/26)
 
 - **Which top-left logo is which.** IES Lens pages (search, Bookmarks) carry

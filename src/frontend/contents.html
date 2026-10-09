@@ -658,14 +658,15 @@
         } else if (g.heading && g.committee) {
           // The link is resolved server-side (same function the result cards
           // use), so a committee IES no longer publishes falls back to the root
-          // list rather than to a 404.
+          // list rather than to a 404. No "↗" on the fallback (client 10/06/26
+          // #8: it marked some committees and not others) — the title says it.
           heading = `<h2 class="text-sm font-bold text-gray-700 mb-1.5">
               <a href="${escapeHtml(g.committee.url)}" target="_blank" rel="noopener"
                  class="hover:text-ies-blue hover:underline"
                  title="${escapeHtml(g.committee.exact
                    ? 'View this committee’s roster on ies.org'
                    : 'This committee has no current page — opens the list of IES technical committees')}"
-              >${escapeHtml(displayName(g.heading))}${g.committee.exact ? '' : ' ↗'}</a>
+              >${escapeHtml(displayName(g.heading))}</a>
             </h2>`;
         } else if (g.heading) {
           heading = `<h2 class="text-sm font-bold text-gray-700 mb-1.5">${escapeHtml(displayName(g.heading))}</h2>`;

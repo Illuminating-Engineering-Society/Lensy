@@ -109,7 +109,10 @@ const DATA_VERSION_KEY = 'cache:data-version';
 //     the merged-predecessor fact), and RESULTS changed (RP-10 common-
 //     application rows, deprecated-edition lookups returning current +
 //     deprecated cards with a catalogue note, Handbook notice, product answers).
-const SEARCH_CACHE_SCHEMA = 'v18';
+// v19: the 10/06/26 notes. RESULTS changed (RP-43 lower/upper limit rows merge
+//     into one row with luxMax/fcMax; exterior questions probe RP-43 rows) and
+//     the Guide PROMPT gained the RP-43-is-the-exterior-default catalogue fact.
+const SEARCH_CACHE_SCHEMA = 'v19';
 
 function errMsg(err: unknown): string {
   return err instanceof Error ? err.message : String(err);

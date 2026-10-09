@@ -96,6 +96,7 @@ import {
 import { isProductQuestion, productAnswerText } from '../lib/product';
 import { resolveQueryLanguage, localizeSummary } from '../lib/language';
 import { hasEnvConsiderationColumns, parseLightingZoneLabel } from '../lib/illuminance-fields.js';
+import { indexLimitPairs, limitInfo, limitPairKey, mergeLimitPairs } from '../lib/limit-ranges';
 import {
   getDataVersion,
   buildSearchCacheKey,
@@ -831,6 +832,21 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
     }
     rp1Note = rp1IlluminanceNote(searchQuery, allResults.results, rp10Name);
     if (rp1Note && !includeAISummary) supersession.notices.push(rp1Note);
+
+    // RP-43 is the default for exterior applications (client 10/06/26 #6) —
+    // stated only when its rows are actually in the results, so the Guide is
+    // never told to cite something it cannot see.
+    const rp43Card = isExteriorQuery(searchQuery)
+      && allResults.results.find(r => /^RP-43-\d{2}/i.test(String(r.application?.standard || '')) && !r.isDeprecated);
+    if (rp43Card) {
+      const rp43Name = rp43Card.application?.standardFull || `ANSI/IES ${rp43Card.application?.standard}`;
+      supersession.facts.push(
+        `${rp43Name} (Lighting Exterior Applications) is the DEFAULT IES standard for exterior applications. `
+        + 'Present it first for this exterior question, unless an application-specific standard in the results '
+        + 'explicitly addresses this exterior application — then present that standard alongside it. '
+        + 'A standard that only touches the topic (e.g. landscape lighting for a building question) is further reading, not the lead.',
+      );
+    }
   }
 
   // ── Related applications + optional AI summary (run concurrently) ────────────
@@ -2195,6 +2211,49 @@ async function currentCommonApplicationsStandard(env: Env): Promise<string | nul
   }
 }
 
+// ─── RP-43: the default standard for exterior applications (client 10/06/26 #6)
+
+const EXTERIOR_DEFAULT_FAMILY = 'RP-43';
+const RP43_MIN_SCORE = 0.55;
+// Looser than RP-10's 0.08: "How do I light the exterior of a downtown store?"
+// put RP-43's best row 0.10 below RP-2's retail rows, and the client's point is
+// precisely that RP-43 belongs beside the application-specific standard.
+const RP43_SCORE_MARGIN = 0.12;
+// Rows, not applications: one RP-43 application is up to 4 zones × lower/upper
+// = 8 rows, which the limit merge and the zone tabs fold into ONE card.
+const RP43_MAX_ROWS = 16;
+
+/** The current edition of a family (newest Active id), read from D1. Fail-open. */
+async function currentEditionOfFamily(env: Env, family: string): Promise<string | null> {
+  try {
+    const row = await env.DB.prepare(
+      "SELECT id FROM standards WHERE status = 'Active' AND id LIKE ? ORDER BY id DESC LIMIT 1"
+    ).bind(`${family}-%`).first<{ id: string }>();
+    return row?.id || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * A question about lighting something OUTSIDE (client 10/06/26 #6: "train Lens
+ * to understand that RP-43 is the default standard for all exterior
+ * applications, unless they are explicitly addressed in application-specific
+ * standards"). Deliberately about the setting, not the application — the
+ * application-specific standard still competes on its own merits.
+ */
+export function isExteriorQuery(query: string): boolean {
+  return /\b(?:exteriors?|outdoors?|outside|fa[cç]ades?|building\s+fronts?|storefronts?|parking\s+lots?|plazas?|courtyards?|walkways?|sidewalks?|pathways?|pedestrian|site\s+lighting|streetscapes?|canopy|canopies|curbside|outdoor\s+dining|patios?|landscape)\b/i
+    .test(normalizeTypography(query || ''));
+}
+
+/** Does the application pool lean outdoor? Used when the query never says so. */
+function poolLeansOutdoor(apps: ApplicationRow[]): boolean {
+  const top = apps.slice(0, 10);
+  if (top.length < 3) return false;
+  return top.filter(a => a.Indoor_Outdoor === 'Outdoor').length * 2 > top.length;
+}
+
 /** A question about illuminance levels / light levels for an application. */
 export function isIlluminanceQuery(query: string): boolean {
   return /\b(?:illuminance|lux|lx|foot-?candles?|fc|light(?:ing)?\s+levels?|how\s+(?:bright|much\s+light)|recommended\s+light(?:ing)?)\b/i
@@ -2312,6 +2371,36 @@ async function runSingleSearch(rawQuery: string, filters: SearchFilters, limit: 
     }
   }
 
+  // 3d. RP-43, the default standard for EXTERIOR applications (client 10/06/26
+  //     #6). Same shape as the RP-10 probe: its rows rarely win the shared pool
+  //     against an application-specific standard ("exterior of a downtown
+  //     store" returned RP-2 retail and RP-47 landscape, and none of RP-43's
+  //     façade rows), so they are probed directly whenever the question is
+  //     about an exterior — and admitted only within reach of the best match.
+  //     Fail-open.
+  if (includeTables && !filters.standard && !filters.standard_prefix && isExteriorQuery(rawQuery)) {
+    try {
+      const rp43 = await currentEditionOfFamily(env, EXTERIOR_DEFAULT_FAMILY);
+      if (rp43) {
+        const probe = await env.VECTORIZE.query(queryVector, {
+          topK: 40,
+          returnMetadata: 'all',
+          filter: { standard_code: rp43, chunk_type: 'application' },
+        });
+        const best = appMatches.reduce((m, a) => Math.max(m, a.score || 0), 0);
+        const floor = Math.max(RP43_MIN_SCORE, best - RP43_SCORE_MARGIN);
+        const have = new Set(appMatches.map(m => m.metadata?.application_code));
+        const admitted = ((probe.matches || []) as unknown as VMatch[])
+          .filter(m => m.metadata?.application_code && !have.has(m.metadata.application_code) && m.score >= floor)
+          .slice(0, RP43_MAX_ROWS);
+        appMatches.push(...admitted);
+        appMatches.sort((a, b) => b.score - a.score);
+      }
+    } catch (err) {
+      console.error('RP-43 exterior probe failed (non-fatal):', errMsg(err));
+    }
+  }
+
   // 4. Fetch application records from D1 (plus the standards index, used
   //    for full-title citations, Vitrium links, and orphan-chunk filtering)
   const appCodes = dedupeByCode(appMatches).slice(0, limit * 2)
@@ -2395,6 +2484,10 @@ async function runSingleSearch(rawQuery: string, filters: SearchFilters, limit: 
     mergeResults(results, fallback);
     results.sort(compareResults);
   }
+
+  // 7b. RP-43's lower/upper limit rows become one row with a range (client
+  //     10/06/26 #1) — partners outside the pool are read from D1.
+  results = await mergeLimitRanges(env.DB, results);
 
   // 8. Blend PDF-chunk results into the list — not only as a zero-result
   //    fallback. Application vectors vastly outnumber chunk vectors, so any
@@ -3832,6 +3925,37 @@ async function textFallback(db: D1Database, query: string, filters: SearchFilter
   );
 }
 
+/**
+ * Merge lower/upper-limit pairs (src/lib/limit-ranges.ts). A half whose partner
+ * did not make the pool is completed from D1: one query per (standard,
+ * application, table), batched. Fail-soft — on a D1 error the pairs that are
+ * both in the pool still merge and the rest stay as separate rows.
+ */
+async function mergeLimitRanges(db: D1Database, results: SearchResult[]): Promise<SearchResult[]> {
+  const pooled = indexLimitPairs(results.filter(r => r.resultType === 'application').map(r => r.application));
+  const triples = new Map<string, { standard: string; category: string; tableRef: string }>();
+  for (const r of results) {
+    if (r.resultType !== 'application' || !limitInfo(r.application)) continue;
+    const pair = pooled.get(limitPairKey(r.application)!);
+    if (pair?.lower && pair?.upper) continue;
+    const a = r.application;
+    if (!a.standard || !a.category || !a.tableRef) continue;
+    triples.set(`${a.standard}|${a.category}|${a.tableRef}`, { standard: a.standard, category: a.category, tableRef: a.tableRef });
+  }
+  if (!triples.size) return mergeLimitPairs(results);
+  const known = new Map();
+  try {
+    const stmts = [...triples.values()].slice(0, 20).map(t =>
+      db.prepare('SELECT * FROM applications WHERE Active = 1 AND Standard = ? AND App = ? AND Table_Ref = ?')
+        .bind(t.standard, t.category, t.tableRef));
+    const batches = await db.batch<ApplicationRow>(stmts);
+    indexLimitPairs(batches.flatMap(b => b.results || []).map(formatApplication), known);
+  } catch (err) {
+    console.error('limit-pair partner fetch failed (non-fatal):', errMsg(err));
+  }
+  return mergeLimitPairs(results, known);
+}
+
 // ─── Result Builder ───────────────────────────────────────────────────────────
 
 export function buildResult(app: ApplicationRow, score: number, chunkMeta: Partial<VectorMetadata> | undefined, excerptIndex: ExcerptIndex, linkCtx: LinkCtx): SearchResult {
@@ -4301,10 +4425,10 @@ function applyUnits(results: SearchResult[], units: string): SearchResult[] {
       const plane = app[block];
       if (!plane) continue;
       if (units === 'lux') {
-        const { fc, heightFt, ...rest } = plane; // eslint-disable-line no-unused-vars
+        const { fc, fcMax, heightFt, ...rest } = plane; // eslint-disable-line no-unused-vars
         app[block] = rest;
       } else if (units === 'fc') {
-        const { lux, heightM, ...rest } = plane; // eslint-disable-line no-unused-vars
+        const { lux, luxMax, heightM, ...rest } = plane; // eslint-disable-line no-unused-vars
         app[block] = rest;
       }
     }

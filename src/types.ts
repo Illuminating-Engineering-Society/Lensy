@@ -204,6 +204,9 @@ export interface IlluminancePlane {
   category: string | null;
   lux?: number | null;      // stripped by applyUnits when units='fc'
   fc?: number | null;       // stripped when units='lux'
+  /** Upper end of a merged lower/upper-limit pair (RP-43, client 10/06/26 #1). */
+  luxMax?: number | null;
+  fcMax?: number | null;
   heightM?: number | null;
   heightFt?: number | null;
   avgMaxMin: string | null;
@@ -269,6 +272,8 @@ export interface FormattedApplication {
   footnoteMarks: FootnoteMarks | null;
   generalNotes: string | null;
   appNotes: string | null;
+  /** Set when a lower/upper-limit pair was merged into this row (src/lib/limit-ranges.ts). */
+  limitRange?: { lowerCode: string; upperCode: string; qualifier: string | null };
 }
 
 /** One step of a section's parent chain: "3.3" → "Transition Spaces…" (DO40). */
