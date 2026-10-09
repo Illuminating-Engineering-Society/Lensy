@@ -161,9 +161,16 @@
   function showDenied(data) {
     var msg = DENY_TEXT[data.reason] || DENY_TEXT.not_invited;
     var staffOnly = data.reason === 'staff_only';
+    // Pre-launch lockdown copy (client, 2026-10-09). Same store URL as the
+    // profile menu's Subscribe (utils/site-menu.js).
+    var body = staffOnly
+      ? 'IES Lens goes live on November 2, 2026. ' +
+        '<a href="https://store.ies.org/ies/subscriptions/" target="_blank" rel="noopener" ' +
+        'style="color:#3A5068;font-weight:600;text-decoration:underline">Click here to subscribe to the Lighting Library.</a>'
+      : esc(msg);
     gateEl().innerHTML = card(
       '<h1 style="font-size:20px;font-weight:700;margin:0 0 10px">' + (staffOnly ? 'Not available yet' : 'No access') + '</h1>' +
-      '<p style="color:#6b7280;font-size:14px;margin:0">' + esc(msg) + '</p>' +
+      '<p style="color:#6b7280;font-size:14px;margin:0">' + body + '</p>' +
       (data.email ? '<p style="color:#9ca3af;font-size:12px;margin:10px 0 0">Signed in as ' + esc(data.email) + '</p>' : '') +
       (staffOnly ? '' : '<p style="color:#6b7280;font-size:13px;margin:14px 0 0">Contact IES staff to request an invitation.</p>') +
       '<div><a href="' + esc(data.logoutUrl || '/logout') + '" style="' + BTN + ';background:#3A5068">Sign out</a></div>'
