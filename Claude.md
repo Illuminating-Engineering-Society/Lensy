@@ -1733,6 +1733,66 @@ losing content") is answered by the alignment report, not by the model.
   `staff-ingest.test.js` (fixtures are stored-method ZIPs so they run on any
   Node ≥ 18; `src/lib/docx-fixture.js` is test-only).
 
+### The 10/09/26 Teams notes: non-subscriber surfaces, per-account bookmarks, the Library hop, committee scopes (2026-10-13)
+
+`SEARCH_CACHE_SCHEMA` → **v20**. Migration **0021** (`projects.owner_email`).
+
+- **Bookmarks were NOT isolated (#1E) — fixed.** Every caller sent the Phase 1
+  placeholder `user_id = 1`, so all readers shared one pool (and the per-id
+  routes checked no owner at all). Collections are now owned by the ies_auth
+  email (`owner_email`, migration 0021 backfills the six pre-existing rows to
+  dozminkowski@ies.org); `handleProjects` requires a session, checks ownership
+  once for any `/api/projects/:id…` path (a stranger's id is a 404), lists,
+  creates, claims and answers saved-status by owner. Only `GET
+  /api/projects/shared/:token` stays account-free (DO52). The staff bearer has
+  no bookmarks (401). `user_id` is now meaningless; clients still send it.
+- **Definitions vanished for non-subscribers (#1F)** because they hang off
+  `LS-1-25`, which no Vitrium folder holds; `restrictToStandards` now always
+  keeps `resultType === 'definition'` (the glossary is public on ies.org).
+- **Subscriber-view counts (#1C).** For tier `lite`, handleSearch runs a second
+  retrieval over the whole corpus with all four kinds IN PARALLEL and returns
+  only `subscriberCounts` (bucketed by `countContentKinds`, mirroring the UI) —
+  no results, so nothing reaches cards or the Guide. The UI shows those counts
+  beside every Contents checkbox (padlocked ones included) for a lite reader.
+  Document Body now carries the padlock like Illuminance Tables, and "Only" is
+  hidden on locked kinds (it would have selected nothing).
+- **Green banner (#1B/#1E1).** "You are searching the Lighting Science
+  Collection" is gone; the Subscribe line is followed by the client's
+  subscriber sentence. Before a search it stays above the footer; once results
+  render, `#lite-banner-top` (immediately above the AI Guide) takes over
+  (`paintLiteBanners`). Bookmarks shows the same box with its own second line.
+  `LITE_NOTICE` (tiers.ts) carries the new copy.
+- **List Standards (#1D1):** a Non-Subscriber's orange button reads "Subscribe"
+  (→ store subscriptions page) and table rows are not Library links; LS-1 stays
+  open. Admin → Users tier labels read Subscriber / Non-Subscriber (#1A).
+- **Vitrium let a non-member open everything (#1D) — AuthIES, built, NOT
+  switched on.** The webhook gate is `VITRIUM_REQUIRE_MEMBERSHIP="off"` in every
+  environment, and even "on" it asks for membership, not subscription. AuthIES
+  `lib/entitlements.ts` gained `VITRIUM_ACCESS` (`subscription` | `membership`
+  | `off`, wins over the legacy var) and `vitriumAdmits` (staff roles and
+  `VITRIUM_SUBSCRIBER_ROLES`, default `lighting-library-full-access,tc-chair`).
+  Measured before flipping (30 days of `token_issued`): 11 subscribers/staff
+  (2,292 grants), 2 members-only, 2 neither. Setting
+  `VITRIUM_ACCESS="subscription"` on AuthIES production is the client's call.
+- **First click loses `#page=N` (#2).** Vitrium's SSO-fail redirect sends the
+  content URL with its query stripped and, being a fragment, never `#page`
+  (sometimes no URL → portal home); the second click works because the viewer
+  session exists. `auth-gate.js` now rewrites a click on any lighting.ies.org
+  document link to `<IdP>/sp/vitrium/sso?returnUrl=<link>` (URL from
+  `/api/auth/me` `libraryHopUrl`), so AuthIES mints the token first and sends
+  the browser to `CODE?iesToken=…#page=N`. Kill switch
+  `LENSY_LIBRARY_SSO_HOP="off"`. **Needs a live first-click test** after deploy
+  (fresh browser, no Vitrium session).
+- **Committee scopes for curation (#3).** `scripts/sync-committee-scopes.js`
+  (read-only Wicket `/groups`, type `technical`, active, Description) writes
+  `src/config/committee-scopes.json` (40 committees, synced 2026-10-13);
+  `committeeScope()` joins any spelling of a committee name; the curation
+  rerank prompt names each result's committee and lists the pool's scopes,
+  with a rule that "what does X mean / how do X and Y differ" belongs to the
+  nomenclature/measurement/science committees. Curation only — needs the Guide
+  on, and Guide-cited cards still lead. Re-run the script when IES edits scopes
+  (env: AuthIES's production REST pair `WICKET_API_USER_UUID`/`WICKET_API_SECRET`).
+
 ### The 10/06/26 Teams notes: ranges, the exterior default, and catalogue gaps (2026-10-09)
 
 `SEARCH_CACHE_SCHEMA` → **v19**. No migration.

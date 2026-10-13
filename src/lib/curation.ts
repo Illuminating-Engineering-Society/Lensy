@@ -35,6 +35,7 @@
  */
 
 import { extractText } from './ai-summary';
+import { committeeScope } from './committees.js';
 import type { SearchResult } from '../types';
 
 /** How many results are described to the rerank model. Beyond this, the tail
@@ -84,21 +85,58 @@ export function describeForRerank(r: SearchResult, idx: number): string {
       ? `§${r.excerpt.section}${r.excerpt.sectionTitle ? ` ${r.excerpt.sectionTitle}` : ''}`
       : '');
   const snippet = (r.excerpt?.text || r.document?.description || '').substring(0, 160);
-  return `[${idx + 1}] ${type} — ${app.standard || ''}${name ? ` — ${name}` : ''}${snippet ? ` — "${snippet}"` : ''}`;
+  const committee = shortCommittee(r.committee?.name);
+  return `[${idx + 1}] ${type} — ${app.standard || ''}${committee ? ` (${committee})` : ''}${name ? ` — ${name}` : ''}${snippet ? ` — "${snippet}"` : ''}`;
+}
+
+/** "IES Color Committee" → "Color Committee": the descriptor is a budget. */
+function shortCommittee(name: string | null | undefined): string {
+  return String(name || '').replace(/^IES\s+/i, '').trim();
+}
+
+/** Longest scope text sent per committee — the Included/Excluded sentences. */
+const SCOPE_MAX_CHARS = 320;
+
+/**
+ * The published scope of every authoring committee in the pool (client
+ * 10/09/26 #3: "train Lens on each Committee's scope, as a way to improve
+ * curation"). A question about what a quantity or term IS belongs to the
+ * committees whose scope is nomenclature, photometry or vision science, not to
+ * the application committees that merely use the term — the scope says which
+ * is which in the committees' own words. Empty when no scope is on record.
+ */
+export function committeeScopesBlock(results: SearchResult[]): string {
+  const seen = new Set<string>();
+  const lines: string[] = [];
+  for (const r of results.slice(0, RERANK_MAX)) {
+    const name = shortCommittee(r.committee?.name);
+    if (!name || seen.has(name.toLowerCase())) continue;
+    seen.add(name.toLowerCase());
+    const scope = committeeScope(name);
+    if (!scope) continue;
+    const text = scope.length > SCOPE_MAX_CHARS ? `${scope.slice(0, SCOPE_MAX_CHARS).replace(/\s+\S*$/, '')}…` : scope;
+    lines.push(`- ${name}: ${text}`);
+  }
+  return lines.join('\n');
 }
 
 export function buildRerankPrompt(query: string, results: SearchResult[]): string {
   const lines = results.slice(0, RERANK_MAX).map((r, i) => describeForRerank(r, i)).join('\n');
+  const scopes = committeeScopesBlock(results);
   return `You are ranking search results for a lighting professional searching the IES standards library.
 
 Query: "${query}"
 
 Results:
 ${lines}
-
+${scopes ? `
+Scopes of the authoring technical committees (as IES publishes them):
+${scopes}
+` : ''}
 Rank ALL of these results from most to least useful for answering the query. Judge by:
 - how directly the result's content answers the query — not mere topical overlap;
 - whether the passage or table row addresses the asked application, space or topic itself;
+- whose subject it is: prefer results from the committee whose scope covers what the query is asking about. A question about what a term, quantity or concept means or how two concepts differ belongs to the committees whose scope is nomenclature, measurement or the science of light and vision, ahead of application committees that only use the term; a question about lighting a particular space or application belongs to that application's committee;
 - variety: when several rows are near-duplicates of one table block, the most representative one ranks ahead of its variants;
 - a definition or a whole-standard card ranks highly only when the query asks for terminology or for that document.
 

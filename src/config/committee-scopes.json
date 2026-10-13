@@ -1,0 +1,126 @@
+{
+  "_comment": "IES Technical Committee scopes, from the Description field of each active Technical group in Wicket (client 10/09/26 #3). Written by scripts/sync-committee-scopes.js — do not edit by hand; re-run when IES revises a scope. Keyed by the committee name as Wicket prints it.",
+  "_syncedAt": "2026-10-13",
+  "committees": {
+    "Airports and Heliports Lighting Committee": {
+      "scope": "Included subject matter: The scope includes aircraft stands and apron areas, internal airport roadways, passenger loading and unloading areas as well as pedestrian walkways. Excluded subject matter: This committee does not cover the illumination of related public areas outside the project limitations. This IES Technical Committee is distinct in purpose and scope from the IESALC (Aviation Lighting Committee)."
+    },
+    "Assembly and Performance Lighting Committee": {
+      "scope": "Included subject matter: The scope includes stage lighting, auditoriums, and film and television studios. Excluded subject matter: This committee does not cover lighting design for productions or related public areas outside the project limitations."
+    },
+    "BIM Committee": {
+      "scope": "Included subject matter: The scope includes developing a Technical Memorandum or Design Guide for shared parameters for BIM lighting file software. Excluded subject matter: The scope does not include software or file formats outside of BIM."
+    },
+    "Color Committee": {
+      "scope": "Included subject matter: The scope includes color rendering, color quality, methods of light source evaluation and reporting, and using color as a design element. Excluded subject matter: This committee does not include how light affects human vision and the visual processes."
+    },
+    "Computer Committee": {
+      "scope": "• Included subject matter: The scope includes luminaire photometric data and light source spectral data. • Excluded subject matter: This scope does not include automotive photo metric data."
+    },
+    "Daylighting Committee": {
+      "scope": "• Included subject matter: The scope includes daylighting interior spaces. • Excluded subject matter: This committee does not cover performance aspects of fenestration design not pertaining to lighting and thermal load consideration."
+    },
+    "Daylight Metrics Committee": {
+      "scope": "Included subject matter: The scope includes daylight metrics applicable to common workplace environments. Excluded subject matter: This committee does not cover energy consumption."
+    },
+    "Discomfort Glare in Outdoor Nighttime Environments Committee": {
+      "scope": "Included subject matter: The scope includes defining a dark-adapted glare metric and field verification method(s) of the predicted glare. Excluded subject matter: This committee does not cover on-site evaluation of glare."
+    },
+    "Economics Committee": {
+      "scope": "Included subject matter: Quantitative (e.g., energy) and qualitative (e.g., wellness) economic factors that should inform selection of illumination platforms. Excluded subject matter: Specific standards for illumination systems needed to drive both quantitative and qualitative economic assessments."
+    },
+    "Education, Library and Office Lighting Committee": {
+      "scope": "Included subject matter: The scope includes lighting practices to enhance the visual environment of office, educational facilities, and various types of libraries with an emphasis on the quality of the lighting. Excluded subject matter: This committee does not cover the illumination of related public areas outside the project limitations, all possible facilities where educational programs could take place such as convention centers or hotel ballrooms."
+    },
+    "Field Measurements Committee": {
+      "scope": "Included subject matter: TBD. Excluded subject matter: This committee does not cover manual or electronic design calculations."
+    },
+    "Healthcare Facilities Lighting Committee": {
+      "scope": "Included subject matter: The scope includes lighting needs specific to acute care hospitals, chronic care hospitals, extended care facilities, and related facilities (free standing ambulatory surgical centers, emergency centers, etc.). Excluded subject matter: This committee does not cover the illumination of related public areas outside the healthcare facility project limitations."
+    },
+    "Horticultural Lighting Committee": {
+      "scope": "Included subject matter: Controlled horticultural environments such as greenhouses, plant factories, and building atria. Excluded subject matter: Horticultural lighting metrics, luminaire test and measurement procedures, and energy performance for luminaires."
+    },
+    "Hospitality Lighting Committee": {
+      "scope": "Included subject matter: The committee scope includes lighting hotel, motel, restaurant, and other hospitality environments. Excluded subject matter: This committee does not cover the illumination of related public areas outside the hospitality project limitations."
+    },
+    "Industrial Lighting Committee": {
+      "scope": "Included subject matter: The scope includes warehouse and storage areas, outdoor industrial areas, and the performance of industrial tasks such as manufacturing, with an emphasis on safety. Excluded subject matter: This committee does not cover the illumination of related public areas outside the industrial project limitations."
+    },
+    "IoT Connected Lighting Sytems": {
+      "scope": "Included subject matter: Included subject matter: The scope includes IoT connected lighting systems, development of system architecture design and application, standards, various other IoT connected system architectures, IoT data analytics, IoT system vocabulary/specifications, IoT security, and system power/energy considerations. Excluded subject matter: This committee does not cover general lighting control systems or energy efficiency lighting programs."
+    },
+    "Landscape Lighting Committee": {
+      "scope": "Included subject matter: The scope includes hardscape and softscape elements in both natural and manmade environments. Excluded subject matter: This committee does not cover the illumination of related public areas outside the landscape project limitations."
+    },
+    "Light and Design Committee": {
+      "scope": "Included subject matter: The scope includes all areas where natural and electric lighting are used, including interiors and exteriors. Excluded subject matter: This committee does not cover specific lighting applications, codes, energy considerations, or specific technologies."
+    },
+    "Light and Human Health Committee": {
+      "scope": "Included subject matter: Summarizing and reporting current knowledge in retinal photoreceptors and physiology associated the impact of lighting characteristics (quantity, spectrum, timing, duration, light history) on the circadian, neuroendocrine, neurobehavioral and visual systems. Excluded subject matter: \"\"This committee does not cover safety requirements or risk group classifications for optical radiation from wavelengths from 200 nm through 3,000 nm, or hazards associated with some lamps/lamp systems relative to potential radiation hazards. Thank you for your interest in the IES Light & Health Committee. This committee is currently closed to new members. When it opens an announcement will be placed in the IES E-newsletter."
+    },
+    "Lighting Commissioning Committee": {
+      "scope": "Included subject matter: The scope includes the technical requirements for commissioning lighting and control systems to achieve owner performance criteria in new construction. Excluded subject matter: This committee does not cover retro-commissioning or commissioning for facilities that have not been previously commissioned."
+    },
+    "Lighting Control Systems Committee": {
+      "scope": "Included subject matter: The scope includes lighting control systems and protocols. Excluded subject matter: This committee does not cover energy efficiency lighting programs."
+    },
+    "Lighting for the Aged and Partially Sighted Committee": {
+      "scope": "Included subject matter: The scope emphasizes vision, comfort, and independence for populations with aging or low vision. It engages in activities such as outreach to senior care organizations, state and national regulatory agencies, and professional organizations involved in the development of standards for senior living environments. Research scope includes the dual function of the human eye for vision and circadian entrainment in relation to aging, particularly the timing, duration, color, and intensity of the circadian stimulus for seniors. Excluded subject matter: This committee does not cover the illumination of related public areas outside the industrial project limitations."
+    },
+    "Lighting for Videoconference and Presentation Spaces Committee": {
+      "scope": "Included subject matter: The scope includes multi-media and video conferencing facilities. Excluded subject matter: This committee does not cover large venues, rooms with more than 25 seats, broadcast studios, or distance education facilities."
+    },
+    "Lighting Maintenance Committee": {
+      "scope": "Included subject matter: The scope includes light loss factors, maintenance methods, and design planning for maintenance. Excluded subject matter: This committee does not cover the design of light sources outside the context of maintenance."
+    },
+    "Lighting Upgrades Committee": {
+      "scope": "Included subject matter: The scope includes upgrades for retrofits and redesigns. Excluded subject matter: This committee does not cover initial or new lighting designs outside the realm of upgrades."
+    },
+    "Museum and Art Gallery Lighting Committee": {
+      "scope": "Included subject matter: The committee scope is limited to lighting applications within the museum environment, particularly exhibits and areas immediately adjacent to exhibits that affect the visitor’s museum experience. Excluded subject matter: This committee does not cover the illumination of related public areas such as exteriors, retail, and restaurants."
+    },
+    "Nomenclature Committee": {
+      "scope": "Included subject matter: The scope includes technically correct definitions for lighting-related terms. Excluded subject matter: This committee does not define terms in common use or which are not clearly related to lighting."
+    },
+    "Outdoor Nighttime Environment Committee": {
+      "scope": "Included: Nighttime illumination recommendations for outdoor spaces including pathways, plazas, landscaping, building facades, art, and monuments that address both visual and environmental factors. Not Included: Special applications that require additional visual expertise beyond the visual and environmental impacts stated above, such as lighting for roadways, sporting facilities, industrial plants, airports, port terminals, or applications targeted to light and human health."
+    },
+    "Photobiology Committee": {
+      "scope": "Included subject matter: The scope includes photobiological hazards, photobiological effects of lighting on plant systems, non-visual photobiological effects, and safety for lamps and lamp systems. Excluded subject matter: This committee does not address health in relation to lighting outside the context of photobiology."
+    },
+    "Port Terminal Lighting Committee": {
+      "scope": "ncluded subject matter: This Technical Committee researches and develops best practices for designing lighting systems for port terminals. Excluded subject matter: This committee does not cover the illumination of related public areas outside the port terminal project limitations."
+    },
+    "Residential Lighting Committee": {
+      "scope": "Included subject matter: The scope includes lighting issues that are primarily related to interior lighting for single family residences. Excluded subject matter: This committee does not cover the illumination of related public areas outside the residential project limitations."
+    },
+    "Resilience Committee": {
+      "scope": "Included subject matter: The scope includes suitable materials, design techniques, and construction procedures for improving the standard of practice for lighting in anticipation of adverse events. Excluded subject matter: This committee does not cover the general maintenance of light sources and systems."
+    },
+    "Retail Lighting Committee": {
+      "scope": "Included subject matter: The scope includes lighting techniques for retail spaces and highlighting merchandise to support brand image and balance energy efficiency. It covers many types of retail spaces including specialty, mass merchant, department, warehouse type stores, retail centers, and outdoor lighting for retail. Excluded subject matter: This committee does not cover the illumination of related public areas outside the retail project limitations."
+    },
+    "Roadway Lighting Committee": {
+      "scope": "Included subject matter: The scope includes roadways and specific roadway areas such as intersections, pedestrian walkways, and bikeways. Excluded subject matter: This committee does not cover the illumination of related public areas outside the project limitations."
+    },
+    "Security Lighting Committee": {
+      "scope": "Included subject matter: The scope includes visibility concerns in security applications, security lighting for controlled spaces, and the relationship between crime and lighting. Excluded subject matter: This committee does not cover the illumination of related public areas outside the project limitations."
+    },
+    "Sports and Recreational Areas Lighting Committee": {
+      "scope": "Included subject matter: The scope includes specific visual needs of each individual sports including the needs of participants and spectators. It addresses various levels of competition, each specific to each sport’s level of play. Excluded subject matter: This committee does not cover the illumination of related public areas outside the project limitations."
+    },
+    "Sustainable Lighting Committee": {
+      "scope": "Included subject matter: The scope includes elements of sustainable lighting design, environmental assessment of lighting practices, light source and luminaire design specific to sustainability, and lighting product disposal. Excluded subject matter: This committee does not cover energy efficiency programs or energy efficient lighting that falls outside the realm of sustainability."
+    },
+    "Testing Procedures Committee": {
+      "scope": "Included subject matter: This Technical Committee review and approve standard test and measurement procedures and calculation practices for illumination characteristics of Light Sources, Life & Projection, General Measurements, and Light Distribution. Excluded subject matter: This committee does not cover procedures for field testing of specific applications of lighting equipment."
+    },
+    "Transportation Facilities": {
+      "scope": "This Technical Committee researches and develops best practices for Transportation Facilities"
+    },
+    "Vision Science Committee": {
+      "scope": "Included subject matter: The scope includes methods based on the visual effects of light sources in interior and outdoor applications. Excluded subject matter: This committee does not cover effects such as color rendering, color appearance, circadian rhythm, or other health considerations."
+    }
+  }
+}

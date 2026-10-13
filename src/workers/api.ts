@@ -34,7 +34,7 @@ import { handleEvent } from './events';
 import { handlePreferences } from './preferences';
 import { handleAdminUsers } from './users';
 import { handleAuthMe, handleDevLogin, requireReadAccess, requireCorpusAccess, staffOnlyActive } from './session';
-import { buildLoginUrl, buildLogoutUrl, isStagingRequest } from '../lib/sso';
+import { buildLoginUrl, buildLogoutUrl, getSsoState, isStagingRequest } from '../lib/sso';
 import {
   normalizeSavedItem, savedItemCodes, newShareToken, CSV_COLUMNS, csvCell, csvRowFor,
 } from '../lib/collections.js';
@@ -47,10 +47,9 @@ import { sendCollectionShareEmail, isEmailAddress, resolveAppUrl } from '../lib/
 // CORS: `*` with no Allow-Credentials, so a cross-origin page can never make a
 // cookie-authenticated call — every session-gated route is effectively
 // same-origin only, and cross-origin callers must present the bearer secret.
-// KNOWN GAP (Phase 1 by design): the
-// /api/projects* routes are anonymous — user_id is a client-supplied
-// placeholder until Phase 3 SSO lands, so project data must be treated as
-// non-confidential until then. Tracked in README "Launch Operations".
+// /api/projects* (bookmark collections) are owned by the email on the ies_auth
+// cookie since client 10/09/26 #1E (migration 0021); the staff bearer has no
+// account and so has no bookmarks.
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, POST, PATCH, DELETE, OPTIONS',
@@ -473,12 +472,58 @@ async function handleStandards(request: Request, env: Env, url: URL): Promise<Re
 
 // ─── Projects Handlers ────────────────────────────────────────────────────────
 
+/**
+ * The account a bookmark request acts for: the lowercased email on the ies_auth
+ * cookie, or null (the staff bearer, or no session).
+ *
+ * Collections are PER ACCOUNT (client 10/09/26 #1E). Until then every caller
+ * sent the Phase 1 placeholder user_id 1, so all readers shared one pool — the
+ * client's own collections appeared on a test account's Bookmarks page.
+ */
+async function collectionOwner(request: Request, env: Env): Promise<string | null> {
+  try {
+    const sso = await getSsoState(request, env);
+    if (sso.state !== 'ok' || !sso.user?.email) return null;
+    return String(sso.user.email).trim().toLowerCase() || null;
+  } catch (err) {
+    console.error('bookmarks: session read failed:', err instanceof Error ? err.message : String(err));
+    return null;
+  }
+}
+
+/** Does this account own this collection? A stranger's id answers exactly like a missing one. */
+async function ownsProject(env: Env, projectId: string, owner: string): Promise<boolean> {
+  const row = await env.DB.prepare('SELECT id FROM projects WHERE id = ? AND owner_email = ?')
+    .bind(projectId, owner).first();
+  return !!row;
+}
+
 async function handleProjects(request: Request, env: Env, url: URL): Promise<Response> {
   const parts = url.pathname.split('/').filter(Boolean);
   // ['api', 'projects'] or ['api', 'projects', :id] or ['api', 'projects', :id, 'applications', :appId]
   const projectId = parts[2];
   const subResource = parts[3]; // 'applications' | 'export' | undefined
   const appId = parts[4];
+
+  // Reading a shared collection by its token is the one route that needs no
+  // account (client DO52) — the token IS the permission.
+  if (projectId === 'shared' && subResource && !appId && request.method === 'GET') {
+    return getSharedCollection(env, subResource);
+  }
+
+  // Everything else acts on the signed-in reader's OWN collections.
+  const owner = await collectionOwner(request, env);
+  if (!owner) {
+    return json({ error: 'sign_in_required', message: 'Sign in to use bookmarks.' }, 401);
+  }
+
+  // A collection id in the path must belong to this account. Checked once,
+  // here, so no handler below can forget it; a stranger's collection is a 404.
+  if (projectId && projectId !== 'shared' && projectId !== 'saved-status') {
+    if (!(await ownsProject(env, projectId, owner))) {
+      return json({ error: 'Collection not found' }, 404);
+    }
+  }
 
   // Route to sub-resource handlers
   if (projectId && subResource === 'applications') {
@@ -490,7 +535,7 @@ async function handleProjects(request: Request, env: Env, url: URL): Promise<Res
   // Which results are already saved (client DO61). Matched before the CRUD
   // switch below, which would otherwise read "saved-status" as a collection id.
   if (projectId === 'saved-status') {
-    if (request.method === 'POST') return savedStatus(request, env);
+    if (request.method === 'POST') return savedStatus(request, env, owner);
     return json({ error: 'Method not allowed' }, 405);
   }
   // Saved Search Collections (client DO37)
@@ -506,8 +551,7 @@ async function handleProjects(request: Request, env: Env, url: URL): Promise<Res
   // /api/projects/shared/:token  and  /api/projects/shared/:token/claim
   if (projectId === 'shared' && subResource) {
     const token = subResource;
-    if (appId === 'claim' && request.method === 'POST') return claimSharedCollection(request, env, token);
-    if (!appId && request.method === 'GET') return getSharedCollection(env, token);
+    if (appId === 'claim' && request.method === 'POST') return claimSharedCollection(env, token, owner);
     return json({ error: 'Not found' }, 404);
   }
 
@@ -515,10 +559,10 @@ async function handleProjects(request: Request, env: Env, url: URL): Promise<Res
   switch (request.method) {
     case 'GET':
       if (projectId) return getProject(env, projectId);
-      return listProjects(request, env, url);
+      return listProjects(env, url, owner);
 
     case 'POST':
-      return createProject(request, env);
+      return createProject(request, env, owner);
 
     case 'PATCH':
       if (!projectId) return json({ error: 'Project ID required' }, 400);
@@ -533,18 +577,18 @@ async function handleProjects(request: Request, env: Env, url: URL): Promise<Res
   }
 }
 
-async function listProjects(request: Request, env: Env, url: URL): Promise<Response> {
-  // Phase 1: simple user_id from query param (Phase 3 will use auth middleware)
-  const userId = url.searchParams.get('user_id') || '1';
+async function listProjects(env: Env, url: URL, owner: string): Promise<Response> {
+  // The signed-in reader's own collections (client 10/09/26 #1E). A `user_id`
+  // query parameter is ignored — the session decides whose list this is.
   const status = url.searchParams.get('status') || 'Active';
 
   const result = await env.DB.prepare(`
     SELECT p.*,
       (SELECT COUNT(*) FROM project_applications pa WHERE pa.project_id = p.id) AS application_count
     FROM projects p
-    WHERE p.user_id = ? AND p.status = ?
+    WHERE p.owner_email = ? AND p.status = ?
     ORDER BY p.modified_at DESC
-  `).bind(userId, status).all();
+  `).bind(owner, status).all();
 
   return json({ projects: result.results });
 }
@@ -614,22 +658,24 @@ function parseSnapshot(raw: unknown): Record<string, any> | null {
   }
 }
 
-async function createProject(request: Request, env: Env): Promise<Response> {
+async function createProject(request: Request, env: Env, owner: string): Promise<Response> {
   const body: any = await request.json();
   const {
-    user_id = 1, name, location, client_name, client_company,
+    name, location, client_name, client_company,
     project_type, collection_type, designer_name, designer_company, target_codes, notes
   } = body;
 
   if (!name) return json({ error: 'Project name is required' }, 400);
 
+  // user_id is NOT NULL in the 0001 schema but no longer means anything; the
+  // owner is owner_email (migration 0021).
   const result = await env.DB.prepare(`
     INSERT INTO projects
-      (user_id, name, location, client_name, client_company, project_type,
+      (user_id, owner_email, name, location, client_name, client_company, project_type,
        collection_type, designer_name, designer_company, target_codes, notes)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).bind(
-    user_id, name, location || null, client_name || null, client_company || null,
+    owner, name, location || null, client_name || null, client_company || null,
     // project_type is CHECK-constrained to four construction categories;
     // collection_type is the free-text field that supports the user-definable
     // "Other" (client DO37) and is what the UI reads back.
@@ -792,20 +838,17 @@ async function getSharedCollection(env: Env, token: string): Promise<Response> {
  * can edit the other's. The source is left untouched, and the copy gets no share
  * token of its own until the new owner shares it.
  */
-async function claimSharedCollection(request: Request, env: Env, token: string): Promise<Response> {
-  const body: any = await request.json().catch(() => ({}));
-  const userId = body?.user_id ?? 1;
-
+async function claimSharedCollection(env: Env, token: string, owner: string): Promise<Response> {
   const source = await env.DB.prepare('SELECT * FROM projects WHERE share_token = ?')
     .bind(token).first<Record<string, any>>();
   if (!source) return json({ error: 'This share link is not valid.' }, 404);
 
   const created = await env.DB.prepare(`
-    INSERT INTO projects (user_id, name, location, client_name, client_company,
+    INSERT INTO projects (user_id, owner_email, name, location, client_name, client_company,
                           collection_type, designer_name, designer_company, notes)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).bind(
-    userId, source.name, source.location, source.client_name, source.client_company,
+    owner, source.name, source.location, source.client_name, source.client_company,
     source.collection_type || source.project_type, source.designer_name,
     source.designer_company, source.notes,
   ).run();
@@ -918,7 +961,7 @@ async function saveSearchItem(env: Env, projectId: string, raw: any): Promise<{
  * Read-only, and it returns one boolean per item and nothing else — no titles, no
  * collection names, no ids.
  */
-async function savedStatus(request: Request, env: Env): Promise<Response> {
+async function savedStatus(request: Request, env: Env, owner: string): Promise<Response> {
   let body: any;
   try {
     body = await request.json();
@@ -935,9 +978,6 @@ async function savedStatus(request: Request, env: Env): Promise<Response> {
     return json({ error: `At most ${MAX_ITEMS} items per request` }, 400);
   }
 
-  // Phase 1 user identity, as everywhere else under /api/projects.
-  const userId = body?.user_id != null ? String(body.user_id) : '1';
-
   // null for an item that is not saveable at all — it can never be saved, so it
   // can never be already-saved.
   const codes: (string | null)[] = savedItemCodes(rawItems);
@@ -950,8 +990,8 @@ async function savedStatus(request: Request, env: Env): Promise<Response> {
     SELECT DISTINCT pa.application_code
     FROM project_applications pa
     JOIN projects p ON p.id = pa.project_id
-    WHERE p.user_id = ? AND pa.application_code IN (${placeholders})
-  `).bind(userId, ...lookup).all<{ application_code: string }>();
+    WHERE p.owner_email = ? AND pa.application_code IN (${placeholders})
+  `).bind(owner, ...lookup).all<{ application_code: string }>();
 
   const saved = new Set((rows.results || []).map(r => r.application_code));
   return json({ saved: codes.map(code => !!code && saved.has(code)) });
@@ -966,7 +1006,7 @@ async function handleProjectApplications(request: Request, env: Env, url: URL, p
 
     case 'PATCH':
       if (!appId) return json({ error: 'Application record ID required' }, 400);
-      return updateApplicationInProject(request, env, appId);
+      return updateApplicationInProject(request, env, appId, projectId);
 
     case 'DELETE':
       if (!appId) return json({ error: 'Application record ID required' }, 400);
@@ -1056,7 +1096,7 @@ async function addApplicationToProject(request: Request, env: Env, projectId: st
   }, hasInserts ? 201 : 200);
 }
 
-async function updateApplicationInProject(request: Request, env: Env, appId: string): Promise<Response> {
+async function updateApplicationInProject(request: Request, env: Env, appId: string, projectId: string): Promise<Response> {
   const body: any = await request.json();
   const allowed = ['quantity', 'room_names', 'custom_notes',
                    'overridden', 'override_hor_lux', 'override_ver_lux',
@@ -1068,13 +1108,16 @@ async function updateApplicationInProject(request: Request, env: Env, appId: str
   const setClauses = fields.map(f => `${f} = ?`).join(', ');
   const values = fields.map(f => body[f]);
 
+  // Scoped to the collection in the path, whose ownership handleProjects has
+  // already checked — an item id alone could name another reader's item.
   await env.DB.prepare(
-    `UPDATE project_applications SET ${setClauses} WHERE id = ?`
-  ).bind(...values, appId).run();
+    `UPDATE project_applications SET ${setClauses} WHERE id = ? AND project_id = ?`
+  ).bind(...values, appId, projectId).run();
 
   const updated = await env.DB.prepare(
-    'SELECT * FROM project_applications WHERE id = ?'
-  ).bind(appId).first();
+    'SELECT * FROM project_applications WHERE id = ? AND project_id = ?'
+  ).bind(appId, projectId).first();
+  if (!updated) return json({ error: 'Item not found' }, 404);
 
   return json({ application: updated });
 }

@@ -286,6 +286,10 @@
     // honest heading rather than left looking mis-filed.
 
     let allStandards = [];
+    // True until the session says otherwise — a subscriber never sees a
+    // "Subscribe" flash while auth-gate is still answering.
+    let readerIsSubscriber = true;
+    const SUBSCRIBE_URL = 'https://store.ies.org/ies/subscriptions/';
 
     // Sort within a series by document number, then edition — "RP-2" before
     // "RP-10", which a plain string sort gets wrong. Both numeric parts are
@@ -745,7 +749,16 @@
       // where it goes rather than what to do when you get there. #FFAA00 is a
       // light amber, so its label is the client's own dark ink: white on it
       // fails contrast outright (client DO108).
-      const read = s.vitrium_web_url
+      // A Non-Subscriber cannot open a Library document, so the same button
+      // offers the subscription instead (client 10/09/26 #1D1). LS-1 is the
+      // free ies.org glossary and stays open to everyone.
+      const subscribeInstead = !readerIsSubscriber && s.id !== DEFINITIONS_SOURCE_ID;
+      const read = subscribeInstead
+        ? `<a href="${SUBSCRIBE_URL}" target="_blank" rel="noopener"
+             class="text-xs px-2.5 py-1 rounded-lg transition font-semibold whitespace-nowrap text-center hover:brightness-95"
+             style="background-color: #FFAA00; color: #30363D;"
+             title="Subscribe to the Lighting Library to open ${escapeHtml(s.id)}">Subscribe</a>`
+        : s.vitrium_web_url
         ? `<a href="${escapeHtml(s.vitrium_web_url)}" target="_blank" rel="noopener"
              class="text-xs px-2.5 py-1 rounded-lg transition font-semibold whitespace-nowrap text-center hover:brightness-95"
              style="background-color: #FFAA00; color: #30363D;"
@@ -876,7 +889,8 @@
       const label = `${escapeHtml(designation)}${title ? ` — ${escapeHtml(title)}` : ''}`;
       // One link per row, on the designation-and-title cell, to the branded
       // Lighting Library host the API already resolved (never Vitrium's own).
-      const doc = s.vitrium_web_url
+      // A Non-Subscriber's row is not a Library link (client 10/09/26 #1D1).
+      const doc = (s.vitrium_web_url && (readerIsSubscriber || s.id === DEFINITIONS_SOURCE_ID))
         ? `<a href="${escapeHtml(s.vitrium_web_url)}" target="_blank" rel="noopener"
              class="text-gray-800 hover:text-ies-blue hover:underline">${label}</a>`
         : `<span class="text-gray-800">${label}</span>`;
@@ -1081,6 +1095,15 @@
 
     // The menu contents (identity, subscription, AI Guide, units, Sign out) are
     // rendered by /utils/site-menu.js, shared with My Bookmarks (9/29/26 DO#4).
+
+    // A Non-Subscriber's buttons read "Subscribe" (client 10/09/26 #1D1). The
+    // tier arrives with the session after the list may already have rendered,
+    // so the list re-renders once it is known.
+    document.addEventListener('lensy:auth', (e) => {
+      const tier = e.detail && e.detail.tier;
+      readerIsSubscriber = !(tier === 'lite' || tier === 'none');
+      if (allStandards.length) render();
+    });
 
     document.getElementById('toc-filter').addEventListener('input', render);
     syncSortControls();

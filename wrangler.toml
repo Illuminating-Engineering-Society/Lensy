@@ -240,6 +240,12 @@ LENSY_DAILY_SEARCH_CAP = "20"
 # move over. I just updated the Vitrium error page url & logo hyperlink."); the
 # AuthIES `lensy` SP already allows both origins.
 LENSY_CANONICAL_HOST = "lens.ies.org"
+# Library links open through the AuthIES Vitrium hop (client 10/09/26 #2):
+# auth-gate.js sends a click on a lighting.ies.org link to
+# <IdP>/sp/vitrium/sso?returnUrl=<link>, which mints the SSO token up front so
+# the FIRST click lands on the linked page instead of losing #page=N in
+# Vitrium's own sign-in bounce. "off" opens the links directly again.
+LENSY_LIBRARY_SSO_HOP = "on"
 
 # Secrets set via `wrangler secret put`:
 # VITRIUM_API_KEY

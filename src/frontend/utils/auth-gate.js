@@ -223,8 +223,48 @@
     if (el) el.remove();
     addUserChip(data);
     window.lensyUser = data.user;
+    installLibraryHop(data.libraryHopUrl);
     document.dispatchEvent(new CustomEvent('lensy:auth', { detail: data.user }));
   }
+
+  // ── Library links open on the linked page the FIRST time (client 10/09/26 #2)
+  // A lighting.ies.org link followed without a Vitrium session bounces through
+  // Vitrium's SSO, which drops the `#page=N` fragment (and sometimes the whole
+  // URL, landing the reader on the portal home). Routing the click through the
+  // AuthIES Vitrium hop instead — the full link as `returnUrl` — lets AuthIES
+  // mint the token up front and send the browser straight to the page. Done at
+  // CLICK time, in one delegated listener, so every Library link on every page
+  // is covered without each renderer knowing about it, and the hrefs shown on
+  // hover and copied with "Copy link" stay the plain Library URL.
+  var LIBRARY_HOST = 'lighting.ies.org';
+  function hoppedLibraryUrl(hop, href) {
+    var u;
+    try { u = new URL(href, location.href); } catch (e) { return null; }
+    if (u.hostname.toLowerCase() !== LIBRARY_HOST) return null;
+    // The portal home and the viewer's own SSO return pages need no help.
+    if (u.pathname === '/' || /^\/signin\b/i.test(u.pathname)) return null;
+    return hop + '?returnUrl=' + encodeURIComponent(u.toString());
+  }
+  function installLibraryHop(hop) {
+    if (!hop || window.__lensyLibraryHop) return;
+    window.__lensyLibraryHop = true;
+    var rewrite = function (e) {
+      var a = e.target && e.target.closest ? e.target.closest('a[href]') : null;
+      if (!a) return;
+      var next = hoppedLibraryUrl(hop, a.getAttribute('href'));
+      if (!next) return;
+      // Restored after the navigation has been taken, so the link keeps
+      // showing (and copying) the Library URL itself.
+      var original = a.getAttribute('href');
+      a.setAttribute('href', next);
+      setTimeout(function () { a.setAttribute('href', original); }, 0);
+    };
+    // Capture phase: runs before any page handler and before the browser acts
+    // on the click (left, middle, and modifier-clicks into a new tab).
+    document.addEventListener('click', rewrite, true);
+    document.addEventListener('auxclick', rewrite, true);
+  }
+  window.lensyHoppedLibraryUrl = hoppedLibraryUrl;
 
   /**
    * Reveal the page to a visitor with no Lensy access, for a share link only

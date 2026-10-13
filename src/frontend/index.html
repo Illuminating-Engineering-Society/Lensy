@@ -539,7 +539,7 @@
                 <svg class="w-4 h-4 mt-0.5 shrink-0 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                   <path stroke-linecap="round" stroke-linejoin="round" d="M12 6.25c-2.4-1.6-5.2-1.6-8-.75v13c2.8-.85 5.6-.85 8 .75 2.4-1.6 5.2-1.6 8-.75v-13c-2.8-.85-5.6-.85-8 .75zm0 0v13"/>
                 </svg>
-                <span class="font-semibold">Document Body</span>
+                <span class="font-semibold">Document Body<span class="lock-label"></span></span>
               </label>
               <label class="side-check">
                 <input type="checkbox" data-filter="definitions" checked class="mt-0.5 rounded accent-ies-blue shrink-0"
@@ -712,7 +712,7 @@
               <svg class="w-4 h-4 mt-0.5 shrink-0 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                 <path stroke-linecap="round" stroke-linejoin="round" d="M12 6.25c-2.4-1.6-5.2-1.6-8-.75v13c2.8-.85 5.6-.85 8 .75 2.4-1.6 5.2-1.6 8-.75v-13c-2.8-.85-5.6-.85-8 .75zm0 0v13"/>
               </svg>
-              <span class="font-semibold">Document Body</span>
+              <span class="font-semibold">Document Body<span class="lock-label"></span></span>
               <button type="button" class="doc-only-btn no-print text-[11px] font-semibold text-ies-blue hover:underline px-1 shrink-0" data-content-only="body" title="Show only document passages">Only</button>
               <span class="side-count ml-auto" data-count-for="body"></span>
             </label>
@@ -879,6 +879,17 @@
     <!-- Results Area -->
     <section id="results-section" class="hidden fade-in">
 
+      <!-- Non-subscriber upgrade banner, post-search position (client 10/09/26
+           #1B1: "move that to top of page (immediately above AI Guide)"). Same
+           copy as #lite-banner above the footer, which hides while this shows. -->
+      <div id="lite-banner-top" class="hidden mb-5 rounded-xl border border-green-200 bg-green-50 px-5 py-4 text-center no-print">
+        <a href="https://store.ies.org/ies/subscriptions/" target="_blank" rel="noopener"
+           class="inline-block text-sm font-semibold text-green-900 underline underline-offset-4 hover:text-green-700">
+          Subscribe to the Lighting Library to unlock full access ↗
+        </a>
+        <p class="mt-1.5 text-sm text-green-900" id="lite-banner-top-text"></p>
+      </div>
+
       <!-- AI Summary -->
       <div id="ai-summary-card" class="hidden bg-amber-50 rounded-xl p-5 mb-5 ai-border">
         <div class="flex items-start gap-3">
@@ -1018,15 +1029,17 @@
   </main>
 
   <!-- ── Non-subscriber upgrade banner (client DO53, reworded DO111) ──────────
-       Shown only to the limited tier, immediately above the footer as in the
-       client's mockup. A subscription is always called the Lighting Library. -->
+       Shown only to the limited tier. Before a search it sits immediately above
+       the footer, as in the client's mockup; once results are on screen the
+       copy at the top of the results (#lite-banner-top) takes over (client
+       10/09/26 #1B1). A subscription is always called the Lighting Library. -->
   <div id="lite-banner" class="hidden max-w-5xl mx-auto px-4 no-print">
     <div class="rounded-xl border border-green-200 bg-green-50 px-5 py-4 text-center">
-      <p class="text-sm text-green-900" id="lite-banner-text"></p>
-      <a href="https://store.ies.org/" target="_blank" rel="noopener"
-         class="inline-block mt-2 text-sm font-semibold text-green-900 underline underline-offset-4 hover:text-green-700">
+      <a href="https://store.ies.org/ies/subscriptions/" target="_blank" rel="noopener"
+         class="inline-block text-sm font-semibold text-green-900 underline underline-offset-4 hover:text-green-700">
         Subscribe to the Lighting Library to unlock full access ↗
       </a>
+      <p class="mt-1.5 text-sm text-green-900" id="lite-banner-text"></p>
     </div>
   </div>
 
@@ -1353,6 +1366,10 @@
     // card says so (client DO72).
     const FORMULA_NOTICE = 'Formula not shown — open the standard in the Library to see it.';
     let allResults = [];
+    // Per-kind counts a subscriber would have seen for the last search — sent
+    // to Non-Subscribers only, so the Contents counts show what a subscription
+    // adds (client 10/09/26 #1C). Null for a subscriber.
+    let subscriberCounts = null;
     let currentPage = 1;
 
     // ── Filter state (DO32, revised by DO57 and the 2026-08-20 wireframes) ───
@@ -1410,6 +1427,10 @@
     // Keep in step with LITE_BLOCKED_FILTERS in src/lib/tiers.ts.
     const LITE_LOCKED_FILTERS = ['tables', 'body', 'compare'];
     let accessTier = 'full';
+    // The upgrade banner's second line (client 10/09/26 #1B3).
+    const LITE_BANNER_TEXT =
+      'Subscribers receive search results with excerpts, illuminance recommendations, ' +
+      'and access to open any current or deprecated document in the Lighting Library.';
 
     function isLite() { return accessTier === 'lite'; }
 
@@ -1427,13 +1448,30 @@
       document.getElementById('menu-subscribe').classList.toggle('hidden', !isLite());
       if (isLite()) {
         filterState = normalizeForTier(filterState);
-        const banner = document.getElementById('lite-banner');
-        document.getElementById('lite-banner-text').textContent =
-          'You are searching the Lighting Science Collection.';
-        banner.classList.remove('hidden');
+        // 10/09/26 #1B2/B3: the "You are searching the Lighting Science
+        // Collection" line is gone; the banner now says what a subscription adds.
+        for (const id of ['lite-banner-text', 'lite-banner-top-text']) {
+          const el = document.getElementById(id);
+          if (el) el.textContent = LITE_BANNER_TEXT;
+        }
       }
+      paintLiteBanners();
       renderFilterPills();
       maybeShowWelcome();
+    }
+
+    /**
+     * One upgrade banner at a time (client 10/09/26 #1B1): above the footer
+     * before a search, at the top of the results — immediately above the AI
+     * Guide — once results are on screen.
+     */
+    function paintLiteBanners() {
+      const bottom = document.getElementById('lite-banner');
+      const top = document.getElementById('lite-banner-top');
+      const section = document.getElementById('results-section');
+      const searched = !!(section && !section.classList.contains('hidden'));
+      if (bottom) bottom.classList.toggle('hidden', !isLite() || searched);
+      if (top) top.classList.toggle('hidden', !isLite() || !searched);
     }
 
     // ── Welcome window (client DO999) ────────────────────────────────────────
@@ -1662,6 +1700,14 @@
             if (rowLock) rowLock.textContent = ' 🔒';
           }
         }
+      }
+
+      // "Only" on a locked kind would clear every kind the tier DOES get and
+      // select nothing, so the button is not offered there.
+      for (const btn of document.querySelectorAll('[data-content-only]') || []) {
+        const kind = btn.dataset.contentOnly;
+        const governing = (kind === 'interior' || kind === 'exterior') ? 'tables' : kind;
+        if (btn.classList) btn.classList.toggle('hidden', lockedForTier(governing));
       }
 
       updateFilterCounts();
@@ -2270,10 +2316,16 @@
 
       // Per-kind result totals beside each Contents checkbox. Blank before the
       // first search: a count of 0 would read as "this kind found nothing".
-      const counts = allResults.length ? contentKindCounts() : null;
+      // A Non-Subscriber sees what a SUBSCRIBER would have found (client
+      // 10/09/26 #1C: "so they can get a feel for how much more they would
+      // access if they subscribed") — padlocked kinds included.
+      const counts = (isLite() && subscriberCounts)
+        ? subscriberCounts
+        : (allResults.length ? contentKindCounts() : null);
       for (const el of document.querySelectorAll('[data-count-for]') || []) {
         const kind = el.dataset.countFor;
         el.textContent = counts ? String(counts[kind] ?? 0) : '';
+        el.title = (isLite() && subscriberCounts) ? 'Results a Lighting Library subscriber would see' : '';
       }
     }
 
@@ -3051,6 +3103,9 @@
     function renderResults(data) {
       const section = document.getElementById('results-section');
       section.classList.remove('hidden');
+      paintLiteBanners();
+      // What a subscriber would have found, per kind (client 10/09/26 #1C).
+      subscriberCounts = (data.subscriberCounts && typeof data.subscriberCounts === 'object') ? data.subscriberCounts : null;
       selectedApplicationCodes = new Set();
       allResults = data.results || [];
       currentPage = 1;
@@ -5730,6 +5785,7 @@
 
     function renderError(message) {
       document.getElementById('results-section').classList.remove('hidden');
+      paintLiteBanners();
       document.getElementById('results-list').innerHTML = `
         <div class="bg-red-50 border border-red-200 rounded-xl p-5 flex items-start gap-3">
           <svg class="w-5 h-5 text-red-400 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
@@ -5911,6 +5967,7 @@
 
     function clearResults() {
       document.getElementById('results-section').classList.add('hidden');
+      paintLiteBanners();
       document.getElementById('results-list').innerHTML = '';
       document.getElementById('ai-summary-card').classList.add('hidden');
       document.getElementById('no-results').classList.add('hidden');

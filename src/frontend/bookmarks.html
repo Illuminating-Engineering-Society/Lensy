@@ -163,6 +163,18 @@
   <!-- ── Main ─────────────────────────────────────────────────────────────── -->
   <main class="max-w-5xl mx-auto px-4 py-8">
 
+    <!-- Non-subscriber upgrade banner (client 10/09/26 #1E1): the search page's
+         green box, with a second line about what a subscriber can bookmark. -->
+    <div id="lite-banner" class="hidden mb-6 rounded-xl border border-green-200 bg-green-50 px-5 py-4 text-center no-print">
+      <a href="https://store.ies.org/ies/subscriptions/" target="_blank" rel="noopener"
+         class="inline-block text-sm font-semibold text-green-900 underline underline-offset-4 hover:text-green-700">
+        Subscribe to the Lighting Library to unlock full access ↗
+      </a>
+      <p class="mt-1.5 text-sm text-green-900">
+        Subscribers can bookmark all search results, including recommended illuminance values and excerpts from a standard
+      </p>
+    </div>
+
     <!-- Page title + New project button -->
     <div class="flex items-center justify-between mb-6 no-print">
       <div>
@@ -476,6 +488,15 @@
     // The menu CONTENTS — identity, subscription, Log in for an anonymous
     // share-link visitor (DO52), AI Guide, units — are rendered and kept up to
     // date by /utils/site-menu.js (client 9/29/26 DO#4).
+
+    // A signed-in Non-Subscriber sees the upgrade banner (client 10/09/26 #1E1).
+    function paintLiteBanner(user) {
+      const tier = user && user.tier;
+      const banner = document.getElementById('lite-banner');
+      if (banner) banner.classList.toggle('hidden', !(tier === 'lite' || tier === 'none'));
+    }
+    document.addEventListener('lensy:auth', (e) => paintLiteBanner(e.detail || null));
+    if (window.lensyUser) paintLiteBanner(window.lensyUser);
 
     // ── Bootstrap ────────────────────────────────────────────────────────────
     document.addEventListener('DOMContentLoaded', () => {

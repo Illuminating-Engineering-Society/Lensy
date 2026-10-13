@@ -600,6 +600,22 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
     ? findStandardLookupResults(env, searchQuery)
     : Promise.resolve([] as SearchResult[]);
 
+  // ── What a subscriber would have found (client 10/09/26 #1C) ────────────────
+  // "Can you still show qty of search results for all contents as though they
+  //  were a subscriber, so they can get a feel for how much more they would
+  //  access if they subscribed?" A second retrieval over the WHOLE corpus with
+  //  every content kind, run in parallel with the Non-Subscriber one. Only its
+  //  COUNTS leave this function — none of its results, so nothing outside the
+  //  tier's scope reaches the cards or the AI Guide. The query embedding is
+  //  shared through the embedding cache; fail-soft to no counts.
+  const subscriberCountsPromise: Promise<ContentKindCounts | null> = isLite
+    ? (isMultiQuery
+        ? runMultiSearch(subQueries, mergedFilters, cleanLimit, env, new Set(SUBSCRIBER_CONTENT_TYPES))
+        : runSingleSearch(searchQuery, mergedFilters, cleanLimit, env, new Set(SUBSCRIBER_CONTENT_TYPES)))
+        .then(out => countContentKinds(out.results))
+        .catch(err => { console.error('subscriber counts failed:', errMsg(err)); return null; })
+    : Promise.resolve(null);
+
   let allResults;
 
   if (isMultiQuery) {
@@ -1152,6 +1168,9 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
     // client wrote for the banner (DO53).
     tier,
     liteNotice: isLite ? LITE_NOTICE : null,
+    // Per-kind result counts a SUBSCRIBER would have seen for this query
+    // (client 10/09/26 #1C) — counts only, never results. Null for a subscriber.
+    subscriberCounts: await subscriberCountsPromise,
     noStrongMatch,
     noStrongMatchMessage: noStrongMatch ? NO_STRONG_MATCH_MESSAGE : null,
     aiGuideRequiredNotice,
@@ -1596,9 +1615,47 @@ async function liteAllowedStandards(env: Env): Promise<Set<string>> {
   return ids;
 }
 
-/** Drop every result whose standard is outside the allowed set. */
+/** The content kinds a subscriber's search retrieves (comparison is a modifier). */
+const SUBSCRIBER_CONTENT_TYPES: ContentType[] = ['tables', 'body', 'references', 'definitions'];
+
+/** Result totals per content kind, bucketed exactly as the UI's Contents checkboxes. */
+export type ContentKindCounts = {
+  body: number; definitions: number; references: number;
+  tables: number; interior: number; exterior: number;
+};
+
+/**
+ * Count a result list by content kind. Mirrors `contentKindCounts()` in
+ * index.html so the number beside a checkbox means the same thing whether it
+ * came from the reader's own results or from the subscriber-view count.
+ */
+export function countContentKinds(results: SearchResult[]): ContentKindCounts {
+  const counts: ContentKindCounts = { body: 0, definitions: 0, references: 0, tables: 0, interior: 0, exterior: 0 };
+  for (const r of results) {
+    const type = r.resultType || 'application';
+    if (type === 'reference') counts.references++;
+    else if (type === 'definition') counts.definitions++;
+    else if (type === 'application') {
+      counts.tables++;
+      const loc = r.application?.indoorOutdoor;
+      if (loc === 'Indoor') counts.interior++;
+      else if (loc === 'Outdoor') counts.exterior++;
+    } else counts.body++;
+  }
+  return counts;
+}
+
+/**
+ * Drop every result whose standard is outside the allowed set.
+ *
+ * Definition cards always pass (client 10/09/26 #1F): they are the LS-1
+ * glossary, published free at ies.org/standards/definitions, and they hang off
+ * `LS-1-25`, which no Vitrium folder holds — so the collection rule silently
+ * removed every one of them from a non-subscriber's results.
+ */
 export function restrictToStandards(results: SearchResult[], allowed: Set<string>): SearchResult[] {
   return results.filter(r => {
+    if (r.resultType === 'definition') return true;
     const id = r.application?.standard;
     return !!id && allowed.has(id);
   });

@@ -848,10 +848,33 @@ describe('Non-Subscriber (DO53, revised DO999)', () => {
   });
 
   it('shows the upgrade banner in the client\'s words', () => {
-    run(`applyTier('lite')`);
+    // Before a search: above the footer.
+    run(`document.getElementById('results-section').classList.add('hidden'); applyTier('lite')`);
     expect(elements.get('lite-banner').classList.contains('hidden')).toBe(false);
+    expect(elements.get('lite-banner-top').classList.contains('hidden')).toBe(true);
+    // 10/09/26 #1B2/B3.
+    expect(elements.get('lite-banner-text').textContent).not.toContain('You are searching');
     expect(elements.get('lite-banner-text').textContent)
-      .toContain('Lighting Science Collection');
+      .toContain('excerpts, illuminance recommendations');
+    // 10/09/26 #1B1: once results are on screen, the copy above the AI Guide.
+    run(`document.getElementById('results-section').classList.remove('hidden'); paintLiteBanners()`);
+    expect(elements.get('lite-banner').classList.contains('hidden')).toBe(true);
+    expect(elements.get('lite-banner-top').classList.contains('hidden')).toBe(false);
+    expect(elements.get('lite-banner-top-text').textContent).toContain('any current or deprecated document');
+  });
+
+  it('counts every kind as a subscriber would see it (10/09/26 #1C)', () => {
+    run(`applyTier('lite'); allResults = [];
+         subscriberCounts = { body: 41, definitions: 3, references: 7, tables: 22, interior: 15, exterior: 7 };
+         updateFilterCounts()`);
+    // Padlocked kinds included — that is the point: what a subscription adds.
+    expect(elements.get('count:body').textContent).toBe('41');
+    expect(elements.get('count:tables').textContent).toBe('22');
+    expect(elements.get('count:definitions').textContent).toBe('3');
+    expect(elements.get('count:body').title).toMatch(/subscriber would see/);
+    // A subscriber counts their own results, as before.
+    run(`applyTier('full'); subscriberCounts = null; allResults = []; updateFilterCounts()`);
+    expect(elements.get('count:body').textContent).toBe('');
   });
 
   it('never lets a locked tool be switched on', () => {

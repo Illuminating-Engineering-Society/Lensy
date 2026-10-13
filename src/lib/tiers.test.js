@@ -193,8 +193,10 @@ describe('the locked tools', () => {
   it('has the banner in the client\'s own words', () => {
     // DO111: a subscription is always called the Lighting Library, and the
     // separate LensyLite product name is gone.
-    expect(LITE_NOTICE).toContain('Lighting Science Collection');
+    // 10/09/26 #1B2/B3: the collection line is gone; what a subscription adds is in.
+    expect(LITE_NOTICE).not.toContain('You are searching');
     expect(LITE_NOTICE).toContain('Subscribe to the Lighting Library');
+    expect(LITE_NOTICE).toContain('any current or deprecated document in the Lighting Library');
     expect(LITE_NOTICE).not.toMatch(/lensy/i);
   });
 });

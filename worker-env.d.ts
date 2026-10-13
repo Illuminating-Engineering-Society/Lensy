@@ -53,6 +53,11 @@ declare global {
     // every other production hostname 301s to it (src/workers/api.ts). Unset →
     // every hostname on the Worker serves the app.
     LENSY_CANONICAL_HOST?: string;
+    // ── Library links through the AuthIES Vitrium hop (client 10/09/26 #2) ──
+    // "off" makes lighting.ies.org links open directly again; anything else
+    // (including unset) routes them through <IdP>/sp/vitrium/sso so the first
+    // click lands on the linked page (src/workers/session.ts libraryHopUrl).
+    LENSY_LIBRARY_SSO_HOP?: string;
     // The static-assets binding ([assets] in wrangler.toml). The Worker runs
     // first and hands every non-API path to it.
     ASSETS?: Fetcher;

@@ -26,6 +26,7 @@
  */
 
 import registry from '../config/technical-committees.json';
+import scopes from '../config/committee-scopes.json';
 
 export const COMMITTEES_ROOT_URL = registry._rootUrl;
 
@@ -116,6 +117,26 @@ export function formatCommitteeName(raw) {
     name = `${name} Committee`;
   }
   return `IES ${name}`;
+}
+
+// ─── Committee scopes (client 10/09/26 #3) ───────────────────────────────────
+// "Can we train Lens on each Committee's scope, as a way to improve curation?"
+// The scope is the Description of each active Technical group in Wicket,
+// synced by scripts/sync-committee-scopes.js. Matched with the same name
+// folding as the registry, so "IES Color Committee" (a card's credit), "Color
+// Committee" (Wicket) and "Color Cmte." (Vitrium's Author) all find it.
+const SCOPE_BY_NAME = new Map(
+  Object.entries(scopes.committees || {}).map(([name, v]) => [normalizeName(name), String(v?.scope || '')])
+);
+
+/**
+ * The committee's published scope, or null when Wicket has none on record.
+ * @param {string|null|undefined} name a committee name or credit
+ * @returns {string|null}
+ */
+export function committeeScope(name) {
+  const scope = SCOPE_BY_NAME.get(normalizeName(name));
+  return scope || null;
 }
 
 /** Is this slug one the public committee index actually publishes? */

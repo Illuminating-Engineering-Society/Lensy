@@ -29,6 +29,7 @@ import {
   decideAccess,
   buildLoginUrl,
   buildLogoutUrl,
+  resolveIdpBaseUrl,
   buildAuthCookieValue,
   isStagingRequest,
   AUTH_COOKIE_NAME,
@@ -174,7 +175,31 @@ export async function handleAuthMe(request: Request, env: Env): Promise<Response
         ? user.subscriptionExpiresAt : null,
     },
     logoutUrl: buildLogoutUrl(env, request.url),
+    // Library links open through the AuthIES Vitrium hop (client 10/09/26 #2);
+    // null when LENSY_LIBRARY_SSO_HOP is "off". See auth-gate.js.
+    libraryHopUrl: libraryHopUrl(env, request.url),
   });
+}
+
+/**
+ * Where a Lighting Library link should go first (client 10/09/26 #2: "clicking
+ * IES Lens links with page=## links take them straight to the Vitrium portal
+ * on first attempt. Then on 2nd attempt, they land at the page").
+ *
+ * Opening `lighting.ies.org/CODE#page=43` without a Vitrium session makes the
+ * viewer bounce to AuthIES for SSO, and that bounce carries the content URL
+ * with its query stripped and — being a fragment — without `#page=43` at all
+ * (Vitrium API Guide 3.5, "SSO Fail Redirection"); sometimes with no URL, which
+ * lands on the portal home. The second click works because the viewer session
+ * now exists. Going to AuthIES FIRST, with the full link as `returnUrl`, turns
+ * that around: AuthIES mints the SSO token and sends the browser to
+ * `lighting.ies.org/CODE?iesToken=…#page=43` — the documented way to open
+ * protected content by token ("Unlock … SSO by Query Param") — and the page
+ * fragment rode inside the parameter the whole way.
+ */
+function libraryHopUrl(env: Env, requestUrl: string): string | null {
+  if (String(env.LENSY_LIBRARY_SSO_HOP ?? '').trim().toLowerCase() === 'off') return null;
+  return `${resolveIdpBaseUrl(env, requestUrl)}/sp/vitrium/sso`;
 }
 
 // ─── Access tier (client DO53) ────────────────────────────────────────────────

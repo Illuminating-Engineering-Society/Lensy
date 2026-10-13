@@ -668,8 +668,8 @@
           <div>
             <label class="block text-xs font-medium text-gray-600 mb-1">Grants</label>
             <select id="inv-tier" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white">
-              <option value="full" selected>full — all of IES Lens</option>
-              <option value="lite">lite — Lighting Science only</option>
+              <option value="full" selected>Subscriber — all of IES Lens</option>
+              <option value="lite">Non-Subscriber — limited access</option>
             </select>
             <p class="mt-1 text-xs text-gray-400">Applies whether or not they are an IES member.</p>
           </div>
@@ -738,8 +738,8 @@
           <div>
             <label class="block text-xs font-medium text-gray-600 mb-1">Grants</label>
             <select id="edit-tier" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white">
-              <option value="full">full</option>
-              <option value="lite">lite</option>
+              <option value="full">Subscriber</option>
+              <option value="lite">Non-Subscriber</option>
             </select>
           </div>
           <div>
@@ -1162,8 +1162,8 @@
           <td class="px-4 py-3">${esc(u.organization) || '<span class="text-gray-300">—</span>'}</td>
           <td class="px-4 py-3">${esc(u.role)}</td>
           <td class="px-4 py-3">${(u.tier || 'full') === 'lite'
-            ? '<span class="inline-block px-2 py-0.5 rounded-full text-xs font-medium bg-amber-50 text-amber-800">lite</span>'
-            : '<span class="inline-block px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-700">full</span>'}</td>
+            ? '<span class="inline-block px-2 py-0.5 rounded-full text-xs font-medium bg-amber-50 text-amber-800">Non-Subscriber</span>'
+            : '<span class="inline-block px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-700">Subscriber</span>'}</td>
           <td class="px-4 py-3"><span class="inline-block px-2 py-0.5 rounded-full text-xs font-medium ${badge}">${esc(u.effective_status)}</span></td>
           <td class="px-4 py-3 text-xs">${inviteEmailCell(u)}</td>
           <td class="px-4 py-3 text-xs text-gray-500">${u.expires_at ? esc(u.expires_at.slice(0, 10)) : '—'}</td>

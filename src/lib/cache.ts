@@ -112,7 +112,11 @@ const DATA_VERSION_KEY = 'cache:data-version';
 // v19: the 10/06/26 notes. RESULTS changed (RP-43 lower/upper limit rows merge
 //     into one row with luxMax/fcMax; exterior questions probe RP-43 rows) and
 //     the Guide PROMPT gained the RP-43-is-the-exterior-default catalogue fact.
-const SEARCH_CACHE_SCHEMA = 'v19';
+// v20: the 10/09/26 notes. RESULTS changed for non-subscribers (Definition
+//     cards are no longer dropped by the collection rule; the payload gained
+//     `subscriberCounts`), and the curation RERANK prompt gained the authoring
+//     committees' Wicket scopes.
+const SEARCH_CACHE_SCHEMA = 'v20';
 
 function errMsg(err: unknown): string {
   return err instanceof Error ? err.message : String(err);

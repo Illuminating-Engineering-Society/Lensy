@@ -227,6 +227,10 @@ export function liteContentTypes(contentTypes: Set<ContentType>): Set<ContentTyp
  * Lighting Library ("We will always refer to subscriptions as 'Lighting
  * Library', as the umbrella product").
  */
+//
+// 10/09/26 #1B: "Delete 'You are searching the Lighting Science Collection.'"
+// and add what a subscription adds, below the Subscribe line.
 export const LITE_NOTICE =
-  'You are searching the Lighting Science Collection. ' +
-  'Subscribe to the Lighting Library to unlock full access.';
+  'Subscribe to the Lighting Library to unlock full access. ' +
+  'Subscribers receive search results with excerpts, illuminance recommendations, ' +
+  'and access to open any current or deprecated document in the Lighting Library.';
