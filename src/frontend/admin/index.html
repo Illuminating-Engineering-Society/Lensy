@@ -769,6 +769,50 @@
   </div>
 
   <!-- ── New-ingest modal (Standards tab) ─────────────────────────────────── -->
+  <!-- Edit / delete one standard's record (client 10/14/26 #2). The three
+       fields are the ones the Vitrium/portal export supplies; a later
+       sync-metadata run overwrites them with the export's values. -->
+  <div id="std-edit-modal" class="hidden fixed inset-0 z-50 flex items-start justify-center bg-black/40 modal-backdrop overflow-y-auto p-4">
+    <div class="bg-white rounded-xl shadow-xl w-full max-w-lg my-10 fade-in">
+      <div class="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+        <h2 class="font-display text-lg font-bold">Edit <span id="se-id" class="font-mono"></span></h2>
+        <button onclick="closeStdEdit()" class="text-gray-400 hover:text-gray-600 text-xl leading-none">&times;</button>
+      </div>
+      <form onsubmit="return saveStdEdit(event)" class="px-6 py-5 space-y-4">
+        <div>
+          <label for="se-url" class="block text-xs font-medium text-gray-600 mb-1">Lighting Library link</label>
+          <input id="se-url" type="url" placeholder="https://lighting.ies.org/AbC123"
+                 class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg" />
+          <p class="mt-1 text-xs text-gray-400">The document's short link in the Lighting Library. Empty = no link.</p>
+        </div>
+        <div>
+          <label for="se-date" class="block text-xs font-medium text-gray-600 mb-1">Publication date</label>
+          <input id="se-date" type="date" class="px-3 py-2 text-sm border border-gray-300 rounded-lg" />
+        </div>
+        <div>
+          <label for="se-collection" class="block text-xs font-medium text-gray-600 mb-1">Collection</label>
+          <select id="se-collection" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white">
+            <option value="">Uncategorized</option>
+            <option value="Recommended Practice">Lighting Applications</option>
+            <option value="Lighting Measurements and Testing">Lighting Measurements and Testing</option>
+            <option value="Lighting Practice">Lighting Practice</option>
+            <option value="Lighting Science">Lighting Science</option>
+            <option value="Roadway and Parking Facilities">Lighting Roadways and Parking Facilities</option>
+          </select>
+          <p class="mt-1 text-xs text-gray-400">Lighting Science is also what Non-Subscribers can search.</p>
+        </div>
+        <div class="flex items-center justify-between pt-2">
+          <button type="button" id="se-delete" onclick="deleteStd()"
+                  class="px-3 py-2 text-sm rounded-lg border border-red-200 text-red-600 hover:bg-red-50">Delete standard…</button>
+          <div class="flex gap-2">
+            <button type="button" onclick="closeStdEdit()" class="px-4 py-2 text-sm rounded-lg border border-gray-300 hover:bg-gray-50">Cancel</button>
+            <button type="submit" class="px-4 py-2 text-sm rounded-lg bg-brand-primary hover:bg-brand-primary-dark text-white font-medium">Save</button>
+          </div>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <div id="ingest-modal" class="hidden fixed inset-0 z-50 flex items-start justify-center bg-black/40 modal-backdrop overflow-y-auto p-4">
     <div class="bg-white rounded-xl shadow-xl w-full max-w-lg my-10 fade-in">
       <div class="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
@@ -2034,6 +2078,8 @@
           <td class="px-4 py-3 text-xs text-gray-500">${s.indexedAt ? esc(String(s.indexedAt).slice(0, 10)) : 'never'}</td>
           <td class="px-4 py-3 text-right whitespace-nowrap text-xs">
             <button onclick="openIngest('${esc(s.id)}')" class="text-brand-secondary hover:underline">Upload new version</button>
+            <span class="text-gray-300 mx-1">·</span>
+            <button onclick="openStdEdit('${esc(s.id)}')" class="text-brand-secondary hover:underline">Edit</button>
           </td>
         </tr>`;
       }).join('');
@@ -2649,6 +2695,74 @@
       if (job.result) renderResultBox(job.result);
     }
 
+    // ── Edit / delete a standard's record (client 10/14/26 #2) ────────────
+    let editingStdId = null;
+
+    async function openStdEdit(id) {
+      const { status, data } = await api(`/api/admin/standards/${encodeURIComponent(id)}`);
+      if (status >= 400 || !data.standard) { toast(data.error || 'Could not load the standard', 'err'); return; }
+      const s = data.standard;
+      editingStdId = s.id;
+      document.getElementById('se-id').textContent = s.id;
+      document.getElementById('se-url').value = s.libraryUrl || '';
+      document.getElementById('se-date').value = s.publishedDate || '';
+      document.getElementById('se-date').max = new Date().toISOString().slice(0, 10);
+      const sel = document.getElementById('se-collection');
+      // A value the list does not offer (a tag-sync marker, a legacy folder
+      // name) is kept selectable rather than silently replaced on save.
+      sel.querySelectorAll('option[data-extra]').forEach(o => o.remove());
+      const current = s.collection || '';
+      if (current && ![...sel.options].some(o => o.value === current)) {
+        const opt = document.createElement('option');
+        opt.value = current; opt.textContent = current; opt.dataset.extra = '1';
+        sel.appendChild(opt);
+      }
+      sel.value = current;
+      document.getElementById('se-delete').classList.toggle('hidden', !s.deletable);
+      document.getElementById('std-edit-modal').classList.remove('hidden');
+    }
+
+    function closeStdEdit() {
+      editingStdId = null;
+      document.getElementById('std-edit-modal').classList.add('hidden');
+    }
+
+    async function saveStdEdit(ev) {
+      ev.preventDefault();
+      if (!editingStdId) return false;
+      const body = {
+        libraryUrl: document.getElementById('se-url').value.trim(),
+        publishedDate: document.getElementById('se-date').value,
+        collection: document.getElementById('se-collection').value,
+      };
+      const { status, data } = await api(`/api/admin/standards/${encodeURIComponent(editingStdId)}`,
+        { method: 'PATCH', body: JSON.stringify(body) });
+      if (status >= 400) { toast(data.error || 'Could not save', 'err'); return false; }
+      toast(`${editingStdId} updated`);
+      closeStdEdit();
+      return false;
+    }
+
+    async function deleteStd() {
+      const id = editingStdId;
+      if (!id) return;
+      const typed = prompt(
+        `Delete ${id} from IES Lens? Its passages, illuminance rows, PDF and cover are removed and it disappears from search and List Standards. This cannot be undone.
+
+Type ${id} to confirm:`);
+      if (typed == null) return;
+      if (typed.trim() !== id) { toast('The designation did not match — nothing was deleted.', 'err'); return; }
+      const { status, data } = await api(`/api/admin/standards/${encodeURIComponent(id)}`,
+        { method: 'DELETE', body: JSON.stringify({ confirm: id }) });
+      if (status >= 400) { toast(data.error || 'Delete failed', 'err'); return; }
+      const failed = (data.actions || []).filter(a => /failed/.test(a.action));
+      toast(failed.length ? `${id} deleted, with ${failed.length} cleanup warning(s) — see the console` : `${id} deleted`,
+        failed.length ? 'err' : 'ok');
+      if (failed.length) console.warn('Delete cleanup warnings:', failed);
+      closeStdEdit();
+      loadStandards();
+    }
+
     // Inline onclick handlers and the tab loader need module functions on
     // window. (No lensy:auth listener here — the Standards tab loads lazily
     // through activateTab in the classic script.)
@@ -2657,6 +2771,7 @@
       openIngest, closeIngest, submitIngest, onIngestFile,
       onIngestStatusChange, onIngestReplacesChange,
       hideTracker, resumeJob, cancelJobUi, showJobDetails,
+      openStdEdit, closeStdEdit, saveStdEdit, deleteStd,
     });
   </script>
 </body>

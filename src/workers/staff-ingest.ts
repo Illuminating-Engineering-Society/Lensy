@@ -873,6 +873,22 @@ async function finalizeJob(env: Env, job: IngestJobRow): Promise<Response> {
     const old = await env.DB.prepare('SELECT id, status, chunk_count FROM standards WHERE id = ?')
       .bind(job.replaces_id).first<{ id: string; status: string; chunk_count: number | null }>();
 
+    // A new edition belongs to its predecessor's collection until the next
+    // Vitrium export says otherwise (client 10/14/26: LP-10-26, LP-12-26,
+    // LS-4-20+E1 and RP-27-26 all arrived uncategorized). Before the
+    // disposition, which may delete the old row.
+    if (old && job.ingest_status === 'current') {
+      try {
+        const res = await env.DB.prepare(`
+          UPDATE standards SET collection = (SELECT collection FROM standards WHERE id = ?)
+          WHERE id = ? AND (collection IS NULL OR collection = '')
+        `).bind(job.replaces_id, job.standard_id).run();
+        if ((res.meta?.changes ?? 0) > 0) actions.push({ action: 'collection_inherited', from: job.replaces_id });
+      } catch (err) {
+        actions.push({ action: 'collection_inherit_failed', error: errMsg(err) });
+      }
+    }
+
     if (!old) {
       actions.push({ action: 'skipped', note: `"${job.replaces_id}" has no standards row any more — nothing to do.` });
     } else if (job.disposition === 'deprecate') {
@@ -939,45 +955,7 @@ async function finalizeJob(env: Env, job: IngestJobRow): Promise<Response> {
         actions.push({ action: 'follow_up_created', jobId: followUpJobId, standardId: job.replaces_id });
       }
     } else if (job.disposition === 'delete') {
-      // Remove the old edition entirely: chunk vectors, application rows and
-      // their vectors, the standards row, and the PDF.
-      const oldIndex = old.status === 'Deprecated' ? env.VECTORIZE_DEPRECATED : env.VECTORIZE;
-      if (oldIndex) {
-        try {
-          const deleted = await deleteVectorRange(oldIndex, job.replaces_id, 0, old.chunk_count ?? null);
-          actions.push({ action: 'chunk_vectors_deleted', count: deleted });
-        } catch (err) {
-          actions.push({ action: 'chunk_vector_delete_failed', error: errMsg(err) });
-        }
-      }
-
-      const codes = await env.DB.prepare('SELECT code FROM applications WHERE Standard = ?')
-        .bind(job.replaces_id).all<{ code: string }>();
-      const codeList = (codes.results || []).map(r => r.code);
-      for (let i = 0; i < codeList.length; i += APP_DELETE_BATCH) {
-        const batch = codeList.slice(i, i + APP_DELETE_BATCH);
-        await env.DB.prepare(
-          `DELETE FROM applications WHERE code IN (${batch.map(() => '?').join(',')})`
-        ).bind(...batch).run();
-      }
-      try {
-        for (let i = 0; i < codeList.length; i += VEC_DELETE_BATCH) {
-          await env.VECTORIZE.deleteByIds(codeList.slice(i, i + VEC_DELETE_BATCH));
-        }
-      } catch (err) {
-        actions.push({ action: 'application_vector_delete_failed', error: errMsg(err) });
-      }
-      if (codeList.length > 0) actions.push({ action: 'applications_deleted', count: codeList.length });
-
-      await env.DB.prepare('DELETE FROM standards WHERE id = ?').bind(job.replaces_id).run();
-      actions.push({ action: 'standards_row_deleted', id: job.replaces_id });
-
-      try {
-        await env.PDFS.delete(pdfKeyFor(job.replaces_id, old.status));
-        actions.push({ action: 'pdf_deleted', key: pdfKeyFor(job.replaces_id, old.status) });
-      } catch (err) {
-        actions.push({ action: 'pdf_delete_failed', error: errMsg(err) });
-      }
+      actions.push(...await deleteStandardCompletely(env, old));
     }
   }
 
@@ -1016,6 +994,185 @@ async function finalizeJob(env: Env, job: IngestJobRow): Promise<Response> {
   });
 
   return jsonResponse({ success: true, actions, followUpJobId });
+}
+
+// ─── Removing a standard entirely ─────────────────────────────────────────────
+
+/**
+ * Remove one standard from IES Lens: chunk vectors (from whichever index its
+ * status puts them in — and the other, since a demoted edition can leave
+ * either), application rows + their vectors, the standards row, its PDF under
+ * both prefixes, and the cover fallback. Deprecated editions that named it as
+ * their successor are re-pointed at nothing rather than at a missing row.
+ *
+ * Shared by the ingest "delete" disposition and the dashboard's Delete button
+ * (client 10/14/26 #2C: "add an option to 'delete' a record from the standards
+ * list in Lens admin"). Fail-soft per step, like the rest of finalize: a
+ * leftover vector or object costs storage, and each failure is reported.
+ */
+export async function deleteStandardCompletely(
+  env: Env,
+  row: { id: string; status: string; chunk_count: number | null },
+): Promise<Array<Record<string, unknown>>> {
+  const actions: Array<Record<string, unknown>> = [];
+  const id = row.id;
+
+  const indexes: Array<[string, VectorizeIndex | undefined]> = row.status === 'Deprecated'
+    ? [['deprecated', env.VECTORIZE_DEPRECATED], ['main', env.VECTORIZE]]
+    : [['main', env.VECTORIZE], ['deprecated', env.VECTORIZE_DEPRECATED]];
+  for (const [name, index] of indexes) {
+    if (!index) continue;
+    try {
+      // The index its status names gets the exact range; the other is probed
+      // (null end) so an empty one costs a single lookup.
+      const end = name === indexes[0][0] ? (row.chunk_count ?? null) : null;
+      const deleted = await deleteVectorRange(index, id, 0, end);
+      if (deleted > 0) actions.push({ action: 'chunk_vectors_deleted', index: name, count: deleted });
+    } catch (err) {
+      actions.push({ action: 'chunk_vector_delete_failed', index: name, error: errMsg(err) });
+    }
+  }
+
+  const codes = await env.DB.prepare('SELECT code FROM applications WHERE Standard = ?')
+    .bind(id).all<{ code: string }>();
+  const codeList = (codes.results || []).map(r => r.code);
+  for (let i = 0; i < codeList.length; i += APP_DELETE_BATCH) {
+    const batch = codeList.slice(i, i + APP_DELETE_BATCH);
+    await env.DB.prepare(
+      `DELETE FROM applications WHERE code IN (${batch.map(() => '?').join(',')})`
+    ).bind(...batch).run();
+  }
+  try {
+    for (let i = 0; i < codeList.length; i += VEC_DELETE_BATCH) {
+      await env.VECTORIZE.deleteByIds(codeList.slice(i, i + VEC_DELETE_BATCH));
+    }
+  } catch (err) {
+    actions.push({ action: 'application_vector_delete_failed', error: errMsg(err) });
+  }
+  if (codeList.length > 0) actions.push({ action: 'applications_deleted', count: codeList.length });
+
+  await env.DB.prepare('UPDATE standards SET superseded_by = NULL WHERE superseded_by = ?').bind(id).run();
+  await env.DB.prepare('DELETE FROM standards WHERE id = ?').bind(id).run();
+  actions.push({ action: 'standards_row_deleted', id });
+
+  for (const key of [pdfKeyFor(id, 'Active'), pdfKeyFor(id, 'Deprecated'), coverKeyFor(id)]) {
+    try {
+      if (await env.PDFS.head(key)) {
+        await env.PDFS.delete(key);
+        actions.push({ action: 'r2_object_deleted', key });
+      }
+    } catch (err) {
+      actions.push({ action: 'r2_delete_failed', key, error: errMsg(err) });
+    }
+  }
+  return actions;
+}
+
+// ─── Editing a standard's catalogue fields (client 10/14/26 #2) ───────────────
+
+// What staff can correct by hand: the three fields the Vitrium/portal export
+// supplies, for the standards it has not reached yet (RP-3-26 had no Library
+// link and no publication date). The next sync-metadata run overwrites them
+// with the export's own values, which is the intended order of authority.
+const LIBRARY_HOSTS = new Set(['lighting.ies.org', 'ies.org', 'www.ies.org', 'view.protectedpdf.com']);
+// LS-1 is the glossary's anchor: its definition vectors carry no PDF and
+// would read as orphans (the 2026-08-29 incident). Never deletable from here.
+const UNDELETABLE = new Set(['LS-1', 'LS-1-25']);
+
+export function validateStandardEdit(body: any): { fields: Record<string, string | null>; error?: string } {
+  const fields: Record<string, string | null> = {};
+  if ('libraryUrl' in body) {
+    const raw = String(body.libraryUrl ?? '').trim();
+    if (!raw) fields.vitrium_web_url = null;
+    else {
+      let url: URL;
+      try { url = new URL(raw); } catch { return { fields, error: 'The Library link is not a URL.' }; }
+      if (url.protocol !== 'https:' || !LIBRARY_HOSTS.has(url.hostname.toLowerCase())) {
+        return { fields, error: 'The Library link must be an https://lighting.ies.org/… address.' };
+      }
+      fields.vitrium_web_url = url.toString();
+    }
+  }
+  if ('publishedDate' in body) {
+    const raw = String(body.publishedDate ?? '').trim();
+    if (!raw) fields.published_date = null;
+    else {
+      const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(raw);
+      const d = m ? new Date(`${raw}T00:00:00Z`) : null;
+      if (!m || !d || Number.isNaN(d.getTime()) || d.toISOString().slice(0, 10) !== raw) {
+        return { fields, error: 'The publication date must be a real date, YYYY-MM-DD.' };
+      }
+      // The same guard sync-metadata applies: a future date is a typo
+      // (RP-3-20+E1's portal record says 2030) and would top "Newest first".
+      if (raw > new Date().toISOString().slice(0, 10)) {
+        return { fields, error: 'The publication date is in the future.' };
+      }
+      fields.published_date = raw;
+    }
+  }
+  if ('collection' in body) {
+    const raw = String(body.collection ?? '').trim().replace(/\s+/g, ' ');
+    if (raw.length > 80) return { fields, error: 'The collection name is too long.' };
+    fields.collection = raw || null;
+  }
+  if (Object.keys(fields).length === 0) return { fields, error: 'Nothing to change.' };
+  return { fields };
+}
+
+/**
+ *   GET    /api/admin/standards/:id   the editable fields
+ *   PATCH  /api/admin/standards/:id   { libraryUrl?, publishedDate?, collection? }
+ *   DELETE /api/admin/standards/:id   { confirm: "<id>" } — removes it entirely
+ */
+export async function handleAdminStandards(request: Request, env: Env, url: URL): Promise<Response> {
+  const denied = await requireAdminAccess(request, env);
+  if (denied) return denied;
+
+  const id = safeDecode(url.pathname.replace(/^\/api\/admin\/standards\/?/, '').split('/')[0] || '');
+  if (!id) return jsonResponse({ error: 'Standard id required' }, 400);
+  const row = await env.DB.prepare(
+    'SELECT id, status, chunk_count, vitrium_web_url, published_date, collection, superseded_by FROM standards WHERE id = ?',
+  ).bind(id).first<{
+    id: string; status: string; chunk_count: number | null; vitrium_web_url: string | null;
+    published_date: string | null; collection: string | null; superseded_by: string | null;
+  }>();
+  if (!row) return jsonResponse({ error: `No standard "${id}"` }, 404);
+
+  if (request.method === 'GET') {
+    return jsonResponse({
+      standard: {
+        id: row.id, status: row.status, libraryUrl: row.vitrium_web_url,
+        publishedDate: row.published_date, collection: row.collection, supersededBy: row.superseded_by,
+        deletable: !UNDELETABLE.has(row.id),
+      },
+    });
+  }
+
+  if (request.method === 'PATCH') {
+    const { fields, error } = validateStandardEdit(await safeJson(request));
+    if (error) return jsonResponse({ error }, 400);
+    const cols = Object.keys(fields);
+    await env.DB.prepare(
+      `UPDATE standards SET ${cols.map(c => `${c} = ?`).join(', ')}, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+    ).bind(...cols.map(c => fields[c]), id).run();
+    await bumpDataVersion(env.SESSIONS);
+    return jsonResponse({ success: true, updated: cols });
+  }
+
+  if (request.method === 'DELETE') {
+    if (UNDELETABLE.has(row.id)) {
+      return jsonResponse({ error: `${row.id} anchors the LS-1 definitions and cannot be deleted here.` }, 409);
+    }
+    const body = await safeJson(request);
+    if (body.confirm !== row.id) {
+      return jsonResponse({ error: `Type the designation "${row.id}" to confirm the deletion.` }, 400);
+    }
+    const actions = await deleteStandardCompletely(env, row);
+    await bumpDataVersion(env.SESSIONS);
+    return jsonResponse({ success: true, actions });
+  }
+
+  return jsonResponse({ error: 'Method not allowed' }, 405);
 }
 
 // ─── Cover fallback (client 10/13/26 #5) ──────────────────────────────────────

@@ -173,3 +173,115 @@ describe('page-1 cover fallback (client 10/13/26 #5)', () => {
     expect((await serveCover(env(store), '..%2F..%2Fstandards%2FRP-1-24.pdf')).status).toBe(404);
   });
 });
+
+// ─── The 10/14/26 follow-ups ─────────────────────────────────────────────────
+
+import { resolveDesignation, resolveGuideMentions, familyOfId, editionBase } from '../lib/guide-links';
+import { validateStandardEdit, deleteStandardCompletely } from './staff-ingest';
+import { previewTierFor } from './session';
+
+describe('every standard the AI Guide names gets a link (client 10/14/26)', () => {
+  const index = new Map([
+    ['RP-8-25+E2', { status: 'Active', webUrl: 'https://lighting.ies.org/yWVuwU' }],
+    ['RP-8-22', { status: 'Deprecated', webUrl: 'https://lighting.ies.org/3Fedak' }],
+    ['RP-10-20+E2', { status: 'Active', webUrl: 'https://lighting.ies.org/r10' }],
+    ['LS-2-20(R2023)', { status: 'Active', webUrl: 'https://lighting.ies.org/ls2' }],
+    ['LS-1', { status: 'Active', webUrl: 'https://ies.org/standards/definitions/', fullDesignation: 'ANSI/IES LS-1-25' }],
+    ['RP-27.1-22', { status: 'Active', webUrl: 'https://lighting.ies.org/r271' }],
+    ['RP-27-20+E1', { status: 'Deprecated', webUrl: 'https://lighting.ies.org/r27' }],
+  ]);
+
+  it('separates family from edition the way IES numbers them', () => {
+    expect(familyOfId('RP-8-25+E2')).toBe('RP-8');
+    expect(familyOfId('RP-10')).toBe('RP-10');
+    expect(familyOfId('RP-27.1-22')).toBe('RP-27.1');
+    expect(editionBase('LS-2-20(R2023)')).toBe('LS-2-20');
+    expect(editionBase('LM-63-19R25')).toBe('LM-63-19');
+  });
+
+  it('resolves an edition without its suffix, a bare family and a full designation', () => {
+    expect(resolveDesignation('RP-8-25', index)).toBe('RP-8-25+E2');
+    expect(resolveDesignation('RP-8', index)).toBe('RP-8-25+E2');
+    expect(resolveDesignation('RP-10', index)).toBe('RP-10-20+E2');
+    expect(resolveDesignation('LS-2-20', index)).toBe('LS-2-20(R2023)');
+    expect(resolveDesignation('LS-1-25', index)).toBe('LS-1');
+    expect(resolveDesignation('RP-8-22', index)).toBe('RP-8-22');   // named exactly
+  });
+
+  it('never links a family to a deprecated edition, nor RP-27 to RP-27.1', () => {
+    expect(resolveDesignation('RP-27', index)).toBeNull();
+    expect(resolveDesignation('RP-27.1', index)).toBe('RP-27.1-22');
+    expect(resolveDesignation('RP-99', index)).toBeNull();
+  });
+
+  it('collects the mentions in the prose, prefixes and all', () => {
+    const m = resolveGuideMentions([
+      'See ANSI/IES RP-8-25, Section 4.2, and IES RP-10 for further reading; RP-99 is not a standard.',
+    ], index);
+    expect([...m.keys()]).toEqual(['RP-8-25', 'RP-10']);
+    expect(m.get('RP-8-25')).toEqual({ id: 'RP-8-25+E2', url: 'https://lighting.ies.org/yWVuwU' });
+  });
+});
+
+describe('editing a standard record (client 10/14/26 #2)', () => {
+  it('accepts the three catalogue fields and clears with an empty value', () => {
+    expect(validateStandardEdit({
+      libraryUrl: 'https://lighting.ies.org/AbC123', publishedDate: '2026-06-26', collection: 'Recommended Practice',
+    })).toEqual({ fields: {
+      vitrium_web_url: 'https://lighting.ies.org/AbC123', published_date: '2026-06-26', collection: 'Recommended Practice',
+    } });
+    expect(validateStandardEdit({ libraryUrl: '', collection: '' }).fields)
+      .toEqual({ vitrium_web_url: null, collection: null });
+  });
+
+  it('refuses a foreign link, an impossible or future date, and an empty edit', () => {
+    expect(validateStandardEdit({ libraryUrl: 'https://evil.example.com/x' }).error).toMatch(/lighting\.ies\.org/);
+    expect(validateStandardEdit({ libraryUrl: 'http://lighting.ies.org/x' }).error).toBeTruthy();
+    expect(validateStandardEdit({ publishedDate: '2026-02-30' }).error).toMatch(/real date/);
+    expect(validateStandardEdit({ publishedDate: '2999-01-01' }).error).toMatch(/future/);
+    expect(validateStandardEdit({}).error).toMatch(/Nothing/);
+  });
+});
+
+describe('deleting a standard removes every trace of it', () => {
+  it('vectors from both indexes, rows, pointers and every R2 object', async () => {
+    const statements = [];
+    const db = {
+      prepare(sql) {
+        return {
+          bind(...args) { statements.push({ sql, args }); return this; },
+          async all() { return { results: [{ code: 'RP0825E1_0001' }] }; },
+          async run() { return { meta: { changes: 1 } }; },
+        };
+      },
+    };
+    const deletedIds = [];
+    const index = (have) => ({
+      async deleteByIds(ids) { deletedIds.push(...ids); return { count: ids.length }; },
+      async getByIds(ids) { return ids.filter(id => have.includes(id)).map(id => ({ id })); },
+    });
+    const r2 = new Set(['deprecated/RP-8-25+E1.pdf', 'covers/RP-8-25+E1']);
+    const env = {
+      DB: db,
+      VECTORIZE: index([]),
+      VECTORIZE_DEPRECATED: index([]),
+      PDFS: { async head(k) { return r2.has(k) ? {} : null; }, async delete(k) { r2.delete(k); } },
+    };
+    const actions = await deleteStandardCompletely(env, { id: 'RP-8-25+E1', status: 'Deprecated', chunk_count: 3 });
+    expect(deletedIds).toEqual(expect.arrayContaining(['RP-8-25+E1-chunk-0', 'RP-8-25+E1-chunk-2', 'RP0825E1_0001']));
+    expect(statements.some(s => /UPDATE standards SET superseded_by = NULL/.test(s.sql))).toBe(true);
+    expect(statements.some(s => /DELETE FROM standards/.test(s.sql) && s.args[0] === 'RP-8-25+E1')).toBe(true);
+    expect(r2.size).toBe(0);
+    expect(actions.map(a => a.action)).toContain('standards_row_deleted');
+  });
+});
+
+describe('administrators can preview the Non-Subscriber tier (client 10/14/26)', () => {
+  const req = (cookie) => new Request('https://lens.ies.org/api/search', { headers: cookie ? { Cookie: cookie } : {} });
+  it('honours the cookie for an administrator only, and only as lite', () => {
+    expect(previewTierFor(req('a=1; lens_preview_tier=lite'), { admin: true })).toBe('lite');
+    expect(previewTierFor(req('lens_preview_tier=lite'), { admin: false })).toBeNull();
+    expect(previewTierFor(req('lens_preview_tier=full'), { admin: true })).toBeNull();
+    expect(previewTierFor(req(''), { admin: true })).toBeNull();
+  });
+});

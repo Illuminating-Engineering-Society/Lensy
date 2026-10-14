@@ -224,7 +224,37 @@
     addUserChip(data);
     window.lensyUser = data.user;
     installLibraryHop(data.libraryHopUrl);
+    installTierPreview(data.user);
     document.dispatchEvent(new CustomEvent('lensy:auth', { detail: data.user }));
+  }
+
+  // ── Preview as a Non-Subscriber (client 10/14/26) ─────────────────────────
+  // "Can I test that somehow, now that we have the staff-only login enabled?"
+  // Administrators get a small switch; the server honours the cookie for
+  // administrators only and can only LOWER their tier (workers/session.ts
+  // previewTierFor). The Lighting Library itself is not previewed — Vitrium
+  // decides access in AuthIES, by the real account.
+  var PREVIEW_COOKIE = 'lens_preview_tier';
+  function setPreview(on) {
+    var secure = location.protocol === 'https:' ? '; Secure' : '';
+    document.cookie = PREVIEW_COOKIE + '=' + (on ? 'lite' : '') + '; Path=/; SameSite=Lax'
+      + (on ? '; Max-Age=28800' : '; Max-Age=0') + secure;
+    location.reload();
+  }
+  function installTierPreview(user) {
+    if (!user || !user.isAdmin || document.getElementById('lens-preview-switch')) return;
+    var on = user.previewTier === 'lite';
+    var el = document.createElement('div');
+    el.id = 'lens-preview-switch';
+    el.className = 'no-print';
+    el.style.cssText = 'position:fixed;right:12px;bottom:12px;z-index:60;font:600 12px/1.2 Inter,system-ui,sans-serif;'
+      + 'border-radius:999px;box-shadow:0 2px 8px rgba(0,0,0,.15);display:flex;align-items:center;gap:8px;padding:8px 12px;'
+      + (on ? 'background:#FFAA00;color:#30363D;' : 'background:#fff;color:#4B5563;border:1px solid #E5E7EB;');
+    el.innerHTML = on
+      ? '<span>Previewing as a Non-Subscriber</span><button type="button" style="text-decoration:underline;font-weight:700">Stop</button>'
+      : '<button type="button" title="See IES Lens as an IES member without a Lighting Library subscription sees it">Preview as Non-Subscriber</button>';
+    el.querySelector('button').addEventListener('click', function () { setPreview(!on); });
+    document.body.appendChild(el);
   }
 
   // ── Library links open on the linked page the FIRST time (client 10/09/26 #2)

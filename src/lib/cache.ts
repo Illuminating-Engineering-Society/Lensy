@@ -121,7 +121,9 @@ const DATA_VERSION_KEY = 'cache:data-version';
 //     frames definitions ("In simplified terms, …"); application rows gained
 //     their printed "@ 0 m" heights and RP-43 Controls ranges (D1 backfill),
 //     which a cached payload would otherwise keep serving without.
-const SEARCH_CACHE_SCHEMA = 'v21';
+// v22: the Guide's link maps cover every standard its prose names (resolved
+//     against the catalogue) and their outline sections (client 10/14/26).
+const SEARCH_CACHE_SCHEMA = 'v22';
 
 function errMsg(err: unknown): string {
   return err instanceof Error ? err.message : String(err);

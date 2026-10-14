@@ -2008,6 +2008,10 @@ describe('subscripts the extraction glued to the next word (client 10/02/26 #4)'
   it('leaves real words and electric vehicles alone', () => {
     expect(s('Evening events')).toBe('Evening events');
     expect(s('EV charging stations')).toBe('EV charging stations');
+    expect(s('Every Ehrlich Eva')).toBe('Every Ehrlich Eva');
+  });
+  it('restores "Ehover task proper" (RP-11 p. 67 note 12, client 10/14/26 #1)', () => {
+    expect(s('Ehover task proper (chairs).')).toBe('E<sub>h</sub> over task proper (chairs).');
   });
 });
 

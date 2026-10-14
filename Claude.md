@@ -1789,8 +1789,50 @@ losing content") is answered by the alignment report, not by the model.
   Library link (lighting.ies.org/2AfKJz, from the client).
 - **The Vitrium stall (10/13 #1) is AuthIES-side** — a redirect loop between
   Vitrium's authenticate webhook and `/sp/vitrium/sso`, ~35–45 s, caused by a
-  stale KV `person:` read cached at Vitrium's edge location. See the AuthIES
-  repo; not fixed from here.
+  stale KV `person:` read cached at Vitrium's edge location. Fixed in AuthIES
+  (the SSO token carries its minting session id, migration 0002 there).
+
+**Second batch, same day (10/14 notes)** — `SEARCH_CACHE_SCHEMA` → **v22**.
+
+- **The Guide's links cover everything it names** (`src/lib/guide-links.ts`,
+  `linkGuideMentions` in search.ts). Every designation in the prose resolves
+  against the D1 catalogue — "RP-8-25" → RP-8-25+E2, bare "RP-8" → the Active
+  edition, "LS-1-25" → LS-1 via `full_designation`, a Further-reading standard
+  outside the results — and the named standards' indexed OUTLINES join the
+  section map (before, only comparisons got outline sections). Each form the
+  prose used is an alias key in both maps, because the UI attributes a locator
+  to the designation before it. A family never resolves to a Deprecated
+  edition, and "RP-27" never to RP-27.1.
+- **Admin → Standards → Edit** (`/api/admin/standards/:id`, in staff-ingest.ts):
+  PATCH the Library link (lighting.ies.org/ies.org hosts only), publication date
+  (real, not future) and collection; DELETE `{confirm: id}` removes the standard
+  entirely via `deleteStandardCompletely` — the same function the ingest
+  "delete" disposition now uses: vectors from BOTH indexes, application rows +
+  vectors, `superseded_by` pointers nulled, the row, and R2 `standards/`,
+  `deprecated/` and `covers/`. LS-1 is undeletable (definitions anchor).
+  Finalize now copies a replaced edition's collection onto the new one.
+- **List Standards has the search page's sidebar** — docked open ≥1280px
+  (below the sticky header, not over the logo), floating Sort/Filter trigger
+  narrower; Sort as before; Filter = Collection / Publication Type / Technical
+  Committee checkbox lists with counts and "Only", applied live, also to the
+  CSV. The empty collection reads "Uncategorized"; a standard with none
+  borrows its family's. Cards no longer collapse on a phone.
+- **"Preview as Non-Subscriber"** for administrators (auth-gate.js pill;
+  `lens_preview_tier=lite` cookie; `previewTierFor` in session.ts honours it for
+  `decision.admin` only and can only LOWER the tier). Lens only — Vitrium access
+  is decided by AuthIES on the real account. A previewing admin is metered by
+  the daily cap like any Non-Subscriber.
+- `sciNotate` un-glues "Ehover" (RP-11 p. 67 note 12) — "over/under/…" joined
+  the function-word list.
+- **Data, 2026-10-14:** dates filled from each PDF's ANSI approval line
+  (approximate — the portal's PublishDate is the later release date): RP-3-26,
+  RP-4-26 → 2026-06-26; LP-10-26, LP-12-26, RP-27-26 → 2026-04-13; RP-27.3-07 →
+  2007-05-17; RP-3-20+E1 → 2020-07-23 (its portal record says 2030 — a typo; same
+  release day as RP-4-20+E1). Collections: LS-1, LS-4-20+E1, RP-27-26 →
+  Lighting Science; LP-10-26, LP-12-26 → Lighting Practice. **RP-8-25+E1 is
+  still to delete** (use the new button — the deprecated-index vector delete
+  was only partly applied by hand). RP-3-26, LP-10-26, LP-12-26, LS-4-20+E1 and
+  RP-27-26 still have no Library link — staff can set them in Edit.
 
 ### The 10/09/26 Teams notes: non-subscriber surfaces, per-account bookmarks, the Library hop, committee scopes (2026-10-13)
 

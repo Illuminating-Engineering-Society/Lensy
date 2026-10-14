@@ -162,7 +162,10 @@ export async function handleAuthMe(request: Request, env: Env): Promise<Response
       role: decision.role,
       // Which Lensy this account gets (client DO53). The UI locks the tools
       // LensyLite excludes; the search Worker enforces the same rule again.
-      tier: tierFor(user, decision, env),
+      tier: tierFor(user, decision, env, request),
+      // An administrator previewing the Non-Subscriber experience (client
+      // 10/14/26); auth-gate.js shows the banner that switches it off.
+      previewTier: previewTierFor(request, decision),
       liteEnabled: liteEnabled(env),
       // What the /admin pages gate on. The API enforces it again server-side
       // (requireAdminAccess) — this only decides what the UI offers.
@@ -204,8 +207,27 @@ function libraryHopUrl(env: Env, requestUrl: string): string | null {
 
 // ─── Access tier (client DO53) ────────────────────────────────────────────────
 
+// ─── Tier preview for administrators (client 10/14/26) ───────────────────────
+// "Can I test that somehow, now that we have the staff-only login enabled?"
+// The staff-only lockdown admits no Non-Subscriber, so an administrator can
+// view IES Lens AS one: a cookie the browser sets from the auth-gate banner.
+// Honoured for administrators only, and it can only LOWER the tier — a forged
+// cookie on anyone else's browser changes nothing.
+export const PREVIEW_TIER_COOKIE = 'lens_preview_tier';
+
+export function previewTierFor(request: Request, decision: AccessDecision): LensyTier | null {
+  if (!decision.admin) return null;
+  const value = (request.headers.get('Cookie') || '')
+    .split(';')
+    .map(part => part.trim().split('='))
+    .find(([name]) => name === PREVIEW_TIER_COOKIE)?.[1];
+  return value === 'lite' ? 'lite' : null;
+}
+
 /** The tier for one authorized session. */
-function tierFor(user: SsoUser, decision: AccessDecision, env: Env): LensyTier {
+function tierFor(user: SsoUser, decision: AccessDecision, env: Env, request?: Request): LensyTier {
+  const preview = request ? previewTierFor(request, decision) : null;
+  if (preview) return preview;
   return resolveTier({
     roles: user.roles,
     isMember: user.isMember,
@@ -233,7 +255,7 @@ export async function resolveRequestTier(request: Request, env: Env): Promise<Le
   }
   const gate = await evaluateSession(request, env);
   if (!gate.ok) return 'none';
-  return tierFor(gate.user, gate.decision, env);
+  return tierFor(gate.user, gate.decision, env, request);
 }
 
 /**
@@ -259,7 +281,7 @@ export async function resolveSearchGrant(request: Request, env: Env): Promise<Se
   }
   const gate = await evaluateSession(request, env);
   if (!gate.ok) return { tier: 'none', user: null, scope };
-  return { tier: tierFor(gate.user, gate.decision, env), user: { sub: gate.user.sub }, scope };
+  return { tier: tierFor(gate.user, gate.decision, env, request), user: { sub: gate.user.sub }, scope };
 }
 
 // ─── Shared gate plumbing ─────────────────────────────────────────────────────

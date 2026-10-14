@@ -5680,7 +5680,10 @@
           // views" arrives as "Evin two opposing views" (client 10/02/26 #4).
           // The glued form is only undone before a short function word, so a
           // real word starting "Ev…"/"Eh…" ("Evening", "Event") is never split.
-          .replace(/\bE(v|h|sc)(in|at|on|of|and|for|to|is|are|with|from|shall|should)\b/g, 'E<sub>$1</sub> $2')
+          // "over"/"under"/… added for RP-11 p. 67 note 12, "Ehover task proper"
+          // (client 10/14/26 #1) — none of them completes an English word
+          // after Ev/Eh/Esc.
+          .replace(/\bE(v|h|sc)(in|at|on|of|and|for|to|is|are|with|from|shall|should|over|under|above|below|across|along|within|by|or|as|per|than)\b/g, 'E<sub>$1</sub> $2')
           .replace(/\bE(v|h|sc)\b(?![-'’])/g, 'E<sub>$1</sub>')
           .replace(/([a-zA-Z])\/(m|cm|mm|ft)2\b/g, '$1/$2<sup>2</sup>');
       }).join('');

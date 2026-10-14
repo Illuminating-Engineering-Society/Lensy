@@ -29,7 +29,7 @@ import { handleIngest } from './ingest';
 import { handleAdminAccessMode, handleAdminScanOrphans, handleAdminEnumerateIds, handleAdminDeleteOrphans, handleAdminFlushCache, handleAdminSearchLog, handleAdminSearchEvents, handleAdminR2Multipart, handleAdminIndexStatus, handleAdminAnalytics, handleAdminDeviceResets, handleAdminDeviceResetsList, handleAdminDeviceResetUpdate } from './admin';
 import { handleLibraryDocumentLookup, handleDeviceResetRequest } from './library-support';
 import { handleAdminCompAccess, handleAdminCompAccessCsv } from './comp-access';
-import { handleIngestJobs, serveCover } from './staff-ingest';
+import { handleIngestJobs, serveCover, handleAdminStandards } from './staff-ingest';
 import { handleEvent } from './events';
 import { handlePreferences } from './preferences';
 import { handleAdminUsers } from './users';
@@ -147,6 +147,10 @@ export default {
       // disposition) — the backend of /admin/standards.
       if (path.startsWith('/api/admin/ingest-jobs')) {
         return withCors(await handleIngestJobs(request, env, url));
+      }
+      // Edit or delete one standard's record (client 10/14/26 #2).
+      if (path.startsWith('/api/admin/standards/')) {
+        return withCors(await handleAdminStandards(request, env, url));
       }
       if (path === '/api/admin/scan-orphans' && request.method === 'POST') {
         return withCors(await handleAdminScanOrphans(request, env));

@@ -79,6 +79,7 @@ import { dailySearchCap, enforceDailySearchCap } from '../lib/search-cap';
 import { generateResponse } from '../lib/ai-summary';
 import { rerankResults, extractGuideCitations, curateResults, conceptOrderForGuide } from '../lib/curation';
 import { generateRefinePrompt } from '../lib/refine';
+import { resolveGuideMentions } from '../lib/guide-links';
 import { formatCitation, composeStandardName } from '../lib/citations';
 import { looksLikeFormalReference, referenceCitationKey } from '../lib/references.js';
 import { referenceEntryNumber } from '../lib/reference-markers.js';
@@ -1162,6 +1163,11 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
       )
     : null;
 
+  const { standardLinks, sectionLinks } = await linkGuideMentions(
+    env, aiSummary, buildStandardLinkMap(linkSourceResults),
+    comparisonSectionLinks ?? buildSectionLinkMap(linkSourceResults), isVersionComparison,
+  );
+
   const payload = {
     query: rawQuery,
     // The query's language and the English interpretation the search actually
@@ -1216,11 +1222,12 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
     confidenceThreshold: STRONG_MATCH_THRESHOLD,
     // Front-cover Library URLs for every standard in this result set, so the UI
     // can hyperlink the standards the AI Guide names in its prose (DO24).
-    standardLinks: buildStandardLinkMap(linkSourceResults),
+    // Extended with every standard the Guide's prose names (linkGuideMentions).
+    standardLinks,
     // Per-standard section/page → Library URL, so the UI can also hyperlink the
     // LOCATORS the Guide names ("§4.2", "p. 21") and not just the designations
     // (client, 2026-08-20: the comparison Guide needs "links to chapters").
-    sectionLinks: comparisonSectionLinks ?? buildSectionLinkMap(linkSourceResults),
+    sectionLinks,
     timestamp: new Date().toISOString(),
     _depDbg: depDbg || undefined,
   };
@@ -1361,6 +1368,58 @@ export async function withOutlineSectionLinks(
     console.error('outline section links failed (non-fatal):', errMsg(err));
   }
   return map;
+}
+
+type SectionLinkMap = Record<string, { sections: Record<string, string>; pages: Record<string, string> }>;
+
+/** How many named standards get their whole outline added to the link map. */
+const GUIDE_OUTLINE_STANDARDS = 6;
+
+/**
+ * Hyperlinks for everything the AI Guide names, not only what retrieval
+ * returned (client, 2026-10-14: "Some standards/sections are referenced
+ * without hyperlink … more consistent?").
+ *
+ *   - Every designation in the prose is resolved against the catalogue
+ *     (src/lib/guide-links.ts) and added under the exact form the prose used —
+ *     "RP-8-25", "RP-8", a Further-reading standard outside the results.
+ *   - The standards it names get their indexed outline's sections, so "§4.2"
+ *     links even when retrieval never reached §4.2 (until now only comparisons
+ *     did this), and each form the prose used is an alias of that entry, since
+ *     the UI attributes a locator to the designation that preceded it.
+ *
+ * Never fabricated: a token naming no catalogued standard, or a section the
+ * outline does not hold, stays plain text. Fail-soft to the maps as they were.
+ */
+async function linkGuideMentions(
+  env: Env,
+  aiSummary: unknown,
+  standardLinks: Record<string, string>,
+  sectionLinks: SectionLinkMap,
+  isVersionComparison: boolean,
+): Promise<{ standardLinks: Record<string, string>; sectionLinks: SectionLinkMap }> {
+  const summary = aiSummary as { text?: string; textEnglish?: string; degraded?: boolean } | null;
+  if (!summary || summary.degraded || !summary.text) return { standardLinks, sectionLinks };
+  try {
+    const index = await fetchStandardsIndex(env.DB);
+    const mentions = resolveGuideMentions([summary.text, summary.textEnglish], index);
+    if (mentions.size === 0) return { standardLinks, sectionLinks };
+
+    const links = { ...standardLinks };
+    for (const [token, { url }] of mentions) if (!links[token]) links[token] = url;
+
+    // A comparison already loaded its editions' outlines.
+    const ids = [...new Set([...mentions.values()].map(m => m.id))].slice(0, GUIDE_OUTLINE_STANDARDS);
+    const sections = isVersionComparison ? sectionLinks : await withOutlineSectionLinks(env, sectionLinks, ids);
+    for (const [token, { id }] of mentions) {
+      const key = token.toUpperCase();
+      if (sections[id] && !sections[key]) sections[key] = sections[id];
+    }
+    return { standardLinks: links, sectionLinks: sections };
+  } catch (err) {
+    console.error('guide mention links failed (non-fatal):', errMsg(err));
+    return { standardLinks, sectionLinks };
+  }
 }
 
 function buildStandardLinkMap(results: SearchResult[]): Record<string, string> {

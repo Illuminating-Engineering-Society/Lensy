@@ -495,7 +495,7 @@ describe('finalize — delete', () => {
     const { status, body } = await call(env, 'POST', '/api/admin/ingest-jobs/j1/finalize', {});
     expect(status).toBe(200);
     expect(body.actions.map(a => a.action)).toEqual(
-      expect.arrayContaining(['chunk_vectors_deleted', 'applications_deleted', 'standards_row_deleted', 'pdf_deleted']));
+      expect.arrayContaining(['chunk_vectors_deleted', 'applications_deleted', 'standards_row_deleted', 'r2_object_deleted']));
 
     // Chunk vectors by deterministic range; application vectors by code.
     expect(env.VECTORIZE.deleted).toEqual(
