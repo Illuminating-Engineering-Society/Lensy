@@ -1733,6 +1733,65 @@ losing content") is answered by the alignment report, not by the model.
   `staff-ingest.test.js` (fixtures are stored-method ZIPs so they run on any
   Node ≥ 18; `src/lib/docx-fixture.js` is test-only).
 
+### The 10/13–10/14/26 Teams notes: scope weight, framed definitions, table cards, covers (2026-10-14)
+
+`SEARCH_CACHE_SCHEMA` → **v21**. No migration.
+
+- **Committee scope weighs more on concept questions (10/14 #3).** "Difference
+  between luminance and illuminance" still led with RP-2 (retail).
+  `isConceptQuery` (query-expander; "what is X", "difference between", "vs",
+  "explain", definitions — NOT "what is the illuminance for/in …") +
+  `isFoundationalCommittee` (committees.js: Nomenclature, Vision Science, Color,
+  Testing Procedures, Field Measurements, Measurements and Calculations,
+  Photobiology, Light and Human Health) act in three places: the rerank prompt
+  makes scope the FIRST criterion naming the committees present; `curateResults`
+  lifts their cards up to `SCOPE_LIFT` (4) places WITHIN each band (a
+  Guide-cited card still outranks an uncited one); and the Guide receives its
+  results in that lifted order (`conceptOrderForGuide`) with each result's
+  authoring committee and a "lead with them" rule. Bounded on purpose —
+  "slightly more".
+- **The Guide frames definitions (10/14).** A FRAMING rule in
+  `guideInstructions` ("In simplified terms, …", "A practical way to understand
+  it is …", "… might be summarized as …; see X for the precise definition",
+  "X provides a detailed explanation of how …"), backed by
+  `frameOpeningDefinition` for the first sentence only (guide mode, not cited,
+  not already framed).
+- **RP-43 table card (10/13 #2).** (A) `Row_Ref` is stored as "Row 109", so the
+  UI's "Row " prefix printed "Row Row 109" (`rowLabel`). (B) `parseHeight`
+  dropped a printed "0.00 m" as "no useful height"; it is kept now. (C) the
+  column notes (`footnoteMarks.columns`, DO092) render as superscripts on the
+  Glare/Uplight/Controls/Spectrum cards. (D) plane cells read Maintained →
+  Basis → Uniformity, no divider between the first two. Also found: the
+  Controls regex missed ranges ("20% - 50%", "Off - 100%") — now read as the
+  cell between the Uplight lumens and the Spectrum kelvins. **D1 was
+  backfilled the same day without a re-ingest**: all 15 table standards
+  re-extracted locally, matched by code with Row_Ref + lux as guards (2,780/2,780
+  matched, 0 mismatches), 720 null→value fills (heights to 0, 44 Controls).
+- **Compare Versions in every tools menu (10/13 #3)** — `site-menu.js` links
+  `/?compare=1`, which index.html opens on load (hidden for non-subscribers).
+- **Collection sort on List Standards (10/13 #4)** — groups by
+  `standards.collection` (the Vitrium FOLDER) shown under the client's TAG
+  names: "Recommended Practice" → Lighting Applications, "Roadway and Parking
+  Facilities" → Lighting Roadways and Parking Facilities; deprecated editions
+  inherit their family's current collection. RP-3-26/RP-4-26 (→ Recommended
+  Practice) and TM-30-24+E1 (→ Lighting Science, its folder before the +E1
+  reprint) were filled in D1 — they postdate the last export. ASHRAE-IES-90.1
+  has none until IES says which tag it carries.
+- **Covers for what the portal export has not reached (10/13 #5).** The cover
+  is the portal's `LatestVersionId` thumbnail, which only arrives with a
+  PortalDocuments export, so a dashboard-ingested standard had none. The
+  dashboard now renders page 1 (pdfjs, 480px JPEG) → `POST
+  …/ingest-jobs/:id/cover` → R2 `covers/<id>` → finalize sets `thumbnail_url =
+  /api/covers/<id>` ONLY when empty (portal covers win; a later
+  `sync-metadata --portal` overwrites). `GET /api/covers/:id` is public, like
+  the portal's own Thumbnail endpoint. Rendered by hand for 90.1, RP-3-26,
+  RP-4-26, TM-30-24+E1 and LP-6-25 (whose portal key 404s); 90.1 also got its
+  Library link (lighting.ies.org/2AfKJz, from the client).
+- **The Vitrium stall (10/13 #1) is AuthIES-side** — a redirect loop between
+  Vitrium's authenticate webhook and `/sp/vitrium/sso`, ~35–45 s, caused by a
+  stale KV `person:` read cached at Vitrium's edge location. See the AuthIES
+  repo; not fixed from here.
+
 ### The 10/09/26 Teams notes: non-subscriber surfaces, per-account bookmarks, the Library hop, committee scopes (2026-10-13)
 
 `SEARCH_CACHE_SCHEMA` → **v20**. Migration **0021** (`projects.owner_email`).

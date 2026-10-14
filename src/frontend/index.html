@@ -126,6 +126,9 @@
     .result-card { transition: box-shadow 0.15s, transform 0.15s; }
     .result-card:hover { box-shadow: 0 4px 24px rgba(44,44,44,0.10); transform: translateY(-1px); }
     .lux-badge { font-variant-numeric: tabular-nums; }
+    /* Plane-box cell dividers: Maintained and Basis share one, so neither
+       draws its own (client 10/13/26 #2D). */
+    .plane-cell-divided { border-left: 1px solid #f3f4f6; }
     .ai-border { border-left: 3px solid var(--brand-accent); }
     .search-glow:focus-within { box-shadow: 0 0 0 3px rgba(239,167,35,0.35); }
     .skeleton { background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%); background-size: 200% 100%; animation: skeleton-loading 1.4s infinite; }
@@ -4798,6 +4801,13 @@
       `;
     }
 
+    // Row_Ref is stored as printed ("Row 109"); a bare number gets the word.
+    // Prefixing unconditionally printed "Row Row 109" (client 10/13/26 #2A).
+    function rowLabel(rowRef) {
+      const s = String(rowRef).trim();
+      return /^row\b/i.test(s) ? s : `Row ${s}`;
+    }
+
     // One section of a grouped card = one adjacent table row: header line
     // (checkbox + differentiator + row badges | actions), citation, data.
     // tailCrumbs are {text, col} objects, so each level's footnote superscript
@@ -4807,7 +4817,7 @@
       const app = result.application || {};
       const label = tailCrumbs.length
         ? tailCrumbs.map(c => crumbHtml(app, c)).join(crumbSep) + supForRow(app)
-        : (app.rowRef ? `Row ${escapeHtml(String(app.rowRef))}` : escapeHtml(app.fullName || app.code || '')) + supForRow(app);
+        : (app.rowRef ? escapeHtml(rowLabel(app.rowRef)) : escapeHtml(app.fullName || app.code || '')) + supForRow(app);
       const name = tailCrumbs.length ? `${appName} › ${tailCrumbs.map(c => c.text).join(' › ')}` : appName;
 
       return `
@@ -5302,18 +5312,21 @@
       // arrive null unless the standard actually prints those columns, so the
       // filter below hides them everywhere else (client DO21).
       const outdoor = app.outdoor || {};
+      // `col` keys footnoteMarks.columns: RP-43 prints note numbers ABOVE these
+      // column headings (Glare 5, Uplight 6, Controls 7·8·9, Spectrum 10), and
+      // the client asked for them as superscripts on the cards (10/13/26 #2C).
       const envCards = [
         { label: 'Lighting Zone', value: outdoor.lightingZone,     sub: null },
         { label: 'Curfew',        value: outdoor.curfewDimming,     sub: null },
-        { label: 'Glare',         value: outdoor.maxGlareRating,    sub: 'Max' },
-        { label: 'Uplight',       value: outdoor.maxUplight,        sub: 'Max' },
-        { label: 'Controls',      value: outdoor.controlsRequired,  sub: 'See Notes' },
-        { label: 'Spectrum',      value: outdoor.spectrumGuidance,  sub: 'See Notes' },
+        { label: 'Glare',         value: outdoor.maxGlareRating,    sub: 'Max',       col: 'glare' },
+        { label: 'Uplight',       value: outdoor.maxUplight,        sub: 'Max',       col: 'uplight' },
+        { label: 'Controls',      value: outdoor.controlsRequired,  sub: 'See Notes', col: 'controls' },
+        { label: 'Spectrum',      value: outdoor.spectrumGuidance,  sub: 'See Notes', col: 'spectrum' },
       ].filter(c => c.value != null && c.value !== '');
 
       const envCard = (c) => `
         <div class="bg-amber-50/60 border border-amber-100 rounded-md px-2.5 py-1">
-          <p class="text-[10px] uppercase tracking-wide text-gray-500 leading-tight">${c.label}</p>
+          <p class="text-[10px] uppercase tracking-wide text-gray-500 leading-tight">${c.label}${c.col ? supMarker(app.footnoteMarks?.columns?.[c.col]) : ''}</p>
           <p class="text-sm font-bold text-gray-800 leading-tight">${escapeHtml(String(c.value))}</p>
           ${c.sub ? `<p class="text-[10px] text-gray-400 leading-tight">${c.sub}</p>` : ''}
         </div>`;
@@ -5703,8 +5716,8 @@
       // A single data cell inside a plane box. Tight vertical padding —
       // client feedback: condense cell padding so adjacent results are
       // easier to compare on one screen.
-      const cell = (label, mainHtml, subText) => `
-        <div class="px-2.5 py-1">
+      const cell = (label, mainHtml, subText, divider = true) => `
+        <div class="px-2.5 py-1${divider ? ' plane-cell-divided' : ''}">
           <p class="text-[10px] uppercase tracking-wide text-gray-400">${label}</p>
           <p class="text-sm font-bold text-gray-900 leading-tight lux-badge">${mainHtml}</p>
           ${subText ? `<p class="text-[11px] text-gray-400 leading-tight">${escapeHtml(String(subText))}</p>` : ''}
@@ -5743,13 +5756,15 @@
         const uniMain = plane.uniformity ?? plane.ratioBasis;
         const uniSub = plane.uniformity != null ? plane.ratioBasis : null;
 
-        // Cell order: Maintained → Uniformity → Basis. Client feedback requires
-        // "Basis" to always display after (to the right of) "Uniformity".
+        // Cell order: Maintained → Basis → Uniformity (client 10/13/26 #2D,
+        // superseding the earlier "Basis after Uniformity"). Basis qualifies the
+        // maintained figure ("10 fc Avg"), so the two read as one value with no
+        // divider between them; the first cell of a plane never has one either.
         const cells = [];
-        if (maintMain != null) cells.push(cell(isRange ? 'Lower–Upper Limit' : 'Maintained', maintMain, maintSub));
-        if (uniMain != null) cells.push(cell('Uniformity', escapeHtml(String(uniMain)), uniSub));
-        if (plane.avgMaxMin != null) cells.push(cell('Basis', escapeHtml(String(plane.avgMaxMin)), null));
-        if (plane.cv != null) cells.push(cell('CV', escapeHtml(String(plane.cv)), null));
+        if (maintMain != null) cells.push(cell(isRange ? 'Lower–Upper Limit' : 'Maintained', maintMain, maintSub, false));
+        if (plane.avgMaxMin != null) cells.push(cell('Basis', escapeHtml(String(plane.avgMaxMin)), null, false));
+        if (uniMain != null) cells.push(cell('Uniformity', escapeHtml(String(uniMain)), uniSub, cells.length > 0));
+        if (plane.cv != null) cells.push(cell('CV', escapeHtml(String(plane.cv)), null, cells.length > 0));
         if (!cells.length) return '';
 
         return `
@@ -5757,7 +5772,7 @@
             <div class="px-2.5 py-1 text-xs font-semibold" style="background-color: ${tintBg}; color: ${tintFg};">
               ${label}${catLabel}
             </div>
-            <div class="grid divide-x divide-gray-100" style="grid-template-columns: repeat(${cells.length}, minmax(0, 1fr));">
+            <div class="grid" style="grid-template-columns: repeat(${cells.length}, minmax(0, 1fr));">
               ${cells.join('')}
             </div>
             ${plane.notes ? `<p class="text-[11px] text-gray-500 italic px-2.5 py-1 border-t border-gray-100">${escapeHtml(plane.notes)}</p>` : ''}
@@ -6208,6 +6223,22 @@
       // Everywhere else the mirror has already been applied and this is instant.
       if (readGuideMirror() === null) loadPreferences().then(start, start);
       else start();
+    })();
+
+    // Deep link: /?compare=1 opens the Compare Versions window — the List
+    // Standards tools menu links here (client 10/13/26 #3). Waits for the
+    // session, because the tier decides whether comparisons are locked.
+    (function openCompareFromUrl() {
+      const params = new URLSearchParams(location.search);
+      if (!params.has('compare')) return;
+      const open = () => {
+        openCompareOverlay();
+        params.delete('compare');
+        const rest = params.toString();
+        history.replaceState(null, '', location.pathname + (rest ? `?${rest}` : '') + location.hash);
+      };
+      if (window.lensyUser) open();
+      else document.addEventListener('lensy:auth', open, { once: true });
     })();
   </script>
 </body>

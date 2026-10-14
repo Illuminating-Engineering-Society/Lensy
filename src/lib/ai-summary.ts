@@ -25,6 +25,7 @@ import { hasFormula, stripInlineFormula } from './formula.js';
 import type { AIMode, AISummary, AnswerStyle, ComparisonContext, SearchResult } from '../types';
 import { productPromptBlock, SUPPORT_FORM_URL } from './product';
 import { SYMBOL_GLOSSARY } from './query-expander';
+import { isFoundationalCommittee } from './committees.js';
 
 // Model chain (client bug DO9: "AI Guide results are not populating on any
 // search"): a failure of the primary model must degrade, never disappear.
@@ -237,6 +238,12 @@ export interface AIRequestOptions {
    * when the question touches the documents concerned.
    */
   facts?: string[];
+  /**
+   * The query asks what a term or concept means, or how two differ (client,
+   * 2026-10-14). The Guide is told to build the answer from the terminology /
+   * measurement / vision-science committees' standards first.
+   */
+  conceptQuery?: boolean;
 }
 
 /**
@@ -255,7 +262,7 @@ export async function generateResponse(
 ): Promise<AISummary> {
   const mode: AIMode = opts.mode || 'guide';
   const answerStyle: AnswerStyle = opts.answerStyle || 'auto';
-  const userPrompt = buildPrompt(query, searchResults, mode, opts.comparison, answerStyle, opts.authorityNotice, opts.facts);
+  const userPrompt = buildPrompt(query, searchResults, mode, opts.comparison, answerStyle, opts.authorityNotice, opts.facts, opts.conceptQuery);
 
   // Invoke through `ai` — NEVER a detached reference.
   //
@@ -331,7 +338,10 @@ export async function generateResponse(
   // survives, the mangled equation does not.
   // Order matters: the quote and formula rules act on the whole text, then the
   // opening sentence is judged on what is left (client DO088).
-  const sanitized = stripOpeningFluff(stripFormulasFromAnswer(sanitizeQuotes(text))).trim();
+  // The framing rule (client, 2026-10-14) acts last, on the sentence that
+  // actually opens the answer once the filler is gone.
+  const cleaned = stripOpeningFluff(stripFormulasFromAnswer(sanitizeQuotes(text)));
+  const sanitized = (mode === 'guide' ? frameOpeningDefinition(cleaned) : cleaned).trim();
   const violations = checkCopyrightViolations(sanitized);
   if (violations.length > 0) {
     console.warn('Copyright violations survived sanitization, using safe fallback:', violations);
@@ -512,6 +522,46 @@ export function stripOpeningFluff(text: string): string {
   return blocks.join('\n');
 }
 
+/**
+ * Phrases that already mark a sentence as a simplification or hand the reader
+ * to the standard's own wording (client, 2026-10-14).
+ */
+const FRAMING_RE = /\b(?:in simplified terms|in simple terms|simply put|put simply|a practical way to understand|might be summarized as|can be summarized as|broadly speaking|in general terms|in practical terms|for the precise definition|provides a detailed explanation)\b/i;
+
+/**
+ * An opening sentence that states what a term or concept IS, or how two
+ * differ: "The difference between luminance and illuminance is that …",
+ * "Luminance is the …", "Glare refers to …".
+ */
+const DEFINITIONAL_OPENING_RE = /^(?:the\s+(?:main\s+|key\s+|primary\s+)?difference\s+between\b|(?:an?\s+|the\s+)?[a-z][\w-]*(?:\s+[a-z][\w-]*){0,3}\s+(?:is|are|refers\s+to|measures|describes|quantifies|represents|means)\s+(?:a|an|the|how|what|defined)\b)/i;
+
+/**
+ * Preface a definitional opening with "In simplified terms," (client,
+ * 2026-10-14): "we can run into issues when Lens summarizes a definition or
+ * technical description … can we have it preface any 'definitions or
+ * statements of fact' with a phrase such as … 'in simplified terms…'".
+ *
+ * The prompt asks for the framing on every such statement; this is what holds
+ * for the one statement every reader sees — the first — when the model forgets.
+ * Conservative like stripOpeningFluff: only the first sentence of the first
+ * paragraph, never a sentence that cites a standard (that one is attributed,
+ * not the model's own definition), never one already framed.
+ */
+export function frameOpeningDefinition(text: string): string {
+  const raw = String(text || '');
+  const lead = /^(\s*)(\S[^\n]*)/.exec(raw);
+  if (!lead) return raw;
+  const [, ws, line] = lead;
+  if (/^(?:#{1,4}\s|[-*•]\s|\*\*|>)/.test(line)) return raw;
+  const sentence = (/^[^.!?]*[.!?]?/.exec(line) || [''])[0];
+  if (!DEFINITIONAL_OPENING_RE.test(sentence)) return raw;
+  if (FRAMING_RE.test(sentence) || CITES_SOMETHING_RE.test(sentence)) return raw;
+  // Lower-case the first word unless it is an acronym or symbol ("CCT", "LED").
+  const first = /^\S+/.exec(line)![0];
+  const lowered = /^[A-Z][a-z]/.test(first) ? first[0].toLowerCase() + first.slice(1) : first;
+  return `${ws}In simplified terms, ${lowered}${line.slice(first.length)}${raw.slice(ws.length + line.length)}`;
+}
+
 export function stripFormulasFromAnswer(text: string): string {
   if (!text || !hasFormula(text)) return text;
   return text
@@ -530,6 +580,7 @@ function buildPrompt(
   answerStyle: AnswerStyle = 'auto',
   authorityNotice?: string | null,
   facts?: string[],
+  conceptQuery = false,
 ): string {
   const picked = pickResults(searchResults, mode, comparison);
   const resultsSummary = picked.map((r, idx) => describeResult(r, idx, mode)).join('\n\n');
@@ -553,7 +604,7 @@ function buildPrompt(
 
   if (mode === 'comparison') return header + notice + factsBlock + comparisonInstructions(comparison);
   if (mode === 'references') return header + notice + factsBlock + referencesInstructions();
-  return header + notice + factsBlock + guideInstructions(answerStyle);
+  return header + notice + factsBlock + guideInstructions(answerStyle, conceptQuery);
 }
 
 /**
@@ -658,8 +709,16 @@ function describeResult(r: SearchResult, idx: number, mode: AIMode = 'guide'): s
         + 'Cite it by label and page; you cannot see its contents.').join('\n')
     : '';
 
+  // The authoring committee (client 10/09/26 #3, weighted 2026-10-14): which
+  // committee's scope a standard comes from is how the Guide tells the
+  // vision-science account of a term from a retail standard that uses it.
+  const committeeName = r.committee?.name || null;
+  const committeeLine = committeeName
+    ? `\n  Authoring committee: ${committeeName}${isFoundationalCommittee(committeeName) ? ' (scope: terminology, measurement or the science of light and vision)' : ''}`
+    : '';
+
   return `[Result ${idx + 1}] ${app.fullName || app.category}
-  Standard: ${app.standardFull || app.standard}${app.tableRef ? ` (${app.tableRef})` : ''}
+  Standard: ${app.standardFull || app.standard}${app.tableRef ? ` (${app.tableRef})` : ''}${committeeLine}
   ${meta.join(', ')}
   Citation: ${r.citation}
 ${excerptLines}${assetLines}`;
@@ -720,16 +779,35 @@ function promptExcerpt(e: { text?: string | null; formulaOmitted?: boolean }, ma
   return `${stripped}${marker}`;
 }
 
-function guideInstructions(style: AnswerStyle = 'auto'): string {
+/**
+ * Client, 2026-10-14: "we can run into issues when Lens summarizes a definition
+ * or technical description … can we have it preface any 'definitions or
+ * statements of fact' with a phrase such as 'might be summarized as … see ___
+ * for the precise definition' or 'in simplified terms…' or 'a practical way to
+ * understand it is…' or 'RP-##-## provides a detailed explanation of how…'".
+ * frameOpeningDefinition() backs up the first sentence when the model forgets.
+ */
+const FRAMING_INSTRUCTION = `- FRAMING OF DEFINITIONS AND STATEMENTS OF FACT: whenever you explain in your own words what a term, quantity or concept IS, or how two concepts differ, preface it with a phrase that marks it as a simplification and points to the standard for the authoritative wording. Use one of these, varying them within an answer:
+    • "In simplified terms, …"
+    • "A practical way to understand it is …"
+    • "… might be summarized as …; see [designation, section] for the precise definition."
+    • "[designation] provides a detailed explanation of how …"
+  Never present your own paraphrase as the standard's definition. Where a DEFINITION result is listed above, point to it for the precise wording.`;
+
+/** Concept questions lead with the foundational committees (client, 2026-10-14). */
+const CONCEPT_INSTRUCTION = `- THIS QUESTION ASKS WHAT A TERM OR CONCEPT MEANS, OR HOW CONCEPTS DIFFER. Build the answer from the standards whose authoring committee's scope is terminology, measurement or the science of light and vision (marked above), and lead with them. Application standards (retail, office, roadway, museum …) may follow only as brief examples of how the concept is used, never as the primary source.`;
+
+function guideInstructions(style: AnswerStyle = 'auto', conceptQuery = false): string {
   return `
 Instructions — write a GUIDE, not a list (client requirement):
 - FIRST SENTENCE: answer the question. The reader's question is on screen above
   your answer, so do not restate it, and do not open by asserting that the topic
   matters. "For a LZ2 roadway, the illuminance target is a crucial aspect of
   lighting design" and "Luminance plays a crucial role in lighting design" are
-  both forbidden openings: they carry no information. Open with the fact, the
-  definition, or the standard that answers it.
-${shapeInstruction(style)}
+  both forbidden openings: they carry no information. Open with the substance —
+  a framed explanation (see FRAMING below), or the standard that answers it.
+${FRAMING_INSTRUCTION}
+${conceptQuery ? `${CONCEPT_INSTRUCTION}\n` : ''}${shapeInstruction(style)}
 - Explain, standard by standard, WHAT the relevant guidance covers and WHY that section matters. Use the excerpts above as your only source.
 - Where the results include illuminance-table rows, explain how to read and apply them (Task vs Area, maintained targets, uniformity/ratio basis, measurement height) and point the user to the result cards for the values themselves.
 - Mention ONLY the governing criteria that genuinely apply to THIS application. Do not enumerate the rest: Class of Play belongs to sports venues, lighting zones and curfews to exterior applications, the S/P variance to Categories P–Y. Naming an irrelevant criterion makes the whole answer less trustworthy.

@@ -29,7 +29,7 @@ import { handleIngest } from './ingest';
 import { handleAdminAccessMode, handleAdminScanOrphans, handleAdminEnumerateIds, handleAdminDeleteOrphans, handleAdminFlushCache, handleAdminSearchLog, handleAdminSearchEvents, handleAdminR2Multipart, handleAdminIndexStatus, handleAdminAnalytics, handleAdminDeviceResets, handleAdminDeviceResetsList, handleAdminDeviceResetUpdate } from './admin';
 import { handleLibraryDocumentLookup, handleDeviceResetRequest } from './library-support';
 import { handleAdminCompAccess, handleAdminCompAccessCsv } from './comp-access';
-import { handleIngestJobs } from './staff-ingest';
+import { handleIngestJobs, serveCover } from './staff-ingest';
 import { handleEvent } from './events';
 import { handlePreferences } from './preferences';
 import { handleAdminUsers } from './users';
@@ -126,6 +126,14 @@ export default {
       }
       if (path === '/api/library/device-reset' && request.method === 'POST') {
         return withCors(await handleDeviceResetRequest(request, env));
+      }
+
+      // ── Cover fallback (client 10/13/26 #5) ─────────────────────────────
+      // PUBLIC like the portal's own Thumbnail endpoint, which serves the same
+      // kind of image without a credential: a cover discloses nothing the
+      // store does not show. Written only by the staff dashboard.
+      if (path.startsWith('/api/covers/') && request.method === 'GET') {
+        return await serveCover(env, path.slice('/api/covers/'.length));
       }
 
       // ── Ingest (internal/admin only) ─────────────────────────────────────

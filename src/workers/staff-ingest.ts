@@ -52,6 +52,8 @@
  *                                              (validated: tracked changes and a
  *                                              wrong-family designation refuse)
  *   DELETE /api/admin/ingest-jobs/:id/docx     detach the manuscript
+ *   POST /api/admin/ingest-jobs/:id/cover      page 1 rendered by the browser →
+ *                                              R2 covers/<id> (thumbnail fallback)
  *   POST /api/admin/ingest-jobs/:id/pages      one batch of raw pages
  *   POST /api/admin/ingest-jobs/:id/process    extract + embed + index
  *   POST /api/admin/ingest-jobs/:id/finalize   old-edition disposition + cleanup
@@ -190,6 +192,9 @@ export async function handleIngestJobs(request: Request, env: Env, url: URL): Pr
       if (request.method === 'POST') return uploadDocx(request, env, job);
       if (request.method === 'DELETE') return removeDocx(env, job);
       return jsonResponse({ error: 'Method not allowed' }, 405);
+    case 'cover':
+      if (request.method !== 'POST') return jsonResponse({ error: 'Method not allowed' }, 405);
+      return uploadCover(request, env, job);
     case 'pages':
       if (request.method !== 'POST') return jsonResponse({ error: 'Method not allowed' }, 405);
       return receivePages(request, env, job);
@@ -976,6 +981,27 @@ async function finalizeJob(env: Env, job: IngestJobRow): Promise<Response> {
     }
   }
 
+  // Cover fallback (client 10/13/26 #5): a standard the Vitrium portal export
+  // has not reached yet — ASHRAE-IES-90.1-2025 was ingested a month after the
+  // last one — has no thumbnail_url, so List Standards showed "No cover". The
+  // page-1 render the browser uploaded fills it, and ONLY when empty: the
+  // portal's own cover (sync-metadata.js --portal) always wins, and a later
+  // sync simply overwrites this one.
+  if (job.ingest_status === 'current') {
+    try {
+      const cover = await env.PDFS.head(coverKeyFor(job.standard_id));
+      if (cover) {
+        const res = await env.DB.prepare(`
+          UPDATE standards SET thumbnail_url = ?, updated_at = CURRENT_TIMESTAMP
+          WHERE id = ? AND (thumbnail_url IS NULL OR thumbnail_url = '')
+        `).bind(coverUrlFor(job.standard_id), job.standard_id).run();
+        if ((res.meta?.changes ?? 0) > 0) actions.push({ action: 'cover_set', id: job.standard_id });
+      }
+    } catch (err) {
+      actions.push({ action: 'cover_set_failed', error: errMsg(err) });
+    }
+  }
+
   await bumpDataVersion(env.SESSIONS);
 
   // Staging cleanup — only ever under this job's own prefix, so a follow-up
@@ -990,6 +1016,52 @@ async function finalizeJob(env: Env, job: IngestJobRow): Promise<Response> {
   });
 
   return jsonResponse({ success: true, actions, followUpJobId });
+}
+
+// ─── Cover fallback (client 10/13/26 #5) ──────────────────────────────────────
+
+// Outside ingest-jobs/ (a cover outlives its job) and outside standards/ and
+// deprecated/ (the only prefixes the R2 orphan sweep lists).
+export const COVER_R2_PREFIX = 'covers/';
+const MAX_COVER_BYTES = 2 * 1024 * 1024;
+const COVER_TYPES = new Set(['image/jpeg', 'image/png']);
+
+export function coverKeyFor(standardId: string): string {
+  return `${COVER_R2_PREFIX}${standardId}`;
+}
+
+export function coverUrlFor(standardId: string): string {
+  return `/api/covers/${encodeURIComponent(standardId)}`;
+}
+
+async function uploadCover(request: Request, env: Env, job: IngestJobRow): Promise<Response> {
+  if (job.ingest_status !== 'current') {
+    return jsonResponse({ success: true, skipped: 'A deprecated edition is never listed with a cover.' });
+  }
+  const type = (request.headers.get('Content-Type') || '').split(';')[0].trim().toLowerCase();
+  if (!COVER_TYPES.has(type)) return jsonResponse({ error: 'The cover must be a JPEG or PNG image.' }, 400);
+  const bytes = await request.arrayBuffer();
+  if (bytes.byteLength === 0) return jsonResponse({ error: 'Empty cover image.' }, 400);
+  if (bytes.byteLength > MAX_COVER_BYTES) return jsonResponse({ error: 'Cover image is larger than 2 MB.' }, 413);
+  await env.PDFS.put(coverKeyFor(job.standard_id), bytes, { httpMetadata: { contentType: type } });
+  return jsonResponse({ success: true, bytes: bytes.byteLength });
+}
+
+/** GET /api/covers/:id — public, like the portal's own Thumbnail endpoint. */
+export async function serveCover(env: Env, rawId: string): Promise<Response> {
+  const id = safeDecode(rawId);
+  if (!STANDARD_ID_RE.test(id) || id.length > MAX_STANDARD_ID_LENGTH) {
+    return new Response('Not found', { status: 404 });
+  }
+  const obj = await env.PDFS.get(coverKeyFor(id));
+  if (!obj) return new Response('Not found', { status: 404 });
+  return new Response(obj.body, {
+    headers: {
+      'Content-Type': obj.httpMetadata?.contentType || 'image/jpeg',
+      'Cache-Control': 'public, max-age=86400',
+      'X-Content-Type-Options': 'nosniff',
+    },
+  });
 }
 
 async function cancelJob(env: Env, job: IngestJobRow): Promise<Response> {

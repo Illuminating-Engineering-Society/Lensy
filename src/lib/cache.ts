@@ -116,7 +116,12 @@ const DATA_VERSION_KEY = 'cache:data-version';
 //     cards are no longer dropped by the collection rule; the payload gained
 //     `subscriberCounts`), and the curation RERANK prompt gained the authoring
 //     committees' Wicket scopes.
-const SEARCH_CACHE_SCHEMA = 'v20';
+// v21: the 10/13–10/14 notes. Concept questions weight the foundational
+//     committees in the rerank, the card order and the Guide's input; the Guide
+//     frames definitions ("In simplified terms, …"); application rows gained
+//     their printed "@ 0 m" heights and RP-43 Controls ranges (D1 backfill),
+//     which a cached payload would otherwise keep serving without.
+const SEARCH_CACHE_SCHEMA = 'v21';
 
 function errMsg(err: unknown): string {
   return err instanceof Error ? err.message : String(err);

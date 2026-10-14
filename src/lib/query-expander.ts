@@ -445,6 +445,32 @@ export function isDefinitionQuery(query: string): boolean {
   return DEFINITION_QUERY_PATTERNS.some(re => re.test(normalizeTypography(query)));
 }
 
+// ─── Concept-question detection (client, 2026-10-14) ──────────────────────────
+
+// Broader than isDefinitionQuery on purpose: this one only WEIGHTS the order
+// toward the terminology / measurement / vision-science committees, it never
+// replaces the content-kind selection. "What is luminance?" and "difference
+// between luminance and illuminance" are concept questions; "what is the
+// recommended illuminance for a parking lot" is not — an application named
+// after a preposition makes it an application question.
+const CONCEPT_QUERY_PATTERNS = [
+  /\bdifferen(?:ce|t)\s+between\b/i,
+  /\bhow\s+(?:do|does|is|are)\b[^.?!]{0,80}?\b(?:differ|different|related|relate)\b/i,
+  /\b(?:vs\.?|versus)\b/i,
+  /\bexplain\b/i,
+  /^\s*what\s+(?:is|are)\s+(?:an?\s+|the\s+)?(?:(?!for\b|in\b|on\b|at\b|of\s+an?\b|recommended\b|required\b|minimum\b|maximum\b|best\b)[\w-]+\s*){1,4}\??\s*$/i,
+];
+
+/**
+ * A question about what a term, quantity or concept means, or how two differ.
+ * Used to weight curation toward the committees whose scope covers it.
+ */
+export function isConceptQuery(query: string): boolean {
+  if (!query) return false;
+  const q = normalizeTypography(query);
+  return isDefinitionQuery(q) || CONCEPT_QUERY_PATTERNS.some(re => re.test(q));
+}
+
 function escapeRegex(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }

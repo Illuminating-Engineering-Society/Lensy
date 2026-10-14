@@ -2467,6 +2467,10 @@
           Keywords: info.Keywords, CreationDate: info.CreationDate, ModDate: info.ModDate,
         };
 
+        // Cover fallback (client 10/13/26 #5): finalize uses it only when the
+        // standard has no Vitrium cover yet. Never blocks the ingest.
+        if (job.ingest_status !== 'deprecated') await uploadCover(job, doc);
+
         for (let start = 1; start <= total; start += PAGE_BATCH) {
           const end = Math.min(total, start + PAGE_BATCH - 1);
           const raw = [];
@@ -2493,6 +2497,32 @@
         setStep('parse', 'done', `${total} pages`);
       } finally {
         doc.destroy().catch(() => {});
+      }
+    }
+
+    // Page 1 → a 480px-wide JPEG, the size of the portal's own thumbnails.
+    async function uploadCover(job, doc) {
+      try {
+        setStep('parse', 'run', 'rendering the cover…');
+        const page = await doc.getPage(1);
+        const base = page.getViewport({ scale: 1 });
+        const viewport = page.getViewport({ scale: 480 / base.width });
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.round(viewport.width);
+        canvas.height = Math.round(viewport.height);
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        await page.render({ canvasContext: ctx, viewport }).promise;
+        page.cleanup();
+        const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.85));
+        if (!blob) return;
+        const res = await fetch(`/api/admin/ingest-jobs/${job.id}/cover`, {
+          method: 'POST', headers: { 'Content-Type': 'image/jpeg' }, body: blob,
+        });
+        if (!res.ok) console.warn('Cover upload failed (non-fatal):', res.status);
+      } catch (err) {
+        console.warn('Cover render failed (non-fatal):', err);
       }
     }
 

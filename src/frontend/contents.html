@@ -176,6 +176,13 @@
               </svg>
               Committee (Default)
             </button>
+            <button data-sort="collection" aria-pressed="false" onclick="setSort('collection')" class="sort-option"
+                    title="Grouped by Lighting Library collection, then by designation">
+              <svg class="w-4 h-4 shrink-0 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M4 7a2 2 0 012-2h4l2 2h6a2 2 0 012 2v8a2 2 0 01-2 2H6a2 2 0 01-2-2V7z"/>
+              </svg>
+              Collection
+            </button>
             <button data-sort="published" aria-pressed="false" onclick="setSort('published')" class="sort-option"
                     title="Newest first, with everything published in the past six months banded at the top">
               <svg class="w-4 h-4 shrink-0 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
@@ -315,6 +322,7 @@
         if (!res.ok) throw new Error(`Could not load the library (HTTP ${res.status}).`);
         const data = await res.json();
         allStandards = (data.standards || []).filter(s => s && s.id);
+        familyCollections = null;
         render();
       } catch (err) {
         document.getElementById('toc-loading').classList.add('hidden');
@@ -423,7 +431,7 @@
     const sortState = { key: 'committee', dir: 'asc' };
 
     const SORT_LABELS = {
-      committee: 'Committee', published: 'Publication Date',
+      committee: 'Committee', collection: 'Collection', published: 'Publication Date',
       designation: 'Designation', title: 'Title',
     };
 
@@ -466,6 +474,7 @@
       if (key === 'published') return publishedSortKey(s);
       if (key === 'title') return titleOf(s).toLowerCase() || null;
       if (key === 'committee') return (authorLabelFor(s) || '').toLowerCase() || null;
+      if (key === 'collection') return (collectionLabelFor(s) || '').toLowerCase() || null;
       if (key === 'designation') return s.id;
       return null;
     }
@@ -588,6 +597,7 @@
      */
     function groupsFor(standards) {
       if (sortState.key === 'committee') return committeeGroups(standards);
+      if (sortState.key === 'collection') return collectionGroups(standards);
 
       if (sortState.key === 'published') {
         const from = isoSixMonthsAgo();
@@ -643,6 +653,70 @@
         committee: byAuthor.get(label).find(s => s.committee)?.committee || null,
         unattributed: !label,
         rows: byAuthor.get(label).sort((a, b) => compareIds(a.id, b.id)),
+      }));
+    }
+
+    /**
+     * The Lighting Library collection a standard belongs to, named the way the
+     * client's Vitrium tags name them (10/13/26 #4): Lighting Applications,
+     * Lighting Measurements and Testing, Lighting Practice, Lighting Science,
+     * Lighting Roadways and Parking Facilities.
+     *
+     * `collection` is synced from the Vitrium FOLDER (sync-metadata.js), whose
+     * names differ from the tags for two of the five; the tag name is shown.
+     * A "… · Lighting Science Collection" marker from the tag sync is
+     * ignored here — the folder decides the group. null when unknown.
+     */
+    const COLLECTION_NAMES = [
+      [/roadway/i, 'Lighting Roadways and Parking Facilities'],
+      [/^\s*(?:recommended practices?|lighting applications)\b/i, 'Lighting Applications'],
+      [/^\s*lighting measurements?\b/i, 'Lighting Measurements and Testing'],
+      [/^\s*lighting practice\b/i, 'Lighting Practice'],
+      [/^\s*lighting science\b/i, 'Lighting Science'],
+    ];
+
+    function namedCollection(raw) {
+      const folder = String(raw || '').split('·')[0].trim();
+      if (!folder) return null;
+      for (const [re, name] of COLLECTION_NAMES) if (re.test(folder)) return name;
+      return folder;
+    }
+
+    // "RP-3-20+E1" → "RP-3"; "ASHRAE-IES-90.1-2025" → "ASHRAE-IES-90.1".
+    const familyKey = (id) => String(id || '').replace(/-\d{2,4}(?:\+E\d+)?(?:\s*\(R\d{2,4}\)|R\d{2,4})?$/i, '').toUpperCase();
+
+    let familyCollections = null;
+    function collectionLabelFor(s) {
+      const own = namedCollection(s.collection);
+      if (own) return own;
+      // A deprecated edition sits in the archive folder, which names no
+      // collection: it belongs with its family's current edition.
+      if (!familyCollections) {
+        familyCollections = new Map();
+        for (const c of allStandards.filter(isCurrent)) {
+          const name = namedCollection(c.collection);
+          if (name) familyCollections.set(familyKey(c.id), name);
+        }
+      }
+      return familyCollections.get(familyKey(s.id)) || null;
+    }
+
+    /** Grouped by collection (alphabetical), designation order inside each. */
+    function collectionGroups(standards) {
+      const byCollection = new Map();
+      for (const s of standards) {
+        const label = collectionLabelFor(s) || '';
+        if (!byCollection.has(label)) byCollection.set(label, []);
+        byCollection.get(label).push(s);
+      }
+      const dir = sortState.dir === 'desc' ? -1 : 1;
+      const named = [...byCollection.keys()].filter(Boolean).sort((a, b) => dir * a.localeCompare(b));
+      // As with committees, "not yet supplied" stays last in either direction.
+      const order = byCollection.has('') ? [...named, ''] : named;
+      return order.map(label => ({
+        key: `collection:${label || 'none'}`,
+        heading: label || 'Collection not yet supplied',
+        rows: byCollection.get(label).sort((a, b) => compareIds(a.id, b.id)),
       }));
     }
 

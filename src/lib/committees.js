@@ -143,3 +143,35 @@ export function committeeScope(name) {
 export function isKnownCommitteeSlug(slug) {
   return SLUGS.has(String(slug || '').toLowerCase());
 }
+
+// ─── Foundational committees (client, 2026-10-14) ────────────────────────────
+// "I'm still getting RP-2 (retail lighting) before the 'vision' documents …
+//  can you weight the scope slightly more?" A question about what a term or
+// quantity IS, or how two differ, belongs to the committees whose scope is
+// nomenclature, measurement or the science of light and vision — the authors
+// of the LS series and most LM/TM documents. Matched as substrings of the
+// folded name, because the Author field also carries subcommittees ("Solid-State
+// Lighting Subcommittee of the IES Testing Procedures Committee", "IES
+// Measurements and Calculations Subcommittee").
+const FOUNDATIONAL_COMMITTEE_KEYS = [
+  'nomenclature',
+  'vision science',
+  'color',
+  'testing procedures',
+  'field measurements',
+  'measurements and calculations',
+  'photobiology',
+  'light and human health',
+];
+
+/**
+ * Is this committee one whose scope is terminology, measurement or the science
+ * of light and vision (rather than an application such as retail or roadway)?
+ * @param {string|null|undefined} name a committee name or credit
+ * @returns {boolean}
+ */
+export function isFoundationalCommittee(name) {
+  const key = normalizeName(name);
+  if (!key) return false;
+  return FOUNDATIONAL_COMMITTEE_KEYS.some(k => new RegExp(`(?:^| )${k}(?: |$)`).test(key));
+}

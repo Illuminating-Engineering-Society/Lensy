@@ -34,6 +34,7 @@
     search: 'M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z',
     library: 'M4 19.5V5a1 1 0 011-1h2a1 1 0 011 1v14.5M10 19.5V5a1 1 0 011-1h2a1 1 0 011 1v14.5M16.5 19.5l-2-14 2.5-.5 2.5 14z',
     list: 'M4 6h16M4 12h16M4 18h10',
+    compare: 'M8 7V3m0 4H4m4 0h4M6 21V11m10 10v-4m0 4h4m-4 0h-4m2-14v10',
     video: 'M15 10l4.55-2.28A1 1 0 0121 8.62v6.76a1 1 0 01-1.45.9L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z',
     faq: 'M8.2 9a4 4 0 017.6 1.5c0 2-3 2.75-3 4.5M12 18h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z',
     user: 'M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z',
@@ -75,6 +76,10 @@
     return [
       link({ href: '/', icon: 'search', label: 'Search with IES Lens', current: current === 'search', title: 'Search the IES standards with IES Lens' }),
       link({ href: 'https://lighting.ies.org', icon: 'library', label: 'Browse Lighting Library', newTab: true, title: 'Open the IES Lighting Library in a new browser tab' }),
+      // 10/13/26 #3: the search page's Compare Versions window, reached from
+      // every tools menu. /?compare=1 opens it on load; hidden for a reader
+      // whose tier locks comparisons (see the auth handler below).
+      link({ href: '/?compare=1', icon: 'compare', label: 'Compare Versions', id: 'menu-compare', title: 'Compare Versions — AI summary of changes between a standard and its previous edition' }),
       link({ href: '/contents', icon: 'list', label: 'List Standards', current: current === 'contents', title: 'Every current IES standard in the Lighting Library' }),
       link({ href: '/tutorials', icon: 'video', label: 'Tutorials', newTab: true, cls: 'border-t border-gray-100', title: 'Video tutorials for the IES Lighting Library and IES Lens' }),
       link({ href: '/tutorials#faq', icon: 'faq', label: 'FAQ', newTab: true, title: 'Frequently asked questions' }),
@@ -171,6 +176,8 @@
     if (until) { until.textContent = date ? 'Subscribed until ' + date : ''; until.classList.toggle('hidden', !date); }
     var sub = document.getElementById('menu-subscribe');
     if (sub) sub.classList.toggle('hidden', !lite);
+    var compare = document.getElementById('menu-compare');
+    if (compare) compare.classList.toggle('hidden', lite);
 
     // auth-gate's chip carries the IdP logout URL with its return parameters.
     var chip = document.querySelector('#lensy-user-chip a');

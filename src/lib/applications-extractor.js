@@ -892,6 +892,15 @@ export function parseDataRow(text) {
   // word boundary after the percent sign, which would defeat the match.
   const ctrlMatch = text.match(/\b(Off to \d+%|Dim to \d+%|Dimmed|Curfew|Occupancy|Daylight|Auto|Manual)/i);
   if (ctrlMatch) result.controls = ctrlMatch[1];
+  // RP-43-25 also prints ranges the vocabulary above cannot name ("20% - 50%",
+  // "Off - 100%"). In its column order the Controls cell is whatever sits
+  // between the Uplight lumens and the Spectrum kelvins, so read that cell
+  // verbatim when both neighbours are present (found 2026-10-14 on Table A-3
+  // Row 109, whose card showed no Controls at all).
+  const ctrlCell = /\d\s*lm\s+(.{1,24}?)\s+\d{3,5}\s*K\s*(?:to|–|-)\s*\d{3,5}\s*K/i.exec(text);
+  if (ctrlCell && /[\d%]|off|dim/i.test(ctrlCell[1])) {
+    result.controls = ctrlCell[1].replace(/\s*([-–])\s*/g, ' – ').trim();
+  }
 
   const specMatch = text.match(/(\d{3,5})\s*K\s*(?:to|–|-)\s*(\d{3,5})\s*K/i);
   if (specMatch) result.spectrum = `${specMatch[1]}K to ${specMatch[2]}K`;
@@ -904,13 +913,15 @@ export function parseDataRow(text) {
 }
 
 /** Parse a height token ("TS" | "0.00 m" | "3.0 ft" | undefined) → number|null.
- *  "0" (ground level / AFF baseline) carries no useful height info → null. */
-function parseHeight(token) {
+ *  A printed "0.00 m" is kept as 0: the card shows "10 lx @ 0 m" exactly as the
+ *  table prints it (client 10/13/26 #2B — it used to be dropped as "no useful
+ *  height", which made the card disagree with the page). Absent → null. */
+export function parseHeight(token) {
   if (!token) return null;
   const t = token.trim();
   if (/^TS$/i.test(t)) return null;
   const n = parseFloat(t);
-  if (Number.isNaN(n) || n === 0) return null;
+  if (Number.isNaN(n)) return null;
   return n;
 }
 

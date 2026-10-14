@@ -49,10 +49,15 @@ describe('parseDataRow — task-surface heights without a unit', () => {
     expect(r.horHeightFt).toBeNull();
   });
 
-  it('treats a "0.00 m" ground-level height as no useful height', () => {
+  it('keeps a printed "0.00 m" ground-level height as 0 (client 10/13/26 #2B)', () => {
     const r = parseDataRow('Aisle A K 50 lx @ 0.00 m 5 fc @ 0.0 ft Avg');
     expect(r.horLux).toBe(50);
-    expect(r.horHeightM).toBeNull();
+    expect(r.horHeightM).toBe(0);
+    expect(r.horHeightFt).toBe(0);
+  });
+
+  it('still reads an absent height as null', () => {
+    expect(parseDataRow('Aisle A K 50 lx 5 fc Avg').horHeightM).toBeNull();
   });
 });
 

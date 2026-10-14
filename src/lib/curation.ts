@@ -35,7 +35,7 @@
  */
 
 import { extractText } from './ai-summary';
-import { committeeScope } from './committees.js';
+import { committeeScope, isFoundationalCommittee } from './committees.js';
 import type { SearchResult } from '../types';
 
 /** How many results are described to the rerank model. Beyond this, the tail
@@ -120,9 +120,28 @@ export function committeeScopesBlock(results: SearchResult[]): string {
   return lines.join('\n');
 }
 
-export function buildRerankPrompt(query: string, results: SearchResult[]): string {
+/** Foundational committees present in the pool, by display name (deduped). */
+export function foundationalCommitteesIn(results: SearchResult[]): string[] {
+  const names = new Map<string, string>();
+  for (const r of results.slice(0, RERANK_MAX)) {
+    const name = shortCommittee(r.committee?.name);
+    if (name && isFoundationalCommittee(name)) names.set(name.toLowerCase(), name);
+  }
+  return [...names.values()];
+}
+
+export function buildRerankPrompt(query: string, results: SearchResult[], conceptQuery = false): string {
   const lines = results.slice(0, RERANK_MAX).map((r, i) => describeForRerank(r, i)).join('\n');
   const scopes = committeeScopesBlock(results);
+  // Client, 2026-10-14: "weight the scope slightly more". On a concept question
+  // the committee fit stops being one criterion among five and becomes the
+  // first thing the ranking is told, naming the committees present.
+  const foundational = conceptQuery ? foundationalCommitteesIn(results) : [];
+  const conceptRule = foundational.length > 0
+    ? `
+THIS QUERY ASKS WHAT A TERM OR CONCEPT MEANS, OR HOW CONCEPTS DIFFER. The committee scope is therefore the FIRST criterion: rank results authored by ${foundational.join(', ')} ahead of results from application committees (retail, office, roadway, museum, sports …), unless an application result is plainly the only one that addresses the concept.
+`
+    : '';
   return `You are ranking search results for a lighting professional searching the IES standards library.
 
 Query: "${query}"
@@ -132,7 +151,7 @@ ${lines}
 ${scopes ? `
 Scopes of the authoring technical committees (as IES publishes them):
 ${scopes}
-` : ''}
+` : ''}${conceptRule}
 Rank ALL of these results from most to least useful for answering the query. Judge by:
 - how directly the result's content answers the query — not mere topical overlap;
 - whether the passage or table row addresses the asked application, space or topic itself;
@@ -176,10 +195,10 @@ export function parseRankOrder(text: string | null | undefined, count: number): 
  * Ask the model for a best-first order over the pool. Returns 0-based indices
  * (possibly a partial prefix), or null — never throws.
  */
-export async function rerankResults(ai: Ai, query: string, results: SearchResult[]): Promise<number[] | null> {
+export async function rerankResults(ai: Ai, query: string, results: SearchResult[], conceptQuery = false): Promise<number[] | null> {
   const pool = results.slice(0, RERANK_MAX);
   if (pool.length < 2) return null;
-  const prompt = buildRerankPrompt(query, pool);
+  const prompt = buildRerankPrompt(query, pool, conceptQuery);
 
   // Receiver-bound call — `Ai#run` writes a private field, so a detached
   // reference throws for every model (the DO9 root cause in ai-summary.ts).
@@ -200,6 +219,17 @@ export async function rerankResults(ai: Ai, query: string, results: SearchResult
     }
   }
   return null;
+}
+
+/**
+ * The order the AI Guide reads a concept question's results in: foundational
+ * committees lifted by up to SCOPE_LIFT places. The Guide sees the first few
+ * results only and tends to lead with Result 1, so this decides which
+ * standards its answer is built from.
+ */
+export function conceptOrderForGuide(results: SearchResult[]): SearchResult[] {
+  const indices = results.map((_, i) => i);
+  return liftWithin(indices, i => isFoundationalCommittee(results[i]?.committee?.name)).map(i => results[i]);
 }
 
 // ─── Guide citations ──────────────────────────────────────────────────────────
@@ -278,6 +308,39 @@ export interface CurationInput {
   order: number[] | null;
   /** Indices of the results the Guide cites (extractGuideCitations). */
   cited: Set<number>;
+  /**
+   * The query asks what a concept means or how two differ (isConceptQuery).
+   * Results from foundational committees are then lifted within their band.
+   */
+  conceptQuery?: boolean;
+}
+
+/**
+ * How far a foundational-committee result may move up within its band on a
+ * concept question — past at most this many application-committee results.
+ * Deliberately bounded ("slightly more", client 2026-10-14): the rerank and
+ * the Guide's citations still decide the order; this settles the near-ties the
+ * model leaves between a vision-science passage and a retail one.
+ */
+export const SCOPE_LIFT = 4;
+
+/** Stable bounded lift: each favoured item moves ahead of at most `lift` others. */
+export function liftWithin(band: number[], favoured: (i: number) => boolean, lift = SCOPE_LIFT): number[] {
+  const out: number[] = [];
+  for (const i of band) {
+    if (!favoured(i)) {
+      out.push(i);
+      continue;
+    }
+    let pos = out.length;
+    let passed = 0;
+    while (pos > 0 && passed < lift && !favoured(out[pos - 1])) {
+      pos--;
+      passed++;
+    }
+    out.splice(pos, 0, i);
+  }
+  return out;
 }
 
 export interface CurationOutcome {
@@ -299,7 +362,7 @@ export interface CurationOutcome {
  * (DO33) that no ranking may undo. Guide-cited results carry `citedByGuide`
  * for the UI badge whether or not they were promoted.
  */
-export function curateResults(results: SearchResult[], { order, cited }: CurationInput): CurationOutcome {
+export function curateResults(results: SearchResult[], { order, cited, conceptQuery = false }: CurationInput): CurationOutcome {
   // The exact/prefix term match scores LS-1 definitions 0.95–1.0
   // (DEFINITION_PREFIX_SCORE in the search worker); semantic definition
   // matches score below that and are curated like everything else.
@@ -329,7 +392,12 @@ export function curateResults(results: SearchResult[], { order, cited }: Curatio
     else rest.push(i);
   }
 
-  const finalOrder = [...pinned, ...promotedList, ...rest];
+  // A concept question lifts the foundational committees' results within each
+  // band (never across bands: a Guide citation still outranks an uncited card).
+  const favoured = (i: number) => isFoundationalCommittee(results[i]?.committee?.name);
+  const finalOrder = conceptQuery
+    ? [...pinned, ...liftWithin(promotedList, favoured), ...liftWithin(rest, favoured)]
+    : [...pinned, ...promotedList, ...rest];
   const changed = finalOrder.some((idx, pos) => idx !== pos);
 
   const curated = finalOrder.map(i =>

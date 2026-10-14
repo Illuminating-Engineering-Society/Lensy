@@ -64,7 +64,7 @@
 
 import {
   prepareQueryForEmbedding, splitMultiQuery, cleanQuery, stripQueryLabel,
-  isVersionComparisonQuery, isReferenceQuery, isDefinitionQuery, normalizeTypography,
+  isVersionComparisonQuery, isReferenceQuery, isDefinitionQuery, isConceptQuery, normalizeTypography,
 } from '../lib/query-expander';
 import {
   DEFINITIONS_STANDARD_FULL, DEFINITIONS_STANDARD_TITLE,
@@ -77,7 +77,7 @@ import {
 import { resolveSearchGrant } from './session';
 import { dailySearchCap, enforceDailySearchCap } from '../lib/search-cap';
 import { generateResponse } from '../lib/ai-summary';
-import { rerankResults, extractGuideCitations, curateResults } from '../lib/curation';
+import { rerankResults, extractGuideCitations, curateResults, conceptOrderForGuide } from '../lib/curation';
 import { generateRefinePrompt } from '../lib/refine';
 import { formatCitation, composeStandardName } from '../lib/citations';
 import { looksLikeFormalReference, referenceCitationKey } from '../lib/references.js';
@@ -579,6 +579,10 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
   // standard to compare — the query has to name one, or the reader has to have
   // armed Compare Versions, which supplies the family through the filters.
   const isVersionComparison = !isLite && hasComparisonIntent(searchQuery, contentTypes);
+  // "What is luminance?" / "difference between luminance and illuminance":
+  // curation and the Guide weight the terminology / measurement / vision-science
+  // committees ahead of application committees (client, 2026-10-14).
+  const conceptQuery = !isVersionComparison && isConceptQuery(searchQuery);
 
   // ── Structural filter inference from query ───────────────────────────────────
   // A bare "LZ1 walkways" in the query string should narrow results to that
@@ -924,12 +928,18 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
           // stays on the summary as textEnglish for the citation extraction
           // below. localizeSummary no-ops for English queries and degraded
           // answers, and fails open to the English text.
-          const generated = await generateResponse(env.AI, searchQuery, allResults.results, {
+          // A concept question hands the Guide its results with the
+          // foundational committees lifted, so the passages it leads with are
+          // the vision-science ones rather than whichever retail passage
+          // happened to rank first. The cards are curated separately below.
+          const guideInput = conceptQuery ? conceptOrderForGuide(allResults.results) : allResults.results;
+          const generated = await generateResponse(env.AI, searchQuery, guideInput, {
             mode: aiMode,
             comparison: comparisonContext,
             answerStyle,
             authorityNotice,
             facts: supersession.facts,
+            conceptQuery,
           });
           // The RP-1 → RP-10 note, verbatim, unless the Guide already said it.
           if (rp1Note && !generated.degraded && !/\bRP-10\b/.test(generated.text || '')) {
@@ -972,7 +982,7 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
   // Fail-open: null keeps the vector order. Not separately KV-cached — the
   // response cache absorbs repeats of the same search wholesale.
   const rerankPromise = (includeAISummary && !isVersionComparison && allResults.results.length > 1)
-    ? rerankResults(env.AI, searchQuery, allResults.results).catch((err) => {
+    ? rerankResults(env.AI, searchQuery, allResults.results, conceptQuery).catch((err) => {
         console.error('AI rerank failed (non-fatal):', errMsg(err));
         return null;
       })
@@ -1022,7 +1032,7 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
     const cited = (summary && !summary.degraded)
       ? extractGuideCitations(summary.textEnglish || summary.text || '', allResults.results)
       : new Set<number>();
-    const curated = curateResults(allResults.results, { order: rerankOrder, cited });
+    const curated = curateResults(allResults.results, { order: rerankOrder, cited, conceptQuery });
     allResults.results = curated.results;
     curation = {
       applied: curated.changed || curated.promoted > 0,
