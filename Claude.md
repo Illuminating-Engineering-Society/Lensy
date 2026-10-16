@@ -1751,12 +1751,12 @@ existing tier).
   sync. Without one, List Standards still falls back to a store search — the
   generic page the client reported. The per-product URLs are owed by the sfx
   (webstore) team.
-- **Subscribe link (#2) — NOT changed yet.** `https://store.ies.org/ies/subscriptions/`
-  now redirects to "IES 2016 Annual Conference Proceedings". The client wants it
-  to land on a page titled "Illuminating Engineering Society", whose URL was lost
-  in the paste. The constant lives in contents.html, site-menu.js, auth-gate.js,
-  index.html (×4, two of them bare `store.ies.org/`), library-error.html and
-  email.ts — change them all together.
+- **Subscribe link (#2).** `https://store.ies.org/ies/subscriptions/` had
+  started redirecting to "IES 2016 Annual Conference Proceedings". Every
+  Subscribe link is now **`https://ies.org/products/lighting-library/`** (client,
+  2026-10-16) — contents.html, site-menu.js, auth-gate.js, index.html (×5),
+  bookmarks.html (×2), library-error.html and email.ts; change them together.
+  The error page's footer "IES Store" link stays the store home on purpose.
 - **Non-Subscriber Guest vs Member (#4).** New tier **`guest`** = an
   authenticated IES account with no membership and no subscription
   (`earnedTier` used to return `none`). Per the webstore prototype's "Digital

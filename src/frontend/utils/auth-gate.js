@@ -165,7 +165,7 @@
     // profile menu's Subscribe (utils/site-menu.js).
     var body = staffOnly
       ? 'IES Lens goes live on November 2, 2026. ' +
-        '<a href="https://store.ies.org/ies/subscriptions/" target="_blank" rel="noopener" ' +
+        '<a href="https://ies.org/products/lighting-library/" target="_blank" rel="noopener" ' +
         'style="color:#3A5068;font-weight:600;text-decoration:underline">Click here to subscribe to the Lighting Library.</a>'
       : esc(msg);
     gateEl().innerHTML = card(

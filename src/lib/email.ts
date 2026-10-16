@@ -230,7 +230,7 @@ export function describeSendError(err: unknown): string {
 
 /** Store pages the email points at for access. */
 const STORE_URL = 'https://store.ies.org/';
-const SUBSCRIBE_URL = 'https://store.ies.org/ies/subscriptions/';
+const SUBSCRIBE_URL = 'https://ies.org/products/lighting-library/';
 
 /** Card labels, matching the result cards and the CSV export exactly. */
 const ITEM_LABELS: Record<string, string> = {

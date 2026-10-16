@@ -204,7 +204,7 @@ describe('buildCollectionShareEmail', () => {
 
   it('carries the subscribe and purchase prompts', () => {
     const mail = buildCollectionShareEmail(shareCtx());
-    expect(mail.html).toContain('store.ies.org/ies/subscriptions/');
+    expect(mail.html).toContain('ies.org/products/lighting-library/');
     expect(mail.html).toContain('Buy individual standards');
     expect(mail.text).toContain('Subscribe to the Lighting Library:');
   });

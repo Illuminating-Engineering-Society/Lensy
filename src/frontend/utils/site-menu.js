@@ -24,7 +24,7 @@
 (function () {
   'use strict';
 
-  var SUBSCRIBE_URL = 'https://store.ies.org/ies/subscriptions/';
+  var SUBSCRIBE_URL = 'https://ies.org/products/lighting-library/';
   var FEEDBACK_URL = 'https://ies.org/contact-us/';
   var GUIDE_KEY = 'lensy.pref.aiGuide';
   var UNITS_KEY = 'lensy.pref.units';

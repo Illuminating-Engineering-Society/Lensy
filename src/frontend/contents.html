@@ -390,7 +390,7 @@
       if (readerIsSubscriber || s.id === DEFINITIONS_SOURCE_ID) return true;
       return readerIsMember && !!s.lighting_science && isCurrent(s);
     }
-    const SUBSCRIBE_URL = 'https://store.ies.org/ies/subscriptions/';
+    const SUBSCRIBE_URL = 'https://ies.org/products/lighting-library/';
 
     // Sort within a series by document number, then edition — "RP-2" before
     // "RP-10", which a plain string sort gets wrong. Both numeric parts are
@@ -654,7 +654,7 @@
         `${matches.length} of ${pool.length} standard${pool.length === 1 ? '' : 's'}`;
       document.getElementById('toc-empty').classList.toggle('hidden', matches.length > 0);
       document.getElementById('toc-subtitle').innerHTML =
-        '<a href="https://store.ies.org/ies/subscriptions/" target="_blank" rel="noopener" class="underline underline-offset-2 font-semibold text-lens-ink hover:no-underline">Subscribers</a>'
+        '<a href="https://ies.org/products/lighting-library/" target="_blank" rel="noopener" class="underline underline-offset-2 font-semibold text-lens-ink hover:no-underline">Subscribers</a>'
         + ' receive access to every document listed below. Deprecated files are only available via subscription.';
 
       renderMetadataNotice(pool);
