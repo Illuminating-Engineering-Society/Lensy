@@ -33,7 +33,7 @@ import { handleIngestJobs, serveCover, handleAdminStandards } from './staff-inge
 import { handleEvent } from './events';
 import { handlePreferences } from './preferences';
 import { handleAdminUsers } from './users';
-import { handleAuthMe, handleDevLogin, requireReadAccess, requireCorpusAccess, staffOnlyActive } from './session';
+import { handleAuthMe, handleDevLogin, requireReadAccess, requireCorpusAccess, resolveRequestTier, staffOnlyActive } from './session';
 import { buildLoginUrl, buildLogoutUrl, getSsoState, isStagingRequest } from '../lib/sso';
 import {
   normalizeSavedItem, savedItemCodes, newShareToken, CSV_COLUMNS, csvCell, csvRowFor,
@@ -223,9 +223,17 @@ export default {
         request.method === 'GET' && /^\/api\/projects\/shared\/[^/]+$/.test(path) &&
         !(await staffOnlyActive(request, env));
 
+      // The catalogue LIST is public (webstore prototype 10/14/26, "List
+      // Contents" tab: "Embed content from lens.ies.org/contents — public
+      // version, no login required"). It is what the store already publishes:
+      // designations, titles, descriptions, committees, dates, covers. A single
+      // standard, its outline and everything else under /api/standards stay
+      // behind the session gate.
+      const isPublicCatalogue = request.method === 'GET' && path === '/api/standards';
+
       // ── Applications / Standards / Projects (same session gate as search) ─
       if (
-        !isPublicSharedRead && (
+        !isPublicSharedRead && !isPublicCatalogue && (
           path.startsWith('/api/applications') ||
           path.startsWith('/api/standards') ||
           path.startsWith('/api/projects')
@@ -255,7 +263,10 @@ export default {
 
       // Everything that is not an API route is a page or an asset (the Worker
       // runs first only so the canonical-host redirect above covers them).
-      if (!path.startsWith('/api/') && env.ASSETS) return env.ASSETS.fetch(request);
+      if (!path.startsWith('/api/') && env.ASSETS) {
+        const asset = await env.ASSETS.fetch(request);
+        return isEmbeddableContents(url) ? allowFramingByIes(asset) : asset;
+      }
       return withCors(json({ error: 'Not found' }, 404));
     } catch (err) {
       console.error('API error:', err);
@@ -266,6 +277,35 @@ export default {
     }
   },
 };
+
+/**
+ * The pages IES may frame (webstore prototype 10/14/26: the store's "List
+ * Contents" tab embeds lens.ies.org/contents). Only the chrome-less EMBED
+ * variant, so the full app — with its account menu — stays unframeable.
+ */
+export const EMBED_FRAME_ANCESTORS = ['https://store.ies.org', 'https://ies.org', 'https://www.ies.org'];
+
+export function isEmbeddableContents(url: URL): boolean {
+  return (url.pathname === '/contents' || url.pathname === '/contents.html')
+    && url.searchParams.get('embed') === '1';
+}
+
+/**
+ * Let the IES sites frame this response: drop X-Frame-Options and swap the
+ * CSP's `frame-ancestors 'none'` for the IES origins. Done here, not in
+ * `_headers`, because a second CSP header would be INTERSECTED with the global
+ * one by the browser — 'none' would still win.
+ */
+export function allowFramingByIes(response: Response): Response {
+  const headers = new Headers(response.headers);
+  headers.delete('X-Frame-Options');
+  const csp = headers.get('Content-Security-Policy');
+  const ancestors = `frame-ancestors ${EMBED_FRAME_ANCESTORS.join(' ')}`;
+  headers.set('Content-Security-Policy', csp
+    ? (/frame-ancestors[^;]*/.test(csp) ? csp.replace(/frame-ancestors[^;]*/, ancestors) : `${csp}; ${ancestors}`)
+    : ancestors);
+  return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+}
 
 /**
  * The redirect to the canonical hostname, or null when this request already is
@@ -533,6 +573,19 @@ async function handleProjects(request: Request, env: Env, url: URL): Promise<Res
   const owner = await collectionOwner(request, env);
   if (!owner) {
     return json({ error: 'sign_in_required', message: 'Sign in to use bookmarks.' }, 401);
+  }
+
+  // "Bookmark & Share Search Results with Subscribers" is a subscription
+  // feature (webstore prototype 10/14/26, Digital Access table: ✓ Subscription
+  // only). A Non-Subscriber may still read, export and delete what they already
+  // have, and open a share link (above) — they may not create, save, share,
+  // email or claim. saved-status is a POST that only reads, so it stays open.
+  const writes = request.method !== 'GET' && request.method !== 'DELETE' && projectId !== 'saved-status';
+  if (writes && (await resolveRequestTier(request, env)) !== 'full') {
+    return json({
+      error: 'subscription_required',
+      message: 'Bookmarking and sharing search results is part of a Lighting Library subscription.',
+    }, 403);
   }
 
   // A collection id in the path must belong to this account. Checked once,

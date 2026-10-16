@@ -14,7 +14,7 @@
        — the collection is references and links, and saving it still needs an
        account, which the page then offers. -->
   <script src="/utils/auth-gate.js" data-public-when-share></script>
-  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="/vendor/tailwind/tailwindcss-3.4.17.js"></script>
   <script>
     // IES brand design tokens — mirror of index.html's config (duplicated
     // because the CDN-Tailwind setup has no shared build step; a future
@@ -62,6 +62,15 @@
     }
   </script>
   <style>
+    /* "Bookmark & Share Search Results with Subscribers" is a subscription
+       feature (webstore prototype 10/14/26). The API refuses these writes for a
+       Non-Subscriber; reading, CSV export and delete stay available. */
+    body.tier-nonsubscriber #page-actions,
+    body.tier-nonsubscriber [onclick^="openEditProjectModal"],
+    body.tier-nonsubscriber [onclick^="copyShareLink"],
+    body.tier-nonsubscriber [onclick^="openEmailModal"],
+    body.tier-nonsubscriber [onclick^="claimShared"] { display: none !important; }
+
     @font-face {
       font-family: 'Nohemi'; font-style: normal; font-weight: 400 700;
       font-display: swap; src: url('/fonts/Nohemi-Variable.woff2') format('woff2');
@@ -171,7 +180,7 @@
         Subscribe to the Lighting Library to unlock full access ↗
       </a>
       <p class="mt-1.5 text-sm text-green-900">
-        Subscribers can bookmark all search results, including recommended illuminance values and excerpts from a standard
+        Subscribers can bookmark and share all search results, including recommended illuminance values and excerpts from a standard
       </p>
     </div>
 
@@ -493,7 +502,9 @@
     function paintLiteBanner(user) {
       const tier = user && user.tier;
       const banner = document.getElementById('lite-banner');
-      if (banner) banner.classList.toggle('hidden', !(tier === 'lite' || tier === 'guest' || tier === 'none'));
+      const nonSubscriber = tier === 'lite' || tier === 'guest' || tier === 'none';
+      if (banner) banner.classList.toggle('hidden', !nonSubscriber);
+      document.body.classList.toggle('tier-nonsubscriber', nonSubscriber);
     }
     document.addEventListener('lensy:auth', (e) => paintLiteBanner(e.detail || null));
     if (window.lensyUser) paintLiteBanner(window.lensyUser);

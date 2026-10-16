@@ -28,6 +28,12 @@
   // into an account still requires signing in — the page asks for that itself.
   var PUBLIC_WHEN_SHARE =
     !!(document.currentScript && document.currentScript.hasAttribute('data-public-when-share'));
+  // Pages carrying `data-public` render for anyone: a signed-out visitor (or a
+  // signed-in one without IES Lens access) sees the page as a guest instead of
+  // the sign-in screen. List Standards is the catalogue the webstore embeds
+  // (prototype 10/14/26: "public version, no login required").
+  var PUBLIC_PAGE =
+    !!(document.currentScript && document.currentScript.hasAttribute('data-public'));
 
   // Hide everything before first paint. The gate overlay is exempt.
   document.documentElement.classList.add('auth-pending');
@@ -345,6 +351,7 @@
   }
 
   function onShareLink() {
+    if (PUBLIC_PAGE) return true;
     if (!PUBLIC_WHEN_SHARE) return false;
     try {
       return new URLSearchParams(location.search).has('share');

@@ -8,9 +8,19 @@
   <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png">
   <link rel="icon" type="image/png" sizes="192x192" href="/favicon-192.png">
   <link rel="apple-touch-icon" href="/apple-touch-icon.png">
-  <!-- SSO gate: same authorization as the search page. -->
-  <script src="/utils/auth-gate.js"></script>
-  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- SSO gate, in PUBLIC mode: the catalogue renders for anyone (webstore
+       prototype 10/14/26 — the store's "List Contents" tab embeds this page,
+       "public version, no login required"). A signed-out visitor sees it as a
+       Non-Subscriber Guest: no Library links, Subscribe on every row. -->
+  <script src="/utils/auth-gate.js" data-public></script>
+  <script>
+    // ?embed=1 — the chrome-less variant the IES store frames (the Worker
+    // allows framing by the IES sites for this URL only). Set before paint.
+    if (new URLSearchParams(location.search).get('embed') === '1') {
+      document.documentElement.classList.add('embed');
+    }
+  </script>
+  <script src="/vendor/tailwind/tailwindcss-3.4.17.js"></script>
   <script>
     // Brand tokens — kept in sync with index.html (no shared build step yet).
     // The `lens-*` set is this page's own palette (client DO108): the banner is
@@ -43,6 +53,11 @@
     .toc-outline > summary::-webkit-details-marker { display: none; }
     .toc-outline > summary::marker { content: ''; }
     .toc-outline[open] > summary svg { transform: rotate(180deg); }
+
+    /* Embed mode (?embed=1): only the list — the IES store page around the
+       frame already carries its own header, footer and account controls. */
+    html.embed body > header,
+    html.embed body > footer { display: none !important; }
 
     /* ── Header (client DO108) ────────────────────────────────────────────────
        The banner is #f6f6f6 now, so nothing in it may stay white: the nav reads
@@ -379,9 +394,11 @@
     // honest heading rather than left looking mis-filed.
 
     let allStandards = [];
-    // True until the session says otherwise — a subscriber never sees a
-    // "Subscribe" flash while auth-gate is still answering.
-    let readerIsSubscriber = true;
+    // Fails closed now that the page is public (10/16/26): nothing is a Library
+    // link until the session says so. The page stays hidden until auth-gate
+    // answers, and its lensy:auth re-render runs before anything is visible, so
+    // a subscriber still never sees a "Subscribe" flash.
+    let readerIsSubscriber = false;
     // An IES member without a subscription ('lite') may still open the
     // Lighting Science Collection (client 10/15/26; prototype "Digital Access").
     let readerIsMember = false;
@@ -1336,6 +1353,13 @@
       if (!id || !body || details.dataset.loaded === '1') return;
       details.dataset.loaded = '1';
 
+      // The catalogue is public; a standard's table of contents still needs a
+      // session (any IES account will do).
+      if (window.lensyAnonymous) {
+        details.dataset.loaded = '';
+        body.innerHTML = `<p class="text-xs text-gray-500"><a href="${escapeHtml(window.lensyLoginUrl || '/login')}" target="_top" class="underline font-semibold">Sign in</a> with your IES account to view the table of contents.</p>`;
+        return;
+      }
       try {
         if (!outlineCache.has(id)) {
           const res = await fetch(`/api/standards/${encodeURIComponent(id)}/outline`);
@@ -1465,7 +1489,9 @@
     // tier arrives with the session after the list may already have rendered,
     // so the list re-renders once it is known.
     document.addEventListener('lensy:auth', (e) => {
-      const tier = e.detail && e.detail.tier;
+      // A signed-out visitor (public page, detail null) is a Guest, never a
+      // subscriber.
+      const tier = (e.detail && e.detail.tier) || 'none';
       readerIsSubscriber = !(tier === 'lite' || tier === 'guest' || tier === 'none');
       readerIsMember = tier === 'lite';
       if (allStandards.length) render();

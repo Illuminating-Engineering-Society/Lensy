@@ -11,7 +11,7 @@
   <!-- SSO gate: hides the app until /api/auth/me authorizes the visitor.
        Must load before anything renders. -->
   <script src="/utils/auth-gate.js"></script>
-  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="/vendor/tailwind/tailwindcss-3.4.17.js"></script>
   <script>
     // ── IES brand design tokens (from the shared IES style guide) ──────────────
     // Brand CHROME uses these. The results-card DATA-VIZ colors (Interior/
@@ -100,6 +100,13 @@
     }
   </script>
   <style>
+    /* "Bookmark & Share Search Results with Subscribers" is a subscription
+       feature (webstore prototype 10/14/26). The API refuses the writes; these
+       hide the controls that would only end in that refusal. */
+    body.tier-nonsubscriber .save-search-btn,
+    body.tier-nonsubscriber .result-checkbox,
+    body.tier-nonsubscriber #bulk-actions { display: none !important; }
+
     /* ── Self-hosted brand fonts ──────────────────────────────────────────────
        Drop the licensed .woff2 files under src/frontend/fonts/ (served at
        /fonts/). Until then the fallback stack (Inter → system UI) renders.
@@ -438,6 +445,16 @@
                 <path stroke-linecap="round" stroke-linejoin="round" d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.3 4.6a1 1 0 00.9 1.4H19M9 21a1 1 0 100-2 1 1 0 000 2zm8 0a1 1 0 100-2 1 1 0 000 2z"/>
               </svg>
               Subscribe
+            </a>
+            <!-- A purchase reaches IES Lens on the next pass through sign-in
+                 (AuthIES re-reads entitlements on every hop); this link IS that
+                 pass. Shown with Subscribe, to non-subscribers only. -->
+            <a href="/login" id="menu-refresh-access" class="menu-item hidden"
+               title="Load a subscription you just purchased">
+              <svg class="w-4 h-4 text-gray-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.6m15.4 2A8 8 0 004.6 9m0 0H9m11 11v-5h-.6m0 0a8 8 0 01-15.4-2m15.4 2H15"/>
+              </svg>
+              Just subscribed? Refresh access
             </a>
             <!-- 9/29/26 DO#3: "Share feedback" — the IES contact form, which has
                  a "The Lighting Library" department. -->
@@ -1451,6 +1468,9 @@
       document.getElementById('menu-tier-label').textContent =
         !isLite() ? 'Lighting Library' : tier === 'lite' ? 'IES Member · no subscription' : 'No subscription';
       document.getElementById('menu-subscribe').classList.toggle('hidden', !isLite());
+      document.body.classList.toggle('tier-nonsubscriber', isLite());
+      const refreshAccess = document.getElementById('menu-refresh-access');
+      if (refreshAccess) refreshAccess.classList.toggle('hidden', !isLite());
       if (isLite()) {
         filterState = normalizeForTier(filterState);
         // 10/09/26 #1B2/B3: the "You are searching the Lighting Science

@@ -99,6 +99,9 @@
       + '<span class="min-w-0"><span id="menu-tier-label" class="font-bold">Lighting Library</span>'
       + '<span id="menu-sub-until" class="hidden block text-[11px] text-gray-500"></span></span></div>'
       + link({ href: SUBSCRIBE_URL, icon: 'cart', label: 'Subscribe', newTab: true, id: 'menu-subscribe', cls: 'hidden', title: 'Subscribe to the Lighting Library to unlock full access' })
+      // A purchase reaches IES Lens on the next pass through sign-in (AuthIES
+      // re-reads entitlements on every hop); this link IS that pass.
+      + link({ href: '/login?returnTo=' + encodeURIComponent(location.pathname + location.search), icon: 'login', label: 'Just subscribed? Refresh access', id: 'menu-refresh-access', cls: 'hidden', title: 'Load a subscription you just purchased' })
       + '<button type="button" id="menu-guide" class="menu-item" title="The AI Guide summarizes and curates IES Lens results">'
       + svg('guide') + '<span id="menu-guide-label">Disable AI Guide</span>'
       + '<span id="menu-guide-switch" class="ml-auto relative inline-block w-8 h-[18px] rounded-full shrink-0 transition" style="background-color:#FFAA00">'
@@ -178,6 +181,8 @@
     if (until) { until.textContent = date ? 'Subscribed until ' + date : ''; until.classList.toggle('hidden', !date); }
     var sub = document.getElementById('menu-subscribe');
     if (sub) sub.classList.toggle('hidden', !lite);
+    var refresh = document.getElementById('menu-refresh-access');
+    if (refresh) refresh.classList.toggle('hidden', !lite);
     var compare = document.getElementById('menu-compare');
     if (compare) compare.classList.toggle('hidden', lite);
 

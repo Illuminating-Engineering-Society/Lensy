@@ -1776,6 +1776,32 @@ existing tier).
   subscription-only since 10/14), so a member's new links are refused there
   until the per-document rule ships in AuthIES.
 
+**Same day, the webstore prototype (Webstore Prototype_261014.pdf) — Lens side:**
+
+- **Bookmark & Share is subscriber-only.** `handleProjects` refuses every write
+  (create, save, share, email, claim, edit) below tier `full` with 403
+  `subscription_required`; reading, CSV export, delete, `saved-status` and the
+  account-free share-link read stay open. The UI hides the controls via
+  `body.tier-nonsubscriber` (index: card/passage Bookmark buttons, checkboxes,
+  bulk bar; bookmarks: New/Edit/Link/Email/"Save to My Bookmarks").
+- **List Standards is public and embeddable.** `GET /api/standards` (the list
+  only — not `/:id`, not `/:id/outline`) skips the session gate; contents.html
+  loads auth-gate with `data-public`, so a signed-out visitor (or anyone the
+  staff-only lockdown refuses) sees it as a Guest — no Library links, Subscribe
+  on every row, "Sign in" in place of a table of contents. `readerIsSubscriber`
+  now fails closed. `/contents?embed=1` hides header and footer, and only that
+  URL may be framed — by `store.ies.org`, `ies.org`, `www.ies.org`
+  (`allowFramingByIes` in api.ts rewrites the asset's CSP `frame-ancestors` and
+  drops X-Frame-Options; `_headers` cannot, since a second CSP header is
+  intersected). Store embed: `<iframe src="https://lens.ies.org/contents?embed=1">`.
+- **"Just subscribed? Refresh access"** in both profile menus (non-subscribers
+  only) → `/login?returnTo=…`. The IES Lens cookie only changes on an IdP hop;
+  AuthIES now re-reads live entitlements on every hop (AuthIES CLAUDE.md, "hop
+  refresh"), so this one click turns a purchase into access.
+- **Tailwind is vendored** at `src/frontend/vendor/tailwind/tailwindcss-3.4.17.js`
+  (the exact build cdn.tailwindcss.com served on the day) and `script-src` no
+  longer names a third-party host — one fewer host for corporate firewalls.
+
 ### The 10/13–10/14/26 Teams notes: scope weight, framed definitions, table cards, covers (2026-10-14)
 
 `SEARCH_CACHE_SCHEMA` → **v21**. No migration.
