@@ -827,8 +827,19 @@ describe('Non-Subscriber (DO53, revised DO999)', () => {
   it('names the subscription rather than renaming the product', () => {
     run(`applyTier('full')`);
     expect(elements.get('menu-tier-label').textContent).toBe('Lighting Library');
+    // A member still opens the Lighting Science Collection; a free account
+    // does not (10/16/26) — the menu says which Non-Subscriber this is.
     run(`applyTier('lite')`);
+    expect(elements.get('menu-tier-label').textContent).toBe('IES Member · no subscription');
+    run(`applyTier('guest')`);
     expect(elements.get('menu-tier-label').textContent).toBe('No subscription');
+  });
+
+  it('gives a free-account Guest the same locked tools as a member (10/16/26)', () => {
+    run(`applyTier('guest')`);
+    for (const name of ['tables', 'body', 'compare']) {
+      expect(pills.get(name).disabled).toBe(true);
+    }
   });
 
   it('locks the tools a subscription unlocks — and no longer the AI Guide', () => {

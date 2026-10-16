@@ -23,7 +23,7 @@
  */
 
 import { checkAuth } from '../lib/auth';
-import { resolveTier, liteEnabled, type LensyTier } from '../lib/tiers';
+import { resolveTier, liteEnabled, TIER_RANK, type LensyTier } from '../lib/tiers';
 import {
   getSsoState,
   decideAccess,
@@ -213,7 +213,12 @@ function libraryHopUrl(env: Env, requestUrl: string): string | null {
 // view IES Lens AS one: a cookie the browser sets from the auth-gate banner.
 // Honoured for administrators only, and it can only LOWER the tier — a forged
 // cookie on anyone else's browser changes nothing.
+//
+// Two previews since 10/15/26: "label that one 'Preview as Non-Subscriber
+// Guest' and create a 2nd one 'Preview as Non-Subscriber Member' (lighting
+// science collection access)" — 'guest' and 'lite' respectively.
 export const PREVIEW_TIER_COOKIE = 'lens_preview_tier';
+const PREVIEWABLE_TIERS = new Set<LensyTier>(['lite', 'guest']);
 
 export function previewTierFor(request: Request, decision: AccessDecision): LensyTier | null {
   if (!decision.admin) return null;
@@ -221,7 +226,7 @@ export function previewTierFor(request: Request, decision: AccessDecision): Lens
     .split(';')
     .map(part => part.trim().split('='))
     .find(([name]) => name === PREVIEW_TIER_COOKIE)?.[1];
-  return value === 'lite' ? 'lite' : null;
+  return value && PREVIEWABLE_TIERS.has(value as LensyTier) ? value as LensyTier : null;
 }
 
 /** The tier for one authorized session. */
@@ -418,14 +423,13 @@ export async function requireReadAccess(request: Request, env: Env): Promise<Res
 export async function requireCorpusAccess(
   request: Request,
   env: Env,
-  minimum: LensyTier = 'lite',
+  minimum: LensyTier = 'guest',
 ): Promise<Response | null> {
   const denied = await requireReadAccess(request, env);
   if (denied) return denied;
 
   const tier = await resolveRequestTier(request, env);
-  const rank = { none: 0, lite: 1, full: 2 } as const;
-  if (rank[tier] >= rank[minimum]) return null;
+  if (TIER_RANK[tier] >= TIER_RANK[minimum]) return null;
 
   return new Response(
     JSON.stringify({

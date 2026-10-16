@@ -1070,11 +1070,16 @@ export async function deleteStandardCompletely(
 
 // ─── Editing a standard's catalogue fields (client 10/14/26 #2) ───────────────
 
-// What staff can correct by hand: the three fields the Vitrium/portal export
+// What staff can correct by hand: the fields the Vitrium/portal export
 // supplies, for the standards it has not reached yet (RP-3-26 had no Library
-// link and no publication date). The next sync-metadata run overwrites them
-// with the export's own values, which is the intended order of authority.
+// link and no publication date), plus the webstore lease link (10/15/26 #3).
+// The next sync-metadata run overwrites them with the export's own values,
+// which is the intended order of authority — but only where the export HAS a
+// value (its col() keeps a column it has nothing for), so a lease link set
+// here survives a sync that carries none.
 const LIBRARY_HOSTS = new Set(['lighting.ies.org', 'ies.org', 'www.ies.org', 'view.protectedpdf.com']);
+// A purchase link: a typo pointing anywhere else would send readers off-site to pay.
+const STORE_HOSTS = new Set(['store.ies.org']);
 // LS-1 is the glossary's anchor: its definition vectors carry no PDF and
 // would read as orphans (the 2026-08-29 incident). Never deletable from here.
 const UNDELETABLE = new Set(['LS-1', 'LS-1-25']);
@@ -1110,6 +1115,21 @@ export function validateStandardEdit(body: any): { fields: Record<string, string
       fields.published_date = raw;
     }
   }
+  // "'Lease Standard' hyperlinks seem to need an update … Does this need to be
+  // an editable field in Lens Admin?" (client 10/15/26 #3). Without one, List
+  // Standards falls back to a store SEARCH, which lands on a generic page.
+  if ('leaseUrl' in body) {
+    const raw = String(body.leaseUrl ?? '').trim();
+    if (!raw) fields.buy_url = null;
+    else {
+      let url: URL;
+      try { url = new URL(raw); } catch { return { fields, error: 'The lease link is not a URL.' }; }
+      if (url.protocol !== 'https:' || !STORE_HOSTS.has(url.hostname.toLowerCase())) {
+        return { fields, error: 'The lease link must be an https://store.ies.org/… address.' };
+      }
+      fields.buy_url = url.toString();
+    }
+  }
   if ('collection' in body) {
     const raw = String(body.collection ?? '').trim().replace(/\s+/g, ' ');
     if (raw.length > 80) return { fields, error: 'The collection name is too long.' };
@@ -1121,7 +1141,7 @@ export function validateStandardEdit(body: any): { fields: Record<string, string
 
 /**
  *   GET    /api/admin/standards/:id   the editable fields
- *   PATCH  /api/admin/standards/:id   { libraryUrl?, publishedDate?, collection? }
+ *   PATCH  /api/admin/standards/:id   { libraryUrl?, publishedDate?, leaseUrl?, collection? }
  *   DELETE /api/admin/standards/:id   { confirm: "<id>" } — removes it entirely
  */
 export async function handleAdminStandards(request: Request, env: Env, url: URL): Promise<Response> {
@@ -1131,10 +1151,10 @@ export async function handleAdminStandards(request: Request, env: Env, url: URL)
   const id = safeDecode(url.pathname.replace(/^\/api\/admin\/standards\/?/, '').split('/')[0] || '');
   if (!id) return jsonResponse({ error: 'Standard id required' }, 400);
   const row = await env.DB.prepare(
-    'SELECT id, status, chunk_count, vitrium_web_url, published_date, collection, superseded_by FROM standards WHERE id = ?',
+    'SELECT id, status, chunk_count, vitrium_web_url, published_date, buy_url, collection, superseded_by FROM standards WHERE id = ?',
   ).bind(id).first<{
     id: string; status: string; chunk_count: number | null; vitrium_web_url: string | null;
-    published_date: string | null; collection: string | null; superseded_by: string | null;
+    published_date: string | null; buy_url: string | null; collection: string | null; superseded_by: string | null;
   }>();
   if (!row) return jsonResponse({ error: `No standard "${id}"` }, 404);
 
@@ -1142,7 +1162,8 @@ export async function handleAdminStandards(request: Request, env: Env, url: URL)
     return jsonResponse({
       standard: {
         id: row.id, status: row.status, libraryUrl: row.vitrium_web_url,
-        publishedDate: row.published_date, collection: row.collection, supersededBy: row.superseded_by,
+        publishedDate: row.published_date, leaseUrl: row.buy_url,
+        collection: row.collection, supersededBy: row.superseded_by,
         deletable: !UNDELETABLE.has(row.id),
       },
     });

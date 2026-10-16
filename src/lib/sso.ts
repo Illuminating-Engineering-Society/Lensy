@@ -489,10 +489,10 @@ export function decideAccess(
   // codebase disagreeing about the same person.
   //
   // What somebody SEES is the tier's job, not the door's. A visitor with no
-  // membership and no subscription resolves to 'none', which the corpus
-  // endpoints refuse (requireCorpusAccess in workers/api.ts) — so opening this
-  // grants no content. It lets them reach the app, open a collection shared
-  // with them (DO52), and be told what they would need.
+  // membership and no subscription resolves to 'guest' (it was 'none' until
+  // 2026-10-16): the Non-Subscriber search of the client's webstore prototype —
+  // Lighting Science scope, References and Definitions, the AI Guide on the
+  // daily cap. Everything a subscription adds stays refused server-side.
   //
   // ALLOW_MEMBERS_WITHOUT_INVITE="false" restores the old invite-only door, and
   // is now the kill switch for exactly that: it is the difference between "any

@@ -72,7 +72,7 @@ import {
 import { resolveCommittee } from '../lib/committees.js';
 import { toLibraryUrlOrNull } from '../lib/library-url.js';
 import {
-  liteContentTypes, liteEnabled, LITE_COLLECTION, LITE_FALLBACK_PREFIX, LITE_NOTICE,
+  liteContentTypes, liteEnabled, isNonSubscriberTier, LITE_COLLECTION, LITE_FALLBACK_PREFIX, LITE_NOTICE,
 } from '../lib/tiers';
 import { resolveSearchGrant } from './session';
 import { dailySearchCap, enforceDailySearchCap } from '../lib/search-cap';
@@ -355,7 +355,8 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
   // a metered trial of it, and the daily cap below is what ends the trial.
   const grant = await resolveSearchGrant(request, env);
   const tier = grant.tier;
-  const isLite = tier === 'lite';
+  // A member ('lite') and a free account ('guest') search alike (10/16/26).
+  const isLite = isNonSubscriberTier(tier);
 
   if (!query || typeof query !== 'string' || !query.trim()) {
     return jsonResponse({ error: 'query is required' }, 400);
@@ -1653,7 +1654,7 @@ export function requestedDeprecatedEdition(rawQuery: string, currentId?: string 
  * An empty set would mean "search nothing", which is why the fallback exists —
  * a Lite user must still get answers, not a blank page.
  */
-async function liteAllowedStandards(env: Env): Promise<Set<string>> {
+export async function liteAllowedStandards(env: Env): Promise<Set<string>> {
   const ids = new Set<string>();
   // The Vitrium TAG wins once it exists (client 9/24/26: the collection is
   // "identified by tags 'Current' + 'Lighting Science'"); sync-metadata marks

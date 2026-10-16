@@ -790,6 +790,12 @@
           <input id="se-date" type="date" class="px-3 py-2 text-sm border border-gray-300 rounded-lg" />
         </div>
         <div>
+          <label for="se-lease" class="block text-xs font-medium text-gray-600 mb-1">3-year lease link (webstore)</label>
+          <input id="se-lease" type="url" placeholder="https://store.ies.org/product/…"
+                 class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg" />
+          <p class="mt-1 text-xs text-gray-400">The product page behind List Standards' "Lease Standard" button. Empty = the button searches the store instead.</p>
+        </div>
+        <div>
           <label for="se-collection" class="block text-xs font-medium text-gray-600 mb-1">Collection</label>
           <select id="se-collection" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white">
             <option value="">Uncategorized</option>
@@ -2027,7 +2033,14 @@
     }
     function setStdFilter(f) { stdFilter = f; renderStandards(); }
 
-    const STD_CHIPS = [['all', 'All'], ['active', 'Active'], ['deprecated', 'Deprecated'], ['warnings', 'Warnings']];
+    // The catalogue-gap chips (client 10/15/26 #1 and #3) narrow the list to
+    // what staff still have to fill in through Edit. "No lease link" counts
+    // current standards only — a deprecated edition is not for sale, and LS-1
+    // is the free ies.org glossary.
+    const STD_CHIPS = [['all', 'All'], ['active', 'Active'], ['deprecated', 'Deprecated'], ['warnings', 'Warnings'],
+      ['nolink', 'No Library link'], ['nodate', 'No publication date'], ['nolease', 'No lease link']];
+    const LEASE_EXEMPT = new Set(['LS-1', 'LS-1-25']);
+    const needsLease = s => s.status !== 'Deprecated' && !LEASE_EXEMPT.has(s.id) && !s.hasLeaseLink;
 
     function renderStandards() {
       if (totals) {
@@ -2043,6 +2056,9 @@
         active: standards.filter(s => s.status !== 'Deprecated').length,
         deprecated: standards.filter(s => s.status === 'Deprecated').length,
         warnings: standards.filter(s => (s.warnings || []).length > 0).length,
+        nolink: standards.filter(s => s.missingLibraryLink).length,
+        nodate: standards.filter(s => s.missingPublishedDate).length,
+        nolease: standards.filter(needsLease).length,
       };
       document.getElementById('std-chips').innerHTML = STD_CHIPS.map(([f, label]) => {
         const active = stdFilter === f;
@@ -2059,6 +2075,9 @@
         if (stdFilter === 'active' && s.status === 'Deprecated') return false;
         if (stdFilter === 'deprecated' && s.status !== 'Deprecated') return false;
         if (stdFilter === 'warnings' && !(s.warnings || []).length) return false;
+        if (stdFilter === 'nolink' && !s.missingLibraryLink) return false;
+        if (stdFilter === 'nodate' && !s.missingPublishedDate) return false;
+        if (stdFilter === 'nolease' && !needsLease(s)) return false;
         if (!q) return true;
         return [s.id, s.title].some(f => f && f.toLowerCase().includes(q));
       });
@@ -2067,9 +2086,16 @@
         const deprecated = s.status === 'Deprecated';
         const warn = (s.warnings || []).length
           ? `<span class="text-amber-600" title="${esc((s.warnings || []).join('\n'))}">⚠</span> ` : '';
+        // Catalogue gaps are spelled out on the row, not only in the ⚠ tooltip:
+        // they are the warnings staff can fix themselves, in Edit.
+        const gaps = [
+          s.missingLibraryLink && 'No Library link',
+          s.missingPublishedDate && 'No publication date',
+        ].filter(Boolean).map(t =>
+          `<span class="inline-block mt-1 mr-1 px-1.5 py-px rounded text-[10px] font-semibold bg-amber-100 text-amber-800">${t}</span>`).join('');
         return `<tr class="border-b border-gray-100 hover:bg-gray-50">
           <td class="px-4 py-3 font-mono text-xs whitespace-nowrap">${warn}${esc(s.id)}</td>
-          <td class="px-4 py-3">${esc(s.title || '')}</td>
+          <td class="px-4 py-3">${esc(s.title || '')}${gaps ? `<div>${gaps}</div>` : ''}</td>
           <td class="px-4 py-3"><span class="inline-block px-2 py-0.5 rounded-full text-xs font-medium ${deprecated
             ? 'bg-amber-100 text-amber-800' : 'bg-green-100 text-green-800'}">${esc(s.status)}</span></td>
           <td class="px-4 py-3 text-right text-xs text-gray-500">${s.pageCount ?? '—'}</td>
@@ -2707,6 +2733,7 @@
       document.getElementById('se-url').value = s.libraryUrl || '';
       document.getElementById('se-date').value = s.publishedDate || '';
       document.getElementById('se-date').max = new Date().toISOString().slice(0, 10);
+      document.getElementById('se-lease').value = s.leaseUrl || '';
       const sel = document.getElementById('se-collection');
       // A value the list does not offer (a tag-sync marker, a legacy folder
       // name) is kept selectable rather than silently replaced on save.
@@ -2733,6 +2760,7 @@
       const body = {
         libraryUrl: document.getElementById('se-url').value.trim(),
         publishedDate: document.getElementById('se-date').value,
+        leaseUrl: document.getElementById('se-lease').value.trim(),
         collection: document.getElementById('se-collection').value,
       };
       const { status, data } = await api(`/api/admin/standards/${encodeURIComponent(editingStdId)}`,
@@ -2740,6 +2768,8 @@
       if (status >= 400) { toast(data.error || 'Could not save', 'err'); return false; }
       toast(`${editingStdId} updated`);
       closeStdEdit();
+      // The catalogue-gap warnings and chips read these fields — refresh them.
+      loadStandards();
       return false;
     }
 

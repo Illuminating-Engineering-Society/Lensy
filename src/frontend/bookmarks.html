@@ -493,7 +493,7 @@
     function paintLiteBanner(user) {
       const tier = user && user.tier;
       const banner = document.getElementById('lite-banner');
-      if (banner) banner.classList.toggle('hidden', !(tier === 'lite' || tier === 'none'));
+      if (banner) banner.classList.toggle('hidden', !(tier === 'lite' || tier === 'guest' || tier === 'none'));
     }
     document.addEventListener('lensy:auth', (e) => paintLiteBanner(e.detail || null));
     if (window.lensyUser) paintLiteBanner(window.lensyUser);

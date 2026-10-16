@@ -127,6 +127,8 @@ export interface StandardRow {
   collection: string | null;
   thumbnail_url: string | null;
   buy_url: string | null;
+  /** The portal's PublishDate, YYYY-MM-DD — migration 0019, client DO112. */
+  published_date?: string | null;
   elearning_json: string | null;
   indexed_at: string | null;
   created_at: string;

@@ -20,6 +20,7 @@
  */
 
 import type { ContentType, NoResultsGuidance, NoResultsSuggestion, SearchFilters } from '../types';
+import { isNonSubscriberTier } from './tiers';
 
 export interface NoResultsInput {
   query: string;
@@ -250,7 +251,7 @@ export function buildNoResultsGuidance(input: NoResultsInput): NoResultsGuidance
     action: 'rephrase',
   });
 
-  if (input.tier === 'lite') {
+  if (isNonSubscriberTier(input.tier)) {
     message = 'Without a subscription, IES Lens searches the Lighting Science Collection only, which may not cover this topic.';
   }
 

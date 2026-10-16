@@ -1733,6 +1733,49 @@ losing content") is answered by the alignment report, not by the model.
   `staff-ingest.test.js` (fixtures are stored-method ZIPs so they run on any
   Node ≥ 18; `src/lib/docx-fixture.js` is test-only).
 
+### The 10/15/26 Teams notes: catalogue warnings, lease links, Guest vs Member (2026-10-16)
+
+No migration; no search-cache bump (search output is unchanged for every
+existing tier).
+
+- **Catalogue-gap warnings (#1).** `index-status` reads `vitrium_web_url`,
+  `published_date` and `buy_url`; a missing Library link or publication date is
+  a row warning (every status) and a `missingLibraryLink` /
+  `missingPublishedDate` flag. Admin → Standards spells them out on the row and
+  adds chips: No Library link, No publication date, No lease link (current,
+  non-LS-1 only — a filter, not a warning: 0 of 111 have one). Production on
+  the day: LS-4-20+E1 and LP-4-20+R2026 lack a link; 7 lack a date.
+- **Lease link is editable (#3).** Edit has "3-year lease link (webstore)" →
+  `buy_url`, `https://store.ies.org` only (a purchase link). sync-metadata's
+  `col()` keeps a column it has no value for, so a hand-set link survives a
+  sync. Without one, List Standards still falls back to a store search — the
+  generic page the client reported. The per-product URLs are owed by the sfx
+  (webstore) team.
+- **Subscribe link (#2) — NOT changed yet.** `https://store.ies.org/ies/subscriptions/`
+  now redirects to "IES 2016 Annual Conference Proceedings". The client wants it
+  to land on a page titled "Illuminating Engineering Society", whose URL was lost
+  in the paste. The constant lives in contents.html, site-menu.js, auth-gate.js,
+  index.html (×4, two of them bare `store.ies.org/`), library-error.html and
+  email.ts — change them all together.
+- **Non-Subscriber Guest vs Member (#4).** New tier **`guest`** = an
+  authenticated IES account with no membership and no subscription
+  (`earnedTier` used to return `none`). Per the webstore prototype's "Digital
+  Access" table it searches exactly like a member (`isNonSubscriberTier` in
+  tiers.ts is the one predicate — `handleSearch`, no-results, every UI check);
+  what differs is the Lighting Library: on List Standards a member ('lite')
+  gets "Open in Library" + row links for the current Lighting Science
+  Collection (`/api/standards` now carries `lighting_science`, from the same
+  `liteAllowedStandards` search uses), a guest gets Subscribe everywhere. The
+  menu reads "IES Member · no subscription" vs "No subscription".
+  `requireCorpusAccess` defaults to `guest`. **This opens Non-Subscriber search
+  to every IES account** once the staff-only lockdown is lifted — intended by
+  the prototype, but the AI cost of the 20/day trial now applies to all of them.
+  Admin preview: two buttons, "Preview as Non-Subscriber Guest" (`guest`) and
+  "… Member" (`lite`); `previewTierFor` accepts both. **Vitrium does not yet
+  admit members to the Lighting Science Collection** (AuthIES is
+  subscription-only since 10/14), so a member's new links are refused there
+  until the per-document rule ships in AuthIES.
+
 ### The 10/13–10/14/26 Teams notes: scope weight, framed definitions, table cards, covers (2026-10-14)
 
 `SEARCH_CACHE_SCHEMA` → **v21**. No migration.

@@ -234,26 +234,47 @@
   // administrators only and can only LOWER their tier (workers/session.ts
   // previewTierFor). The Lighting Library itself is not previewed — Vitrium
   // decides access in AuthIES, by the real account.
+  //
+  // Two previews since 10/15/26: "label that one 'Preview as Non-Subscriber
+  // Guest' and create a 2nd one 'Preview as Non-Subscriber Member' (lighting
+  // science collection access)". Guest = a free IES account ('guest'), Member
+  // = an IES member without a subscription ('lite').
   var PREVIEW_COOKIE = 'lens_preview_tier';
-  function setPreview(on) {
+  var PREVIEWS = [
+    { tier: 'guest', label: 'Non-Subscriber Guest',
+      title: 'See IES Lens as a free IES account (no membership, no subscription) sees it' },
+    { tier: 'lite', label: 'Non-Subscriber Member',
+      title: 'See IES Lens as an IES member without a subscription sees it — Lighting Science Collection access' },
+  ];
+  function setPreview(tier) {
     var secure = location.protocol === 'https:' ? '; Secure' : '';
-    document.cookie = PREVIEW_COOKIE + '=' + (on ? 'lite' : '') + '; Path=/; SameSite=Lax'
-      + (on ? '; Max-Age=28800' : '; Max-Age=0') + secure;
+    document.cookie = PREVIEW_COOKIE + '=' + (tier || '') + '; Path=/; SameSite=Lax'
+      + (tier ? '; Max-Age=28800' : '; Max-Age=0') + secure;
     location.reload();
   }
   function installTierPreview(user) {
     if (!user || !user.isAdmin || document.getElementById('lens-preview-switch')) return;
-    var on = user.previewTier === 'lite';
+    var active = null;
+    PREVIEWS.forEach(function (p) { if (user.previewTier === p.tier) active = p; });
     var el = document.createElement('div');
     el.id = 'lens-preview-switch';
     el.className = 'no-print';
     el.style.cssText = 'position:fixed;right:12px;bottom:12px;z-index:60;font:600 12px/1.2 Inter,system-ui,sans-serif;'
       + 'border-radius:999px;box-shadow:0 2px 8px rgba(0,0,0,.15);display:flex;align-items:center;gap:8px;padding:8px 12px;'
-      + (on ? 'background:#FFAA00;color:#30363D;' : 'background:#fff;color:#4B5563;border:1px solid #E5E7EB;');
-    el.innerHTML = on
-      ? '<span>Previewing as a Non-Subscriber</span><button type="button" style="text-decoration:underline;font-weight:700">Stop</button>'
-      : '<button type="button" title="See IES Lens as an IES member without a Lighting Library subscription sees it">Preview as Non-Subscriber</button>';
-    el.querySelector('button').addEventListener('click', function () { setPreview(!on); });
+      + (active ? 'background:#FFAA00;color:#30363D;' : 'background:#fff;color:#4B5563;border:1px solid #E5E7EB;');
+    if (active) {
+      el.innerHTML = '<span>Previewing as a ' + active.label + '</span>'
+        + '<button type="button" style="text-decoration:underline;font-weight:700">Stop</button>';
+      el.querySelector('button').addEventListener('click', function () { setPreview(null); });
+    } else {
+      el.innerHTML = PREVIEWS.map(function (p, i) {
+        return (i ? '<span aria-hidden="true" style="color:#D1D5DB">|</span>' : '')
+          + '<button type="button" data-tier="' + p.tier + '" title="' + p.title + '">Preview as ' + p.label + '</button>';
+      }).join('');
+      Array.prototype.forEach.call(el.querySelectorAll('button'), function (b) {
+        b.addEventListener('click', function () { setPreview(b.getAttribute('data-tier')); });
+      });
+    }
     document.body.appendChild(el);
   }
 

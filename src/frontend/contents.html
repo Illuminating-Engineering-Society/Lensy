@@ -382,6 +382,14 @@
     // True until the session says otherwise — a subscriber never sees a
     // "Subscribe" flash while auth-gate is still answering.
     let readerIsSubscriber = true;
+    // An IES member without a subscription ('lite') may still open the
+    // Lighting Science Collection (client 10/15/26; prototype "Digital Access").
+    let readerIsMember = false;
+    /** May this reader open `s` in the Lighting Library? */
+    function readerMayOpen(s) {
+      if (readerIsSubscriber || s.id === DEFINITIONS_SOURCE_ID) return true;
+      return readerIsMember && !!s.lighting_science && isCurrent(s);
+    }
     const SUBSCRIBE_URL = 'https://store.ies.org/ies/subscriptions/';
 
     // Sort within a series by document number, then edition — "RP-2" before
@@ -1116,8 +1124,9 @@
       // fails contrast outright (client DO108).
       // A Non-Subscriber cannot open a Library document, so the same button
       // offers the subscription instead (client 10/09/26 #1D1). LS-1 is the
-      // free ies.org glossary and stays open to everyone.
-      const subscribeInstead = !readerIsSubscriber && s.id !== DEFINITIONS_SOURCE_ID;
+      // free ies.org glossary and stays open to everyone; an IES member keeps
+      // "Open in Library" on the Lighting Science Collection (10/15/26).
+      const subscribeInstead = !readerMayOpen(s);
       const read = subscribeInstead
         ? `<a href="${SUBSCRIBE_URL}" target="_blank" rel="noopener"
              class="text-xs px-2.5 py-1 rounded-lg transition font-semibold whitespace-nowrap text-center hover:brightness-95"
@@ -1254,8 +1263,9 @@
       const label = `${escapeHtml(designation)}${title ? ` — ${escapeHtml(title)}` : ''}`;
       // One link per row, on the designation-and-title cell, to the branded
       // Lighting Library host the API already resolved (never Vitrium's own).
-      // A Non-Subscriber's row is not a Library link (client 10/09/26 #1D1).
-      const doc = (s.vitrium_web_url && (readerIsSubscriber || s.id === DEFINITIONS_SOURCE_ID))
+      // A Non-Subscriber's row is not a Library link (client 10/09/26 #1D1),
+      // except a member's Lighting Science Collection rows (10/15/26).
+      const doc = (s.vitrium_web_url && readerMayOpen(s))
         ? `<a href="${escapeHtml(s.vitrium_web_url)}" target="_blank" rel="noopener"
              class="text-gray-800 hover:text-ies-blue hover:underline">${label}</a>`
         : `<span class="text-gray-800">${label}</span>`;
@@ -1456,7 +1466,8 @@
     // so the list re-renders once it is known.
     document.addEventListener('lensy:auth', (e) => {
       const tier = e.detail && e.detail.tier;
-      readerIsSubscriber = !(tier === 'lite' || tier === 'none');
+      readerIsSubscriber = !(tier === 'lite' || tier === 'guest' || tier === 'none');
+      readerIsMember = tier === 'lite';
       if (allStandards.length) render();
     });
 

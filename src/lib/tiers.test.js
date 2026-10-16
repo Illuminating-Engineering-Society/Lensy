@@ -12,7 +12,7 @@
 
 import { describe, it, expect } from 'vitest';
 import {
-  resolveTier, liteEnabled, liteContentTypes, LITE_BLOCKED_FILTERS, LITE_NOTICE,
+  resolveTier, liteEnabled, liteContentTypes, isNonSubscriberTier, TIER_RANK, LITE_BLOCKED_FILTERS, LITE_NOTICE,
 } from './tiers';
 
 const ON = { LENSY_LITE: 'on' };
@@ -52,8 +52,8 @@ describe('resolveTier', () => {
     expect(resolveTier({ isMember: true, roles: ['member'] }, ON)).toBe('lite');
   });
 
-  it('gives anyone else neither', () => {
-    expect(resolveTier({ isMember: false, roles: [] }, ON)).toBe('none');
+  it('gives anyone else a free-account Guest (10/16/26)', () => {
+    expect(resolveTier({ isMember: false, roles: [] }, ON)).toBe('guest');
   });
 
   it('never demotes staff', () => {
@@ -111,8 +111,8 @@ describe('the live production configuration', () => {
     }
   });
 
-  it('locks out an IES account that is neither member nor subscriber', () => {
-    expect(resolveTier({ isMember: false, roles: ['user'] }, PROD)).toBe('none');
+  it('makes an IES account that is neither member nor subscriber a Guest', () => {
+    expect(resolveTier({ isMember: false, roles: ['user'] }, PROD)).toBe('guest');
   });
 });
 
@@ -123,9 +123,9 @@ describe('what an invitation grants', () => {
 
   it('admits a total stranger at the tier the row names', () => {
     // No membership, no subscription, no roles: without the invite this is
-    // 'none', which is what a plain 'guest' used to get — in and shown nothing.
+    // 'guest' (it used to be 'none' — in and shown nothing).
     const stranger = { isMember: false, roles: [] };
-    expect(resolveTier(stranger, PROD)).toBe('none');
+    expect(resolveTier(stranger, PROD)).toBe('guest');
     expect(resolveTier({ ...stranger, inviteTier: 'full' }, PROD)).toBe('full');
     expect(resolveTier({ ...stranger, inviteTier: 'lite' }, PROD)).toBe('lite');
   });
@@ -147,8 +147,8 @@ describe('what an invitation grants', () => {
     expect(resolveTier({ ...member, inviteTier: 'premium' }, PROD)).toBe('lite');
     expect(resolveTier({ ...member, inviteTier: '' }, PROD)).toBe('lite');
     expect(resolveTier({ ...member, inviteTier: null }, PROD)).toBe('lite');
-    // And it cannot conjure access for someone with nothing.
-    expect(resolveTier({ isMember: false, roles: [], inviteTier: 'nonsense' }, PROD)).toBe('none');
+    // And it cannot lift someone with nothing above a free account.
+    expect(resolveTier({ isMember: false, roles: [], inviteTier: 'nonsense' }, PROD)).toBe('guest');
   });
 
   it('is inert while tiering is off', () => {
@@ -198,5 +198,27 @@ describe('the locked tools', () => {
     expect(LITE_NOTICE).toContain('Subscribe to the Lighting Library');
     expect(LITE_NOTICE).toContain('any current or deprecated document in the Lighting Library');
     expect(LITE_NOTICE).not.toMatch(/lensy/i);
+  });
+});
+
+// 10/16/26: a free IES account is a Non-Subscriber Guest. In IES Lens it
+// searches exactly like a member; the Lighting Library behind it differs.
+describe('Non-Subscriber Guest vs Member', () => {
+  it('both search as Non-Subscribers; nobody else does', () => {
+    expect(isNonSubscriberTier('lite')).toBe(true);
+    expect(isNonSubscriberTier('guest')).toBe(true);
+    expect(isNonSubscriberTier('full')).toBe(false);
+    expect(isNonSubscriberTier('none')).toBe(false);
+    expect(isNonSubscriberTier(undefined)).toBe(false);
+  });
+
+  it('ranks a guest above no session and below a member', () => {
+    expect(TIER_RANK.none).toBeLessThan(TIER_RANK.guest);
+    expect(TIER_RANK.guest).toBeLessThan(TIER_RANK.lite);
+    expect(TIER_RANK.lite).toBeLessThan(TIER_RANK.full);
+  });
+
+  it('a lite invitation still lifts a guest to member', () => {
+    expect(resolveTier({ isMember: false, roles: [], inviteTier: 'lite' }, ON)).toBe('lite');
   });
 });

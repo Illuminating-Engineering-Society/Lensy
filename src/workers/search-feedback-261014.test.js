@@ -241,6 +241,15 @@ describe('editing a standard record (client 10/14/26 #2)', () => {
     expect(validateStandardEdit({ publishedDate: '2999-01-01' }).error).toMatch(/future/);
     expect(validateStandardEdit({}).error).toMatch(/Nothing/);
   });
+
+  it('edits the webstore lease link, store hosts only (client 10/15/26 #3)', () => {
+    expect(validateStandardEdit({ leaseUrl: 'https://store.ies.org/product/rp-41-20/' }).fields)
+      .toEqual({ buy_url: 'https://store.ies.org/product/rp-41-20/' });
+    expect(validateStandardEdit({ leaseUrl: '' }).fields).toEqual({ buy_url: null });
+    expect(validateStandardEdit({ leaseUrl: 'https://lighting.ies.org/AbC123' }).error).toMatch(/store\.ies\.org/);
+    expect(validateStandardEdit({ leaseUrl: 'http://store.ies.org/x' }).error).toBeTruthy();
+    expect(validateStandardEdit({ leaseUrl: 'not a url' }).error).toMatch(/not a URL/);
+  });
 });
 
 describe('deleting a standard removes every trace of it', () => {
@@ -278,10 +287,14 @@ describe('deleting a standard removes every trace of it', () => {
 
 describe('administrators can preview the Non-Subscriber tier (client 10/14/26)', () => {
   const req = (cookie) => new Request('https://lens.ies.org/api/search', { headers: cookie ? { Cookie: cookie } : {} });
-  it('honours the cookie for an administrator only, and only as lite', () => {
+  it('honours the cookie for an administrator only, and only as a Non-Subscriber', () => {
     expect(previewTierFor(req('a=1; lens_preview_tier=lite'), { admin: true })).toBe('lite');
+    // 10/15/26: "Preview as Non-Subscriber Guest" — a free IES account.
+    expect(previewTierFor(req('lens_preview_tier=guest'), { admin: true })).toBe('guest');
     expect(previewTierFor(req('lens_preview_tier=lite'), { admin: false })).toBeNull();
+    expect(previewTierFor(req('lens_preview_tier=guest'), { admin: false })).toBeNull();
     expect(previewTierFor(req('lens_preview_tier=full'), { admin: true })).toBeNull();
+    expect(previewTierFor(req('lens_preview_tier=none'), { admin: true })).toBeNull();
     expect(previewTierFor(req(''), { admin: true })).toBeNull();
   });
 });

@@ -1438,7 +1438,9 @@
     function isLite() { return accessTier === 'lite'; }
 
     function applyTier(tier) {
-      accessTier = tier === 'lite' ? 'lite' : 'full';
+      // A member ('lite') and a free IES account ('guest', 10/16/26) get the
+      // same IES Lens; only the Lighting Library behind it differs.
+      accessTier = (tier === 'lite' || tier === 'guest' || tier === 'none') ? 'lite' : 'full';
       // DO999: one product, one logo. The mark and the page title no longer
       // change with the tier — only what is unlocked does.
       //
@@ -1447,7 +1449,7 @@
       // Library' … We will always refer to subscriptions as 'Lighting Library',
       // as the umbrella product").
       document.getElementById('menu-tier-label').textContent =
-        isLite() ? 'No subscription' : 'Lighting Library';
+        !isLite() ? 'Lighting Library' : tier === 'lite' ? 'IES Member · no subscription' : 'No subscription';
       document.getElementById('menu-subscribe').classList.toggle('hidden', !isLite());
       if (isLite()) {
         filterState = normalizeForTier(filterState);

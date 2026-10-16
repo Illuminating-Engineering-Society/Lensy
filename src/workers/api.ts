@@ -24,7 +24,7 @@
  *   GET    /api/projects/:id/export
  */
 
-import { handleSearch } from './search';
+import { handleSearch, liteAllowedStandards } from './search';
 import { handleIngest } from './ingest';
 import { handleAdminAccessMode, handleAdminScanOrphans, handleAdminEnumerateIds, handleAdminDeleteOrphans, handleAdminFlushCache, handleAdminSearchLog, handleAdminSearchEvents, handleAdminR2Multipart, handleAdminIndexStatus, handleAdminAnalytics, handleAdminDeviceResets, handleAdminDeviceResetsList, handleAdminDeviceResetUpdate } from './admin';
 import { handleLibraryDocumentLookup, handleDeviceResetRequest } from './library-support';
@@ -424,11 +424,17 @@ async function handleStandards(request: Request, env: Env, url: URL): Promise<Re
       ' published_date' +
       ` FROM standards${where} ORDER BY id`
     ).all<Record<string, any>>();
+    // Which documents an IES member may open without a subscription — the same
+    // set a Non-Subscriber's search is scoped to (search.ts), so List Standards
+    // links exactly those rows for a member (client 10/15/26: "Non-Subscriber
+    // Member (lighting science collection access)"). Fail-soft to none.
+    const lighting = await liteAllowedStandards(env).catch(() => new Set<string>());
 
     // Resolve the committee here rather than in the browser, so the ToC and the
     // result cards credit and link it identically (DO34).
     const standards = (result.results || []).map(s => ({
       ...s,
+      lighting_science: lighting.has(s.id),
       // The "Read" link opens the branded Library host, not Vitrium's own —
       // see src/lib/library-url.js.
       vitrium_web_url: toLibraryUrlOrNull(s.vitrium_web_url),

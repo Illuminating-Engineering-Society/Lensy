@@ -55,6 +55,11 @@ interface IndexStatusRow {
   pageCoveragePct: number | null; chunkTypes: Record<string, number> | null;
   applicationRows: number;
   vectorSpotCheck: { probed: number; found: number; missing: string[] } | { error: string } | null;
+  /** Catalogue gaps staff fix in Edit (client 10/15/26 #1). */
+  missingLibraryLink: boolean;
+  missingPublishedDate: boolean;
+  /** The webstore's 3-year-lease page is on record (client 10/15/26 #3). */
+  hasLeaseLink: boolean;
   warnings: string[];
 }
 
@@ -397,7 +402,7 @@ export async function handleAdminIndexStatus(request: Request, env: Env): Promis
   const [standardsRes, appCountsRes] = await Promise.all([
     env.DB.prepare(`
       SELECT id, title, full_designation, status, chunk_count, page_count,
-             coverage_json, indexed_at
+             coverage_json, indexed_at, vitrium_web_url, published_date, buy_url
       FROM standards ORDER BY id
     `).all<StandardRow>(),
     env.DB.prepare(`
@@ -427,8 +432,22 @@ export async function handleAdminIndexStatus(request: Request, env: Env): Promis
       chunkTypes: coverage?.byType ?? null,
       applicationRows: appCounts.get(std.id) || 0,
       vectorSpotCheck: null,
+      missingLibraryLink: !String(std.vitrium_web_url ?? '').trim(),
+      missingPublishedDate: !String(std.published_date ?? '').trim(),
+      hasLeaseLink: !!String(std.buy_url ?? '').trim(),
       warnings: [],
     };
+
+    // "Can you program a 'warning' for any entries without a 'lighting library
+    // link' or without 'publication date'?" (client 10/15/26 #1). Every status:
+    // a deprecated edition is still listed (table view) and opened from version
+    // comparisons, so it needs both too. Staff fix them in Edit.
+    if (row.missingLibraryLink) {
+      row.warnings.push('No Lighting Library link — readers cannot open it from IES Lens. Add it in Edit.');
+    }
+    if (row.missingPublishedDate) {
+      row.warnings.push('No publication date — List Standards falls back to the edition year. Add it in Edit.');
+    }
 
     if (std.chunk_count == null) {
       row.warnings.push('No coverage stats — ingested before migration 0006; re-ingest to record them.');

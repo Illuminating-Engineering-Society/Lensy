@@ -168,9 +168,11 @@
     var email = document.getElementById('menu-email');
     if (email) email.textContent = user.email || user.name || 'Signed in';
     // DO111: name the subscription, never the tool.
-    var lite = user.tier === 'lite' || user.tier === 'none';
+    var lite = user.tier === 'lite' || user.tier === 'guest' || user.tier === 'none';
     var tier = document.getElementById('menu-tier-label');
-    if (tier) tier.textContent = lite ? 'No subscription' : 'Lighting Library';
+    // A member without a subscription still opens the Lighting Science
+    // Collection, so the menu says which kind of Non-Subscriber this is.
+    if (tier) tier.textContent = !lite ? 'Lighting Library' : user.tier === 'lite' ? 'IES Member · no subscription' : 'No subscription';
     var until = document.getElementById('menu-sub-until');
     var date = lite ? null : formatDate(user.subscriptionExpiresAt);
     if (until) { until.textContent = date ? 'Subscribed until ' + date : ''; until.classList.toggle('hidden', !date); }

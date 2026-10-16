@@ -10,16 +10,28 @@
  *    Members without a subscription) … 20x daily search cap (then AI is
  *    disabled for 24hr)."
  *
- *   Lighting Library subscription                → Subscriber      ('full')
- *   IES account, no subscription                 → Non-Subscriber  ('lite')
- *   Any other IES account                        → 'none': may open a saved
- *                                                  collection shared with them,
- *                                                  but has no search access
+ *   Lighting Library subscription                → Subscriber                   ('full')
+ *   IES member, no subscription                  → Non-Subscriber Member        ('lite')
+ *   Free IES account, no membership              → Non-Subscriber Guest         ('guest')
+ *   No session at all                            → 'none': no search access
  *
- * The tier ids stay 'full' / 'lite' / 'none' — they are internal identifiers on
- * the wire, in the response-cache key and in `invited_users.tier`, and renaming
- * them would be a data migration for no reader-visible gain. What changed is
- * what 'lite' GRANTS and what it is CALLED on screen.
+ * 'guest' split off 'none' on 2026-10-16. The client's webstore prototype
+ * (Webstore Prototype_261014.pdf, "Digital Access") gives a "Free My IES
+ * Account" the SAME limited IES Lens column as an IES Member — AI Guide on the
+ * daily cap, LS-1 definitions, references — and the 10/15/26 notes ask for an
+ * admin preview of each ("Preview as Non-Subscriber Guest" / "… Member
+ * (lighting science collection access)"). So in IES Lens the two search alike;
+ * what separates them is the Lighting Library: a member may OPEN the Lighting
+ * Science Collection, a guest may open nothing. That door is decided in AuthIES
+ * (Vitrium's authorization webhook), so here it only changes which List
+ * Standards rows are Library links. `isNonSubscriberTier` is the one predicate
+ * for "searches like a Non-Subscriber"; use it, never `tier === 'lite'`.
+ *
+ * The tier ids stay 'full' / 'lite' / 'none' (+ 'guest') — they are internal
+ * identifiers on the wire, in the response-cache key and in
+ * `invited_users.tier`, and renaming them would be a data migration for no
+ * reader-visible gain. What changed is what 'lite' GRANTS and what it is CALLED
+ * on screen.
  *
  * Non-Subscriber blocks two tools — Illuminance Tables and Document Comparison
  * — and searches only the current Lighting Science collection. **The AI Guide
@@ -72,7 +84,12 @@
 
 import type { ContentType } from '../types';
 
-export type LensyTier = 'full' | 'lite' | 'none';
+export type LensyTier = 'full' | 'lite' | 'guest' | 'none';
+
+/** Searches as a Non-Subscriber — an IES member ('lite') or a free account ('guest'). */
+export function isNonSubscriberTier(tier: string | null | undefined): boolean {
+  return tier === 'lite' || tier === 'guest';
+}
 
 /**
  * The webstore collection a Non-Subscriber may search — "the current Lighting
@@ -116,7 +133,7 @@ const DEFAULT_SUBSCRIBER_ROLES = [
 ];
 
 /** Ordering used to combine an invitation with what someone holds in Wicket. */
-const TIER_RANK: Record<LensyTier, number> = { none: 0, lite: 1, full: 2 };
+export const TIER_RANK: Record<LensyTier, number> = { none: 0, guest: 1, lite: 2, full: 3 };
 
 function highest(a: LensyTier, b: LensyTier): LensyTier {
   return TIER_RANK[a] >= TIER_RANK[b] ? a : b;
@@ -192,7 +209,8 @@ function earnedTier(input: TierInput, env: { LENSY_SUBSCRIBER_ROLES?: string }):
   if (/lighting\s*library|library\s*subscri|subscriber/.test(tier)) return 'full';
 
   if (input.isMember) return 'lite';
-  return 'none';
+  // Anyone the IdP authenticated holds at least a free IES account.
+  return 'guest';
 }
 
 /**
