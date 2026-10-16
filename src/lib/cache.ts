@@ -123,7 +123,10 @@ const DATA_VERSION_KEY = 'cache:data-version';
 //     which a cached payload would otherwise keep serving without.
 // v22: the Guide's link maps cover every standard its prose names (resolved
 //     against the catalogue) and their outline sections (client 10/14/26).
-const SEARCH_CACHE_SCHEMA = 'v22';
+// v23: the Guide's answer loses any paragraph naming a designation nothing
+//     grounded (Dan, 10/16/26: "RP-33-99, Section 5, p. 12"), and the prompt
+//     forbids naming standards from memory.
+const SEARCH_CACHE_SCHEMA = 'v23';
 
 function errMsg(err: unknown): string {
   return err instanceof Error ? err.message : String(err);

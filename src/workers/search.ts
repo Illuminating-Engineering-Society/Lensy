@@ -79,7 +79,7 @@ import { dailySearchCap, enforceDailySearchCap } from '../lib/search-cap';
 import { generateResponse } from '../lib/ai-summary';
 import { rerankResults, extractGuideCitations, curateResults, conceptOrderForGuide } from '../lib/curation';
 import { generateRefinePrompt } from '../lib/refine';
-import { resolveGuideMentions } from '../lib/guide-links';
+import { resolveGuideMentions, dropUngroundedDesignations } from '../lib/guide-links';
 import { formatCitation, composeStandardName } from '../lib/citations';
 import { looksLikeFormalReference, referenceCitationKey } from '../lib/references.js';
 import { referenceEntryNumber } from '../lib/reference-markers.js';
@@ -943,6 +943,25 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
             facts: supersession.facts,
             conceptQuery,
           });
+          // Nothing the Guide names may come from its own memory (Dan,
+          // 2026-10-16: "RP-33-99, Section 5, p. 12" — a 1999 edition no index
+          // holds). Checked on the English text, before translation.
+          if (!generated.degraded && generated.text) {
+            try {
+              const grounding = dropUngroundedDesignations(
+                generated.text,
+                await fetchStandardsIndex(env.DB),
+                [searchQuery, rawQuery, ...supersession.facts, ...guideGroundingSources(guideInput)],
+                { allowDeprecated: aiMode === 'comparison' },
+              );
+              if (grounding.removed.length > 0) {
+                console.warn('AI Guide named ungrounded designations, removed:', grounding.removed.join(', '));
+                generated.text = grounding.text;
+              }
+            } catch (err) {
+              console.error('guide grounding check failed (non-fatal):', errMsg(err));
+            }
+          }
           // The RP-1 → RP-10 note, verbatim, unless the Guide already said it.
           if (rp1Note && !generated.degraded && !/\bRP-10\b/.test(generated.text || '')) {
             generated.text = `${generated.text}\n\n${rp1Note}`;
@@ -1421,6 +1440,23 @@ async function linkGuideMentions(
     console.error('guide mention links failed (non-fatal):', errMsg(err));
     return { standardLinks, sectionLinks };
   }
+}
+
+/**
+ * Every text the Guide was shown that can name a standard — the designations
+ * of its results and the passages, reference entries and definitions under
+ * them. A designation found here is one the model read, not one it remembered.
+ */
+function guideGroundingSources(results: SearchResult[]): string[] {
+  const out: string[] = [];
+  for (const r of results) {
+    out.push(
+      r.application?.standard || '', r.application?.standardFull || '', r.supersededBy || '',
+      r.document?.designation || '', r.excerpt?.text || '',
+      ...(r.excerpts || []).map(e => e.text || ''),
+    );
+  }
+  return out.filter(Boolean);
 }
 
 function buildStandardLinkMap(results: SearchResult[]): Record<string, string> {

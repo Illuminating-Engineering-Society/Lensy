@@ -1733,6 +1733,30 @@ losing content") is answered by the alignment report, not by the model.
   `staff-ingest.test.js` (fixtures are stored-method ZIPs so they run on any
   Node ≥ 18; `src/lib/docx-fixture.js` is test-only).
 
+### The Guide may not cite from memory (Dan, 2026-10-16: "RP-33-99")
+
+Recording a tutorial as a Non-Subscriber, Dan got "According to ANSI/IES
+RP-33-99, Section 5, p. 12, exterior facade lighting …". RP-33-99 is a real
+1999 IESNA document that no index holds — the only RP-33 text in the current
+PDFs is "IES RP-33-14" in RP-39-19's bibliography, and RP-39 is outside the
+Lighting Science Collection. The Non-Subscriber results had nothing on facades
+(RP-43 is filtered out), so the 70B model filled the gap from training memory,
+section and page included. `SEARCH_CACHE_SCHEMA` → **v23**.
+
+- `dropUngroundedDesignations` (guide-links.ts), run in handleSearch on the
+  English text before translation and caching: a designation is grounded when
+  the text the model was shown names it (`guideGroundingSources` + query +
+  facts; an EDITION only by that edition, so "RP-33-14" never vouches for
+  "RP-33-99") or it resolves to a CURRENT catalogue standard (Further reading).
+  Deprecated editions only on comparisons. A paragraph naming an ungrounded one
+  is dropped whole (inside a list, only the item); nothing left that names a
+  standard → `UNGROUNDED_FALLBACK`. Fail-soft.
+- The guide prompt now forbids naming a standard, edition, section or page from
+  memory, and asks for Further reading from the results.
+- Known limit: a section/page attached to a GROUNDED designation is not
+  verified against the outline, so a remembered "§5, p. 12" on a real current
+  standard would still pass.
+
 ### The 10/15/26 Teams notes: catalogue warnings, lease links, Guest vs Member (2026-10-16)
 
 No migration; no search-cache bump (search output is unchanged for every

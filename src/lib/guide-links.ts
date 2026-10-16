@@ -17,6 +17,8 @@
  * caller supplies the index), so it is unit-testable without D1.
  */
 
+import { SUPPORT_FORM_URL, SUPPORT_SENTENCE } from './product';
+
 export interface CatalogueEntry {
   status: string;
   webUrl: string | null;
@@ -109,4 +111,82 @@ export function resolveGuideMentions(
     }
   }
   return out;
+}
+
+/** What the Guide says when every paragraph it wrote rested on a designation nothing grounded. */
+export const UNGROUNDED_FALLBACK =
+  'The standards in these results do not appear to address this question directly. '
+  + `Review the result cards below for the closest material. ${SUPPORT_SENTENCE} (${SUPPORT_FORM_URL}).`;
+
+const LIST_ITEM_RE = /^\s*(?:[-*•]|\d+[.)])\s/;
+
+/**
+ * Remove what the Guide wrote about standards nothing grounded (Dan, 2026-10-16).
+ *
+ * As a Non-Subscriber, the Guide opened "According to ANSI/IES RP-33-99,
+ * Section 5, p. 12, …". RP-33-99 is a real 1999 IESNA document, but no index
+ * IES Lens holds contains it: the model wrote it, and its section and page, from
+ * memory. Prompt rules ask the model not to; this is the check that does not
+ * depend on the model listening.
+ *
+ * A designation is grounded when
+ *   - the text the model was shown names it (results, excerpts, reference
+ *     entries, catalogue facts, the query) — an EDITION only by that edition, so
+ *     a bibliography's "RP-33-14" never vouches for "RP-33-99"; or
+ *   - it resolves to a CURRENT catalogue standard (a Further-reading pointer
+ *     outside the results), or to any catalogued edition on a comparison.
+ *
+ * A paragraph naming an ungrounded designation is dropped whole — its other
+ * sentences ("In simplified terms, this means …") lean on the fabricated
+ * citation — and inside a list only the offending item goes. If nothing that
+ * names a standard survives, the answer is replaced by UNGROUNDED_FALLBACK.
+ */
+export function dropUngroundedDesignations(
+  text: string,
+  index: Map<string, CatalogueEntry>,
+  sources: Array<string | null | undefined>,
+  opts: { allowDeprecated?: boolean } = {},
+): { text: string; removed: string[] } {
+  const editions = new Set<string>();
+  const families = new Set<string>();
+  for (const s of sources) {
+    if (!s) continue;
+    for (const m of String(s).matchAll(GUIDE_DESIGNATION_RE)) {
+      editions.add(editionBase(m[1]));
+      families.add(familyOfId(m[1]));
+    }
+  }
+  const grounded = (token: string): boolean => {
+    const base = editionBase(token);
+    if (namesEdition(token) ? editions.has(base) : families.has(base)) return true;
+    const id = resolveDesignation(token, index);
+    return !!id && (!!opts.allowDeprecated || index.get(id)?.status !== 'Deprecated');
+  };
+
+  const removed: string[] = [];
+  const offends = (s: string): boolean => {
+    let bad = false;
+    for (const m of s.matchAll(GUIDE_DESIGNATION_RE)) {
+      if (grounded(m[1])) continue;
+      bad = true;
+      if (!removed.includes(m[1])) removed.push(m[1]);
+    }
+    return bad;
+  };
+
+  const kept: string[] = [];
+  for (const block of String(text || '').split(/\n\s*\n/)) {
+    const lines = block.split('\n');
+    if (lines.some(l => LIST_ITEM_RE.test(l))) {
+      const survivors = lines.filter(l => !offends(l));
+      if (survivors.some(l => l.trim())) kept.push(survivors.join('\n'));
+    } else if (!offends(block)) {
+      kept.push(block);
+    }
+  }
+  if (removed.length === 0) return { text, removed };
+
+  const rest = kept.join('\n\n').trim();
+  const namesAStandard = !rest.matchAll(GUIDE_DESIGNATION_RE).next().done;
+  return { text: namesAStandard ? rest : UNGROUNDED_FALLBACK, removed };
 }
