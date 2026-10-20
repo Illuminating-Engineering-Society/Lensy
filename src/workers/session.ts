@@ -39,6 +39,7 @@ import {
 } from '../lib/sso';
 import { sessionCapEnabled, enforceSessionCap } from '../lib/session-cap';
 import { readAccessMode } from '../lib/access-mode';
+import { hasActiveLensComp } from '../lib/comp-grants';
 import type { InvitedUserRow } from '../types';
 
 function allowMembersWithoutInvite(env: Env): boolean {
@@ -62,11 +63,17 @@ export async function staffOnlyActive(request: Request, env: Env): Promise<boole
 
 /** The invite row + access decision for one signed-in user. */
 async function decideFor(request: Request, env: Env, user: SsoUser) {
-  const [row, staffOnly] = await Promise.all([
+  const [row, staffOnly, lensComp] = await Promise.all([
     findInvite(env, user.email),
     staffOnlyActive(request, env),
+    hasActiveLensComp(env, user.email),
   ]);
   const decision = decideAccess(user, row, allowMembersWithoutInvite(env), Date.now(), staffOnly);
+  // A live complimentary IES Lens grant (client 10/16/26 #6) is a full-tier
+  // grant for its window, exactly like an invitation's tier: it only ever ADDS
+  // (resolveTier takes the higher), and it never admits anyone the door — the
+  // staff-only lockdown included — would turn away.
+  if (lensComp && decision.authorized) decision.tier = 'full';
   return { row, decision };
 }
 
@@ -176,6 +183,10 @@ export async function handleAuthMe(request: Request, env: Env): Promise<Response
       // DO#4). Only a well-formed date is passed on.
       subscriptionExpiresAt: /^\d{4}-\d{2}-\d{2}$/.test(String(user.subscriptionExpiresAt ?? ''))
         ? user.subscriptionExpiresAt : null,
+      // The IdP session's creation time (cookie `iat`). Only a NEW sign-in
+      // changes it — a re-mint of a live session repeats it — so it is what the
+      // welcome window keys "every login" on (client 10/16/26 #8).
+      signedInAt: Number.isFinite(user.iat) ? user.iat : null,
     },
     logoutUrl: buildLogoutUrl(env, request.url),
     // Library links open through the AuthIES Vitrium hop (client 10/09/26 #2);

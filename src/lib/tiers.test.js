@@ -157,13 +157,15 @@ describe('what an invitation grants', () => {
 });
 
 describe('liteContentTypes', () => {
-  it('drops Illuminance Tables and Document Comparison', () => {
+  // 10/16/26: the Guide answers a non-subscriber from the subscriber's pool, so
+  // retrieval keeps Tables — only the cards are cut down (nonSubscriberCards).
+  it('drops only Document Comparison', () => {
     const out = liteContentTypes(new Set(['tables', 'body', 'references', 'compare']));
-    expect([...out].sort()).toEqual(['body', 'references']);
+    expect([...out].sort()).toEqual(['body', 'references', 'tables']);
   });
 
   it('never leaves a search with nothing selected', () => {
-    expect([...liteContentTypes(new Set(['tables']))]).toEqual(['body']);
+    expect([...liteContentTypes(new Set(['compare']))]).toEqual(['body']);
   });
 
   it('leaves the kinds LensyLite includes alone', () => {

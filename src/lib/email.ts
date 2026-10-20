@@ -570,6 +570,10 @@ export interface CompAccessDocument {
 export interface CompAccessEmailContext {
   to: string;
   name: string | null;
+  /** 'lens' = full IES Lens + the whole Lighting Library (client 10/16/26 #6). */
+  scope?: 'documents' | 'lens';
+  /** The Lighting Library half is already live (AuthIES took the grant). */
+  applied?: boolean;
   documents: CompAccessDocument[];
   days: number;
   /** YYYY-MM-DD. */
@@ -581,6 +585,7 @@ export interface CompAccessEmailContext {
 
 /** The library the granted documents live in — where the reader signs in. */
 const LIBRARY_URL = 'https://lighting.ies.org/';
+const LENS_URL = 'https://lens.ies.org/';
 
 /**
  * The recipient's notification for one complimentary access grant.
@@ -595,24 +600,39 @@ const LIBRARY_URL = 'https://lighting.ies.org/';
  * hyperlink per standard, which is exactly what the list below prints.
  */
 export function buildCompAccessEmail(ctx: CompAccessEmailContext): InviteEmailContent {
-  const docs = ctx.documents || [];
+  const lens = ctx.scope === 'lens';
+  const docs = lens ? [] : (ctx.documents || []);
   const count = docs.length;
-  const subject = count === 1
-    ? `Complimentary ${ctx.days}-day access: ${docs[0].designation}`
-    : `Complimentary ${ctx.days}-day access to ${count} IES standards`;
+  const subject = lens
+    ? `Complimentary ${ctx.days}-day access to IES Lens and the IES Lighting Library`
+    : count === 1
+      ? `Complimentary ${ctx.days}-day access: ${docs[0].designation}`
+      : `Complimentary ${ctx.days}-day access to ${count} IES standards`;
 
+  const what = lens
+    ? 'IES Lens and the full IES Lighting Library'
+    : `the ${count === 1 ? 'standard' : 'standards'} listed below`;
   const lines: string[] = [];
   lines.push(
     ctx.grantedBy
-      ? `${ctx.grantedBy} at the Illuminating Engineering Society has given you complimentary ${ctx.days}-day access to the ${count === 1 ? 'standard' : 'standards'} listed below.`
-      : `The Illuminating Engineering Society has given you complimentary ${ctx.days}-day access to the ${count === 1 ? 'standard' : 'standards'} listed below.`,
+      ? `${ctx.grantedBy} at the Illuminating Engineering Society has given you complimentary ${ctx.days}-day access to ${what}.`
+      : `The Illuminating Engineering Society has given you complimentary ${ctx.days}-day access to ${what}.`,
   );
+  lines.push(lens
+    ? `Your access runs from ${formatExpiry(ctx.startDate)} through ${formatExpiry(ctx.endDate)}, with everything a Lighting Library subscriber has: every current and deprecated IES standard, and the full IES Lens search with its AI Guide, illuminance tables and version comparisons.`
+    : `Your access runs from ${formatExpiry(ctx.startDate)} through ${formatExpiry(ctx.endDate)}. It covers only these documents — it is not a Lighting Library subscription.`,
+  );
+  // "What steps if any does a user have to take if they do not already have an
+  // existing IES account with us under that email?" (client 10/16/26 #6) —
+  // AuthIES matches the grant by email at sign-in, so the answer is in the mail.
   lines.push(
-    `Your access runs from ${formatExpiry(ctx.startDate)} through ${formatExpiry(ctx.endDate)}. It covers only these documents — it is not a Lighting Library subscription.`,
+    `Sign in with your IES account under this email address (${ctx.to}). If you do not have one yet, create a free IES account at ies.org with this same address — your access applies the first time you sign in.`,
   );
-  lines.push(
-    'Sign in to the IES Lighting Library with your IES account to read them. If your access has not appeared yet, give it a few hours: it is enabled by IES staff shortly after this message goes out.',
-  );
+  if (!ctx.applied) {
+    lines.push(lens
+      ? 'If your Lighting Library access has not appeared yet, give it a few hours: IES staff are enabling it shortly after this message goes out. IES Lens is available as soon as you sign in.'
+      : 'If your access has not appeared yet, give it a few hours: it is enabled by IES staff shortly after this message goes out.');
+  }
 
   const docHtml = docs.map(d => {
     const label = d.title ? `${d.designation} ${d.title}` : d.designation;
@@ -634,14 +654,15 @@ export function buildCompAccessEmail(ctx: CompAccessEmailContext): InviteEmailCo
       <h1 style="margin:0 0 14px;font-size:19px;color:${BRAND_SECONDARY}">Your complimentary ${escapeHtml(String(ctx.days))}-day access</h1>
       ${paragraph(greeting(ctx.name))}
       ${lines.map(paragraph).join('\n      ')}
-      <p style="margin:0 0 4px;font-size:13px;color:#7a8794;letter-spacing:.03em;text-transform:uppercase">${count === 1 ? '1 standard' : `${count} standards`}</p>
+      ${lens ? '' : `<p style="margin:0 0 4px;font-size:13px;color:#7a8794;letter-spacing:.03em;text-transform:uppercase">${count === 1 ? '1 standard' : `${count} standards`}</p>
       <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse;margin:0 0 22px">
       ${docHtml}
-      </table>
+      </table>`}
+      ${lens ? `<p style="margin:0 0 12px"><a href="${LENS_URL}" style="display:inline-block;background:${BRAND_PRIMARY};color:#fff;text-decoration:none;padding:12px 22px;border-radius:6px;font-weight:600;font-size:15px">Open IES Lens</a></p>` : ''}
       <p style="margin:0 0 20px"><a href="${LIBRARY_URL}" style="display:inline-block;background:${BRAND_PRIMARY};color:#fff;text-decoration:none;padding:12px 22px;border-radius:6px;font-weight:600;font-size:15px">Open the IES Lighting Library</a></p>
       <p style="margin:0;font-size:13px;color:#666">Technical support: <a href="https://ies.org/contact-us/" style="color:${BRAND_SECONDARY}">ies.org/contact-us</a>.</p>
     </div>
-    <div style="padding:14px 20px;background:#f4f6f8;color:#888;font-size:12px">Sent by IES Lens because IES granted you complimentary access to these standards${ctx.grantedBy ? ` (${escapeHtml(ctx.grantedBy)})` : ''} — please do not reply to this message.</div>
+    <div style="padding:14px 20px;background:#f4f6f8;color:#888;font-size:12px">Sent by IES Lens because IES granted you complimentary access${lens ? '' : ' to these standards'}${ctx.grantedBy ? ` (${escapeHtml(ctx.grantedBy)})` : ''} — please do not reply to this message.</div>
   </div>
 </body></html>`;
 
@@ -651,15 +672,13 @@ export function buildCompAccessEmail(ctx: CompAccessEmailContext): InviteEmailCo
     greeting(ctx.name),
     '',
     ...lines.flatMap(l => [l, '']),
-    count === 1 ? '1 standard' : `${count} standards`,
-    '',
-    docText,
+    ...(lens ? [`Open IES Lens: ${LENS_URL}`] : [count === 1 ? '1 standard' : `${count} standards`, '', docText]),
     '',
     `Open the IES Lighting Library: ${LIBRARY_URL}`,
     '',
     'Technical support: https://ies.org/contact-us/',
     '',
-    `Sent by IES Lens because IES granted you complimentary access to these standards${ctx.grantedBy ? ` (${ctx.grantedBy})` : ''} — please do not reply.`,
+    `Sent by IES Lens because IES granted you complimentary access${lens ? '' : ' to these standards'}${ctx.grantedBy ? ` (${ctx.grantedBy})` : ''} — please do not reply.`,
   ].join('\n');
 
   return { subject, html, text };

@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { dropUngroundedDesignations, UNGROUNDED_FALLBACK } from '../lib/guide-links';
+import { nonSubscriberCards } from './search';
 
 // Dan, 2026-10-16: recording a tutorial as a Non-Subscriber, the AI Guide opened
 // "According to ANSI/IES RP-33-99, Section 5, p. 12, exterior facade lighting …".
@@ -67,5 +68,28 @@ describe('the AI Guide may not name a standard nothing grounded (client 10/16/26
   it('leaves an answer that names nothing untouched', () => {
     const text = 'The standards in these results do not appear to cover this question.';
     expect(dropUngroundedDesignations(text, index, [])).toEqual({ text, removed: [] });
+  });
+});
+
+// Dan, 10/16/26: "All 3 responses should be the same in AI Guide (the difference
+// being that subscribers can open anything it references and others can't)".
+// The Guide now reads the subscriber's pool; this is the one place the
+// Non-Subscriber's cards are cut from it.
+describe('nonSubscriberCards (client 10/16/26)', () => {
+  const card = (resultType, standard) => ({ resultType, application: { standard } });
+  const allowed = new Set(['LS-6-20+E1']);
+
+  it('keeps References, Definitions and document cards of the collection, in order', () => {
+    const out = nonSubscriberCards([
+      card('application', 'RP-43-25'),     // a table row — subscriber content
+      card('excerpt', 'LS-6-20+E1'),       // a passage — subscriber content
+      card('reference', 'RP-43-25'),       // outside the collection
+      card('reference', 'LS-6-20+E1'),
+      card('definition', 'LS-1-25'),
+      card('standard', 'LS-6-20+E1'),
+      card(undefined, 'LS-6-20+E1'),       // no resultType = a table row
+    ], allowed);
+    expect(out.map(r => `${r.resultType}:${r.application.standard}`))
+      .toEqual(['reference:LS-6-20+E1', 'definition:LS-1-25', 'standard:LS-6-20+E1']);
   });
 });

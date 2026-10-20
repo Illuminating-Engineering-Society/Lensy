@@ -397,3 +397,96 @@ describe('GET /api/admin/comp-access.csv', () => {
     expect(text.split('\r\n')).toHaveLength(1);       // header only
   });
 });
+
+// ─── 10/16/26 #6: Lens comps, and the Vitrium half through AuthIES ────────────
+
+describe('comp access through AuthIES (client 10/16/26 #6)', () => {
+  const withDocIds = (route) => (sql, b) => (/FROM standards/.test(sql)
+    ? CATALOG.map(r => ({ ...r, vitrium_doc_id: r.id === 'RP-8-25+E2' ? 'doc-guid-rp8' : null }))
+    : route(sql, b));
+
+  function stubFetch(status = 201) {
+    const calls = [];
+    const real = globalThis.fetch;
+    globalThis.fetch = async (url, init) => {
+      calls.push({ url: String(url), auth: init.headers.Authorization, body: JSON.parse(init.body) });
+      return new Response(JSON.stringify(status < 300 ? { grants: [] } : { error: 'nope' }), { status });
+    };
+    return { calls, restore: () => { globalThis.fetch = real; } };
+  }
+
+  it('a Lens comp needs no documents, defaults to 7 days, and lands in AuthIES as a subscriber grant', async () => {
+    const env = { ...makeEnv(withDocIds(makeRoute())), COMP_GRANTS_API_SECRET: 's3cret', AUTH_IDP_BASE_URL: 'https://auth.ies.org' };
+    const f = stubFetch();
+    try {
+      const { status, body } = await call(handleAdminCompAccess, env, '/api/admin/comp-access', {
+        method: 'POST', body: { scope: 'lens', email: 'guest@example.com', start_date: '2026-10-20' },
+      });
+      expect(status).toBe(201);
+      expect(body.window).toEqual({ startDate: '2026-10-20', endDate: '2026-10-27', days: 7 });
+      expect(body.vitrium).toEqual({ applied: 1, pending: 0 });
+      expect(body.vitriumStep).toBeNull();
+      expect(f.calls).toHaveLength(1);
+      expect(f.calls[0].url).toBe('https://auth.ies.org/api/comp-grants');
+      expect(f.calls[0].auth).toBe('Bearer s3cret');
+      expect(f.calls[0].body).toMatchObject({
+        email: 'guest@example.com', kind: 'subscriber', starts_at: '2026-10-20', expires_at: '2026-10-27',
+        source_ref: 'lens-comp-100',
+      });
+      expect(f.calls[0].body.documents).toBeUndefined();
+      const insert = env.DB.calls.find(c => /INSERT INTO comp_access_grants/.test(c.sql));
+      expect(insert.bindings.at(-1)).toBe('lens');
+      expect(env.DB.calls.some(c => /vitrium_applied_by = \?/.test(c.sql) && c.bindings[0] === 'authies')).toBe(true);
+      // The mail says what was granted, and what to do without an account.
+      expect(env.sent[0].subject).toMatch(/IES Lens and the IES Lighting Library/);
+      expect(env.sent[0].text).toMatch(/create a free IES account at ies\.org with this same address/);
+      expect(env.sent[0].text).not.toMatch(/give it a few hours/);
+    } finally { f.restore(); }
+  });
+
+  it('a document grant sends Vitrium ids, and one without a synced id stays pending with the reason', async () => {
+    const env = { ...makeEnv(withDocIds(makeRoute())), COMP_GRANTS_API_SECRET: 's3cret', AUTH_IDP_BASE_URL: 'https://auth.ies.org' };
+    const f = stubFetch();
+    try {
+      const ok = await call(handleAdminCompAccess, env, '/api/admin/comp-access', {
+        method: 'POST', body: { standard_ids: ['RP-8-25+E2'], email: 'a@example.com' },
+      });
+      expect(ok.body.window.days).toBe(90);
+      expect(f.calls[0].body).toMatchObject({ kind: 'documents', documents: ['doc-guid-rp8'], labels: ['RP-8-25+E2'] });
+
+      const pending = await call(handleAdminCompAccess, env, '/api/admin/comp-access', {
+        method: 'POST', body: { standard_ids: ['LM-75-19'], email: 'b@example.com' },
+      });
+      expect(f.calls).toHaveLength(1);                  // nothing pushed for it
+      expect(pending.body.vitrium).toEqual({ applied: 0, pending: 1 });
+      expect(env.DB.calls.some(c => /authies_error = \?/.test(c.sql) && /LM-75-19/.test(String(c.bindings[0])))).toBe(true);
+    } finally { f.restore(); }
+  });
+
+  it('without the secret nothing is pushed — the pre-10/16 manual step', async () => {
+    const env = makeEnv(withDocIds(makeRoute()));
+    const f = stubFetch();
+    try {
+      const { body } = await call(handleAdminCompAccess, env, '/api/admin/comp-access', {
+        method: 'POST', body: { scope: 'lens', email: 'c@example.com' },
+      });
+      expect(f.calls).toHaveLength(0);
+      expect(body.vitrium.pending).toBe(1);
+      expect(body.vitriumStep).toMatch(/by hand/);
+    } finally { f.restore(); }
+  });
+
+  it('revoking a row revokes it in AuthIES', async () => {
+    const row = { ...GRANT_ROW, scope: 'lens', standard_ids: '[]', authies_error: null };
+    const env = { ...makeEnv(withDocIds(makeRoute([row]))), COMP_GRANTS_API_SECRET: 's3cret', AUTH_IDP_BASE_URL: 'https://auth.ies.org' };
+    const f = stubFetch(200);
+    try {
+      const { body } = await call(handleAdminCompAccess, env, '/api/admin/comp-access/7', {
+        method: 'PATCH', body: { status: 'revoked', by: 'staff@ies.org' },
+      });
+      expect(body.authies).toEqual({ ok: true });
+      expect(f.calls[0].url).toBe('https://auth.ies.org/api/comp-grants/revoke');
+      expect(f.calls[0].body).toEqual({ source_ref: 'lens-comp-7', email: 'student@example.edu', revoked_by: 'staff@ies.org' });
+    } finally { f.restore(); }
+  });
+});

@@ -305,7 +305,13 @@
       </div>
 
       <div class="bg-white rounded-xl shadow p-4 mb-6">
-        <h3 class="font-display font-bold mb-3">Searches per day</h3>
+        <div class="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 mb-3">
+          <h3 class="font-display font-bold">Searches per day</h3>
+          <!-- Subscribers vs Non-Subscribers (client 10/16/26 #5). Recorded from
+               migration 0022 on; earlier searches are Unknown. A search an
+               administrator runs while previewing counts as that preview. -->
+          <div id="an-chart-legend" class="flex flex-wrap gap-x-3 gap-y-1 text-xs text-gray-600"></div>
+        </div>
         <div id="an-chart" class="flex items-end gap-px h-32"></div>
         <div id="an-chart-labels" class="flex justify-between text-xs text-gray-400 mt-1"></div>
       </div>
@@ -425,28 +431,40 @@
         </div>
       </div>
       <p class="text-sm text-gray-500 mb-4">
-        Give one person — or a whole classroom or committee — time-limited access to specific standards,
-        without a Lighting Library subscription. IES Lens records the grant and emails each recipient the
-        documents, dates and links.
+        Give one person — or a whole classroom or committee — time-limited complimentary access: either
+        to specific standards, or to full IES Lens with subscriber-level Lighting Library access. IES Lens
+        records the grant, applies it in the Lighting Library through IES Auth, and emails each recipient
+        the dates and links.
       </p>
 
-      <!-- The one thing a staff member must not miss: this page does not grant
-           anything. Stated where the grant is created, not only in the docs. -->
-      <div class="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 mb-6 text-sm text-amber-900">
-        <p class="font-medium mb-1">The access itself is still enabled by hand.</p>
+      <!-- Since 10/16/26 the Lighting Library half is automatic (AuthIES
+           comp_grants); the manual route remains for whatever it cannot take. -->
+      <div class="rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 mb-6 text-sm text-gray-700">
         <p>
-          After creating a grant, open the Vitrium admin app and give each recipient access to the listed
-          documents through the end date, then press <strong>Mark applied</strong> here. Recipients are told
-          their access may take a few hours to appear, so the email can safely go out first.
-          Automating this step is waiting on Vitrium API access (a privilege grant pending with Vitrium) —
-          and note that Vitrium’s External Services mode has no groups, so the “90-day document comp” group
-          in the original request has to become a per-document permission.
+          Access is matched by <strong>email address</strong> when the recipient signs in. Someone with no
+          IES account must create a free one at ies.org with that same address — the grant applies at
+          their first sign-in, so it can be issued before they register. A grant whose “In Vitrium” column
+          reads <em>pending</em> could not be applied automatically (the reason is on the row): press
+          <strong>Retry</strong>, or apply it in the Vitrium admin app and press <strong>Mark applied</strong>.
         </p>
       </div>
 
       <!-- ── New grant ──────────────────────────────────────────────────── -->
       <form onsubmit="return submitCompGrant(event)" class="bg-white rounded-xl shadow p-5 mb-8 space-y-4">
         <h3 class="font-display font-bold">New grant</h3>
+
+        <!-- What the grant opens (client 10/16/26 #6). -->
+        <fieldset class="flex flex-wrap gap-x-6 gap-y-2 text-sm">
+          <legend class="sr-only">Access type</legend>
+          <label class="flex items-center gap-2">
+            <input type="radio" name="ca-scope" value="documents" checked onchange="onCompScope()" class="accent-brand-primary">
+            <span><strong>Specific documents</strong> <span class="text-gray-500">— default 90 days</span></span>
+          </label>
+          <label class="flex items-center gap-2">
+            <input type="radio" name="ca-scope" value="lens" onchange="onCompScope()" class="accent-brand-primary">
+            <span><strong>Full IES Lens + Lighting Library</strong> <span class="text-gray-500">— subscriber level, default 7 days</span></span>
+          </label>
+        </fieldset>
 
         <div class="grid md:grid-cols-2 gap-4">
           <div>
@@ -461,7 +479,7 @@
             </div>
           </div>
 
-          <div>
+          <div id="ca-docs-wrap">
             <label class="block text-xs font-medium text-gray-600 mb-1">Documents <span class="text-gray-400">(current or deprecated)</span></label>
             <div id="ca-doc-chips" class="flex flex-wrap gap-1.5 mb-2"></div>
             <div class="relative">
@@ -1420,19 +1438,43 @@
     // Simple CSS bar chart: one bar per day of the window, zero-filled so a
     // quiet day reads as quiet rather than missing. Dates are UTC to match
     // SQLite's datetime('now').
+    // Each bar is stacked Subscribers (bottom) / Non-Subscribers / Unknown — the
+    // searches logged before the tier was recorded (client 10/16/26 #5).
+    const CHART_SERIES = [
+      { key: 'sub',     label: 'Subscribers',     color: '#3A5068' },   // brand-secondary
+      { key: 'non',     label: 'Non-Subscribers', color: '#FFAA00' },
+      { key: 'unknown', label: 'Unknown (before tiers were logged)', color: '#d1d5db' },
+    ];
+
     function renderChart(perDay, days) {
-      const byDay = Object.fromEntries(perDay.map(d => [d.day, d.searches]));
+      const byDay = Object.fromEntries(perDay.map(d => [d.day, d]));
       const bars = [];
       const today = new Date();
       for (let i = days - 1; i >= 0; i--) {
         const d = new Date(today.getTime() - i * 86400e3).toISOString().slice(0, 10);
-        bars.push({ day: d, n: byDay[d] || 0 });
+        const row = byDay[d] || {};
+        const n = Number(row.searches) || 0;
+        const sub = Number(row.subscribers) || 0;
+        const non = Number(row.nonSubscribers) || 0;
+        bars.push({ day: d, n, sub, non, unknown: Math.max(0, n - sub - non) });
       }
       const max = Math.max(1, ...bars.map(b => b.n));
-      document.getElementById('an-chart').innerHTML = bars.map(b => `
-        <div class="flex-1 min-w-[2px] rounded-t ${b.n ? 'bg-brand-secondary hover:bg-brand-primary' : 'bg-gray-100'} transition"
-             style="height:${b.n ? Math.max(4, Math.round((b.n / max) * 100)) : 2}%"
-             title="${esc(b.day)}: ${fmt(b.n)} search${b.n === 1 ? '' : 'es'}"></div>`).join('');
+      const totals = { sub: 0, non: 0, unknown: 0 };
+      for (const b of bars) for (const s of CHART_SERIES) totals[s.key] += b[s.key];
+      document.getElementById('an-chart').innerHTML = bars.map(b => {
+        const title = `${b.day}: ${fmt(b.n)} search${b.n === 1 ? '' : 'es'}`
+          + (b.n ? ` — ${fmt(b.sub)} subscriber, ${fmt(b.non)} non-subscriber${b.unknown ? `, ${fmt(b.unknown)} unknown` : ''}` : '');
+        if (!b.n) return `<div class="flex-1 min-w-[2px] rounded-t bg-gray-100" style="height:2%" title="${esc(title)}"></div>`;
+        const segments = CHART_SERIES.filter(s => b[s.key] > 0).reverse().map(s =>
+          `<div style="flex:${b[s.key]} 1 0;background:${s.color}"></div>`).join('');
+        return `<div class="flex-1 min-w-[2px] rounded-t overflow-hidden flex flex-col hover:opacity-80 transition"
+                     style="height:${Math.max(4, Math.round((b.n / max) * 100))}%" title="${esc(title)}">${segments}</div>`;
+      }).join('');
+      document.getElementById('an-chart-legend').innerHTML = CHART_SERIES
+        .filter(s => s.key !== 'unknown' || totals.unknown > 0)
+        .map(s => `<span class="inline-flex items-center gap-1.5">
+            <span class="inline-block w-2.5 h-2.5 rounded-sm" style="background:${s.color}"></span>
+            ${esc(s.label)} <span class="font-semibold text-gray-900">${fmt(totals[s.key])}</span></span>`).join('');
       document.getElementById('an-chart-labels').innerHTML =
         `<span>${esc(bars[0].day)}</span><span>${esc(bars[bars.length - 1].day)}</span>`;
     }
@@ -1699,11 +1741,28 @@
         });
     }
 
+    // "Specific documents" (DO110) or "Full IES Lens + Lighting Library"
+    // (client 10/16/26 #6). A Lens comp opens everything, so it has no list,
+    // and its default window is 7 days rather than 90.
+    function compScope() {
+      const el = document.querySelector('input[name="ca-scope"]:checked');
+      return el && el.value === 'lens' ? 'lens' : 'documents';
+    }
+
+    function onCompScope() {
+      const lens = compScope() === 'lens';
+      document.getElementById('ca-docs-wrap').classList.toggle('opacity-40', lens);
+      document.getElementById('ca-docs-wrap').classList.toggle('pointer-events-none', lens);
+      document.getElementById('ca-days').value = lens ? 7 : 90;
+      recomputeCompEnd();
+    }
+
     async function submitCompGrant(event) {
       event.preventDefault();
       const out = document.getElementById('ca-result');
       const btn = document.getElementById('ca-submit');
-      if (compSelected.length === 0) {
+      const scope = compScope();
+      if (scope === 'documents' && compSelected.length === 0) {
         out.className = 'text-sm rounded-lg px-3 py-2 bg-red-50 text-red-700';
         out.textContent = 'Choose at least one document.';
         return false;
@@ -1714,7 +1773,8 @@
           method: 'POST',
           body: JSON.stringify({
             recipients: parseCompRecipients(),
-            standard_ids: compSelected,
+            scope,
+            standard_ids: scope === 'lens' ? [] : compSelected,
             start_date: document.getElementById('ca-start').value,
             end_date: document.getElementById('ca-end').value,
             notes: document.getElementById('ca-notes').value.trim() || null,
@@ -1732,7 +1792,11 @@
         if (data.emailed?.failed?.length) parts.push(`${data.emailed.failed.length} email(s) failed`);
         if (data.rejected?.length) parts.push(`${data.rejected.length} rejected (${esc(data.rejected[0].reason)})`);
         out.className = 'text-sm rounded-lg px-3 py-2 bg-green-50 text-green-800';
-        out.innerHTML = `${parts.join(' · ')}.<br><strong>Next:</strong> enable these documents for each recipient in the Vitrium admin app, then press “Mark applied”.`;
+        const pending = data.vitrium?.pending || 0;
+        if (data.vitrium?.applied) parts.push(`${data.vitrium.applied} applied in the Lighting Library`);
+        out.className = `text-sm rounded-lg px-3 py-2 ${pending ? 'bg-amber-50 text-amber-900' : 'bg-green-50 text-green-800'}`;
+        out.innerHTML = `${parts.join(' · ')}.`
+          + (pending ? `<br><strong>${pending} pending:</strong> ${esc(data.vitriumStep || '')}` : '');
         document.getElementById('ca-emails').value = '';
         document.getElementById('ca-notes').value = '';
         compSelected = [];
@@ -1774,12 +1838,15 @@
       });
 
       document.getElementById('ca-rows').innerHTML = visible.map(g => {
-        const docs = g.documents.map(d => `<span class="inline-block px-1.5 py-0.5 rounded bg-gray-100 font-mono text-[11px] mr-1 mb-1"
+        const docs = g.scope === 'lens'
+          ? '<span class="inline-block px-1.5 py-0.5 rounded bg-amber-100 text-amber-900 text-[11px] font-semibold">Full IES Lens + Library</span>'
+          : g.documents.map(d => `<span class="inline-block px-1.5 py-0.5 rounded bg-gray-100 font-mono text-[11px] mr-1 mb-1"
           title="${esc(d.title || d.designation)}">${esc(d.id)}</span>`).join('');
         const applied = g.vitrium_applied_at
           ? `<span class="text-green-700 text-xs">✓ ${esc(day(g.vitrium_applied_at))}</span>
              ${g.vitrium_applied_by ? `<p class="text-xs text-gray-400">${esc(g.vitrium_applied_by)}</p>` : ''}`
-          : '<span class="text-xs text-amber-700 font-medium">Not yet</span>';
+          : `<span class="text-xs text-amber-700 font-medium">pending</span>
+             ${g.authies_error ? `<p class="text-xs text-gray-500 max-w-[220px]" title="${esc(g.authies_error)}">${esc(g.authies_error)}</p>` : ''}`;
         const mail = g.notify_error
           ? `<span class="text-xs text-red-600" title="${esc(g.notify_error)}">failed ⚠</span>`
           : g.notify_sent
@@ -1789,7 +1856,8 @@
         const actions = [
           g.vitrium_applied_at
             ? `<button onclick="compAction(${g.id}, {vitrium_applied:false})" class="text-gray-400 hover:text-gray-700 hover:underline">Undo applied</button>`
-            : `<button onclick="compAction(${g.id}, {vitrium_applied:true})" class="text-green-700 hover:underline">Mark applied</button>`,
+            : `<button onclick="compAction(${g.id}, {retry:true})" class="text-brand-secondary hover:underline">Retry</button>
+               <button onclick="compAction(${g.id}, {vitrium_applied:true})" class="text-green-700 hover:underline">Mark applied</button>`,
           revoked
             ? `<button onclick="compAction(${g.id}, {status:'active'})" class="text-brand-secondary hover:underline">Reinstate</button>`
             : `<button onclick="compAction(${g.id}, {status:'revoked'})" class="text-gray-400 hover:text-red-600 hover:underline">Revoke</button>`,
@@ -1816,13 +1884,14 @@
 
     async function compAction(id, patch) {
       if (patch.status === 'revoked' &&
-          !confirm('Revoke this grant? Remember to remove the access in the Vitrium admin app too — revoking here only records the decision.')) return;
+          !confirm('Revoke this grant? IES Lens access ends now; the Lighting Library access ends too if it was applied automatically (applied by "authies") — otherwise remove it in the Vitrium admin app.')) return;
       if (patch.vitrium_applied === true &&
           !confirm('Mark as applied in Vitrium? Only do this once the recipient can actually open the documents.')) return;
       const { status, data } = await api(`/api/admin/comp-access/${id}`, {
         method: 'PATCH', body: JSON.stringify(patch),
       });
       if (status >= 400) alert(`Could not update: ${data.error || 'unknown error'}`);
+      else if (data.authies && !data.authies.ok) alert(`Saved, but the Lighting Library half did not go through: ${data.authies.error}`);
       else if (patch.resend) alert('Notification re-sent.');
       await loadCompGrants();
     }

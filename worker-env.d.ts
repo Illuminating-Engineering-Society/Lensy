@@ -71,5 +71,9 @@ declare global {
     // only the per-request notification email is skipped. IES has not named
     // the inbox yet — set it in wrangler.toml [vars] once they do.
     DEVICE_RESET_NOTIFY_EMAIL?: string;
+    // Bearer for AuthIES's /api/comp-grants (client 10/16/26 #6) — the SAME
+    // value as AuthIES's COMP_GRANTS_API_SECRET. Unset: comp grants are only
+    // recorded here, and staff apply the Vitrium half by hand (pre-10/16).
+    COMP_GRANTS_API_SECRET?: string;
   }
 }

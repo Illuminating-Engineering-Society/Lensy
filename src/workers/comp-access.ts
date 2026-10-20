@@ -7,8 +7,18 @@
  *  complimentary 90-day access to one or more documents without providing
  *  access to the 'full' Lensy toolset."
  *
- * ── WHAT THIS DOES NOT DO ────────────────────────────────────────────────────
- * It does not grant anything. The permission is applied by hand, today in the
+ * ── SINCE 10/16/26 (client #6) ──────────────────────────────────────────────
+ * Two scopes: 'documents' (below) and 'lens' — complimentary FULL IES Lens plus
+ * subscriber-level Lighting Library, default 7 days. And the grant IS applied:
+ * each row goes to AuthIES's /api/comp-grants (lib/comp-grants.ts), whose
+ * Vitrium webhook reads it on every call, and IES Lens itself reads 'lens'
+ * rows in the session gate (hasActiveLensComp). The history below is why the
+ * Vitrium half lives in AuthIES; the manual route ("Mark applied") remains for
+ * whatever AuthIES cannot take — no COMP_GRANTS_API_SECRET, or a standard with
+ * no synced vitrium_doc_id.
+ *
+ * ── WHAT THIS DID NOT DO, BEFORE 10/16 ───────────────────────────────────────
+ * It did not grant anything. The permission is applied by hand, today in the
  * Vitrium admin app, and a row here records that it should be. Two separate
  * reasons it cannot be automated from Lensy yet, and they need different
  * people to resolve:
@@ -55,9 +65,14 @@ import { normalizeEmail } from '../lib/invites';
 import { sendCompAccessEmail, type CompAccessDocument, type SendOutcome } from '../lib/email';
 import { toLibraryUrlOrNull } from '../lib/library-url.js';
 import { csvCell } from '../lib/collections.js';
+import { compGrantsConfigured, pushCompGrant, revokeCompGrant } from '../lib/comp-grants';
 
-/** The client's number. Overridable per grant, not per deployment. */
+/** The client's numbers (DO110; 10/16/26 #6). Overridable per grant. */
 const DEFAULT_DAYS = 90;
+const DEFAULT_LENS_DAYS = 7;
+
+/** What a row grants — see migration 0023. */
+type CompScope = 'documents' | 'lens';
 
 /** A comp window measured in years is a subscription; refuse it as a typo. */
 const MAX_DAYS = 730;
@@ -98,6 +113,8 @@ interface CompGrantRow {
   vitrium_applied_by: string | null;
   revoked_at: string | null;
   revoked_by: string | null;
+  scope: CompScope;
+  authies_error: string | null;
 }
 
 /** One standards row, as everything here needs it. */
@@ -107,12 +124,15 @@ interface CatalogEntry {
   title: string | null;
   status: string;
   libraryUrl: string | null;
+  /** What AuthIES's Vitrium webhook matches a document grant on. */
+  vitriumDocId: string | null;
 }
 
 const GRANT_COLUMNS =
   `id, created_at, email, name, standard_ids, start_date, end_date, days,
    created_by, notes, status, notify_sent, notify_sent_at, notify_error,
-   vitrium_applied_at, vitrium_applied_by, revoked_at, revoked_by`;
+   vitrium_applied_at, vitrium_applied_by, revoked_at, revoked_by,
+   scope, authies_error`;
 
 // ─── Router ───────────────────────────────────────────────────────────────────
 
@@ -161,9 +181,14 @@ async function createGrants(request: Request, env: Env): Promise<Response> {
   }
   const input = body as Record<string, unknown>;
 
+  // 'lens' = complimentary FULL IES Lens + subscriber-level Lighting Library
+  // (client 10/16/26 #6); anything else is the DO110 document grant.
+  const scope: CompScope = input.scope === 'lens' ? 'lens' : 'documents';
+
   // ── Documents ───────────────────────────────────────────────────────────────
-  const requestedIds = uniqueStrings(input.standard_ids);
-  if (requestedIds.length === 0) {
+  // A Lens comp opens the whole library, so it carries no document list.
+  const requestedIds = scope === 'lens' ? [] : uniqueStrings(input.standard_ids);
+  if (scope === 'documents' && requestedIds.length === 0) {
     return json({ error: 'At least one standard id is required.' }, 400);
   }
   if (requestedIds.length > MAX_DOCUMENTS) {
@@ -192,7 +217,7 @@ async function createGrants(request: Request, env: Env): Promise<Response> {
   }
 
   // ── Window ──────────────────────────────────────────────────────────────────
-  const window = resolveWindow(input);
+  const window = resolveWindow(input, scope === 'lens' ? DEFAULT_LENS_DAYS : DEFAULT_DAYS);
   if ('error' in window) return json({ error: window.error }, 400);
 
   // ── Recipients ──────────────────────────────────────────────────────────────
@@ -230,11 +255,11 @@ async function createGrants(request: Request, env: Env): Promise<Response> {
     try {
       const res = await env.DB.prepare(`
         INSERT INTO comp_access_grants
-          (email, name, standard_ids, start_date, end_date, days, created_by, notes)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+          (email, name, standard_ids, start_date, end_date, days, created_by, notes, scope)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).bind(
         email, item.name, idsJson, window.startDate, window.endDate, window.days,
-        createdBy, notes,
+        createdBy, notes, scope,
       ).run();
       created.push({ id: res.meta.last_row_id as number, email, name: item.name });
     } catch (err) {
@@ -244,40 +269,100 @@ async function createGrants(request: Request, env: Env): Promise<Response> {
     }
   }
 
+  // The Vitrium half, through AuthIES (client 10/16/26 #6) — BEFORE the mail,
+  // so the mail can say whether the access is already live.
+  const pushed = await pushGrants(env, request.url, created, scope, resolved, window, createdBy, notes);
+
   const notify = input.notify !== false;
   const emailed = notify
-    ? await mailGrants(env, created, resolved, window, createdBy)
+    ? await mailGrants(env, created, scope, resolved, window, createdBy, pushed)
     : { sent: 0, failed: [] as EmailFailure[], skipped: true };
 
+  const notPushed = created.filter(r => !pushed.has(r.id)).length;
   return json({
     created,
     rejected,
     emailed,
+    scope,
     documents: resolved.map(d => ({ id: d.id, designation: d.designation, title: d.title, status: d.status })),
     window,
-    // Repeated in the response because the dashboard prints it after every
-    // create: the grant does not exist for the reader until this is done.
-    vitriumStep: 'Add each recipient to the Vitrium "90-day document comp" group and scope it to these documents in the Vitrium admin app, then mark the row applied here.',
+    vitrium: { applied: created.length - notPushed, pending: notPushed },
+    // Printed by the dashboard after every create while anything is pending:
+    // that recipient's Library access does not exist until it is done.
+    vitriumStep: notPushed === 0 ? null : (scope === 'lens'
+      ? 'The Lighting Library half could not be applied automatically — use "Retry" on the row, or give the recipient subscriber access in Vitrium by hand and mark it applied.'
+      : 'The Lighting Library half could not be applied automatically — use "Retry" on the row, or enable these documents for the recipient in Vitrium by hand and mark it applied.'),
   }, created.length > 0 ? 201 : 200);
 }
 
-// ─── The Vitrium half (not yet automatable) ───────────────────────────────────
+// ─── The Vitrium half, through AuthIES (client 10/16/26 #6) ──────────────────
 
 /**
- * SEAM — where the automated grant will go, once there is one to call.
- *
- * Whatever mechanism wins (a privileged Vitrium session, or more likely a
- * date-bounded per-document entitlement AuthIES's `authenticate` webhook
- * reads — see the header), the contract from this file's side is fixed: after
- * the grant is applied, stamp `vitrium_applied_at = datetime('now')` and
- * `vitrium_applied_by` with the mechanism's name instead of a staff email, and
- * the dashboard's "awaiting Vitrium" count empties itself.
- *
- * Named here rather than left as a TODO so the stamp a future implementation
- * must write is unambiguous. The endpoints above deliberately do not pretend:
- * PATCH {vitrium_applied:true} is a human saying they did it by hand.
+ * Hand each fresh row to AuthIES and stamp what happened. Returns the ids that
+ * landed. A document whose standard has no synced Vitrium id cannot be granted
+ * automatically, so such a grant stays "awaiting Vitrium" with the reason.
  */
-export const VITRIUM_COMP_GROUP = '90-day document comp';
+async function pushGrants(
+  env: Env,
+  requestUrl: string,
+  rows: Array<{ id: number; email: string }>,
+  scope: CompScope,
+  documents: CatalogEntry[],
+  window: GrantWindow,
+  grantedBy: string | null,
+  note: string | null,
+): Promise<Set<number>> {
+  const landed = new Set<number>();
+  if (rows.length === 0 || !compGrantsConfigured(env)) return landed;
+
+  const missing = documents.filter(d => !d.vitriumDocId).map(d => d.id);
+  for (let i = 0; i < rows.length; i += EMAIL_CONCURRENCY) {
+    const group = rows.slice(i, i + EMAIL_CONCURRENCY);
+    await Promise.all(group.map(async row => {
+      const outcome = scope === 'documents' && missing.length > 0
+        ? { ok: false as const, error: `No Vitrium document id synced for ${missing.join(', ')} — apply by hand.` }
+        : await pushCompGrant(env, requestUrl, {
+            rowId: row.id,
+            email: row.email,
+            kind: scope === 'lens' ? 'subscriber' : 'documents',
+            documents: documents.map(d => d.vitriumDocId as string),
+            labels: documents.map(d => d.id),
+            startDate: window.startDate,
+            endDate: window.endDate,
+            grantedBy,
+            note,
+          });
+      if (outcome.ok) landed.add(row.id);
+      await stampPush(env, row.id, outcome.ok ? null : outcome.error);
+    }));
+  }
+  return landed;
+}
+
+/** Record a push outcome on the row; a D1 hiccup here must not fail the request. */
+async function stampPush(env: Env, id: number, error: string | null): Promise<void> {
+  if (error != null) return stampAuthiesError(env, id, error);
+  try {
+    await env.DB.prepare(`
+      UPDATE comp_access_grants
+      SET vitrium_applied_at = datetime('now'), vitrium_applied_by = ?, authies_error = NULL
+      WHERE id = ?
+    `).bind(AUTHIES_APPLIER, id).run();
+  } catch (err) {
+    console.error('comp_access_push_status_write_failed', { id, detail: errMsg(err) });
+  }
+}
+
+async function stampAuthiesError(env: Env, id: number, error: string | null): Promise<void> {
+  try {
+    await env.DB.prepare('UPDATE comp_access_grants SET authies_error = ? WHERE id = ?').bind(error, id).run();
+  } catch (err) {
+    console.error('comp_access_push_status_write_failed', { id, detail: errMsg(err) });
+  }
+}
+
+/** `vitrium_applied_by` when AuthIES applied it, rather than a staff member. */
+export const AUTHIES_APPLIER = 'authies';
 
 // ─── Recipient mail ───────────────────────────────────────────────────────────
 
@@ -299,15 +384,17 @@ interface EmailReport {
 async function mailGrants(
   env: Env,
   rows: Array<{ id: number; email: string; name: string | null }>,
+  scope: CompScope,
   documents: CatalogEntry[],
   window: GrantWindow,
   grantedBy: string | null,
+  applied: Set<number>,
 ): Promise<EmailReport> {
   const report: EmailReport = { sent: 0, failed: [] };
   for (let i = 0; i < rows.length; i += EMAIL_CONCURRENCY) {
     const group = rows.slice(i, i + EMAIL_CONCURRENCY);
     const outcomes = await Promise.all(
-      group.map(row => deliverGrant(env, row, documents, window, grantedBy)),
+      group.map(row => deliverGrant(env, row, scope, documents, window, grantedBy, applied.has(row.id))),
     );
     for (let j = 0; j < group.length; j++) {
       const outcome = outcomes[j];
@@ -321,13 +408,17 @@ async function mailGrants(
 async function deliverGrant(
   env: Env,
   row: { id: number; email: string; name: string | null },
+  scope: CompScope,
   documents: CatalogEntry[],
   window: GrantWindow,
   grantedBy: string | null,
+  applied: boolean,
 ): Promise<SendOutcome> {
   const outcome = await sendCompAccessEmail(env, {
     to: row.email,
     name: row.name,
+    scope,
+    applied,
     documents: documents.map(toEmailDocument),
     days: window.days,
     startDate: window.startDate,
@@ -459,10 +550,12 @@ export function effectiveGrantStatus(
  *   { status: 'revoked' | 'active', by? }   revoke, or undo a mis-click
  *   { vitrium_applied: true | false, by? }  the manual Vitrium step happened
  *   { resend: true }                        email the recipient again
+ *   { retry: true }                         hand the grant to AuthIES again
  *
- * Marking applied is bookkeeping, exactly like the device-reset queue's "Mark
- * done": the permission is added in the Vitrium admin app, and this records
- * that a human did it.
+ * Revoking and reinstating follow through to AuthIES (client 10/16/26 #6), so
+ * the Lighting Library half ends or resumes with the row. Marking applied by
+ * hand remains for a grant AuthIES could not take (no COMP_GRANTS_API_SECRET,
+ * or a standard with no synced Vitrium id).
  */
 async function updateGrant(request: Request, env: Env, rawId: string): Promise<Response> {
   const id = Number(rawId);
@@ -507,8 +600,9 @@ async function updateGrant(request: Request, env: Env, rawId: string): Promise<R
   }
 
   const wantsResend = patch.resend === true;
-  if (fields.length === 0 && !wantsResend) {
-    return json({ error: 'Nothing to update (send status, vitrium_applied or resend)' }, 400);
+  const wantsRetry = patch.retry === true;
+  if (fields.length === 0 && !wantsResend && !wantsRetry) {
+    return json({ error: 'Nothing to update (send status, vitrium_applied, resend or retry)' }, 400);
   }
 
   if (fields.length > 0) {
@@ -522,6 +616,30 @@ async function updateGrant(request: Request, env: Env, rawId: string): Promise<R
   // shaping asks for it.
   let catalogPromise: Promise<Map<string, CatalogEntry>> | null = null;
   const catalog = () => (catalogPromise ??= loadStandardCatalog(env.DB).catch(() => new Map<string, CatalogEntry>()));
+  const grantRow = row;
+  const grantDocuments = async (): Promise<CatalogEntry[]> => {
+    const known = await catalog();
+    return parseIdList(grantRow.standard_ids)
+      .map(sid => known.get(sid.toLowerCase()))
+      .filter((d): d is CatalogEntry => Boolean(d));
+  };
+  const scope: CompScope = row.scope === 'lens' ? 'lens' : 'documents';
+  const window: GrantWindow = { startDate: row.start_date, endDate: row.end_date, days: row.days };
+
+  // ── AuthIES follows the row (client 10/16/26 #6) ────────────────────────────
+  const newStatus = 'status' in patch ? String(patch.status).trim().toLowerCase() : null;
+  let authies: { ok: boolean; error?: string } | undefined;
+  if (newStatus === 'revoked') {
+    if (compGrantsConfigured(env)) {
+      const out = await revokeCompGrant(env, request.url, id, row.email, by);
+      authies = out.ok ? { ok: true } : { ok: false, error: out.error };
+      await stampAuthiesError(env, id, out.ok ? null : out.error);
+    }
+  } else if ((newStatus === 'active' || wantsRetry)
+      && effectiveGrantStatus({ status: newStatus ?? row.status, end_date: row.end_date }, todayUtc()) === 'active') {
+    const landed = await pushGrants(env, request.url, [{ id, email: row.email }], scope, await grantDocuments(), window, row.created_by, row.notes);
+    authies = landed.has(id) ? { ok: true } : { ok: false, error: 'AuthIES did not take the grant — the row says why.' };
+  }
 
   let resend: SendOutcome | undefined;
   if (wantsResend) {
@@ -536,16 +654,15 @@ async function updateGrant(request: Request, env: Env, rawId: string): Promise<R
     if (statusNow === 'revoked') return json({ error: 'Cannot email a revoked grant. Reinstate it first.' }, 409);
     if (statusNow === 'expired') return json({ error: 'Cannot email an expired grant. Extend the end date first.' }, 409);
 
-    const known = await catalog();
-    const documents = parseIdList(row.standard_ids)
-      .map(sid => known.get(sid.toLowerCase()))
-      .filter((d): d is CatalogEntry => Boolean(d));
-    if (documents.length === 0) {
+    const documents = await grantDocuments();
+    if (scope === 'documents' && documents.length === 0) {
       return json({ error: 'None of this grant\'s documents are in the corpus any more.' }, 409);
     }
-    resend = await deliverGrant(env, { id, email: row.email, name: row.name }, documents, {
-      startDate: row.start_date, endDate: row.end_date, days: row.days,
-    }, row.created_by);
+    // Whether the Library half is live NOW (a retry above may just have
+    // applied it) decides what the mail promises.
+    const appliedNow = authies?.ok === true || (!!row.vitrium_applied_at && newStatus !== 'active');
+    resend = await deliverGrant(env, { id, email: row.email, name: row.name }, scope, documents, window,
+      row.created_by, appliedNow);
     if (!resend.sent) return json({ error: resend.error }, 502);
   }
 
@@ -555,6 +672,7 @@ async function updateGrant(request: Request, env: Env, rawId: string): Promise<R
   return json({
     updated: true,
     resent: resend?.sent === true,
+    ...(authies ? { authies } : {}),
     grant: updated ? shapeGrant(updated, await catalog(), todayUtc()) : null,
   });
 }
@@ -566,6 +684,7 @@ const CSV_COLUMNS = [
   'start_date', 'end_date', 'days', 'status', 'effective_status',
   'created_by', 'notes', 'notify_sent', 'notify_sent_at', 'notify_error',
   'vitrium_applied_at', 'vitrium_applied_by', 'revoked_at', 'revoked_by',
+  'scope', 'authies_error',
 ] as const;
 
 /**
@@ -645,7 +764,10 @@ const DATE_ONLY_RE = /^\d{4}-\d{2}-\d{2}$/;
  * RECOMPUTED from the span, because the recipient's email says "you have N
  * days" and it must agree with the dates printed beside it.
  */
-export function resolveWindow(input: Record<string, unknown>): GrantWindow | { error: string } {
+export function resolveWindow(
+  input: Record<string, unknown>,
+  defaultDays: number = DEFAULT_DAYS,
+): GrantWindow | { error: string } {
   const startDate = typeof input.start_date === 'string' && input.start_date.trim()
     ? input.start_date.trim() : todayUtc();
   if (!isDateOnly(startDate)) return { error: 'start_date must be YYYY-MM-DD' };
@@ -659,7 +781,7 @@ export function resolveWindow(input: Record<string, unknown>): GrantWindow | { e
     return { startDate, endDate: endRaw, days };
   }
 
-  const days = input.days == null || input.days === '' ? DEFAULT_DAYS : Number(input.days);
+  const days = input.days == null || input.days === '' ? defaultDays : Number(input.days);
   if (!Number.isInteger(days) || days < 1 || days > MAX_DAYS) {
     return { error: `days must be a whole number between 1 and ${MAX_DAYS}` };
   }
@@ -689,7 +811,7 @@ export function parseRecipients(input: Record<string, unknown>): ParsedRecipient
  */
 async function loadStandardCatalog(db: D1Database): Promise<Map<string, CatalogEntry>> {
   const res = await db.prepare(
-    'SELECT id, full_designation, title, status, vitrium_web_url FROM standards'
+    'SELECT id, full_designation, title, status, vitrium_web_url, vitrium_doc_id FROM standards'
   ).all<Record<string, unknown>>();
   const map = new Map<string, CatalogEntry>();
   for (const row of res.results || []) {
@@ -703,6 +825,7 @@ async function loadStandardCatalog(db: D1Database): Promise<Map<string, CatalogE
       title: typeof row.title === 'string' && row.title && row.title !== id ? row.title : null,
       status: String(row.status || 'Active'),
       libraryUrl: toLibraryUrlOrNull(row.vitrium_web_url),
+      vitriumDocId: typeof row.vitrium_doc_id === 'string' && row.vitrium_doc_id.trim() ? row.vitrium_doc_id.trim() : null,
     });
   }
   return map;

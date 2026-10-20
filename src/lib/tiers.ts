@@ -216,23 +216,21 @@ function earnedTier(input: TierInput, env: { LENSY_SUBSCRIBER_ROLES?: string }):
 /**
  * The content types a Non-Subscriber search RETRIEVES.
  *
- * Illuminance Tables are blocked outright, and `compare` (Document Comparison)
- * with them. Documents, Definitions and References stay — the client's own
- * wording is "You may search for standards, references and definitions" —
- * inside the Lighting Science collection, which is where the tier is scoped.
+ * Everything a subscriber's search retrieves, except `compare` (Document
+ * Comparison, a subscriber tool). "All 3 responses should be the same in AI
+ * Guide (the difference being that subscribers can open anything it references
+ * and others can't) … so users understand the value of subscribing" (client,
+ * 10/16/26): the Guide answers from the same pool a subscriber's does, Tables
+ * and the whole corpus included.
  *
- * 'body' is deliberately NOT removed here although it is in
- * LITE_BLOCKED_FILTERS: the passages are what the AI Guide answers from, and
- * what the whole-document lookup is gated on. What a non-subscriber does not
- * get is the passage CARDS, which search.ts strips from the response after the
- * Guide has read them (client, 2026-09-23).
+ * What a non-subscriber is SHOWN is decided afterwards, by `nonSubscriberCards`
+ * in search.ts — Reference, Definition and whole-document cards from the
+ * Lighting Science Collection. The padlocks in LITE_BLOCKED_FILTERS are about
+ * those cards, not about retrieval.
  */
 export function liteContentTypes(contentTypes: Set<ContentType>): Set<ContentType> {
-  const allowed = new Set<ContentType>(
-    [...contentTypes].filter(t => t !== 'tables' && t !== 'compare')
-  );
-  // Never end up with nothing selected: an all-tables request becomes a
-  // document search rather than an empty result page.
+  const allowed = new Set<ContentType>([...contentTypes].filter(t => t !== 'compare'));
+  // Never end up with nothing selected.
   if (allowed.size === 0) allowed.add('body');
   return allowed;
 }

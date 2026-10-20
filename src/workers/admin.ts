@@ -625,6 +625,32 @@ export async function handleAdminR2Multipart(request: Request, env: Env): Promis
  * there is nothing personal to aggregate. Each table fails soft (missing
  * migration → zeros plus a note), matching the CSV handlers' posture.
  */
+/**
+ * Searches per day, split by the tier that answered (client 10/16/26 #5:
+ * "break out the 'Searches per day' graph into Subscribers vs
+ * Non-Subscribers"). Rows logged before migration 0022 carry no tier and are
+ * neither — the dashboard shows them as Unknown. A database without the column
+ * still gets the plain per-day counts.
+ */
+async function searchesPerDay(env: Env, since: string): Promise<{ results?: Record<string, unknown>[] }> {
+  try {
+    return await env.DB.prepare(`
+      SELECT date(created_at) AS day, COUNT(*) AS searches,
+             COALESCE(SUM(CASE WHEN tier = 'full' THEN 1 ELSE 0 END), 0) AS subscribers,
+             COALESCE(SUM(CASE WHEN tier IN ('lite', 'guest', 'none') THEN 1 ELSE 0 END), 0) AS nonSubscribers
+      FROM search_log WHERE created_at >= datetime('now', ?)
+      GROUP BY day ORDER BY day
+    `).bind(since).all<Record<string, unknown>>();
+  } catch (err) {
+    if (!/no such column: tier/i.test(err instanceof Error ? err.message : String(err))) throw err;
+    return env.DB.prepare(`
+      SELECT date(created_at) AS day, COUNT(*) AS searches
+      FROM search_log WHERE created_at >= datetime('now', ?)
+      GROUP BY day ORDER BY day
+    `).bind(since).all<Record<string, unknown>>();
+  }
+}
+
 export async function handleAdminAnalytics(request: Request, env: Env): Promise<Response> {
   const denied = await requireAuth(request, env);
   if (denied) return denied;
@@ -648,11 +674,7 @@ export async function handleAdminAnalytics(request: Request, env: Env): Promise<
                COALESCE(SUM(CASE WHEN result_count = 0 THEN 1 ELSE 0 END), 0) AS zeroResults
         FROM search_log WHERE created_at >= datetime('now', ?)
       `).bind(since).first<Record<string, number>>(),
-      env.DB.prepare(`
-        SELECT date(created_at) AS day, COUNT(*) AS searches
-        FROM search_log WHERE created_at >= datetime('now', ?)
-        GROUP BY day ORDER BY day
-      `).bind(since).all<{ day: string; searches: number }>(),
+      searchesPerDay(env, since),
       // Grouped case-insensitively so "RP-6" and "rp-6" read as one query;
       // MIN(query) picks a deterministic representative spelling.
       env.DB.prepare(`

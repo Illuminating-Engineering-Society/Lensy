@@ -126,7 +126,10 @@ const DATA_VERSION_KEY = 'cache:data-version';
 // v23: the Guide's answer loses any paragraph naming a designation nothing
 //     grounded (Dan, 10/16/26: "RP-33-99, Section 5, p. 12"), and the prompt
 //     forbids naming standards from memory.
-const SEARCH_CACHE_SCHEMA = 'v23';
+// v24: a Non-Subscriber's Guide answers from the subscriber's pool and only the
+//     cards are cut to the collection (client 10/16/26); the comparison prompt
+//     nests sections by their numbering (10/16/26 #4).
+const SEARCH_CACHE_SCHEMA = 'v24';
 
 function errMsg(err: unknown): string {
   return err instanceof Error ? err.message : String(err);

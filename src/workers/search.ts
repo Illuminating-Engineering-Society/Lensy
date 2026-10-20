@@ -606,22 +606,6 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
     ? findStandardLookupResults(env, searchQuery)
     : Promise.resolve([] as SearchResult[]);
 
-  // ── What a subscriber would have found (client 10/09/26 #1C) ────────────────
-  // "Can you still show qty of search results for all contents as though they
-  //  were a subscriber, so they can get a feel for how much more they would
-  //  access if they subscribed?" A second retrieval over the WHOLE corpus with
-  //  every content kind, run in parallel with the Non-Subscriber one. Only its
-  //  COUNTS leave this function — none of its results, so nothing outside the
-  //  tier's scope reaches the cards or the AI Guide. The query embedding is
-  //  shared through the embedding cache; fail-soft to no counts.
-  const subscriberCountsPromise: Promise<ContentKindCounts | null> = isLite
-    ? (isMultiQuery
-        ? runMultiSearch(subQueries, mergedFilters, cleanLimit, env, new Set(SUBSCRIBER_CONTENT_TYPES))
-        : runSingleSearch(searchQuery, mergedFilters, cleanLimit, env, new Set(SUBSCRIBER_CONTENT_TYPES)))
-        .then(out => countContentKinds(out.results))
-        .catch(err => { console.error('subscriber counts failed:', errMsg(err)); return null; })
-    : Promise.resolve(null);
-
   let allResults;
 
   if (isMultiQuery) {
@@ -631,16 +615,21 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
     allResults = await runSingleSearch(searchQuery, mergedFilters, cleanLimit, env, contentTypes);
   }
 
-  // ── LensyLite corpus scope (client DO53) ─────────────────────────────────────
-  // "LensyLite can ONLY search the current Lighting Science Collection." Applied
-  // to the assembled results rather than to the vector query, because Vectorize
-  // cannot express "id IN (…)" — recall is narrower for a Lite user, which is
-  // what a teaser tier is, and nothing outside the collection can reach them.
-  let liteAllowed: Set<string> | null = null;
-  if (isLite) {
-    liteAllowed = await liteAllowedStandards(env);
-    allResults.results = restrictToStandards(allResults.results, liteAllowed);
-  }
+  // ── Non-Subscribers get a subscriber's AI Guide (client, 10/16/26) ──────────
+  // "All 3 responses should be the same in AI Guide (the difference being that
+  //  subscribers can open anything it references and others can't) … so users
+  //  understand the value of subscribing." The pool is therefore NOT narrowed
+  //  to the Lighting Science Collection here any more: retrieval, the scope
+  //  check, the catalogue facts, the Guide, the rerank and the link maps all
+  //  read the subscriber's pool, and only the CARDS are cut down, at the end
+  //  (`nonSubscriberCards`). Narrowing first is what made a façade question
+  //  answer out of LS-1 definitions and a bibliography entry for RP-8-18.
+  //
+  // The per-kind counts a subscriber would have seen (client 10/09/26 #1C) are
+  // read off the same pool — before any card is cut — so they no longer cost a
+  // second retrieval.
+  const liteAllowed: Set<string> | null = isLite ? await liteAllowedStandards(env) : null;
+  const subscriberCounts: ContentKindCounts | null = isLite ? countContentKinds(allResults.results) : null;
 
   // ── The query IS a standard: no AI Guide (client DO075) ─────────────────────
   // `findStandardLookupResults` only answers for a query that is WHOLLY a
@@ -1107,15 +1096,12 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
   // found for the word "handbook" is noise (client 9/30/26 DO#1).
   if (bareHandbook) allResults.results = [];
 
-  // ── Non-subscriber cards (client, 2026-09-23) ────────────────────────────────
+  // ── Non-subscriber cards (client, 2026-09-23 and 10/16/26) ──────────────────
   // "Lensy for non-subscribers should show AI Guide, reference cards and
-  //  definition cards only." The body passages were RETRIEVED — they are what
-  //  grounds the Guide's answer, and the link maps above were built from them so
-  //  its citations still open the Library — but they leave the response here.
-  //  A whole-document card stays: the client's own copy says a non-subscriber
-  //  "may search for standards", and the card is the standard, not its text.
-  if (isLite) {
-    allResults.results = allResults.results.filter(r => r.resultType !== 'excerpt');
+  //  definition cards only." Everything above ran on the subscriber's pool; the
+  //  cards leave it here, after the Guide, the curation and the link maps.
+  if (liteAllowed) {
+    allResults.results = nonSubscriberCards(allResults.results, liteAllowed);
   }
 
   // ── Confidence flag ──────────────────────────────────────────────────────────
@@ -1126,7 +1112,11 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
   // sibling row into first position. References-only searches skip the banner:
   // reference entries legitimately score lower than application rows, and the
   // advisory text (about missing lighting recommendations) doesn't apply.
-  const topScore = allResults.results.reduce(
+  // A Non-Subscriber's confidence is the subscriber pool's (client 10/16/26):
+  // the cut-down cards are References and Definitions, which legitimately score
+  // low, and would raise the advisory over a Guide answer a subscriber gets
+  // without one.
+  const topScore = (liteAllowed ? linkSourceResults : allResults.results).reduce(
     (max, r) => Math.max(max, r.relevanceScore || 0), 0
   );
   // The advisory doesn't apply to References or version-comparison searches
@@ -1156,7 +1146,11 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
   //  applied, so it names the real cause rather than guessing; the LS-1 terms
   //  are read only on this path, which is rare.
   let noResultsGuidance: NoResultsGuidance | null = null;
-  if (allResults.results.length === 0) {
+  // A Non-Subscriber whose matches were ALL subscriber content (passages, table
+  // rows, standards outside the collection) did not get "no results": the Guide
+  // answered from them, and the UI says the rest is behind the subscription.
+  const nothingRetrieved = (liteAllowed ? linkSourceResults : allResults.results).length === 0;
+  if (allResults.results.length === 0 && nothingRetrieved) {
     noResultsGuidance = buildNoResultsGuidance({
       // The English interpretation: the guidance's spell-check runs against the
       // LS-1 vocabulary and its scope-stripping reads English narrowing words,
@@ -1206,7 +1200,7 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
     liteNotice: isLite ? LITE_NOTICE : null,
     // Per-kind result counts a SUBSCRIBER would have seen for this query
     // (client 10/09/26 #1C) — counts only, never results. Null for a subscriber.
-    subscriberCounts: await subscriberCountsPromise,
+    subscriberCounts,
     noStrongMatch,
     noStrongMatchMessage: noStrongMatch ? NO_STRONG_MATCH_MESSAGE : null,
     aiGuideRequiredNotice,
@@ -1721,9 +1715,6 @@ export async function liteAllowedStandards(env: Env): Promise<Set<string>> {
   return ids;
 }
 
-/** The content kinds a subscriber's search retrieves (comparison is a modifier). */
-const SUBSCRIBER_CONTENT_TYPES: ContentType[] = ['tables', 'body', 'references', 'definitions'];
-
 /** Result totals per content kind, bucketed exactly as the UI's Contents checkboxes. */
 export type ContentKindCounts = {
   body: number; definitions: number; references: number;
@@ -1765,6 +1756,19 @@ export function restrictToStandards(results: SearchResult[], allowed: Set<string
     const id = r.application?.standard;
     return !!id && allowed.has(id);
   });
+}
+
+/**
+ * The cards a Non-Subscriber is shown, cut from the subscriber's result pool:
+ * References, Definitions and whole-document cards, from the Lighting Science
+ * Collection (Definitions from anywhere — see restrictToStandards). Document
+ * passages and Illuminance Table rows are subscriber content (client
+ * 2026-09-23; the padlocks in LITE_BLOCKED_FILTERS). Order is kept, so the
+ * cards follow the same AI curation a subscriber's do.
+ */
+export function nonSubscriberCards(results: SearchResult[], allowed: Set<string>): SearchResult[] {
+  return restrictToStandards(results, allowed)
+    .filter(r => r.resultType !== 'excerpt' && (r.resultType || 'application') !== 'application');
 }
 
 // ─── Editions of one standard family (client DO42 / DO43) ────────────────────
@@ -2327,29 +2331,44 @@ async function embedQueryText(env: Env, text: string): Promise<number[]> {
 /**
  * Append one row to the anonymous search log (D1 search_log table).
  *
- * PRIVACY: no user id, no IP, no session — only the query text and what the
- * response referenced. Staff export it via GET /api/admin/search-log.csv.
- * Fail-open: a missing table or a D1 hiccup never breaks search.
+ * PRIVACY: no user id, no IP, no session — only the query text, what the
+ * response referenced, and the TIER that answered it (migration 0022, client
+ * 10/16/26 #5: searches per day by Subscribers vs Non-Subscribers). Staff
+ * export it via GET /api/admin/search-log.csv.
+ * Fail-open: a missing table or a D1 hiccup never breaks search, and a database
+ * without the 0022 column still gets the row, without its tier.
  */
-async function logSearch(env: Env, payload: { query: string; results?: SearchResult[]; noStrongMatch?: boolean }, cached: boolean): Promise<void> {
+async function logSearch(env: Env, payload: { query: string; results?: SearchResult[]; noStrongMatch?: boolean; tier?: string }, cached: boolean): Promise<void> {
+  const standards = [
+    ...new Set((payload.results || [])
+      .map(r => r.application?.standard)
+      .filter(Boolean)),
+  ];
+  const values = [
+    payload.query,
+    (payload.results || []).length,
+    JSON.stringify(standards),
+    payload.noStrongMatch ? 1 : 0,
+    cached ? 1 : 0,
+  ];
   try {
-    const standards = [
-      ...new Set((payload.results || [])
-        .map(r => r.application?.standard)
-        .filter(Boolean)),
-    ];
     await env.DB.prepare(`
-      INSERT INTO search_log (query, result_count, standards_referenced, no_strong_match, cached)
-      VALUES (?, ?, ?, ?, ?)
-    `).bind(
-      payload.query,
-      (payload.results || []).length,
-      JSON.stringify(standards),
-      payload.noStrongMatch ? 1 : 0,
-      cached ? 1 : 0
-    ).run();
+      INSERT INTO search_log (query, result_count, standards_referenced, no_strong_match, cached, tier)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).bind(...values, payload.tier ?? null).run();
   } catch (err) {
-    console.error('search log write failed (non-fatal):', errMsg(err));
+    if (!/no column named tier|has no column/i.test(errMsg(err))) {
+      console.error('search log write failed (non-fatal):', errMsg(err));
+      return;
+    }
+    try {
+      await env.DB.prepare(`
+        INSERT INTO search_log (query, result_count, standards_referenced, no_strong_match, cached)
+        VALUES (?, ?, ?, ?, ?)
+      `).bind(...values).run();
+    } catch (retryErr) {
+      console.error('search log write failed (non-fatal):', errMsg(retryErr));
+    }
   }
 }
 

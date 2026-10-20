@@ -977,6 +977,12 @@ Rules for that structure:
   drawn from prior knowledge, which the rule below forbids outright.
 - Do not write a prose paragraph inside these three sections. The bulleted,
   chapter-grouped list IS the format.
+- Nest by the NUMBERING, like a table of contents: a section goes under its
+  parent, two spaces of indent per level — 6.1 under Chapter 6.0, 6.1.1 under
+  6.1, 6.1.1.1 under 6.1.1. Only a whole chapter is called "Chapter" ("Chapter
+  7.0"); 7.3.1 is a section, written "**7.3.1 …**", never "Chapter 7.3.1".
+- Never repeat a chapter or section as its own sub-bullet: a finding about the
+  chapter as a whole goes on the chapter bullet itself, after a colon.
 
 COMPARE THE CONTENT OF THE TWO EDITIONS. Read the passages from each edition
 above, then say what the current edition covers that the prior one does not,

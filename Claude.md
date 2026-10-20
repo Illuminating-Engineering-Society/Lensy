@@ -1733,6 +1733,74 @@ losing content") is answered by the alignment report, not by the model.
   `staff-ingest.test.js` (fixtures are stored-method ZIPs so they run on any
   Node ≥ 18; `src/lib/docx-fixture.js` is test-only).
 
+### The 10/16/26 Teams notes: one Guide for every tier, an outline-shaped comparison (2026-10-20)
+
+`SEARCH_CACHE_SCHEMA` → **v24**. Migrations **0022** (`search_log.tier`) and **0023** (comp scope).
+
+- **Non-Subscribers get the subscriber's AI Guide.** "All 3 responses should be
+  the same in AI Guide (the difference being that subscribers can open anything
+  it references and others can't)." The pool used to be cut to the Lighting
+  Science Collection right after retrieval, so a façade question was answered
+  out of LS-1 definitions and an LS bibliography entry citing RP-8-18. Dan
+  guessed uncategorized or deprecated documents were leaking. They weren't:
+  `liteAllowedStandards` is Active-only. Now `liteContentTypes` strips only
+  `compare`, and
+  retrieval, the scope check, the catalogue facts, the Guide, the rerank and the
+  link maps all run on the subscriber's pool; `nonSubscriberCards` cuts the
+  CARDS at the end (References, Definitions, whole-document cards; collection
+  only, Definitions from anywhere). Since the pool is the same, the AI-summary
+  KV key (mode + query + top-5 codes) is the same, so the text is literally the
+  subscriber's. `subscriberCounts` are read off that pool, which dropped the
+  second retrieval. A non-subscriber whose matches were all subscriber content
+  gets "N results available to subscribers", not "No results found"
+  (`noResultsGuidance` is sent only when nothing was retrieved), and the
+  low-confidence banner judges the pool, not the cut-down cards. Guide links to
+  a standard the reader cannot open still go through the SSO hop; Vitrium
+  refuses and the custom error page offers the purchase.
+- **The Guide's fold no longer cuts inside a locator (#2).** `leadSentences`
+  split on every "." and printed "Section 3." / "0 and its subsections",
+  "§11." / "7.2", "p." / "39". A sentence now ends at `[.!?]` + whitespace,
+  not before a number, not after p./pp./Fig./Sec./No./e.g. ….
+- **Comparison findings nest by their section number (#4).** `outlineItem`
+  (index.html) takes the depth from a bolded or Chapter/Section/Annex-labelled
+  number (7.0 → 0, 7.3 → 1, 7.3.1 → 2, deeper → 3), demotes "Chapter 7.3.1" to
+  "7.3.1", and folds a repeated section into the item above it; rendered
+  with 1rem per level and •/◦/▪/▫ markers, still one `<ul>`. The prompt asks
+  for the same nesting.
+- **Search analytics by tier (#5).** `logSearch` records the answering tier
+  (anonymous, so the privacy contract holds) and the per-day chart stacks
+  Subscribers / Non-Subscribers / Unknown. Only searches after 0022 carry it,
+  and an administrator's preview search counts as the previewed tier.
+- **Smaller:** "Cat. X" on table cards links RP-10 Table A-2
+  (`CATEGORY_TABLE_URL` = RP-10-20+E2's `cxXJMG#page=29`, so a new RP-10
+  edition means a new code) (#3); the welcome line under the search bar (#7);
+  the welcome window keys "every login" on `signedInAt` (the cookie `iat`,
+  which only a new IdP sign-in changes) instead of `sessionStorage` (#8); a
+  member's window opens "Thank you for being an IES Member! …" (#9); the
+  bullseye mark replaces the book icon on every Lighting Library Tools trigger
+  and "Browse Lighting Library" item (#10). The Subscribe-link fix (10/15 #2)
+  was already live.
+- **Comp access for full IES Lens, and the Vitrium half is automatic (#6).**
+  Migration **0023** adds `comp_access_grants.scope` (`documents` | `lens`)
+  and `authies_error`. A `lens` row (default 7 days, no document list) is read
+  by `decideFor` on every gated request (`hasActiveLensComp`, lib/comp-grants.ts)
+  and sets `decision.tier = 'full'`, the invitation-tier mechanism, so it only
+  ever adds and never opens the door to anyone the door refuses (lockdown
+  included). Every row is pushed to AuthIES `POST /api/comp-grants`
+  (bearer `COMP_GRANTS_API_SECRET`, the same value on both Workers;
+  `source_ref = lens-comp-<id>`; kind `subscriber` for a Lens comp, `documents`
+  with `standards.vitrium_doc_id` values otherwise). On success the row is
+  stamped `vitrium_applied_by = 'authies'`, and revoke/reinstate/Retry follow
+  through. Secret unset, or a standard with no Vitrium id: the row stays
+  pending with the reason and "Mark applied" is still the manual route.
+  Lens does NOT read AuthIES's `lighting-library-comp` cookie role: its own row
+  takes effect at once, with no re-sign-in. Recipients without an IES account
+  create a free one at ies.org with the same email; the grant is matched by
+  email at their first sign-in, and the email says so. **Unverified:** whether
+  Vitrium's `Document.DocumentId` equals the export's Doc ID that
+  `vitrium_doc_id` holds — the first real document grant will show it (AuthIES
+  logs `documentId`).
+
 ### The Guide may not cite from memory (Dan, 2026-10-16: "RP-33-99")
 
 Recording a tutorial as a Non-Subscriber, Dan got "According to ANSI/IES

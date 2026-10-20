@@ -71,7 +71,10 @@ function analyticsRoute(sql) {
     return { total: 10, cached: 4, noStrongMatch: 2, zeroResults: 1 };
   }
   if (/GROUP BY day/.test(sql)) {
-    return [{ day: '2026-09-10', searches: 6 }, { day: '2026-09-11', searches: 4 }];
+    return [
+      { day: '2026-09-10', searches: 6, subscribers: 4, nonSubscribers: 1 },
+      { day: '2026-09-11', searches: 4, subscribers: 1, nonSubscribers: 3 },
+    ];
   }
   if (/result_count = 0/.test(sql) && /GROUP BY LOWER/.test(sql)) {
     return [{ query: 'unicorn lighting', searches: 2, lastSeen: '2026-09-11 08:00:00' }];
@@ -105,6 +108,23 @@ describe('GET /api/admin/analytics', () => {
     expect(body.events.topStandards[0].standardId).toBe('RP-6-22');
     expect(body.searches.note).toBeUndefined();
     expect(body.events.note).toBeUndefined();
+  });
+
+  // 10/16/26 #5: Subscribers vs Non-Subscribers per day.
+  it('splits searches per day by tier, and degrades to totals before migration 0022', async () => {
+    const env = makeEnv(analyticsRoute);
+    const { body } = await call(handleAdminAnalytics, env, '/api/admin/analytics');
+    expect(body.searches.perDay[1]).toMatchObject({ subscribers: 1, nonSubscribers: 3 });
+    expect(env.DB.calls.find(c => /GROUP BY day/.test(c.sql)).sql).toMatch(/tier IN \('lite', 'guest', 'none'\)/);
+
+    const old = makeEnv(sql => {
+      if (/GROUP BY day/.test(sql) && /tier/.test(sql)) throw new Error('D1_ERROR: no such column: tier');
+      if (/GROUP BY day/.test(sql)) return [{ day: '2026-09-10', searches: 6 }];
+      return analyticsRoute(sql);
+    });
+    const res = await call(handleAdminAnalytics, old, '/api/admin/analytics');
+    expect(res.body.searches.perDay).toEqual([{ day: '2026-09-10', searches: 6 }]);
+    expect(res.body.searches.note).toBeUndefined();
   });
 
   it('clamps the days window and binds it as a modifier, never as SQL text', async () => {

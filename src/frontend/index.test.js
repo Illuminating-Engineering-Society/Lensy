@@ -1412,11 +1412,40 @@ describe('AI comparison rendering (DO062)', () => {
     ].join('\\n'))`);
     expect(html).toContain('What appears to be new');
     expect(html).toContain('<strong>Chapter 6.0 Community Planning</strong>');
-    // The nested findings are indented and given their own marker.
-    expect((html.match(/list-\[circle\]/g) || []).length).toBe(2);
+    // Depth follows the numbering: chapters 0, 6.2 is 1, 8.7.2.4 is 3.
+    expect((html.match(/data-depth="(\d)"/g) || []).map(s => s.slice(-2, -1))).toEqual(['0', '1', '0', '3']);
     // ONE list, so the "Continue Reading" fold can only ever cut between blocks.
     expect((html.match(/<ul/g) || []).length).toBe(1);
     expect((html.match(/<\/ul>/g) || []).length).toBe(1);
+  });
+
+  // 10/16/26 #4: "sub-sections visually represented as a hierarchy".
+  it('indents by section number even when the model did not indent', () => {
+    const html = run(`renderAIText([
+      '- **6.0 Lighting Design**: a.',
+      '- **6.1 Criteria**: b.',
+      '- **6.1.1 Illuminance**: c.',
+      '- **6.1.1.1 Horizontal**: d.',
+    ].join('\\n'))`);
+    expect((html.match(/data-depth="(\d)"/g) || []).map(s => s.slice(-2, -1))).toEqual(['0', '1', '2', '3']);
+    expect(html).toMatch(/margin-left: 3rem/);
+  });
+
+  it('demotes a subsection labelled "Chapter" and merges a repeated section', () => {
+    const html = run(`renderAIText([
+      '- **Chapter 7.0 Photometric Test Procedures** (p. 15): covers the procedures.',
+      '  - **7.0 Photometric Test Procedures**: the pre-burning period is new.',
+      '- **Chapter 7.3.1 Relative Photometry – Calibration Factor** (p. 16): explains the factor.',
+    ].join('\\n'))`);
+    expect((html.match(/<li/g) || []).length).toBe(2);
+    expect(html).toContain('covers the procedures. the pre-burning period is new.');
+    expect(html).not.toContain('Chapter 7.3.1');
+    expect(html).toMatch(/data-depth="2"[\s\S]*7\.3\.1 Relative Photometry/);
+  });
+
+  it('gives a plain bullet list no depth, and reads a quantity as no locator', () => {
+    const html = run(`renderAIText('- 12 lux minimum in corridors\\n- **2.5 m** mounting height')`);
+    expect((html.match(/data-depth="0"/g) || []).length).toBe(2);
   });
 
   it('bolds a locator the model left plain, number and title together', () => {
@@ -1888,6 +1917,25 @@ describe('the AI Guide fold (DO089, DO095)', () => {
     expect(lead).toContain('w119.');
   });
 
+  // 10/16/26 #2: the fold landed inside a locator, printing "Section 3." and
+  // "0 and its subsections." as two paragraphs.
+  it.each([
+    ['Section 3.0 and its subsections', 'Section 3.0'],
+    ['ANSI/IES LS-1-25 §11.7.2, offers further guidance', '§11.7.2'],
+    ['such as Figure 5-6, p. 39, and Figure 5-10, p. 41', 'p. 39'],
+    ['see Fig. 4 for the layout', 'Fig. 4'],
+  ])('never cuts inside a locator: %s', (phrase, locator) => {
+    // Sized so the 50-word budget runs out exactly at the locator's first full
+    // stop — where the old splitter cut.
+    const upToStop = phrase.slice(0, phrase.indexOf('.') + 1).split(/\s+/).length;
+    const filler = Array.from({ length: 50 - upToStop }, (_, i) => `w${i}`).join(' ');
+    const text = `${filler} ${phrase}. Then a second sentence follows here.`;
+    const html = run(`renderAIText(${JSON.stringify(text)})`);
+    const lead = html.slice(0, html.indexOf('ai-summary-more'));
+    expect(lead.replace(/<[^>]+>/g, '')).toContain(locator.replace(/^.*?(\S+)$/, '$1'));
+    expect(html).not.toMatch(/<p class="mb-2">\s*(?:0|7\.2|39|4)\b/);
+  });
+
   it('still refuses to open the fold on a bare heading', () => {
     const html = run(`renderAIText(${JSON.stringify('## Extent of the changes\n\nOnly a little changed.\n\nThen more prose.')})`);
     const lead = html.slice(0, html.indexOf('ai-summary-more'));
@@ -2082,5 +2130,33 @@ describe('comparison locators link to chapters (client 9/29/26 DO#1)', () => {
     // A page retrieval never reached still links, as front link + #page=N.
     expect(run(`linkifyLocators('(p. 99)')`)).toContain('https://lighting.ies.org/x#page=99');
     run(`setSectionLinks(null); setStandardLinks(null)`);
+  });
+});
+
+// ─── 10/16/26 #8/#9: the welcome window ───────────────────────────────────────
+
+describe('the welcome window shows a non-subscriber every SIGN-IN (10/16/26 #8)', () => {
+  const overlayShown = () => !run(`document.getElementById('welcome-overlay').classList.contains('hidden')`);
+  const hide = () => run(`document.getElementById('welcome-overlay').classList.add('hidden'); welcomeResolved = false;`);
+
+  it('once per IdP session, again after a new sign-in, and greets a member first', () => {
+    hide(); run(`localStorage._m.clear(); signedInAt = 1760000000; applyTier('lite')`);
+    expect(overlayShown()).toBe(true);
+    expect(run(`document.getElementById('welcome-member').classList.contains('hidden')`)).toBe(false);
+
+    hide();                                   // a page reload in the same sign-in
+    run(`maybeShowWelcome()`);
+    expect(overlayShown()).toBe(false);
+
+    hide();                                   // signed out and back in
+    run(`signedInAt = 1760090000; maybeShowWelcome()`);
+    expect(overlayShown()).toBe(true);
+  });
+
+  it('does not print the member greeting to a free (guest) account', () => {
+    hide();
+    run(`localStorage._m.clear(); signedInAt = 1760100000; applyTier('guest')`);
+    expect(overlayShown()).toBe(true);
+    expect(run(`document.getElementById('welcome-member').classList.contains('hidden')`)).toBe(true);
   });
 });
