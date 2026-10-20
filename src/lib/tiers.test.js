@@ -224,3 +224,17 @@ describe('Non-Subscriber Guest vs Member', () => {
     expect(resolveTier({ isMember: false, roles: [], inviteTier: 'lite' }, ON)).toBe('lite');
   });
 });
+
+// Client 10/19/26 #3: a TC chair's free access requires an active IES membership.
+describe('TC chairs', () => {
+  const env = { LENSY_LITE: 'on', LENSY_SUBSCRIBER_ROLES: 'lighting-library-full-access,tc-chair' };
+  it('a chair who is a member is a subscriber', () => {
+    expect(resolveTier({ roles: ['tc-chair'], isMember: true }, env)).toBe('full');
+  });
+  it('a chair who is not a member is not', () => {
+    expect(resolveTier({ roles: ['tc-chair'], isMember: false }, env)).toBe('guest');
+  });
+  it('a subscription still counts on its own', () => {
+    expect(resolveTier({ roles: ['tc-chair', 'lighting-library-full-access'], isMember: false }, env)).toBe('full');
+  });
+});

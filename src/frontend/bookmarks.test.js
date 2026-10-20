@@ -207,11 +207,17 @@ describe('shared (read-only) collection', () => {
     expect(elements.get('detail-project-name').textContent).toBe("Dan's test collection");
   });
 
-  it('hides the owner-only actions', () => {
+  // Client 10/19/26 #2: a shared view keeps Export CSV and Print.
+  it('hides the owner-only actions, keeping Export CSV and Print', () => {
+    const child = (shared) => ({ style: {}, hasAttribute: (a) => shared && a === 'data-shared-ok' });
+    const [edit, csv, print] = [child(false), child(true), child(true)];
+    elements.get('detail-owner-actions').children = [edit, csv, print];
     run(`renderProjectDetail(${shared}, { readOnly: true })`);
-    expect(elements.get('detail-owner-actions').style.display).toBe('none');
-    run(`renderProjectDetail({ project: { id: 1, name: 'Mine' }, applications: [] })`);
     expect(elements.get('detail-owner-actions').style.display).toBe('');
+    expect([edit.style.display, csv.style.display, print.style.display]).toEqual(['none', '', '']);
+    run(`renderProjectDetail({ project: { id: 1, name: 'Mine' }, applications: [] })`);
+    expect(edit.style.display).toBe('');
+    elements.get('detail-owner-actions').children = undefined;
   });
 
   it('prints the collection note without offering to edit it', () => {

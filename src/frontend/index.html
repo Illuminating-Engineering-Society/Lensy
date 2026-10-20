@@ -101,9 +101,14 @@
   </script>
   <style>
     /* "Bookmark & Share Search Results with Subscribers" is a subscription
-       feature (webstore prototype 10/14/26). The API refuses the writes; these
-       hide the controls that would only end in that refusal. */
-    body.tier-nonsubscriber .save-search-btn,
+       feature (webstore prototype 10/14/26). The API refuses the writes.
+       Client 10/20/26: "+ Bookmark" stays VISIBLE for a non-subscriber, greyed
+       and padlocked like the locked filters — it is what the subscription
+       sells. A click explains instead of saving; the bulk controls stay hidden. */
+    body.tier-nonsubscriber .save-search-btn {
+      background-color: #d1d5db !important; color: #6b7280 !important; cursor: not-allowed;
+    }
+    body.tier-nonsubscriber .save-search-btn .save-label::after { content: ' 🔒'; }
     body.tier-nonsubscriber .result-checkbox,
     body.tier-nonsubscriber #bulk-actions { display: none !important; }
 
@@ -5214,7 +5219,8 @@
             data-citation="${escapeHtml(result.citation || '')}"
             data-save-key="${escapeHtml(key)}"
             data-saved="${already ? '1' : '0'}"
-            title="${already ? SAVED_AGAIN_TITLE : SAVE_TITLE}"
+            title="${isLite() ? LOCKED_BOOKMARK_TITLE : already ? SAVED_AGAIN_TITLE : SAVE_TITLE}"
+            ${isLite() ? 'aria-disabled="true"' : ''}
           >
             <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
               <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/>
@@ -5260,7 +5266,8 @@
                 data-citation="${escapeHtml(name)}"
                 data-save-key="${escapeHtml(key)}"
                 data-saved="${already ? '1' : '0'}"
-                title="Bookmark this passage (its section, page and Library link) in one of your Bookmark Collections">
+                title="${isLite() ? LOCKED_BOOKMARK_TITLE : 'Bookmark this passage (its section, page and Library link) in one of your Bookmark Collections'}"
+                ${isLite() ? 'aria-disabled="true"' : ''}>
           <svg class="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
             <path stroke-linecap="round" stroke-linejoin="round" d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z"/>
           </svg>
@@ -5273,6 +5280,7 @@
     const SAVED_AGAIN_FILL = '#8FA3B4';
     const SAVE_TITLE = 'Bookmark a reference to this result in one of your Bookmark Collections';
     const SAVED_AGAIN_TITLE = 'Already in one of your Bookmark Collections — bookmark it to another as well';
+    const LOCKED_BOOKMARK_TITLE = 'Included with a Lighting Library subscription';
 
     /**
      * A stable identity for one result, used to remember that it is already in a
@@ -6128,6 +6136,10 @@
       if (type === 'success') {
         inner.className = inner.className.replace(/bg-\S+/, '') + ' bg-gray-900';
         icon.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/>';
+      } else if (type === 'info') {
+        // A locked subscriber feature (client 10/20/26) — neither success nor error.
+        inner.className = inner.className.replace(/bg-\S+/, '') + ' bg-gray-900';
+        icon.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" d="M7 11V8a5 5 0 0110 0v3M6 11h12v9H6z"/>';
       } else {
         inner.className = inner.className.replace(/bg-\S+/, '') + ' bg-red-600';
         icon.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>';
@@ -6263,6 +6275,10 @@
       }
 
       const btn = e.target.closest('.save-search-btn');
+      if (btn && isLite()) {
+        showToast('Bookmarks are included with a Lighting Library subscription', 'info');
+        return;
+      }
       if (btn) {
         try {
           openSaveSearchModal(

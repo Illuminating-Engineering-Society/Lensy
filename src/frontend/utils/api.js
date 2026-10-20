@@ -312,6 +312,11 @@ const LensyAPI = {
     return `${BASE_URL}/projects/${projectId}/csv`;
   },
 
+  /** The same CSV for a share-link recipient — no account needed (client 10/19/26 #2). */
+  sharedCollectionCsvUrl(token) {
+    return `${BASE_URL}/projects/shared/${encodeURIComponent(token)}/csv`;
+  },
+
   /**
    * Export project data as JSON (client renders PDF/Excel from this).
    * @param {string|number} projectId

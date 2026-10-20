@@ -138,8 +138,9 @@
           <input type="text" id="ve-f-name" name="name" maxlength="120" autocomplete="name">
           <label for="ve-f-email">Email on your IES account</label>
           <input type="email" id="ve-f-email" name="email" maxlength="200" required autocomplete="email">
-          <label for="ve-f-note">Anything staff should know? (optional)</label>
-          <textarea id="ve-f-note" name="note" maxlength="1000" placeholder="e.g., I replaced my laptop last week."></textarea>
+          <p class="intro" style="margin:12px 0 0">Subscriptions are licensed for individual use on up to 2 devices.</p>
+          <label for="ve-f-note">Please share your reason for requesting a device limit reset</label>
+          <textarea id="ve-f-note" name="note" maxlength="1000" required placeholder="e.g., I replaced my laptop last week."></textarea>
           <div class="hp" aria-hidden="true">
             <label for="ve-f-website">Website</label>
             <input type="text" id="ve-f-website" name="website" tabindex="-1" autocomplete="off">
@@ -168,6 +169,8 @@
     <p class="foot">
       <a href="https://lighting.ies.org/">Back to the IES Lighting Library</a>
       &nbsp;·&nbsp;
+      <a href="https://lens.ies.org/tutorials" target="_blank" rel="noopener">Tutorials</a>
+      &nbsp;·&nbsp;
       <a href="https://store.ies.org/">IES Store</a>
     </p>
   </main>
@@ -184,6 +187,9 @@
     var LIBRARY_URL = 'https://lighting.ies.org/';
     // Client 9/30/26 DO#4: support is the IES contact form, not a staff inbox.
     var SUPPORT_FORM_URL = 'https://ies.org/contact-us/';
+    // Client 10/20/26: "all error pages: add a link to the Tutorials page".
+    // Absolute, so the page survives being re-hosted off lens.ies.org.
+    var TUTORIALS_URL = 'https://lens.ies.org/tutorials';
 
     // ── Parsers (mirrors src/lib/vitrium-support.js — this page must not import) ─
     function errorCodeFromMessage(message) {
@@ -252,15 +258,15 @@
       if (code === 'w29' || code === 'n4p' || code === '4k3') {
         view.category = 'purchase';
         view.title = 'This document isn’t included in your current access';
-        view.lead = 'Your IES sign-in doesn’t currently include access to this document. You can purchase it individually, or subscribe to the IES Lighting Library for the full collection of current standards.';
+        view.lead = 'Your IES sign-in doesn’t currently include access to this document. You can lease it individually, or subscribe to the IES Lighting Library for the full collection of current standards.';
         view.wantsBuy = true;
         view.actions = [
           { label: 'Subscribe to the Lighting Library', href: SUBSCRIBE_URL, kind: 'secondary' },
           { label: 'Browse the IES Store', href: STORE_URL, kind: 'ghost' }
         ];
         view.help = [
-          'Already purchased it or already a subscriber? Make sure you’re signed in with the same email address your purchase or subscription is under, then open the document again.',
-          'Access purchased through your organization can take until the next business day to appear.'
+          'Already leased it or already a subscriber? Make sure you’re signed in with the same email address your lease or subscription is under, then open the document again.',
+          'Access obtained through your organization can take until the next business day to appear.'
         ];
       } else if (code === 'qe2' || code === 'rqe2') {
         view.category = 'expired';
@@ -279,15 +285,23 @@
         view.title = CLEAR_USE_TITLES[code];
         view.lead = CLEAR_USE_LEADS[code];
         view.showForm = true;
+        if (code === 'vc3') {
+          view.help = [
+            'Your individual digital license permits access from 2 browsers on up to 2 devices. This browser-based tool utilizes cookies to authenticate users and stores standards for offline access via browser cache. Do not browse in ‘Incognito’ or ‘Private’ browser windows and do not clear your cache. Supported browsers: Chrome, Firefox, Edge, Safari.',
+            { before: 'Visit the ', link: 'Subscription', href: SUBSCRIBE_URL, after: ' page to license additional users.' }
+          ];
+        }
       } else if (code === '3yq' || code === 'g45') {
         view.category = 'account';
         view.title = 'We couldn’t find your account';
         view.lead = 'The sign-in you used isn’t recognized in the Lighting Library.';
         view.actions = [
-          { label: 'Back to the Lighting Library', href: LIBRARY_URL, kind: 'secondary' }
+          { label: 'Back to the Lighting Library', href: LIBRARY_URL, kind: 'secondary' },
+          // Client 10/20/26: 3yq and g45 "add a link to subscribe".
+          { label: 'Subscribe to the Lighting Library', href: SUBSCRIBE_URL, kind: 'ghost' }
         ];
         view.help = [
-          'Make sure you signed in with the email address on your IES account — a purchase made under a different email creates a separate account.',
+          'Make sure you signed in with the email address on your IES account — a lease or subscription under a different email creates a separate account.',
           'If you registered recently, your account may still need to be activated: look for a confirmation email and click the link in it.',
           'Still stuck? Contact IES with the technical details below and staff can locate or activate your account.'
         ];
@@ -385,12 +399,32 @@
       var helpEl = document.getElementById('ve-help');
       view.help.forEach(function (line) {
         var li = document.createElement('li');
-        li.textContent = line;
+        if (typeof line === 'string') {
+          li.textContent = line;
+        } else {
+          li.appendChild(document.createTextNode(line.before || ''));
+          var a = document.createElement('a');
+          a.href = line.href;
+          a.target = '_blank';
+          a.rel = 'noopener';
+          var b = document.createElement('strong');
+          b.textContent = line.link;
+          a.appendChild(b);
+          li.appendChild(a);
+          li.appendChild(document.createTextNode(line.after || ''));
+        }
         helpEl.appendChild(li);
       });
 
       var supportEl = document.getElementById('ve-support');
-      supportEl.textContent = 'Need help? Complete the ';
+      supportEl.textContent = 'Need help? Visit the ';
+      var tut = document.createElement('a');
+      tut.href = TUTORIALS_URL;
+      tut.target = '_blank';
+      tut.rel = 'noopener';
+      tut.textContent = 'Tutorials';
+      supportEl.appendChild(tut);
+      supportEl.appendChild(document.createTextNode(' page, or complete the '));
       var mail = document.createElement('a');
       mail.href = SUPPORT_FORM_URL;
       mail.target = '_blank';
@@ -429,7 +463,7 @@
           if (view.wantsBuy && doc.buyUrl) {
             var actionsEl = document.getElementById('ve-actions');
             actionsEl.insertBefore(
-              makeButton({ label: 'Buy this document', href: doc.buyUrl, kind: 'primary' }),
+              makeButton({ label: 'Lease this document', href: doc.buyUrl, kind: 'primary' }),
               actionsEl.firstChild
             );
           }
@@ -446,7 +480,7 @@
               buy.href = s.buyUrl;
               buy.target = '_blank';
               buy.rel = 'noopener';
-              buy.textContent = 'Purchase the current edition →';
+              buy.textContent = 'Lease the current edition →';
               noticeEl.appendChild(buy);
             }
             noticeEl.style.display = 'block';

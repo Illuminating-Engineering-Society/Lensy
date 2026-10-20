@@ -47,6 +47,7 @@ import { bumpDataVersion, getDataVersion } from '../lib/cache';
 import { requireAdminAccess } from './session';
 import { readAccessMode, writeAccessMode, parseAccessMode } from '../lib/access-mode';
 import { getSsoState, isStagingRequest } from '../lib/sso';
+import { sendDeviceResetDecisionEmail } from '../lib/email';
 import type { StandardRow, SearchLogRow } from '../types';
 
 interface IndexStatusRow {
@@ -848,8 +849,14 @@ export async function handleAdminDeviceResetsList(request: Request, env: Env): P
  * POST /api/admin/device-resets — mark one request handled.
  * Body: { id, status: 'done'|'dismissed'|'new', resolved_by? }
  *
- * Bookkeeping only: the actual reset is the "Clear Use" action in the Vitrium
- * admin app. 'new' is accepted so a mis-click can be undone.
+ * The actual reset is the "Clear Use" action in the Vitrium admin app. 'new'
+ * is accepted so a mis-click can be undone.
+ *
+ * 'done' is an approval and 'dismissed' a rejection, and either one emails the
+ * READER the client's wording (10/20/26) — but only when the request was still
+ * open, so a re-click never mails twice; `notify: false` skips it. The mail
+ * is fail-soft: the decision is recorded either way and `readerNotified`
+ * says what happened.
  */
 export async function handleAdminDeviceResetUpdate(request: Request, env: Env): Promise<Response> {
   const denied = await requireAuth(request, env);
@@ -863,6 +870,11 @@ export async function handleAdminDeviceResetUpdate(request: Request, env: Env): 
   }
   const resolvedBy = typeof body.resolved_by === 'string' ? body.resolved_by.trim().slice(0, 200) || null : null;
 
+  const before = await env.DB.prepare(
+    'SELECT email, name, document_title, status FROM device_reset_requests WHERE id = ?'
+  ).bind(id).first<{ email: string; name: string | null; document_title: string | null; status: string }>();
+  if (!before) return jsonResponse({ error: 'Request not found' }, 404);
+
   const result = await env.DB.prepare(`
     UPDATE device_reset_requests
     SET status = ?,
@@ -872,7 +884,18 @@ export async function handleAdminDeviceResetUpdate(request: Request, env: Env): 
   `).bind(status, status, status, resolvedBy, id).run();
 
   if (!result.meta.changes) return jsonResponse({ error: 'Request not found' }, 404);
-  return jsonResponse({ updated: true, id, status });
+
+  let readerNotified: { sent: boolean; error?: string } | null = null;
+  if (status !== 'new' && before.status === 'new' && body.notify !== false) {
+    const outcome = await sendDeviceResetDecisionEmail(env, {
+      to: before.email,
+      name: before.name,
+      approved: status === 'done',
+      documentTitle: before.document_title,
+    });
+    readerNotified = outcome.sent ? { sent: true } : { sent: false, error: outcome.error };
+  }
+  return jsonResponse({ updated: true, id, status, readerNotified });
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────

@@ -105,3 +105,34 @@ describe('resolveView — account and document states', () => {
     expect(v.actions.length).toBeGreaterThan(0);
   });
 });
+
+// ─── Client 10/20/26: lease wording, subscribe on 3yq/g45, vc3 license terms ──
+
+describe('the 10/20/26 error-page edits', () => {
+  it('no permission says "lease it individually"', () => {
+    const v = view('No permission (w29)');
+    expect(v.lead).toContain('lease it individually');
+    expect(v.lead).not.toMatch(/purchase/);
+  });
+
+  it('3yq and g45 offer the subscription', () => {
+    for (const code of ['3yq', 'g45']) {
+      expect(view(`Not found (${code})`).actions.map(a => a.label)).toContain('Subscribe to the Lighting Library');
+    }
+  });
+
+  it('vc3 explains the 2-device license and links the Subscription page', () => {
+    const v = view('You have exceeded your device limit (vc3)');
+    expect(v.showForm).toBe(true);
+    expect(v.help[0]).toMatch(/2 browsers on up to 2 devices/);
+    expect(v.help[0]).toMatch(/Supported browsers: Chrome, Firefox, Edge, Safari\./);
+    expect(v.help[1]).toMatchObject({ link: 'Subscription', after: ' page to license additional users.' });
+  });
+
+  it('asks for the reason behind a reset request, and links Tutorials everywhere', () => {
+    const html = readFileSync(join(here, 'library-error.html'), 'utf8');
+    expect(html).toContain('Subscriptions are licensed for individual use on up to 2 devices.');
+    expect(html).toContain('Please share your reason for requesting a device limit reset');
+    expect(html).toContain('https://lens.ies.org/tutorials');
+  });
+});

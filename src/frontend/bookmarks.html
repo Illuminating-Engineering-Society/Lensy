@@ -66,10 +66,18 @@
        feature (webstore prototype 10/14/26). The API refuses these writes for a
        Non-Subscriber; reading, CSV export and delete stay available. */
     body.tier-nonsubscriber #page-actions,
+    body.tier-nonsubscriber [onclick^="claimShared"] { display: none !important; }
+    /* Client 10/19/26 #1: Edit details, Link and Email stay VISIBLE, greyed
+       with the padlock the search filters use — the click is blocked in
+       script (LOCKED_ACTIONS below), since these are inline onclick handlers. */
     body.tier-nonsubscriber [onclick^="openEditProjectModal"],
     body.tier-nonsubscriber [onclick^="copyShareLink"],
-    body.tier-nonsubscriber [onclick^="openEmailModal"],
-    body.tier-nonsubscriber [onclick^="claimShared"] { display: none !important; }
+    body.tier-nonsubscriber [onclick^="openEmailModal"] {
+      opacity: .45; cursor: not-allowed;
+    }
+    body.tier-nonsubscriber [onclick^="openEditProjectModal"]::after,
+    body.tier-nonsubscriber [onclick^="copyShareLink"]::after,
+    body.tier-nonsubscriber [onclick^="openEmailModal"]::after { content: '🔒'; margin-left: 2px; }
 
     @font-face {
       font-family: 'Nohemi'; font-style: normal; font-weight: 400 700;
@@ -180,6 +188,11 @@
       <p class="mt-1.5 text-sm text-green-900">
         Subscribers can bookmark and share all search results, including recommended illuminance values and excerpts from a standard
       </p>
+      <!-- A share-link visitor who is not signed in (client 10/19/26 #2:
+           "followed by a shortcut to 'log in' if they are already a subscriber"). -->
+      <p id="lite-banner-login" class="hidden mt-2 text-sm text-green-900">
+        Already a subscriber? <a id="lite-banner-login-link" href="/login" class="font-semibold underline underline-offset-4 hover:text-green-700">Log in</a>
+      </p>
     </div>
 
     <!-- Page title + New project button -->
@@ -275,14 +288,14 @@
               </svg>
               Email
             </button>
-            <button onclick="exportProjectCSV()"
+            <button onclick="exportProjectCSV()" data-shared-ok
               class="flex items-center gap-1.5 px-3 py-2 border border-gray-200 rounded-lg text-sm text-gray-600 hover:border-gray-300 hover:bg-gray-50 transition">
               <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                 <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
               </svg>
               Export CSV
             </button>
-            <button onclick="window.print()"
+            <button onclick="window.print()" data-shared-ok
               class="flex items-center gap-1.5 px-3 py-2 border border-gray-200 rounded-lg text-sm text-gray-600 hover:border-gray-300 hover:bg-gray-50 transition">
               <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                 <path stroke-linecap="round" stroke-linejoin="round" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"/>
@@ -472,6 +485,7 @@
     // True while showing a collection someone else shared (client DO49): the
     // view is a preview, so nothing on it may write to the owner's data.
     let readOnlyCollection = false;
+    let sharedToken = null;   // the ?share= token a shared view was opened with
 
     // ── Header menus (client DO109) ──────────────────────────────────────────
     // Recreated from the search page. The signed-in identity comes from the
@@ -507,6 +521,19 @@
     document.addEventListener('lensy:auth', (e) => paintLiteBanner(e.detail || null));
     if (window.lensyUser) paintLiteBanner(window.lensyUser);
 
+    // The padlocked actions (client 10/19/26 #1): visible, but a click explains
+    // instead of opening. Capture phase, so it runs before the inline onclick.
+    const LOCKED_ACTIONS = '[onclick^="openEditProjectModal"], [onclick^="copyShareLink"], [onclick^="openEmailModal"]';
+    document.addEventListener('click', (e) => {
+      if (!document.body.classList.contains('tier-nonsubscriber')) return;
+      const btn = e.target.closest && e.target.closest(LOCKED_ACTIONS);
+      if (!btn) return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      btn.title = 'Included with a Lighting Library subscription';
+      if (typeof showToast === 'function') showToast('Editing and sharing bookmarks is included with a Lighting Library subscription', 'info');
+    }, true);
+
     // ── Bootstrap ────────────────────────────────────────────────────────────
     document.addEventListener('DOMContentLoaded', () => {
       // A share link lands here as ?share=<token>. Show what is being shared and
@@ -525,8 +552,16 @@
     });
 
     async function showSharedCollection(token) {
+      sharedToken = token;
       document.getElementById('loading-projects').classList.add('hidden');
       const banner = document.getElementById('shared-banner');
+      // The upsell at the top for a visitor who is not signed in (client
+      // 10/19/26 #2), with the log-in shortcut for an existing subscriber.
+      if (window.lensyAnonymous === true) {
+        document.getElementById('lite-banner').classList.remove('hidden');
+        document.getElementById('lite-banner-login').classList.remove('hidden');
+        document.getElementById('lite-banner-login-link').href = window.lensyLoginUrl || '/login';
+      }
       // Without an account there are no collections of one's own to offer
       // (client DO52) — the page is just this shared list.
       if (window.lensyAnonymous === true) {
@@ -731,7 +766,13 @@
       }
       currentProject = p;
       readOnlyCollection = !!opts.readOnly;
-      document.getElementById('detail-owner-actions').style.display = readOnlyCollection ? 'none' : '';
+      // A shared view keeps Export CSV and Print (client 10/19/26 #2: "allow
+      // Export CSV and Print"); the owner's other actions are not the visitor's.
+      const ownerActions = document.getElementById('detail-owner-actions');
+      ownerActions.style.display = '';
+      for (const el of Array.from(ownerActions.children || [])) {
+        el.style.display = readOnlyCollection && !el.hasAttribute('data-shared-ok') ? 'none' : '';
+      }
 
       document.getElementById('detail-project-name').textContent = p.name || 'Untitled collection';
 
@@ -1236,7 +1277,9 @@
         showToast('Nothing saved in this collection yet', 'error');
         return;
       }
-      window.location.href = LensyAPI.collectionCsvUrl(currentProject.id);
+      window.location.href = readOnlyCollection && sharedToken
+        ? LensyAPI.sharedCollectionCsvUrl(sharedToken)
+        : LensyAPI.collectionCsvUrl(currentProject.id);
     }
 
     // ── New / edit project modal ─────────────────────────────────────────────
@@ -1368,7 +1411,9 @@
       inner.className = `flex items-center gap-3 px-4 py-3 rounded-xl shadow-lg text-sm font-medium text-white min-w-[220px] ${type === 'error' ? 'bg-red-600' : 'bg-gray-900'}`;
       icon.innerHTML = type === 'error'
         ? '<path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>'
-        : '<path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/>';
+        : type === 'info'   // a padlocked subscriber feature (client 10/19/26)
+          ? '<path stroke-linecap="round" stroke-linejoin="round" d="M7 11V8a5 5 0 0110 0v3M6 11h12v9H6z"/>'
+          : '<path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/>';
       toast.classList.remove('hidden');
       clearTimeout(toastTimeout);
       toastTimeout = setTimeout(() => toast.classList.add('hidden'), 3000);

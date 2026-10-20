@@ -46,6 +46,16 @@ describe('buildInviteEmail', () => {
     expect(anon.text).not.toContain('has given you access');
   });
 
+  // Client 10/20/26: the yellow / green / blue edits and the two buttons.
+  it('describes IES Lens in the client\'s words, and adds Video Overview + Tutorials', () => {
+    const mail = buildInviteEmail(ctx());
+    expect(mail.text).toContain("the Illuminating Engineering Society's AI-assisted guide for navigating IES resources.");
+    expect(mail.text).toContain('IES Lens can interpret your question, surface relevant excerpts, definitions, references, and illuminance recommendations, and link you directly to the source within the Lighting Library.');
+    expect(mail.text).not.toContain('sign-in upgrade');
+    expect(mail.html).toContain('>Video Overview</a>');
+    expect(mail.html).toContain('https://lensy.ies.org/tutorials');
+  });
+
   it('links to the deployment it was sent from, without a doubled slash', () => {
     const mail = buildInviteEmail(ctx({ appUrl: 'https://lensy.ies.org/' }));
     expect(mail.text).toContain('https://lensy.ies.org/');
@@ -205,7 +215,10 @@ describe('buildCollectionShareEmail', () => {
   it('carries the subscribe and purchase prompts', () => {
     const mail = buildCollectionShareEmail(shareCtx());
     expect(mail.html).toContain('ies.org/products/lighting-library/');
-    expect(mail.html).toContain('Buy individual standards');
+    // Client 10/20/26: "Lease", and the Library described in their words.
+    expect(mail.html).toContain('Lease individual standards');
+    expect(mail.html).toContain('The Lighting Library is the complete library of IES standards and guidelines.');
+    expect(mail.html).toContain('>Video Overview</a>');
     expect(mail.text).toContain('Subscribe to the Lighting Library:');
   });
 

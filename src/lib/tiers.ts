@@ -132,6 +132,9 @@ const DEFAULT_SUBSCRIBER_ROLES = [
   'lensy-subscriber', 'subscriber',
 ];
 
+/** The AuthIES slug for a Technical Committee Chair / Co-Chair. */
+export const TC_CHAIR_ROLE = 'tc-chair';
+
 /** Ordering used to combine an invitation with what someone holds in Wicket. */
 export const TIER_RANK: Record<LensyTier, number> = { none: 0, guest: 1, lite: 2, full: 3 };
 
@@ -201,7 +204,11 @@ export function resolveTier(input: TierInput, env: { LENSY_LITE?: string; LENSY_
 function earnedTier(input: TierInput, env: { LENSY_SUBSCRIBER_ROLES?: string }): LensyTier {
   const roles = (input.roles ?? []).map(r => String(r).toLowerCase());
   const subscriber = subscriberRoles(env);
-  if (roles.some(r => subscriber.includes(r))) return 'full';
+  // A committee chair's free access needs an active IES membership too
+  // (client 10/19/26 #3: "Grant permission if they also have an active IES
+  // Membership? If not, they can use the same code as other TC members for
+  // $174 access in the webstore"). AuthIES applies the same rule to Vitrium.
+  if (roles.some(r => subscriber.includes(r) && (r !== TC_CHAIR_ROLE || input.isMember === true))) return 'full';
 
   // The member tier is free text at the IdP, so match it loosely — but only on
   // words that actually mean a Library entitlement.

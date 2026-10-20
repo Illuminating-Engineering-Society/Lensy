@@ -439,8 +439,16 @@ describe('comp access through AuthIES (client 10/16/26 #6)', () => {
       expect(env.DB.calls.some(c => /vitrium_applied_by = \?/.test(c.sql) && c.bindings[0] === 'authies')).toBe(true);
       // The mail says what was granted, and what to do without an account.
       expect(env.sent[0].subject).toMatch(/IES Lens and the IES Lighting Library/);
-      expect(env.sent[0].text).toMatch(/create a free IES account at ies\.org with this same address/);
+      expect(env.sent[0].text).toMatch(/create a free one at ies\.org with this same address/);
+      // Client 10/20/26: the Subscription version of the mail.
+      expect(env.sent[0].text).toMatch(/^Your complimentary 7-day Subscription access/);
+      expect(env.sent[0].text).toMatch(/has granted you complimentary 7-day access to the full Lighting Library and IES Lens\./);
+      expect(env.sent[0].text).toMatch(/Sign in to the Lighting Library with your IES account to get started/);
+      expect(env.sent[0].text).not.toMatch(/covers only these documents/);
+      expect(env.sent[0].text).toMatch(/refresh your browser page\.$/m);
       expect(env.sent[0].text).not.toMatch(/give it a few hours/);
+      expect(env.sent[0].html).toContain('>Video Overview</a>');
+      expect(env.sent[0].html).toContain('/tutorials');
     } finally { f.restore(); }
   });
 

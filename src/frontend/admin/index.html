@@ -386,9 +386,19 @@
       </div>
       <p class="text-sm text-gray-500 mb-4">
         Requests submitted from the Lighting Library error page when a reader hits a Vitrium usage limit.
-        Marking a row <strong>Done</strong> is bookkeeping only — the actual reset is the
-        <strong>“Clear Use”</strong> action in the Vitrium admin app (Users → Clear Use).
+        Subscriptions are licensed for individual use on up to 2 devices; the reader’s stated reason is in the
+        <strong>Note</strong> column.
       </p>
+      <!-- Client 10/20/26: "update staff instruction for clearing use", and the
+           reader is now emailed the decision either way. -->
+      <ol class="text-sm text-gray-600 mb-4 list-decimal pl-5 space-y-1">
+        <li><strong>To approve:</strong> sign in to the Vitrium admin app, open the <strong>Users</strong> tab, find the reader by
+          email, and click <strong>“Clear Use”</strong> beside their row. Then press <strong>Approve</strong> here — the reader is
+          emailed that a one-time reset was authorized, with guidance to stay within two browsers.</li>
+        <li><strong>To reject:</strong> press <strong>Reject</strong> — the reader is emailed that, per the terms of service, the
+          reset could not be approved. Per Vitrium’s guidance, reject when you suspect fraud or shared credentials.</li>
+        <li>Each reader is emailed once, on the first decision; <strong>Reopen</strong> undoes a mis-click without mailing.</li>
+      </ol>
 
       <div class="flex flex-wrap items-center gap-2 mb-4">
         <div id="rs-chips" class="flex flex-wrap gap-2"></div>
@@ -652,7 +662,7 @@
             <li>• New or replacement PDFs: the <a href="#standards" class="text-brand-secondary hover:underline">Standards</a> tab (upload → index → disposition).</li>
             <li>• Access grants and invitations: the <a href="#users" class="text-brand-secondary hover:underline">Users</a> tab.</li>
             <li>• Vitrium metadata (titles, covers, buy links, collections): <code class="font-mono text-xs">npm run sync-metadata</code>, then flush the cache here.</li>
-            <li>• Device resets are actioned in the Vitrium admin app (Users → “Clear Use”), then marked Done in the queue tab.</li>
+            <li>• Device resets: “Clear Use” in the Vitrium admin app (Users tab), then Approve in the Device resets tab — or Reject. The reader is emailed either way.</li>
           </ul>
         </div>
 
@@ -1511,7 +1521,7 @@
     function setResetFilter(s) { resetFilter = s; renderResets(); }
 
     function renderResets() {
-      const CHIPS = [['new', 'New'], ['done', 'Done'], ['dismissed', 'Dismissed'], ['all', 'All']];
+      const CHIPS = [['new', 'New'], ['done', 'Approved'], ['dismissed', 'Rejected'], ['all', 'All']];
       document.getElementById('rs-chips').innerHTML = CHIPS.map(([s, label]) => {
         const active = resetFilter === s;
         return `<button onclick="setResetFilter('${s}')"
@@ -1526,8 +1536,8 @@
       document.getElementById('rs-rows').innerHTML = visible.map(r => {
         const codeLabel = RESET_CODES[r.error_code] || r.error_code;
         const actions = r.status === 'new'
-          ? `<button onclick="updateReset(${r.id}, 'done')" class="text-green-700 hover:underline">Mark done</button>
-             <button onclick="updateReset(${r.id}, 'dismissed')" class="text-gray-400 hover:text-red-600 hover:underline">Dismiss</button>`
+          ? `<button onclick="updateReset(${r.id}, 'done')" class="text-green-700 hover:underline">Approve</button>
+             <button onclick="updateReset(${r.id}, 'dismissed')" class="text-gray-400 hover:text-red-600 hover:underline">Reject</button>`
           : `<button onclick="updateReset(${r.id}, 'new')" class="text-brand-secondary hover:underline">Reopen</button>`;
         const resolved = r.resolved_at
           ? `<p class="text-xs text-gray-400 mt-0.5">${esc(day(r.resolved_at))}${r.resolved_by ? ' · ' + esc(r.resolved_by) : ''}</p>`
@@ -1548,7 +1558,7 @@
           <td class="px-4 py-3 text-xs"><span title="${esc(r.raw_message || '')}">${esc(codeLabel)}</span>
             <p class="font-mono text-gray-400">${esc(r.error_code)}</p></td>
           <td class="px-4 py-3 text-xs text-gray-600 max-w-[260px]"><span class="line-clamp-3" title="${esc(r.user_note || '')}">${esc(r.user_note) || '<span class="text-gray-300">—</span>'}</span></td>
-          <td class="px-4 py-3"><span class="inline-block px-2 py-0.5 rounded-full text-xs font-medium ${RS_BADGE[r.status] || 'bg-gray-100 text-gray-600'}">${esc(r.status)}</span>${resolved}</td>
+          <td class="px-4 py-3"><span class="inline-block px-2 py-0.5 rounded-full text-xs font-medium ${RS_BADGE[r.status] || 'bg-gray-100 text-gray-600'}">${esc(({ done: 'approved', dismissed: 'rejected' })[r.status] || r.status)}</span>${resolved}</td>
           <td class="px-4 py-3 text-right whitespace-nowrap space-x-3 text-xs">${actions}</td>
         </tr>`;
       }).join('');
@@ -1559,11 +1569,14 @@
       const by = document.getElementById('rs-by').value.trim() || null;
       if (by) localStorage.setItem(RESOLVED_BY_STORAGE, by);
       if (status === 'done' &&
-          !confirm('Mark as done? Remember: the actual reset is the “Clear Use” action in the Vitrium admin app — this only records that it happened.')) return;
+          !confirm('Approve this reset? First click “Clear Use” for this reader in the Vitrium admin app (Users tab). The reader is then emailed that a one-time reset was authorized.')) return;
+      if (status === 'dismissed' &&
+          !confirm('Reject this request? The reader is emailed that the reset could not be approved under the terms of service.')) return;
       const { status: code, data } = await api('/api/admin/device-resets', {
         method: 'POST', body: JSON.stringify({ id, status, resolved_by: by }),
       });
       if (code >= 400) alert(`Could not update: ${data.error || 'unknown error'}`);
+      else if (data.readerNotified && !data.readerNotified.sent) alert(`Saved, but the email to the reader failed: ${data.readerNotified.error}`);
       await loadResets();
     }
 

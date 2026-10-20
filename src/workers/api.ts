@@ -33,7 +33,7 @@ import { handleIngestJobs, serveCover, handleAdminStandards } from './staff-inge
 import { handleEvent } from './events';
 import { handlePreferences } from './preferences';
 import { handleAdminUsers } from './users';
-import { handleAuthMe, handleDevLogin, requireReadAccess, requireCorpusAccess, resolveRequestTier, staffOnlyActive } from './session';
+import { handleAuthMe, handleDevLogin, requireReadAccess, requireCorpusAccess, resolveRequestTier } from './session';
 import { buildLoginUrl, buildLogoutUrl, getSsoState, isStagingRequest } from '../lib/sso';
 import {
   normalizeSavedItem, savedItemCodes, newShareToken, CSV_COLUMNS, csvCell, csvRowFor,
@@ -217,11 +217,13 @@ export default {
       // enforces that at save time), so the link discloses references, which is
       // the point of sharing it. Claiming it into an account still needs a
       // session, and so does everything else under /api/projects.
-      // Under the staff-only lockdown (lib/access-mode.ts) even this read
-      // needs a session — which then has to be a staff one.
+      // Not even the staff-only lockdown closes it any more (client 10/19/26
+      // #2: "Don't require any authentication to view a shared link … I think
+      // that's zero-risk and could increase adoption") — recipients were shown
+      // a bare "authentication_required". Its CSV export is public with it
+      // ("allow Export CSV and Print").
       const isPublicSharedRead =
-        request.method === 'GET' && /^\/api\/projects\/shared\/[^/]+$/.test(path) &&
-        !(await staffOnlyActive(request, env));
+        request.method === 'GET' && /^\/api\/projects\/shared\/[^/]+(?:\/csv)?$/.test(path);
 
       // The catalogue LIST is public (webstore prototype 10/14/26, "List
       // Contents" tab: "Embed content from lens.ies.org/contents — public
@@ -568,6 +570,13 @@ async function handleProjects(request: Request, env: Env, url: URL): Promise<Res
   if (projectId === 'shared' && subResource && !appId && request.method === 'GET') {
     return getSharedCollection(env, subResource);
   }
+  // …and its CSV, for the recipient's "Export CSV" (client 10/19/26 #2). The
+  // same citations-only columns as the owner's export.
+  if (projectId === 'shared' && subResource && appId === 'csv' && request.method === 'GET') {
+    const shared = await resolveSharedProject(env, subResource);
+    if ('error' in shared) return json({ error: shared.error }, shared.status);
+    return exportCollectionCsv(env, String(shared.project.id));
+  }
 
   // Everything else acts on the signed-in reader's OWN collections.
   const owner = await collectionOwner(request, env);
@@ -892,13 +901,23 @@ async function emailCollection(request: Request, env: Env, projectId: string): P
 
 /** Read a shared collection by token — the recipient's preview before claiming. */
 async function getSharedCollection(env: Env, token: string): Promise<Response> {
+  const shared = await resolveSharedProject(env, token);
+  if ('error' in shared) return json({ error: shared.error }, shared.status);
+  const project = shared.project;
+  return json({ collection: project, applications: await collectionItems(env, String(project.id)), shared: true });
+}
+
+/** The collection a share token opens, or why it opens nothing. */
+async function resolveSharedProject(
+  env: Env, token: string,
+): Promise<{ project: Record<string, any> } | { error: string; status: number }> {
   const project = await env.DB.prepare('SELECT * FROM projects WHERE share_token = ?')
     .bind(token).first<Record<string, any>>();
-  if (!project) return json({ error: 'This share link is not valid.' }, 404);
+  if (!project) return { error: 'This share link is not valid.', status: 404 };
   if (project.share_expires_at && new Date(project.share_expires_at) < new Date()) {
-    return json({ error: 'This share link has expired.' }, 410);
+    return { error: 'This share link has expired.', status: 410 };
   }
-  return json({ collection: project, applications: await collectionItems(env, String(project.id)), shared: true });
+  return { project };
 }
 
 /**

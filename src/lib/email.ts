@@ -100,6 +100,28 @@ function greeting(name: string | null): string {
   return first ? `Hello ${first},` : 'Hello,';
 }
 
+/**
+ * "Near bottom, add 2 buttons: 'Video Overview' and 'Tutorials'" (client,
+ * 10/20/26) — on every message a reader receives. The video is the one the
+ * welcome window opens (index.html WELCOME_LINKS); keep the two in step.
+ */
+export const VIDEO_OVERVIEW_URL = 'https://www.loom.com/share/7fc113be55b04f3588d0f549809c3028';
+const CANONICAL_APP_URL = 'https://lens.ies.org';
+
+function tutorialsUrl(appUrl?: string): string {
+  return `${(appUrl || CANONICAL_APP_URL).replace(/\/+$/, '')}/tutorials`;
+}
+
+function resourceButtonsHtml(appUrl?: string): string {
+  const btn = (href: string, label: string) =>
+    `<a href="${escapeHtml(href)}" style="display:inline-block;margin:0 8px 8px 0;border:1px solid ${BRAND_SECONDARY};color:${BRAND_SECONDARY};text-decoration:none;padding:9px 16px;border-radius:6px;font-weight:600;font-size:14px">${label}</a>`;
+  return `<p style="margin:0 0 18px">${btn(VIDEO_OVERVIEW_URL, 'Video Overview')}${btn(tutorialsUrl(appUrl), 'Tutorials')}</p>`;
+}
+
+function resourceLinesText(appUrl?: string): string[] {
+  return [`Video Overview: ${VIDEO_OVERVIEW_URL}`, `Tutorials: ${tutorialsUrl(appUrl)}`];
+}
+
 function paragraph(text: string): string {
   return `<p style="margin:0 0 16px;color:#444;font-size:15px;line-height:1.55">${escapeHtml(text)}</p>`;
 }
@@ -123,14 +145,14 @@ export function buildInviteEmail(ctx: InviteEmailContext): InviteEmailContent {
   const lines: string[] = [];
   lines.push(
     invitedBy
-      ? `${invitedBy} has given you access to IES Lens, the Illuminating Engineering Society's assistant for searching the IES Lighting Library.`
-      : `You have been given access to IES Lens, the Illuminating Engineering Society's assistant for searching the IES Lighting Library.`,
+      ? `${invitedBy} has given you access to IES Lens, the Illuminating Engineering Society's AI-assisted guide for navigating IES resources.`
+      : `You have been given access to IES Lens, the Illuminating Engineering Society's AI-assisted guide for navigating IES resources.`,
   );
   lines.push(
-    'Ask a question in plain language — "how bright should a skating rink be?" — and IES Lens answers with the relevant passages, illuminance tables and citations from current IES standards.',
+    'IES Lens can interpret your question, surface relevant excerpts, definitions, references, and illuminance recommendations, and link you directly to the source within the Lighting Library.',
   );
   lines.push(
-    'Sign in with your IES account. The first time you sign in since the IES sign-in upgrade you will be asked to set a new password; look for a separate email from IES after you enter your address.',
+    'Sign in with your IES account. The first time you sign in you may be asked to set a new password; look for a separate email from IES after you enter your address.',
   );
   if (ctx.expiresAt) {
     lines.push(`Your access runs through ${formatExpiry(ctx.expiresAt)}.`);
@@ -148,6 +170,7 @@ export function buildInviteEmail(ctx: InviteEmailContext): InviteEmailContent {
       ${lines.map(paragraph).join('\n      ')}
       <p style="margin:0 0 20px"><a href="${escapeHtml(appUrl)}/" style="display:inline-block;background:${BRAND_PRIMARY};color:#fff;text-decoration:none;padding:12px 22px;border-radius:6px;font-weight:600;font-size:15px">Open IES Lens</a></p>
       <p style="margin:0 0 20px;font-size:13px;color:#666">If the button doesn't work, copy this address into your browser:<br><span style="color:${BRAND_SECONDARY};word-break:break-all">${escapeHtml(appUrl)}/</span></p>
+      ${resourceButtonsHtml(appUrl)}
       <p style="margin:0;font-size:13px;color:#666">Technical support: <a href="https://ies.org/contact-us/" style="color:${BRAND_SECONDARY}">ies.org/contact-us</a>.</p>
     </div>
     <div style="padding:14px 20px;background:#f4f6f8;color:#888;font-size:12px">Sent by IES Lens because you were added to IES Lens's access list${invitedBy ? ` by ${escapeHtml(invitedBy)}` : ''} — please do not reply to this message.</div>
@@ -161,6 +184,8 @@ export function buildInviteEmail(ctx: InviteEmailContext): InviteEmailContent {
     '',
     ...lines.flatMap((l) => [l, '']),
     `Open IES Lens: ${appUrl}/`,
+    '',
+    ...resourceLinesText(appUrl),
     '',
     'Technical support: https://ies.org/contact-us/',
     '',
@@ -231,6 +256,10 @@ export function describeSendError(err: unknown): string {
 /** Store pages the email points at for access. */
 const STORE_URL = 'https://store.ies.org/';
 const SUBSCRIBE_URL = 'https://ies.org/products/lighting-library/';
+
+/** The client's description of the Library (10/20/26). */
+const LIBRARY_PITCH = 'The Lighting Library is the complete library of IES standards and guidelines. '
+  + 'Read lighting standards from IES committees or explore with IES Lens for guided access to definitions, documents, references, and more.';
 
 /** Card labels, matching the result cards and the CSV export exactly. */
 const ITEM_LABELS: Record<string, string> = {
@@ -354,11 +383,11 @@ export function buildCollectionShareEmail(ctx: CollectionShareEmailContext): Inv
   const accessHtml = `
       <div style="margin:22px 0 0;padding:16px 18px;background:#f8fafb;border:1px solid #e2e6ea;border-radius:6px">
         <div style="font-size:14px;font-weight:600;color:${BRAND_SECONDARY};padding-bottom:6px">Don't have access to these standards?</div>
-        <p style="margin:0 0 10px;font-size:13px;color:#555;line-height:1.55">The IES Lighting Library is the Illuminating Engineering Society's collection of ANSI-approved lighting standards. Every reference above links to the exact page.</p>
+        <p style="margin:0 0 10px;font-size:13px;color:#555;line-height:1.55">${escapeHtml(LIBRARY_PITCH)} Every reference above links to the exact page.</p>
         <p style="margin:0;font-size:13px">
           <a href="${SUBSCRIBE_URL}" style="color:${BRAND_PRIMARY};text-decoration:none;font-weight:600">Subscribe to the Lighting Library</a>
           <span style="color:#b7c0c8"> &nbsp;·&nbsp; </span>
-          <a href="${STORE_URL}" style="color:${BRAND_PRIMARY};text-decoration:none;font-weight:600">Buy individual standards</a>
+          <a href="${STORE_URL}" style="color:${BRAND_PRIMARY};text-decoration:none;font-weight:600">Lease individual standards</a>
         </p>
       </div>`;
 
@@ -388,7 +417,8 @@ export function buildCollectionShareEmail(ctx: CollectionShareEmailContext): Inv
       </table>
       ${claimHtml}
       ${accessHtml}
-      <p style="margin:22px 0 0;font-size:13px;color:#666">Technical support: <a href="https://ies.org/contact-us/" style="color:${BRAND_SECONDARY}">ies.org/contact-us</a>.</p>
+      <div style="margin:22px 0 0">${resourceButtonsHtml(appUrl)}</div>
+      <p style="margin:4px 0 0;font-size:13px;color:#666">Technical support: <a href="https://ies.org/contact-us/" style="color:${BRAND_SECONDARY}">ies.org/contact-us</a>.</p>
     </div>
     <div style="padding:14px 20px;background:#f4f6f8;color:#888;font-size:12px">Sent by IES Lens because ${sender ? escapeHtml(sender) : 'an IES Lens user'} shared these search results with you — please do not reply to this message. Excerpt text is not reproduced; each reference links to the standard in the IES Lighting Library.</div>
   </div>
@@ -410,7 +440,10 @@ export function buildCollectionShareEmail(ctx: CollectionShareEmailContext): Inv
     '',
     "Don't have access to these standards?",
     `Subscribe to the Lighting Library: ${SUBSCRIBE_URL}`,
-    `Buy individual standards: ${STORE_URL}`,
+    LIBRARY_PITCH,
+    `Lease individual standards: ${STORE_URL}`,
+    '',
+    ...resourceLinesText(appUrl),
     '',
     'Technical support: https://ies.org/contact-us/',
     '',
@@ -550,6 +583,81 @@ export async function sendDeviceResetEmail(
   }
 }
 
+// ─── The reader's answer to a device-limit reset request (client 10/20/26) ────
+
+export interface DeviceResetDecisionContext {
+  to: string;
+  name: string | null;
+  approved: boolean;
+  /** Designation + title of the document the reader was refused, if known. */
+  documentTitle: string | null;
+}
+
+/**
+ * "If staff approves: send email to user … If staff rejects: notify user via
+ * email" — the sentences are the client's own.
+ */
+export function buildDeviceResetDecisionEmail(ctx: DeviceResetDecisionContext): InviteEmailContent {
+  const tutorials = tutorialsUrl();
+  const subject = ctx.approved
+    ? 'Your Lighting Library device limit reset was approved'
+    : 'Your Lighting Library device limit reset request';
+  const [before, after] = ctx.approved
+    ? ['Staff has authorized a one-time device limit reset. To maintain your access, limit your use to two browsers (e.g. one on a laptop and one on a mobile device) and avoid clearing your browser cache. Visit the ',
+       ' page to learn more.']
+    : ['Per the terms of service, staff was unable to approve your request for a device limit reset. Please continue to access your Lighting Library subscription from the two registered personal devices. Visit the ',
+       ' page to learn more.'];
+  const docLine = ctx.documentTitle ? `Your request concerned ${ctx.documentTitle}.` : '';
+
+  const html = `<!doctype html><html><body style="margin:0;background:#f4f6f8;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif">
+  <div style="max-width:560px;margin:24px auto;background:#fff;border:1px solid #e2e6ea;border-radius:8px;overflow:hidden">
+    ${emailBanner()}
+    <div style="padding:24px 20px">
+      <h1 style="margin:0 0 14px;font-size:19px;color:${BRAND_SECONDARY}">${ctx.approved ? 'Device limit reset approved' : 'Device limit reset not approved'}</h1>
+      ${paragraph(greeting(ctx.name))}
+      <p style="margin:0 0 16px;color:#444;font-size:15px;line-height:1.55">${escapeHtml(before)}<a href="${escapeHtml(tutorials)}" style="color:${BRAND_PRIMARY};font-weight:700;text-decoration:none">Tutorials</a>${escapeHtml(after)}</p>
+      ${docLine ? paragraph(docLine) : ''}
+      <p style="margin:0 0 20px"><a href="${LIBRARY_URL}" style="display:inline-block;background:${BRAND_PRIMARY};color:#fff;text-decoration:none;padding:12px 22px;border-radius:6px;font-weight:600;font-size:15px">Open the IES Lighting Library</a></p>
+      ${resourceButtonsHtml()}
+      <p style="margin:0;font-size:13px;color:#666">Technical support: <a href="https://ies.org/contact-us/" style="color:${BRAND_SECONDARY}">ies.org/contact-us</a>.</p>
+    </div>
+    <div style="padding:14px 20px;background:#f4f6f8;color:#888;font-size:12px">Sent by IES Lens in answer to your device limit reset request — please do not reply to this message.</div>
+  </div>
+</body></html>`;
+
+  const text = [
+    ctx.approved ? 'Device limit reset approved' : 'Device limit reset not approved',
+    '',
+    greeting(ctx.name),
+    '',
+    `${before}Tutorials${after} ${tutorials}`,
+    ...(docLine ? ['', docLine] : []),
+    '',
+    `Open the IES Lighting Library: ${LIBRARY_URL}`,
+    '',
+    ...resourceLinesText(),
+    '',
+    'Technical support: https://ies.org/contact-us/',
+    '',
+    'Sent by IES Lens in answer to your device limit reset request — please do not reply.',
+  ].join('\n');
+  return { subject, html, text };
+}
+
+export async function sendDeviceResetDecisionEmail(env: Env, ctx: DeviceResetDecisionContext): Promise<SendOutcome> {
+  const binding = env.SEND_EMAIL;
+  if (!binding) return { sent: false, error: 'SEND_EMAIL binding is not configured on this deployment.' };
+  const { subject, html, text } = buildDeviceResetDecisionEmail(ctx);
+  try {
+    await binding.send({ to: ctx.to, from: { email: FROM_ADDRESS, name: FROM_NAME }, subject, html, text });
+    return { sent: true };
+  } catch (err) {
+    const error = describeSendError(err);
+    console.error('device_reset_decision_email_failed', { to: ctx.to, error });
+    return { sent: false, error };
+  }
+}
+
 // ─── Complimentary document access (client DO110) ─────────────────────────────
 
 /** One granted standard, already resolved against D1 by the caller. */
@@ -609,30 +717,31 @@ export function buildCompAccessEmail(ctx: CompAccessEmailContext): InviteEmailCo
       ? `Complimentary ${ctx.days}-day access: ${docs[0].designation}`
       : `Complimentary ${ctx.days}-day access to ${count} IES standards`;
 
-  const what = lens
-    ? 'IES Lens and the full IES Lighting Library'
-    : `the ${count === 1 ? 'standard' : 'standards'} listed below`;
+  // Client 10/20/26: "granted"; a document grant says what it does NOT include;
+  // a Lens comp is a Subscription for the window. "Give it a few hours" went:
+  // the grant is applied automatically (AuthIES), so the honest advice is a
+  // browser refresh, with support as the fallback for the rare manual case.
+  const by = ctx.grantedBy ? `${ctx.grantedBy} at the Illuminating Engineering Society` : 'The Illuminating Engineering Society';
   const lines: string[] = [];
-  lines.push(
-    ctx.grantedBy
-      ? `${ctx.grantedBy} at the Illuminating Engineering Society has given you complimentary ${ctx.days}-day access to ${what}.`
-      : `The Illuminating Engineering Society has given you complimentary ${ctx.days}-day access to ${what}.`,
-  );
   lines.push(lens
-    ? `Your access runs from ${formatExpiry(ctx.startDate)} through ${formatExpiry(ctx.endDate)}, with everything a Lighting Library subscriber has: every current and deprecated IES standard, and the full IES Lens search with its AI Guide, illuminance tables and version comparisons.`
-    : `Your access runs from ${formatExpiry(ctx.startDate)} through ${formatExpiry(ctx.endDate)}. It covers only these documents — it is not a Lighting Library subscription.`,
-  );
+    ? `${by} has granted you complimentary ${ctx.days}-day access to the full Lighting Library and IES Lens.`
+    : `${by} has granted you complimentary ${ctx.days}-day access to the ${count === 1 ? 'standard' : 'standards'} listed below.`);
+  lines.push(lens
+    ? `Your access runs from ${formatExpiry(ctx.startDate)} through ${formatExpiry(ctx.endDate)}.`
+    : `Your access runs from ${formatExpiry(ctx.startDate)} through ${formatExpiry(ctx.endDate)}. It covers only these documents — it is not a Lighting Library subscription and does not include full access to IES Lens.`);
   // "What steps if any does a user have to take if they do not already have an
   // existing IES account with us under that email?" (client 10/16/26 #6) —
   // AuthIES matches the grant by email at sign-in, so the answer is in the mail.
   lines.push(
-    `Sign in with your IES account under this email address (${ctx.to}). If you do not have one yet, create a free IES account at ies.org with this same address — your access applies the first time you sign in.`,
+    `${lens ? 'Sign in to the Lighting Library with your IES account to get started' : 'Sign in to the Lighting Library with your IES account to read them'}, using this email address (${ctx.to}). If you do not have an IES account yet, create a free one at ies.org with this same address — your access applies the first time you sign in.`,
   );
-  if (!ctx.applied) {
-    lines.push(lens
-      ? 'If your Lighting Library access has not appeared yet, give it a few hours: IES staff are enabling it shortly after this message goes out. IES Lens is available as soon as you sign in.'
-      : 'If your access has not appeared yet, give it a few hours: it is enabled by IES staff shortly after this message goes out.');
-  }
+  lines.push(ctx.applied
+    ? 'If your access does not appear right away, refresh your browser page.'
+    : 'If your access does not appear right away, refresh your browser page; if it is still missing after a few hours, contact us at ies.org/contact-us.');
+  const heading = `Your complimentary ${ctx.days}-day ${lens ? 'Subscription' : 'Document'} access`;
+  // Only a document grant is told what a subscription adds.
+  const subscribeHtml = lens ? '' : `<p style="margin:0 0 16px;color:#444;font-size:15px;line-height:1.55"><a href="${SUBSCRIBE_URL}" style="color:${BRAND_PRIMARY};font-weight:700;text-decoration:none">Subscribe</a> for full access.</p>`;
+  const subscribeText = lens ? [] : [`Subscribe for full access: ${SUBSCRIBE_URL}`, ''];
 
   const docHtml = docs.map(d => {
     const label = d.title ? `${d.designation} ${d.title}` : d.designation;
@@ -651,15 +760,18 @@ export function buildCompAccessEmail(ctx: CompAccessEmailContext): InviteEmailCo
   <div style="max-width:600px;margin:24px auto;background:#fff;border:1px solid #e2e6ea;border-radius:8px;overflow:hidden">
     ${emailBanner()}
     <div style="padding:24px 20px">
-      <h1 style="margin:0 0 14px;font-size:19px;color:${BRAND_SECONDARY}">Your complimentary ${escapeHtml(String(ctx.days))}-day access</h1>
+      <h1 style="margin:0 0 14px;font-size:19px;color:${BRAND_SECONDARY}">${escapeHtml(heading)}</h1>
       ${paragraph(greeting(ctx.name))}
-      ${lines.map(paragraph).join('\n      ')}
+      ${lines.slice(0, 2).map(paragraph).join('\n      ')}
+      ${subscribeHtml}
+      ${lines.slice(2).map(paragraph).join('\n      ')}
       ${lens ? '' : `<p style="margin:0 0 4px;font-size:13px;color:#7a8794;letter-spacing:.03em;text-transform:uppercase">${count === 1 ? '1 standard' : `${count} standards`}</p>
       <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse;margin:0 0 22px">
       ${docHtml}
       </table>`}
       ${lens ? `<p style="margin:0 0 12px"><a href="${LENS_URL}" style="display:inline-block;background:${BRAND_PRIMARY};color:#fff;text-decoration:none;padding:12px 22px;border-radius:6px;font-weight:600;font-size:15px">Open IES Lens</a></p>` : ''}
       <p style="margin:0 0 20px"><a href="${LIBRARY_URL}" style="display:inline-block;background:${BRAND_PRIMARY};color:#fff;text-decoration:none;padding:12px 22px;border-radius:6px;font-weight:600;font-size:15px">Open the IES Lighting Library</a></p>
+      ${resourceButtonsHtml()}
       <p style="margin:0;font-size:13px;color:#666">Technical support: <a href="https://ies.org/contact-us/" style="color:${BRAND_SECONDARY}">ies.org/contact-us</a>.</p>
     </div>
     <div style="padding:14px 20px;background:#f4f6f8;color:#888;font-size:12px">Sent by IES Lens because IES granted you complimentary access${lens ? '' : ' to these standards'}${ctx.grantedBy ? ` (${escapeHtml(ctx.grantedBy)})` : ''} — please do not reply to this message.</div>
@@ -667,14 +779,18 @@ export function buildCompAccessEmail(ctx: CompAccessEmailContext): InviteEmailCo
 </body></html>`;
 
   const text = [
-    `Your complimentary ${ctx.days}-day access`,
+    heading,
     '',
     greeting(ctx.name),
     '',
-    ...lines.flatMap(l => [l, '']),
+    ...lines.slice(0, 2).flatMap(l => [l, '']),
+    ...subscribeText,
+    ...lines.slice(2).flatMap(l => [l, '']),
     ...(lens ? [`Open IES Lens: ${LENS_URL}`] : [count === 1 ? '1 standard' : `${count} standards`, '', docText]),
     '',
     `Open the IES Lighting Library: ${LIBRARY_URL}`,
+    '',
+    ...resourceLinesText(),
     '',
     'Technical support: https://ies.org/contact-us/',
     '',

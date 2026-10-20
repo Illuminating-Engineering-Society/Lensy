@@ -1733,6 +1733,50 @@ losing content") is answered by the alignment report, not by the model.
   `staff-ingest.test.js` (fixtures are stored-method ZIPs so they run on any
   Node ≥ 18; `src/lib/docx-fixture.js` is test-only).
 
+### The 10/19–10/20/26 Teams notes: emails, error pages, padlocked bookmarks, public share links (2026-10-20)
+
+No migration; no search-cache bump.
+
+- **Shared bookmark links are public, lockdown or not (10/19 #2).** The
+  staff-only lockdown used to close `GET /api/projects/shared/:token` too, so
+  recipients got a bare "authentication_required". It is now always public, and
+  so is its CSV (`GET /api/projects/shared/:token/csv`, `resolveSharedProject`
+  in api.ts; same citations-only columns as the owner export). The shared view
+  keeps Export CSV and Print (`data-shared-ok` on those buttons), and an
+  anonymous visitor gets the green Subscribe banner plus "Already a subscriber?
+  Log in".
+- **Locked, not hidden, for non-subscribers (10/19 #1, 10/20).** "+ Bookmark"
+  on cards and passages is greyed with 🔒 and a click toasts instead of saving;
+  on /bookmarks, Edit details / Link / Email are greyed with 🔒 and a
+  capture-phase listener (`LOCKED_ACTIONS`) blocks their inline onclick. The
+  API refusal (`subscription_required`) is unchanged and is the boundary.
+- **A TC chair's free access needs an active IES membership (10/19 #3).**
+  `earnedTier` counts `tc-chair` only when `isMember` is true (`TC_CHAIR_ROLE`
+  in tiers.ts); AuthIES applies the same rule to Vitrium (`vitriumAdmits`,
+  refusal `tc_chair_requires_membership`). On the day: 35 member chairs keep
+  it, 5 non-members lose it, 5 also subscribe. Chairs come only from active
+  Technical committees (AuthIES tc-roles-shape.ts, already true).
+- **Emails (10/20).** Every reader-facing message gains Video Overview +
+  Tutorials buttons (`resourceButtonsHtml`, `VIDEO_OVERVIEW_URL` — keep in step
+  with index.html `WELCOME_LINKS`). Invite: "AI-assisted guide for navigating
+  IES resources", the client's capability sentence, no "sign-in upgrade".
+  Shared bookmarks: `LIBRARY_PITCH`, "Lease individual standards". Comp: the
+  heading names "Document" or "Subscription", "granted", a document grant says
+  it "does not include full access to IES Lens" + Subscribe, and "give it a few
+  hours" became "refresh your browser page".
+- **Device resets (10/20).** The error-page form asks for the reason ("Subscriptions
+  are licensed for individual use on up to 2 devices", required); the admin tab
+  reads Approve / Reject with the Vitrium "Clear Use" steps; the first decision
+  emails the READER the client's wording (`buildDeviceResetDecisionEmail`), never
+  twice, never on Reopen.
+- **Error page (10/20).** "lease it individually" (and lease wording throughout),
+  Tutorials on every code, Subscribe on 3yq/g45, the vc3 2-browser/2-device
+  license text and "Visit the Subscription page to license additional users".
+- **Data:** RP-27-20+E1 is Deprecated in D1 (superseded by RP-27-26); its
+  Library link `7jbkB4` is the Lighting Science-folder copy in the 8/24 portal
+  export (DocCode 0000-2E4F-3A9370-00656659) — the Vitrium-side move is IES's.
+  The per-product lease URLs (Manuel's 10/16 email) are still to load.
+
 ### The 10/16/26 Teams notes: one Guide for every tier, an outline-shaped comparison (2026-10-20)
 
 `SEARCH_CACHE_SCHEMA` → **v24**. Migrations **0022** (`search_log.tier`) and **0023** (comp scope).

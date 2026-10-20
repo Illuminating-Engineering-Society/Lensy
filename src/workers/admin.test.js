@@ -10,7 +10,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { handleAdminAnalytics, handleAdminDeviceResetsList } from './admin';
+import { handleAdminAnalytics, handleAdminDeviceResetsList, handleAdminDeviceResetUpdate } from './admin';
 
 // ─── Stubs ─────────────────────────────────────────────────────────────────────
 
@@ -30,6 +30,7 @@ function makeDb(route) {
         bind(...b) { stmt.bindings = b; calls.push({ sql, bindings: b }); return stmt; },
         async first() { return route(sql, stmt.bindings); },
         async all() { return { results: route(sql, stmt.bindings) || [] }; },
+        async run() { return route(sql, stmt.bindings) || { meta: { changes: 1 } }; },
       };
       return stmt;
     },
@@ -210,5 +211,51 @@ describe('GET /api/admin/device-resets', () => {
     expect(body.requests).toEqual([]);
     expect(body.counts.all).toBe(0);
     expect(body.note).toMatch(/migration 0016/);
+  });
+});
+
+// ─── Client 10/20/26: the reader hears the decision ───────────────────────────
+
+describe('POST /api/admin/device-resets emails the reader', () => {
+  const post = async (env, body) => {
+    const request = new Request('http://localhost/api/admin/device-resets', {
+      method: 'POST', headers: { Authorization: 'Bearer test', 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const res = await handleAdminDeviceResetUpdate(request, env);
+    return { status: res.status, body: await res.json() };
+  };
+  const envWith = (prior) => {
+    const sent = [];
+    const env = makeEnv(sql => (/SELECT email/.test(sql)
+      ? { email: 'reader@example.com', name: 'Pat Reader', document_title: 'ANSI/IES RP-6-24', status: prior }
+      : { meta: { changes: 1 } }));
+    env.SEND_EMAIL = { async send(m) { sent.push(m); } };
+    return { env, sent };
+  };
+
+  it('approval sends the authorized-reset wording', async () => {
+    const { env, sent } = envWith('new');
+    const { body } = await post(env, { id: 3, status: 'done' });
+    expect(body.readerNotified).toEqual({ sent: true });
+    expect(sent[0].to).toBe('reader@example.com');
+    expect(sent[0].text).toContain('Staff has authorized a one-time device limit reset.');
+    expect(sent[0].text).toContain('limit your use to two browsers');
+  });
+
+  it('rejection sends the terms-of-service wording', async () => {
+    const { env, sent } = envWith('new');
+    await post(env, { id: 3, status: 'dismissed' });
+    expect(sent[0].text).toContain('Per the terms of service, staff was unable to approve your request');
+    expect(sent[0].html).toMatch(/>Tutorials<\/a> page to learn more/);
+  });
+
+  it('never mails twice, and not when reopening or asked not to', async () => {
+    for (const [prior, body] of [['done', { id: 3, status: 'done' }], ['done', { id: 3, status: 'new' }], ['new', { id: 3, status: 'done', notify: false }]]) {
+      const { env, sent } = envWith(prior);
+      const res = await post(env, body);
+      expect(res.body.readerNotified).toBeNull();
+      expect(sent).toHaveLength(0);
+    }
   });
 });
