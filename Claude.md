@@ -1733,6 +1733,40 @@ losing content") is answered by the alignment report, not by the model.
   `staff-ingest.test.js` (fixtures are stored-method ZIPs so they run on any
   Node ≥ 18; `src/lib/docx-fixture.js` is test-only).
 
+### The 10/20/26 #1–#3 notes: rows with no vectors, answer-order curation, padlocks everywhere (2026-10-21)
+
+`SEARCH_CACHE_SCHEMA` → **v25**. No migration.
+
+- **RP-3-26 and RP-4-26 returned no illuminance cards (#1)** — their 26 / 40
+  rows were in D1 with NO application vectors. Those vectors (id = the row
+  code) only came from the separate full re-index
+  (`ingest-pdfs.js --applications-only` → `POST /api/ingest/applications`),
+  which nothing ran after a dashboard ingest; the other 13 table standards had
+  theirs from the last manual run. Fixed at both ends: `runDocumentIngest`
+  step 5 now embeds the rows it just wrote (`indexApplicationVectors` over
+  `loadApplicationsByCode`, so a 20-row script batch embeds 20, not the whole
+  standard), and production was re-indexed the same day (2,498 rows; Vectorize
+  showed the new ids ~3 min later). "how to light k-12 classroom" now leads with
+  15 RP-3-26 table cards. **Index health** probes each standard's first/last row
+  code (`appVectorSpotCheck`) and warns; Maintenance has **Re-index
+  illuminance rows**. That spot-check is the honest answer to Dan's "is there a
+  test that each indexed standard would appear": structural coverage is
+  checkable; whether a given phrasing RANKS a standard is a retrieval-quality
+  question, not a yes/no.
+- **The cited cards read in the answer's order (#2).** "Parking garages": the
+  Guide led with RP-8, the cards with 90.1 and G-1 — the cited band followed
+  the rerank. `curateResults` now sorts it by `guideMentionPositions` (where
+  each standard is first named in the English answer), stable, so cards of one
+  standard keep the rerank's order; the concept-question lift no longer applies
+  inside that band (the Guide is already told to lead with those committees).
+- **Locked, never hidden (#3, "make this a practice universally").**
+  `lockMenuItem` in site-menu.js greys + padlocks Compare Versions in the
+  List Standards / Bookmarks tools menu (the search page's already was); on
+  /bookmarks New Bookmark Collection and "Save to My Bookmarks" join Edit /
+  Link / Email in `LOCKED_ACTIONS`. Still hidden on purpose: result checkboxes
+  and the bulk bar (selection UI with nothing to act on), and every account
+  action for an anonymous share-link visitor.
+
 ### The 10/19–10/20/26 Teams notes: emails, error pages, padlocked bookmarks, public share links (2026-10-20)
 
 No migration; no search-cache bump.

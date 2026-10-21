@@ -129,7 +129,9 @@ const DATA_VERSION_KEY = 'cache:data-version';
 // v24: a Non-Subscriber's Guide answers from the subscriber's pool and only the
 //     cards are cut to the collection (client 10/16/26); the comparison prompt
 //     nests sections by their numbering (10/16/26 #4).
-const SEARCH_CACHE_SCHEMA = 'v24';
+// v25: the Guide-cited cards read in the order the answer names their
+//     standards (Dan, 10/20/26: Guide led with RP-8, cards with 90.1 and G-1).
+const SEARCH_CACHE_SCHEMA = 'v25';
 
 function errMsg(err: unknown): string {
   return err instanceof Error ? err.message : String(err);

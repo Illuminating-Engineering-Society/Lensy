@@ -10,7 +10,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { handleAdminAnalytics, handleAdminDeviceResetsList, handleAdminDeviceResetUpdate } from './admin';
+import { handleAdminAnalytics, handleAdminDeviceResetsList, handleAdminDeviceResetUpdate, handleAdminIndexStatus } from './admin';
 
 // ─── Stubs ─────────────────────────────────────────────────────────────────────
 
@@ -257,5 +257,35 @@ describe('POST /api/admin/device-resets emails the reader', () => {
       expect(res.body.readerNotified).toBeNull();
       expect(sent).toHaveLength(0);
     }
+  });
+});
+
+// ─── Client 10/20/26: illuminance rows without search vectors ─────────────────
+
+describe('GET /api/admin/index-status probes the illuminance rows\' own vectors', () => {
+  it('warns when a standard\'s rows have no vectors, and not when they do', async () => {
+    const env = makeEnv(sql => {
+      if (/FROM standards ORDER BY id/.test(sql)) {
+        return [
+          { id: 'RP-3-26', title: 'Educational', status: 'Active', chunk_count: null, page_count: 80, coverage_json: null,
+            vitrium_web_url: 'https://lighting.ies.org/x', published_date: '2026-06-26', buy_url: null },
+          { id: 'RP-6-24', title: 'Sports', status: 'Active', chunk_count: null, page_count: 90, coverage_json: null,
+            vitrium_web_url: 'https://lighting.ies.org/y', published_date: '2024-01-01', buy_url: null },
+        ];
+      }
+      if (/MIN\(code\)/.test(sql)) {
+        return [{ standard: 'RP-3-26', first: 'RP326_0000', last: 'RP326_0025' }, { standard: 'RP-6-24', first: 'RP624_0000', last: 'RP624_0236' }];
+      }
+      if (/COUNT\(\*\) AS n/.test(sql)) return [{ standard: 'RP-3-26', n: 26 }, { standard: 'RP-6-24', n: 237 }];
+      return [];
+    });
+    env.VECTORIZE = { getByIds: async (ids) => ids.filter(id => id.startsWith('RP624')).map(id => ({ id })) };
+    const { body } = await call(handleAdminIndexStatus, env, '/api/admin/index-status');
+    const rp3 = body.standards.find(s => s.id === 'RP-3-26');
+    const rp6 = body.standards.find(s => s.id === 'RP-6-24');
+    expect(rp3.appVectorSpotCheck).toEqual({ probed: 2, found: 0, missing: ['RP326_0000', 'RP326_0025'] });
+    expect(rp3.warnings.some(w => /Illuminance rows have no search vectors/.test(w))).toBe(true);
+    expect(rp6.appVectorSpotCheck.found).toBe(2);
+    expect(rp6.warnings.some(w => /Illuminance rows/.test(w))).toBe(false);
   });
 });

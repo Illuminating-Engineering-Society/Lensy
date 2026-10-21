@@ -1042,7 +1042,10 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
     const cited = (summary && !summary.degraded)
       ? extractGuideCitations(summary.textEnglish || summary.text || '', allResults.results)
       : new Set<number>();
-    const curated = curateResults(allResults.results, { order: rerankOrder, cited, conceptQuery });
+    // The cited cards then read in the order the answer names their standards
+    // (Dan, 10/20/26: the Guide led with RP-8, the cards with 90.1 and G-1).
+    const guideText = (summary && !summary.degraded) ? (summary.textEnglish || summary.text || '') : null;
+    const curated = curateResults(allResults.results, { order: rerankOrder, cited, conceptQuery, guideText });
     allResults.results = curated.results;
     curation = {
       applied: curated.changed || curated.promoted > 0,

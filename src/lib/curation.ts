@@ -301,6 +301,37 @@ export function extractGuideCitations(text: string | null | undefined, results: 
   return cited;
 }
 
+/**
+ * Where in the Guide's text each result's standard is FIRST named — the order
+ * the answer presents them in. Standards it never names are absent.
+ *
+ * "AI Guide returned RP-8 (roadway & parking facilities) first, but the first
+ * search cards were ASHRAE 90.1 (energy) and G-1 (security) … I would expect
+ * RP-8 to appear as the first search result" (Dan, 10/20/26). The cited band
+ * used to follow the rerank's order, which need not agree with the answer the
+ * reader is reading right above the cards.
+ */
+export function guideMentionPositions(text: string | null | undefined, results: SearchResult[]): Map<string, number> {
+  const positions = new Map<string, number>();
+  if (!text) return positions;
+  const names = new Map<string, Set<string>>();
+  for (const r of results) {
+    const id = r.application?.standard;
+    if (!id) continue;
+    if (!names.has(id)) names.set(id, new Set([id]));
+    if (r.application?.standardFull) names.get(id)!.add(r.application.standardFull);
+  }
+  for (const [id, designations] of names) {
+    let first = Infinity;
+    for (const d of designations) {
+      const m = new RegExp(`(?<![\\w-])${escapeRe(d)}(?![\\w-])`, 'i').exec(text);
+      if (m && m.index < first) first = m.index;
+    }
+    if (first !== Infinity) positions.set(id, first);
+  }
+  return positions;
+}
+
 // ─── Assembly ─────────────────────────────────────────────────────────────────
 
 export interface CurationInput {
@@ -313,6 +344,12 @@ export interface CurationInput {
    * Results from foundational committees are then lifted within their band.
    */
   conceptQuery?: boolean;
+  /**
+   * The Guide's English text. When given, the cited band follows the order the
+   * answer names its standards (guideMentionPositions), the rerank deciding
+   * only among cards of one standard.
+   */
+  guideText?: string | null;
 }
 
 /**
@@ -362,7 +399,7 @@ export interface CurationOutcome {
  * (DO33) that no ranking may undo. Guide-cited results carry `citedByGuide`
  * for the UI badge whether or not they were promoted.
  */
-export function curateResults(results: SearchResult[], { order, cited, conceptQuery = false }: CurationInput): CurationOutcome {
+export function curateResults(results: SearchResult[], { order, cited, conceptQuery = false, guideText = null }: CurationInput): CurationOutcome {
   // The exact/prefix term match scores LS-1 definitions 0.95–1.0
   // (DEFINITION_PREFIX_SCORE in the search worker); semantic definition
   // matches score below that and are curated like everything else.
@@ -392,12 +429,27 @@ export function curateResults(results: SearchResult[], { order, cited, conceptQu
     else rest.push(i);
   }
 
+  // The cited band reads in the order the Guide names its standards (Dan,
+  // 10/20/26). A stable sort, so cards of one standard keep the rerank's order,
+  // and a cited card whose standard the text never names (cannot happen today —
+  // citation requires the name — but cheap to guard) keeps its place at the end.
+  const mention = guideMentionPositions(guideText, results);
+  const mentionOf = (i: number) => mention.get(results[i]?.application?.standard ?? '') ?? Infinity;
+  const citedInAnswerOrder = mention.size > 0
+    ? [...promotedList].sort((a, b) => mentionOf(a) - mentionOf(b))
+    : promotedList;
+
   // A concept question lifts the foundational committees' results within each
   // band (never across bands: a Guide citation still outranks an uncited card).
+  // Not within the cited band when the answer's order is known: the Guide is
+  // already told to lead with those committees on a concept question, so its
+  // order IS the lift, and lifting again could put a card above the one the
+  // answer leads with.
   const favoured = (i: number) => isFoundationalCommittee(results[i]?.committee?.name);
+  const citedBand = conceptQuery && mention.size === 0 ? liftWithin(promotedList, favoured) : citedInAnswerOrder;
   const finalOrder = conceptQuery
-    ? [...pinned, ...liftWithin(promotedList, favoured), ...liftWithin(rest, favoured)]
-    : [...pinned, ...promotedList, ...rest];
+    ? [...pinned, ...citedBand, ...liftWithin(rest, favoured)]
+    : [...pinned, ...citedBand, ...rest];
   const changed = finalOrder.some((idx, pos) => idx !== pos);
 
   const curated = finalOrder.map(i =>

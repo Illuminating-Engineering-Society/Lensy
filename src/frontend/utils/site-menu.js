@@ -47,6 +47,33 @@
     login: 'M11 16l-4-4m0 0l4-4m-4 4h14m-5 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h7a3 3 0 013 3v1',
   };
 
+  /**
+   * A subscriber feature shown to a non-subscriber: greyed, padlocked, inert
+   * (client 10/20/26 #3 — the same treatment as the locked search filters).
+   * Idempotent, and reversible when the tier changes.
+   */
+  function lockMenuItem(el, locked) {
+    el.style.opacity = locked ? '0.5' : '';
+    el.style.cursor = locked ? 'not-allowed' : '';
+    el.setAttribute('aria-disabled', locked ? 'true' : 'false');
+    if (locked) el.title = 'Included with a Lighting Library subscription';
+    var lock = el.querySelector('.menu-lock');
+    if (locked && !lock) {
+      lock = document.createElement('span');
+      lock.className = 'menu-lock';
+      lock.textContent = ' 🔒';
+      el.appendChild(lock);
+    } else if (!locked && lock) {
+      lock.remove();
+    }
+    if (!el.__lockGuard) {
+      el.__lockGuard = true;
+      el.addEventListener('click', function (e) {
+        if (el.getAttribute('aria-disabled') === 'true') e.preventDefault();
+      });
+    }
+  }
+
   function esc(s) {
     return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
       return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
@@ -82,8 +109,9 @@
       link({ href: '/', icon: 'search', label: 'Search with IES Lens', current: current === 'search', title: 'Search the IES standards with IES Lens' }),
       link({ href: 'https://lighting.ies.org', icon: 'library', label: 'Browse Lighting Library', newTab: true, title: 'Open the IES Lighting Library in a new browser tab' }),
       // 10/13/26 #3: the search page's Compare Versions window, reached from
-      // every tools menu. /?compare=1 opens it on load; hidden for a reader
-      // whose tier locks comparisons (see the auth handler below).
+      // every tools menu. /?compare=1 opens it on load; for a reader
+      // whose tier locks comparisons it is greyed with the padlock, not hidden
+      // (client 10/20/26 #3; see lockMenuItem and the auth handler below).
       link({ href: '/?compare=1', icon: 'compare', label: 'Compare Versions', id: 'menu-compare', title: 'Compare Versions — AI summary of changes between a standard and its previous edition' }),
       link({ href: '/contents', icon: 'list', label: 'List Standards', current: current === 'contents', title: 'Every current IES standard in the Lighting Library' }),
       link({ href: '/tutorials', icon: 'video', label: 'Tutorials', newTab: true, cls: 'border-t border-gray-100', title: 'Video tutorials for the IES Lighting Library and IES Lens' }),
@@ -188,8 +216,10 @@
     if (sub) sub.classList.toggle('hidden', !lite);
     var refresh = document.getElementById('menu-refresh-access');
     if (refresh) refresh.classList.toggle('hidden', !lite);
+    // Compare Versions is a subscriber tool: greyed with the padlock, not
+    // hidden (client 10/20/26 #3: "let's make this a practice universally").
     var compare = document.getElementById('menu-compare');
-    if (compare) compare.classList.toggle('hidden', lite);
+    if (compare) lockMenuItem(compare, lite);
 
     // auth-gate's chip carries the IdP logout URL with its return parameters.
     var chip = document.querySelector('#lensy-user-chip a');

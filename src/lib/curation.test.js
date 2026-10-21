@@ -14,7 +14,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   buildRerankPrompt, describeForRerank, parseRankOrder,
-  extractGuideCitations, curateResults, PROMOTED_MAX, RERANK_MAX,
+  extractGuideCitations, curateResults, guideMentionPositions, PROMOTED_MAX, RERANK_MAX,
 } from './curation';
 
 const doc = (std, section, page, over = {}) => ({
@@ -202,5 +202,39 @@ describe('rerank prompt', () => {
     const prompt = buildRerankPrompt('parking', [doc('RP-8-25+E2', '4.2', 21), doc('RP-6-24', '5.4', 40)]);
     expect(prompt).toContain('ONLY a JSON array');
     expect(prompt).toContain('"parking"');
+  });
+});
+
+// Dan, 10/20/26: "AI Guide returned RP-8 … first, but the first search cards
+// were ASHRAE 90.1 (energy) and G-1 (security)."
+describe('the cited band follows the order the Guide names its standards', () => {
+  const results = [
+    doc('ASHRAE-IES-90.1-2025', '9.4.1.3', 120),
+    doc('G-1-22', '6.2', 30),
+    doc('RP-8-25+E2', '11.2', 60),
+    doc('RP-8-25+E2', '11.3', 61),
+  ];
+  const guide = 'According to ANSI/IES RP-8-25+E2, Section 11.2, p. 60 and Section 11.3, p. 61, parking garages need … '
+    + 'Energy limits come from ANSI/ASHRAE-IES-90.1-2025 Section 9.4.1.3, and security from ANSI/IES G-1-22, Section 6.2.';
+
+  it('finds where each standard is first named', () => {
+    const pos = guideMentionPositions(guide, results);
+    expect(pos.get('RP-8-25+E2')).toBeLessThan(pos.get('ASHRAE-IES-90.1-2025'));
+    expect(pos.get('ASHRAE-IES-90.1-2025')).toBeLessThan(pos.get('G-1-22'));
+  });
+
+  it('puts the Guide\'s lead standard first, whatever the rerank said', () => {
+    const cited = extractGuideCitations(guide, results);
+    const out = curateResults(results, { order: [0, 1, 3, 2], cited, guideText: guide });
+    expect(out.results.map(r => `${r.application.standard} ${r.excerpt.section}`)).toEqual([
+      // Same standard: the rerank's order (11.3 before 11.2) still decides.
+      'RP-8-25+E2 11.3', 'RP-8-25+E2 11.2', 'ASHRAE-IES-90.1-2025 9.4.1.3', 'G-1-22 6.2',
+    ]);
+  });
+
+  it('keeps the rerank order when no Guide text is given', () => {
+    const cited = extractGuideCitations(guide, results);
+    const out = curateResults(results, { order: [0, 1, 3, 2], cited });
+    expect(out.results[0].application.standard).toBe('ASHRAE-IES-90.1-2025');
   });
 });

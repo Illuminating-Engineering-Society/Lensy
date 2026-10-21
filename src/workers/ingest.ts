@@ -766,9 +766,18 @@ export async function runDocumentIngest(
   // This is the "PDFs as source of truth" step: application data comes FROM
   // the PDF, not from a manually maintained CSV.
   let applicationsUpserted = 0;
+  let applicationVectors = 0;
   if (Array.isArray(applications) && applications.length > 0) {
     await report('applications', { total: applications.length });
     applicationsUpserted = await upsertApplications(env.DB, applications);
+    // …and their vectors. Until 2026-10-21 these only came from the separate
+    // full re-index (`ingest-pdfs.js --applications-only`), which nothing ran
+    // after a dashboard ingest — RP-3-26 and RP-4-26 sat in D1 with 26 and 40
+    // rows and no vector, so no search ever returned a single table row from
+    // either (Dan, 10/20/26: "0 illuminance cards" for a K-12 classroom).
+    applicationVectors = await indexApplicationVectors(env, await loadApplicationsByCode(
+      env.DB, applications.map(a => a.code).filter((c): c is string => typeof c === 'string' && c !== ''),
+    ));
   }
 
   // ── 6. R2: drop the copy under the prefix this standard no longer belongs to ─
@@ -790,6 +799,7 @@ export async function runDocumentIngest(
     staleVectorsDeleted: staleDeleted,
     sectionTitles: sectionsJson ? Object.keys(sections).length : 0,
     applicationsUpserted,
+    applicationVectors,
     r2ObjectRemoved: r2Removed,
     coverage: chunks.length > 0 ? { ...coverage, pageCount } : null,
   } };
@@ -949,6 +959,23 @@ async function upsertApplications(db: D1Database, applications: Partial<Applicat
   return upserted;
 }
 
+/**
+ * The FULL active rows for these codes, as just written — the embed text reads
+ * columns the extractor's partial records may not carry (Standard_Full, notes).
+ */
+async function loadApplicationsByCode(db: D1Database, codes: string[]): Promise<ApplicationRow[]> {
+  const rows: ApplicationRow[] = [];
+  const PARAMS = 90;   // under D1's bound-variable limit per statement
+  for (let i = 0; i < codes.length; i += PARAMS) {
+    const group = codes.slice(i, i + PARAMS);
+    const res = await db.prepare(
+      `SELECT * FROM applications WHERE Active = 1 AND code IN (${group.map(() => '?').join(', ')})`
+    ).bind(...group).all<ApplicationRow>();
+    rows.push(...(res.results || []));
+  }
+  return rows;
+}
+
 // ─── Application Embedding ────────────────────────────────────────────────────
 // Re-embeds all D1 application rows into Vectorize.
 // Safe to re-run at any time (upsert is idempotent).
@@ -965,6 +992,25 @@ async function ingestApplications(env: Env): Promise<Response> {
     }, 400);
   }
 
+  const indexed = await indexApplicationVectors(env, applications);
+
+  // Corpus changed — invalidate all cached search responses.
+  await bumpDataVersion(env.SESSIONS);
+
+  return jsonResponse({
+    success: true,
+    applicationsIndexed: indexed,
+  });
+}
+
+/**
+ * Embed application rows into the main index. The vector id IS the row's
+ * code, which is how search finds its way back to the D1 row — a row without a
+ * vector is unreachable however well it matches. Shared by the full re-index
+ * above and by every document ingest (runDocumentIngest step 5).
+ */
+async function indexApplicationVectors(env: Env, applications: ApplicationRow[]): Promise<number> {
+  if (applications.length === 0) return 0;
   const texts = applications.map(buildApplicationEmbedText);
   const embeddings = await embedInBatches(env.AI, texts);
 
@@ -987,14 +1033,7 @@ async function ingestApplications(env: Env): Promise<Response> {
   for (let i = 0; i < vectors.length; i += VECTORIZE_BATCH) {
     await env.VECTORIZE.upsert(vectors.slice(i, i + VECTORIZE_BATCH) as unknown as VectorizeVector[]);
   }
-
-  // Corpus changed — invalidate all cached search responses.
-  await bumpDataVersion(env.SESSIONS);
-
-  return jsonResponse({
-    success: true,
-    applicationsIndexed: vectors.length,
-  });
+  return vectors.length;
 }
 
 /**

@@ -65,16 +65,19 @@
     /* "Bookmark & Share Search Results with Subscribers" is a subscription
        feature (webstore prototype 10/14/26). The API refuses these writes for a
        Non-Subscriber; reading, CSV export and delete stay available. */
-    body.tier-nonsubscriber #page-actions,
-    body.tier-nonsubscriber [onclick^="claimShared"] { display: none !important; }
-    /* Client 10/19/26 #1: Edit details, Link and Email stay VISIBLE, greyed
-       with the padlock the search filters use — the click is blocked in
-       script (LOCKED_ACTIONS below), since these are inline onclick handlers. */
+    /* Client 10/19/26 #1 and 10/20/26 #3 ("make this a practice universally"):
+       every subscriber action stays VISIBLE, greyed with the padlock the
+       search filters use — the click is blocked in script (LOCKED_ACTIONS
+       below), since these are inline onclick handlers. */
+    body.tier-nonsubscriber [onclick^="openNewProjectModal"],
+    body.tier-nonsubscriber [onclick^="claimShared"],
     body.tier-nonsubscriber [onclick^="openEditProjectModal"],
     body.tier-nonsubscriber [onclick^="copyShareLink"],
     body.tier-nonsubscriber [onclick^="openEmailModal"] {
       opacity: .45; cursor: not-allowed;
     }
+    body.tier-nonsubscriber [onclick^="openNewProjectModal"]::after,
+    body.tier-nonsubscriber [onclick^="claimShared"]::after,
     body.tier-nonsubscriber [onclick^="openEditProjectModal"]::after,
     body.tier-nonsubscriber [onclick^="copyShareLink"]::after,
     body.tier-nonsubscriber [onclick^="openEmailModal"]::after { content: '🔒'; margin-left: 2px; }
@@ -523,7 +526,7 @@
 
     // The padlocked actions (client 10/19/26 #1): visible, but a click explains
     // instead of opening. Capture phase, so it runs before the inline onclick.
-    const LOCKED_ACTIONS = '[onclick^="openEditProjectModal"], [onclick^="copyShareLink"], [onclick^="openEmailModal"]';
+    const LOCKED_ACTIONS = '[onclick^="openNewProjectModal"], [onclick^="claimShared"], [onclick^="openEditProjectModal"], [onclick^="copyShareLink"], [onclick^="openEmailModal"]';
     document.addEventListener('click', (e) => {
       if (!document.body.classList.contains('tier-nonsubscriber')) return;
       const btn = e.target.closest && e.target.closest(LOCKED_ACTIONS);
@@ -531,7 +534,7 @@
       e.preventDefault();
       e.stopImmediatePropagation();
       btn.title = 'Included with a Lighting Library subscription';
-      if (typeof showToast === 'function') showToast('Editing and sharing bookmarks is included with a Lighting Library subscription', 'info');
+      if (typeof showToast === 'function') showToast('Creating, editing and sharing bookmarks is included with a Lighting Library subscription', 'info');
     }, true);
 
     // ── Bootstrap ────────────────────────────────────────────────────────────

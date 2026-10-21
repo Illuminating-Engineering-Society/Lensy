@@ -56,6 +56,12 @@ interface IndexStatusRow {
   pageCoveragePct: number | null; chunkTypes: Record<string, number> | null;
   applicationRows: number;
   vectorSpotCheck: { probed: number; found: number; missing: string[] } | { error: string } | null;
+  /**
+   * The illuminance rows' own vectors (id = the row code), first and last row
+   * probed. Rows without vectors are unreachable by search — RP-3-26 and
+   * RP-4-26 sat that way after a dashboard ingest (Dan, 10/20/26).
+   */
+  appVectorSpotCheck: { probed: number; found: number; missing: string[] } | { error: string } | null;
   /** Catalogue gaps staff fix in Edit (client 10/15/26 #1). */
   missingLibraryLink: boolean;
   missingPublishedDate: boolean;
@@ -400,7 +406,7 @@ export async function handleAdminIndexStatus(request: Request, env: Env): Promis
   const url = new URL(request.url);
   const verify = url.searchParams.get('verify') !== '0';
 
-  const [standardsRes, appCountsRes] = await Promise.all([
+  const [standardsRes, appCountsRes, appEndsRes] = await Promise.all([
     env.DB.prepare(`
       SELECT id, title, full_designation, status, chunk_count, page_count,
              coverage_json, indexed_at, vitrium_web_url, published_date, buy_url
@@ -410,7 +416,12 @@ export async function handleAdminIndexStatus(request: Request, env: Env): Promis
       SELECT Standard AS standard, COUNT(*) AS n
       FROM applications WHERE Active = 1 GROUP BY Standard
     `).all<{ standard: string; n: number }>(),
+    env.DB.prepare(`
+      SELECT Standard AS standard, MIN(code) AS first, MAX(code) AS last
+      FROM applications WHERE Active = 1 GROUP BY Standard
+    `).all<{ standard: string; first: string; last: string }>(),
   ]);
+  const appEnds = new Map((appEndsRes.results || []).map(r => [r.standard, [r.first, r.last]] as [string, string[]]));
 
   const appCounts = new Map((appCountsRes.results || []).map(r => [r.standard, r.n] as [string, number]));
 
@@ -433,6 +444,7 @@ export async function handleAdminIndexStatus(request: Request, env: Env): Promis
       chunkTypes: coverage?.byType ?? null,
       applicationRows: appCounts.get(std.id) || 0,
       vectorSpotCheck: null,
+      appVectorSpotCheck: null,
       missingLibraryLink: !String(std.vitrium_web_url ?? '').trim(),
       missingPublishedDate: !String(std.published_date ?? '').trim(),
       hasLeaseLink: !!String(std.buy_url ?? '').trim(),
@@ -478,6 +490,22 @@ export async function handleAdminIndexStatus(request: Request, env: Env): Promis
         } catch (err) {
           row.vectorSpotCheck = { error: err instanceof Error ? err.message : String(err) };
         }
+      }
+    }
+
+    const ends = appEnds.get(std.id);
+    if (verify && ends && std.status !== 'Deprecated') {
+      const ids = [...new Set(ends.filter(Boolean))];
+      try {
+        const got = await env.VECTORIZE.getByIds(ids);
+        const foundIds = new Set((got || []).map((v: { id: string }) => v.id));
+        const missing = ids.filter(id => !foundIds.has(id));
+        row.appVectorSpotCheck = { probed: ids.length, found: ids.length - missing.length, missing };
+        if (missing.length > 0) {
+          row.warnings.push(`Illuminance rows have no search vectors (${missing.length}/${ids.length} probes missing) — search cannot return them. Run "Re-index illuminance rows" in Maintenance.`);
+        }
+      } catch (err) {
+        row.appVectorSpotCheck = { error: err instanceof Error ? err.message : String(err) };
       }
     }
 

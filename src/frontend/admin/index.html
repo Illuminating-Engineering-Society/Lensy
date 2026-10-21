@@ -634,6 +634,20 @@
           <span id="mt-flush-result" class="ml-3 text-sm text-gray-500"></span>
         </div>
 
+        <!-- Client 10/20/26: RP-3-26's illuminance rows were in D1 with no
+             search vectors. Index health now warns about that; this repairs it. -->
+        <div class="bg-white rounded-xl shadow p-5">
+          <h3 class="font-display font-bold mb-1">Re-index illuminance rows</h3>
+          <p class="text-sm text-gray-500 mb-3">
+            Rebuilds the search vector of every active illuminance-table row (about 2,500). Run it when
+            Index health warns that a standard's illuminance rows have no search vectors — those rows
+            cannot appear in any search until they do. Takes about a minute; results show in search a few
+            minutes later.
+          </p>
+          <button onclick="reindexApplications()" id="mt-reindex" class="px-4 py-2 text-sm rounded-lg bg-brand-primary hover:bg-brand-primary-dark text-white font-medium transition">Re-index illuminance rows</button>
+          <span id="mt-reindex-result" class="ml-3 text-sm text-gray-500"></span>
+        </div>
+
         <div class="bg-white rounded-xl shadow p-5">
           <h3 class="font-display font-bold mb-1">Scan for orphan vectors</h3>
           <p class="text-sm text-gray-500 mb-3">
@@ -2000,6 +2014,22 @@
         const { status, data } = await api('/api/admin/flush-cache', { method: 'POST' });
         document.getElementById('mt-flush-result').textContent = status < 400
           ? `✓ Flushed — data version is now ${data.dataVersion}`
+          : `Failed: ${data.error || status}`;
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    async function reindexApplications() {
+      if (!confirm('Rebuild the search vectors of every active illuminance row? Takes about a minute.')) return;
+      const btn = document.getElementById('mt-reindex');
+      const out = document.getElementById('mt-reindex-result');
+      btn.disabled = true;
+      out.textContent = 'Re-indexing…';
+      try {
+        const { status, data } = await api('/api/ingest/applications', { method: 'POST', body: '{}' });
+        out.textContent = status < 400
+          ? `✓ ${data.applicationsIndexed} rows re-indexed — searchable within a few minutes`
           : `Failed: ${data.error || status}`;
       } finally {
         btn.disabled = false;
