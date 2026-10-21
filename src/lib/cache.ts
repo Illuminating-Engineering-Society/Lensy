@@ -131,7 +131,8 @@ const DATA_VERSION_KEY = 'cache:data-version';
 //     nests sections by their numbering (10/16/26 #4).
 // v25: the Guide-cited cards read in the order the answer names their
 //     standards (Dan, 10/20/26: Guide led with RP-8, cards with 90.1 and G-1).
-const SEARCH_CACHE_SCHEMA = 'v25';
+// v26: application questions lead with the application's own standard (same note).
+const SEARCH_CACHE_SCHEMA = 'v26';
 
 function errMsg(err: unknown): string {
   return err instanceof Error ? err.message : String(err);

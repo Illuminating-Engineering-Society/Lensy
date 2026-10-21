@@ -43,6 +43,9 @@ const MODELS = [
   '@cf/meta/llama-3.1-8b-instruct-fp8',
 ];
 
+/** Sampling temperature for guide answers (Workers AI accepts 0–5; unset is the model default). */
+const GUIDE_TEMPERATURE = 0.2;
+
 // Output budget per mode (client DO24: answers read as length-capped; DO25:
 // comparisons need "greatly expanded" capacity to convey changes accurately).
 //
@@ -286,6 +289,11 @@ export async function generateResponse(
     try {
       const response = await run(model, {
         max_tokens: tokenBudget(mode, answerStyle),
+        // A guide answer follows its rules more consistently at a low
+        // temperature (Dan, 10/20/26: the same parking-garage question led with
+        // RP-8 one run and ASHRAE/IES 90.1 the next, at the model's default).
+        // Comparisons keep the default: their length and breadth is the point.
+        ...(mode === 'guide' ? { temperature: GUIDE_TEMPERATURE } : {}),
         messages: [
           { role: 'system', content: SYSTEM_PROMPT },
           { role: 'user', content: userPrompt },
@@ -797,6 +805,15 @@ const FRAMING_INSTRUCTION = `- FRAMING OF DEFINITIONS AND STATEMENTS OF FACT: wh
 /** Concept questions lead with the foundational committees (client, 2026-10-14). */
 const CONCEPT_INSTRUCTION = `- THIS QUESTION ASKS WHAT A TERM OR CONCEPT MEANS, OR HOW CONCEPTS DIFFER. Build the answer from the standards whose authoring committee's scope is terminology, measurement or the science of light and vision (marked above), and lead with them. Application standards (retail, office, roadway, museum …) may follow only as brief examples of how the concept is used, never as the primary source.`;
 
+/**
+ * An application question leads with that application's own standard (Dan,
+ * 10/20/26: "What are considerations for lighting parking garages?" was
+ * answered once from RP-8 and once from ASHRAE/IES 90.1 — the 70B model picks
+ * its lead freely). The cards follow the answer's order (curation.ts), so the
+ * lead decides the top card too.
+ */
+const APPLICATION_LEAD_INSTRUCTION = `- LEAD WITH THE APPLICATION'S OWN STANDARD. When the question is about lighting a particular space, facility or application, open with the standard whose subject IS that application — its title or authoring committee names it (parking facilities → the roadway and parking facilities standard; classrooms → the educational facilities standard) — together with its illuminance rows when they are in the results. Cross-cutting standards — energy codes such as ANSI/ASHRAE/IES 90.1, security lighting (G-1), maintenance, economics, controls, health and circadian guidance — come AFTER it, as further considerations, unless the question itself is about energy, security, maintenance or controls.`;
+
 function guideInstructions(style: AnswerStyle = 'auto', conceptQuery = false): string {
   return `
 Instructions — write a GUIDE, not a list (client requirement):
@@ -807,7 +824,7 @@ Instructions — write a GUIDE, not a list (client requirement):
   both forbidden openings: they carry no information. Open with the substance —
   a framed explanation (see FRAMING below), or the standard that answers it.
 ${FRAMING_INSTRUCTION}
-${conceptQuery ? `${CONCEPT_INSTRUCTION}\n` : ''}${shapeInstruction(style)}
+${conceptQuery ? `${CONCEPT_INSTRUCTION}\n` : `${APPLICATION_LEAD_INSTRUCTION}\n`}${shapeInstruction(style)}
 - Explain, standard by standard, WHAT the relevant guidance covers and WHY that section matters. Use the excerpts above as your only source.
 - Where the results include illuminance-table rows, explain how to read and apply them (Task vs Area, maintained targets, uniformity/ratio basis, measurement height) and point the user to the result cards for the values themselves.
 - Mention ONLY the governing criteria that genuinely apply to THIS application. Do not enumerate the rest: Class of Play belongs to sports venues, lighting zones and curfews to exterior applications, the S/P variance to Categories P–Y. Naming an irrelevant criterion makes the whole answer less trustworthy.

@@ -1735,7 +1735,7 @@ losing content") is answered by the alignment report, not by the model.
 
 ### The 10/20/26 #1–#3 notes: rows with no vectors, answer-order curation, padlocks everywhere (2026-10-21)
 
-`SEARCH_CACHE_SCHEMA` → **v25**. No migration.
+`SEARCH_CACHE_SCHEMA` → **v26**. No migration.
 
 - **RP-3-26 and RP-4-26 returned no illuminance cards (#1)** — their 26 / 40
   rows were in D1 with NO application vectors. Those vectors (id = the row
@@ -1759,6 +1759,12 @@ losing content") is answered by the alignment report, not by the model.
   each standard is first named in the English answer), stable, so cards of one
   standard keep the rerank's order; the concept-question lift no longer applies
   inside that band (the Guide is already told to lead with those committees).
+  That only moves the problem to the Guide's own lead, which varied run to run
+  (3 uncached runs: RP-8, RP-8, 90.1). So the guide prompt gained
+  `APPLICATION_LEAD_INSTRUCTION` (an application question opens with that
+  application's standard; energy codes, security, maintenance, controls follow)
+  and guide mode now runs at `GUIDE_TEMPERATURE = 0.2` (was the model default;
+  comparisons keep it). After both: 3/3 runs led with RP-8-25+E2.
 - **Locked, never hidden (#3, "make this a practice universally").**
   `lockMenuItem` in site-menu.js greys + padlocks Compare Versions in the
   List Standards / Bookmarks tools menu (the search page's already was); on
