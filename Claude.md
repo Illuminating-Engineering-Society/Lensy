@@ -1775,7 +1775,16 @@ No migration; no search-cache bump.
 - **Data:** RP-27-20+E1 is Deprecated in D1 (superseded by RP-27-26); its
   Library link `7jbkB4` is the Lighting Science-folder copy in the 8/24 portal
   export (DocCode 0000-2E4F-3A9370-00656659) — the Vitrium-side move is IES's.
-  The per-product lease URLs (Manuel's 10/16 email) are still to load.
+- **Lease URLs loaded (2026-10-21)** from Manuel's webstore export
+  (`IES-Webstore_Products-Export-2026-October-16-2124.csv`): `buy_url` set to
+  each `store.ies.org/product/…` permalink, matched on the SKU designation —
+  111 standards (108 Active + LP-2-20, LP-11-20, RP-8-22 the store still sells).
+  By hand: reaffirmation-form SKUs (LM-73-18, LS-4-20+E1, LS-6-20+E1, TM-31-20,
+  TM-38-21), the SKU-less sDA/ASE product → LM-83-23, the store's typo
+  `LP-42-26` → RP-42-26, and 90.1-2025 → the "Section 9 Lighting Only" product
+  (the only 90.1 one). Still without: LS-1 (by design), LP-7-20 (not in the
+  store), LM-79-24 (the store's product is SKU "LM-79-19-1" — ask which edition
+  it sells).
 
 ### The 10/16/26 Teams notes: one Guide for every tier, an outline-shaped comparison (2026-10-20)
 
