@@ -1822,9 +1822,24 @@ No migration; no search-cache bump.
   By hand: reaffirmation-form SKUs (LM-73-18, LS-4-20+E1, LS-6-20+E1, TM-31-20,
   TM-38-21), the SKU-less sDA/ASE product → LM-83-23, the store's typo
   `LP-42-26` → RP-42-26, and 90.1-2025 → the "Section 9 Lighting Only" product
-  (the only 90.1 one). Still without: LS-1 (by design), LP-7-20 (not in the
-  store), LM-79-24 (the store's product is SKU "LM-79-19-1" — ask which edition
-  it sells).
+  (the only 90.1 one). Still without: LS-1 (by design) and LP-7-20 (withdrawn —
+  see below). LM-79-24 was set 2026-10-22 once Dan confirmed the product page:
+  store product 34579 IS the LM-79-24 listing; only its SKU field still reads
+  "ANSI/IES LM-79-19-1" (webstore-side typo, there is no separate listing).
+
+### The 10/22/26 Teams notes: notes open by default, deprecate without a successor (2026-10-22)
+
+No migration; no search-cache bump.
+
+- **Application Task/Area Notes begin open (#1)**, dressed exactly like FROM
+  THE STANDARD (bordered strip, static caret tile, Show/Hide at the far right).
+  `buildNotesBlock` in index.html; the footnote-marker click still opens it.
+- **Admin → Standards → Edit → "Mark as deprecated…"** for an edition IES
+  withdrew with no replacement (LP-7-20). `POST /api/admin/standards/:id/deprecate
+  {confirm: id}` runs `demoteStandard(env, row, null)` — the same steps the
+  ingest `deprecate` disposition now calls (status + `superseded_by`,
+  illuminance rows + vectors pruned, PDF → `deprecated/`). It does NOT index the
+  edition into the deprecated index; that still needs an ingest job.
 
 ### The 10/16/26 Teams notes: one Guide for every tier, an outline-shaped comparison (2026-10-20)
 

@@ -892,50 +892,8 @@ async function finalizeJob(env: Env, job: IngestJobRow): Promise<Response> {
     if (!old) {
       actions.push({ action: 'skipped', note: `"${job.replaces_id}" has no standards row any more — nothing to do.` });
     } else if (job.disposition === 'deprecate') {
-      // The RP-27/RP-8 demotion shape. The old edition's main-index CHUNK
-      // vectors stay put: search reads status live from D1 (notDeprecated) and
-      // stops surfacing them the moment this UPDATE lands.
-      if (old.status !== 'Deprecated') {
-        await env.DB.prepare(`
-          UPDATE standards SET status = 'Deprecated', superseded_by = ?, updated_at = CURRENT_TIMESTAMP
-          WHERE id = ?
-        `).bind(job.standard_id, job.replaces_id).run();
-        actions.push({ action: 'deprecated', id: job.replaces_id, supersededBy: job.standard_id });
-      } else {
-        actions.push({ action: 'already_deprecated', id: job.replaces_id });
-      }
-
-      // Its ILLUMINANCE rows and their vectors do not stay (RP-4-26
-      // replacement, 2026-10-06): a deprecated edition never carries
-      // application records — the deprecated ingest refuses them outright —
-      // yet the demotion left RP-4-20+E1's 40 rows behind, where the search's
-      // application path (which read only `applications.Active`) kept serving
-      // them as current and the AI Guide cited RP-4-20 beside RP-4-26. Same
-      // helper as the re-parse prune; an empty keep-set removes every row.
-      try {
-        const removed = await pruneApplicationRowsCore(env, job.replaces_id, new Set<string>());
-        if (removed.deleted > 0) {
-          actions.push({
-            action: 'applications_removed', id: job.replaces_id,
-            count: removed.deleted, vectorsDeleted: removed.vectorsDeleted,
-          });
-        }
-      } catch (err) {
-        actions.push({ action: 'applications_remove_failed', id: job.replaces_id, error: errMsg(err) });
-      }
-
-      // Move the PDF to the deprecated/ prefix (fail-soft: a leftover object
-      // costs storage, never correctness — same posture as the ingest script).
-      const fromKey = pdfKeyFor(job.replaces_id, 'Active');
+      actions.push(...await demoteStandard(env, old, job.standard_id));
       const toKey = pdfKeyFor(job.replaces_id, 'Deprecated');
-      try {
-        if (await copyR2Object(env, fromKey, toKey)) {
-          await env.PDFS.delete(fromKey);
-          actions.push({ action: 'pdf_moved', from: fromKey, to: toKey });
-        }
-      } catch (err) {
-        actions.push({ action: 'pdf_move_failed', error: errMsg(err) });
-      }
 
       if (job.index_old_for_comparison) {
         // A follow-up job that indexes the OLD edition into the deprecated
@@ -994,6 +952,71 @@ async function finalizeJob(env: Env, job: IngestJobRow): Promise<Response> {
   });
 
   return jsonResponse({ success: true, actions, followUpJobId });
+}
+
+// ─── Demoting a standard ──────────────────────────────────────────────────────
+
+/**
+ * The RP-27/RP-8 demotion shape, shared by the ingest "deprecate" disposition
+ * and the dashboard's "Mark as deprecated" (client 10/22/26: LP-7-20 is
+ * withdrawn with no successor, so there is no new edition to upload in its
+ * place). `supersededBy` is the replacing edition, or null when there is none.
+ *
+ * The edition's main-index CHUNK vectors stay put: search reads status live
+ * from D1 (notDeprecated) and stops surfacing them the moment the UPDATE
+ * lands. Fail-soft after that UPDATE, like the rest of finalize.
+ */
+export async function demoteStandard(
+  env: Env,
+  row: { id: string; status: string },
+  supersededBy: string | null,
+): Promise<Array<Record<string, unknown>>> {
+  const actions: Array<Record<string, unknown>> = [];
+  const id = row.id;
+
+  if (row.status !== 'Deprecated') {
+    await env.DB.prepare(`
+      UPDATE standards SET status = 'Deprecated', superseded_by = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).bind(supersededBy, id).run();
+    actions.push({ action: 'deprecated', id, supersededBy });
+  } else {
+    actions.push({ action: 'already_deprecated', id });
+  }
+
+  // Its ILLUMINANCE rows and their vectors do not stay (RP-4-26
+  // replacement, 2026-10-06): a deprecated edition never carries
+  // application records — the deprecated ingest refuses them outright —
+  // yet the demotion left RP-4-20+E1's 40 rows behind, where the search's
+  // application path (which read only `applications.Active`) kept serving
+  // them as current and the AI Guide cited RP-4-20 beside RP-4-26. Same
+  // helper as the re-parse prune; an empty keep-set removes every row.
+  try {
+    const removed = await pruneApplicationRowsCore(env, id, new Set<string>());
+    if (removed.deleted > 0) {
+      actions.push({
+        action: 'applications_removed', id,
+        count: removed.deleted, vectorsDeleted: removed.vectorsDeleted,
+      });
+    }
+  } catch (err) {
+    actions.push({ action: 'applications_remove_failed', id, error: errMsg(err) });
+  }
+
+  // Move the PDF to the deprecated/ prefix (fail-soft: a leftover object
+  // costs storage, never correctness — same posture as the ingest script).
+  const fromKey = pdfKeyFor(id, 'Active');
+  const toKey = pdfKeyFor(id, 'Deprecated');
+  try {
+    if (await copyR2Object(env, fromKey, toKey)) {
+      await env.PDFS.delete(fromKey);
+      actions.push({ action: 'pdf_moved', from: fromKey, to: toKey });
+    }
+  } catch (err) {
+    actions.push({ action: 'pdf_move_failed', error: errMsg(err) });
+  }
+
+  return actions;
 }
 
 // ─── Removing a standard entirely ─────────────────────────────────────────────
@@ -1143,6 +1166,8 @@ export function validateStandardEdit(body: any): { fields: Record<string, string
  *   GET    /api/admin/standards/:id   the editable fields
  *   PATCH  /api/admin/standards/:id   { libraryUrl?, publishedDate?, leaseUrl?, collection? }
  *   DELETE /api/admin/standards/:id   { confirm: "<id>" } — removes it entirely
+ *   POST   /api/admin/standards/:id/deprecate  { confirm: "<id>" } — demotes it
+ *          with no successor (an edition IES withdrew without replacing)
  */
 export async function handleAdminStandards(request: Request, env: Env, url: URL): Promise<Response> {
   const denied = await requireAdminAccess(request, env);
@@ -1189,6 +1214,22 @@ export async function handleAdminStandards(request: Request, env: Env, url: URL)
       return jsonResponse({ error: `Type the designation "${row.id}" to confirm the deletion.` }, 400);
     }
     const actions = await deleteStandardCompletely(env, row);
+    await bumpDataVersion(env.SESSIONS);
+    return jsonResponse({ success: true, actions });
+  }
+
+  if (request.method === 'POST' && /\/deprecate\/?$/.test(url.pathname)) {
+    if (UNDELETABLE.has(row.id)) {
+      return jsonResponse({ error: `${row.id} anchors the LS-1 definitions and cannot be deprecated here.` }, 409);
+    }
+    if (row.status === 'Deprecated') {
+      return jsonResponse({ error: `${row.id} is already deprecated.` }, 409);
+    }
+    const body = await safeJson(request);
+    if (body.confirm !== row.id) {
+      return jsonResponse({ error: `Type the designation "${row.id}" to confirm.` }, 400);
+    }
+    const actions = await demoteStandard(env, row, null);
     await bumpDataVersion(env.SESSIONS);
     return jsonResponse({ success: true, actions });
   }

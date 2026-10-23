@@ -4449,7 +4449,7 @@
     // footnoteMarks (per migration 0006) records WHERE each footnote number is
     // printed in the source table: { levels: { App_s1: [1] }, row: [3] }.
     // supFor() renders the marker for one hierarchy level; the note TEXT stays
-    // in the collapsed "Application Task/Area Notes" disclosure below.
+    // in the "Application Task/Area Notes" disclosure below.
     //
     // Markers are clickable: clicking one opens that card's notes disclosure,
     // so the reader can see WHERE each footnote is referenced and what it says
@@ -5427,10 +5427,15 @@
       return lines;
     }
 
-    // One collapsed disclosure listing the notes. Numbered entries ("1. …",
-    // "1) …") render with the number set off in a bold superscript-style
-    // marker so each note visually pairs with the ¹ markers on the rows —
-    // matching the printed table's footnote list.
+    // One disclosure listing the notes. Numbered entries ("1. …", "1) …")
+    // render with the number set off in a bold superscript-style marker so each
+    // note visually pairs with the ¹ markers on the rows — matching the printed
+    // table's footnote list.
+    //
+    // Open by default and dressed exactly like "FROM THE STANDARD" — bordered
+    // strip, static caret tile, Show/Hide at the far right (client 10/22/26 #1:
+    // "default to displayed (dropped-down), mimicking the 'From the Standard'").
+    // It began collapsed until then (DO3).
     function buildNotesBlock(noteLines) {
       if (!noteLines || !noteLines.length) return '';
       const items = noteLines.map(line => {
@@ -5443,16 +5448,25 @@
         }
         return `<div class="mb-1">${sciNotate(escapeHtml(line))}</div>`;
       }).join('');
+      const caret = (d) => `<svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3">
+                <path stroke-linecap="round" stroke-linejoin="round" d="${d}"/>
+              </svg>`;
       return `
-        <details class="notes-disclosure mt-2 pt-2 border-t border-gray-100 group">
-          <summary class="cursor-pointer text-sm font-semibold text-gray-700 flex items-center gap-2 list-none select-none">
-            <svg class="w-3.5 h-3.5 text-gray-400 transition-transform group-open:rotate-90 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
-              <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/>
-            </svg>
-            Application Task/Area Notes
-            <span class="text-xs font-normal text-gray-400">— footnotes begin collapsed. Click to display.</span>
+        <details class="disclosure notes-disclosure mt-2 group" open>
+          <summary class="cursor-pointer list-none select-none rounded-lg border border-gray-200 bg-gray-50 hover:bg-gray-100 hover:border-gray-300 transition px-2 py-1.5">
+            <div class="flex items-center gap-2">
+              <span class="shrink-0 w-5 h-5 rounded flex items-center justify-center text-white"
+                    style="background-color: var(--brand-secondary);" aria-hidden="true">
+                <span class="group-open:hidden">${caret('M19 9l-7 7-7-7')}</span>
+                <span class="hidden group-open:inline">${caret('M5 15l7-7 7 7')}</span>
+              </span>
+              <span class="text-[11px] font-bold text-gray-900 uppercase tracking-wider">Application Task/Area Notes</span>
+              <span class="ml-auto text-[10px] font-semibold uppercase tracking-wide text-gray-400 no-print">
+                <span class="group-open:hidden">Show</span><span class="hidden group-open:inline">Hide</span>
+              </span>
+            </div>
           </summary>
-          <div class="mt-2 pl-5 text-xs text-gray-600 leading-relaxed">${items}</div>
+          <div class="mt-2 pl-[28px] text-xs text-gray-600 leading-relaxed">${items}</div>
         </details>
       `;
     }
@@ -5504,8 +5518,8 @@
         </div>
       ` : '';
 
-      // Application Task/Area Notes — footnotes collapsed by default; the user
-      // clicks to expand (matches the proposed layout). Combines App_Notes,
+      // Application Task/Area Notes — open by default since 10/22/26 (the user
+      // may collapse it with Hide). Combines App_Notes,
       // Footnotes and General_Notes into one disclosure. Grouped cards
       // suppress the per-row disclosure and render ONE consolidated block
       // after the member rows instead (feedback DO3: the drop-down must sit
