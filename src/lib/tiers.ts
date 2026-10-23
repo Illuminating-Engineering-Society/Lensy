@@ -127,7 +127,7 @@ export const LITE_BLOCKED_FILTERS = ['tables', 'body', 'compare'] as const;
  * configured value is what production actually runs on.
  */
 const DEFAULT_SUBSCRIBER_ROLES = [
-  'lighting-library-full-access',
+  'lighting-library-full-access', 'lighting-library-sustaining',
   'lighting-library', 'lighting_library', 'library-subscriber',
   'lensy-subscriber', 'subscriber',
 ];

@@ -194,7 +194,12 @@ LENSY_LITE = "on"
 # is removed by the same sync when the role or status changes. Inert until that
 # ships — no cookie carries it before then. TC members (tc-member) are NOT
 # here: theirs is a webstore discount, not free access.
-LENSY_SUBSCRIBER_ROLES = "lighting-library-full-access,tc-chair"
+#
+# lighting-library-sustaining (Dan, 2026-10-22: "sustaining assignments would
+# count towards subscribers in both Vitrium and Lens"): Wicket's "Lighting
+# Library (Sustaining)" tier, a seat assigned out of a sustaining
+# organization's user cap. AuthIES's Vitrium gate admits the same slug.
+LENSY_SUBSCRIBER_ROLES = "lighting-library-full-access,lighting-library-sustaining,tc-chair"
 # ── Lighting Library error page (2026-09-04) ──────────────────────────────────
 # Staff inbox for device-limit reset requests submitted from
 # /library-error.html (the page Vitrium's WebViewer redirects refused readers

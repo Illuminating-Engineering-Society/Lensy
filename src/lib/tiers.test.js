@@ -238,3 +238,18 @@ describe('TC chairs', () => {
     expect(resolveTier({ roles: ['tc-chair', 'lighting-library-full-access'], isMember: false }, env)).toBe('full');
   });
 });
+
+// Dan, 2026-10-22: a "Lighting Library (Sustaining)" seat counts as a subscription.
+describe('Lighting Library (Sustaining)', () => {
+  const env = {
+    LENSY_LITE: 'on',
+    LENSY_SUBSCRIBER_ROLES: 'lighting-library-full-access,lighting-library-sustaining,tc-chair',
+  };
+  it('a sustaining seat is a subscriber, member or not', () => {
+    expect(resolveTier({ roles: ['lighting-library-sustaining'], isMember: false }, env)).toBe('full');
+    expect(resolveTier({ roles: ['member', 'lighting-library-sustaining'], isMember: true }, env)).toBe('full');
+  });
+  it('is recognized when the var is unset', () => {
+    expect(resolveTier({ roles: ['lighting-library-sustaining'], isMember: false }, { LENSY_LITE: 'on' })).toBe('full');
+  });
+});
