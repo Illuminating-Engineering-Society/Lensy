@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 /**
  * SureCart setup for the purchase → Lighting Library integration
  * (docs/SURECART_PURCHASES.md). Everything the SureCart side needs, driven by
