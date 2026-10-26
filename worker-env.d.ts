@@ -75,5 +75,30 @@ declare global {
     // value as AuthIES's COMP_GRANTS_API_SECRET. Unset: comp grants are only
     // recorded here, and staff apply the Vitrium half by hand (pre-10/16).
     COMP_GRANTS_API_SECRET?: string;
+    // ── SureCart purchases → Lighting Library access (2026-10-26) ──────────
+    // The webhook endpoint's signing secret (SureCart → Developer → Webhooks).
+    // Unset: POST /api/webhooks/surecart answers 503 and records nothing.
+    SURECART_WEBHOOK_SECRET?: string;
+    // A SureCart API token that can READ purchases, customers, products and
+    // subscriptions. Unset: a webhook is acknowledged but cannot be read back,
+    // so nothing is granted (the row is not even written); Import is refused.
+    SURECART_API_KEY?: string;
+    // Lease term in days, inclusive of the purchase day. Unset → 1096 (three
+    // years incl. a leap day; the webstore prototype's "3-year lease").
+    SURECART_LEASE_DAYS?: string;
+    // Subscription term when SureCart reports no billing period (a one-time
+    // subscription product). Unset → 365.
+    SURECART_SUBSCRIPTION_DAYS?: string;
+    // Comma-separated SureCart PRODUCT ids that sell a Lighting Library
+    // subscription. A purchase of one is a subscription even if its slug or
+    // SKU happens to match a standard. Unset/empty: only a purchase carrying a
+    // SureCart subscription object (a recurring price) is a subscription.
+    SURECART_SUBSCRIPTION_PRODUCTS?: string;
+    // "on" lets a test-mode (live_mode = false) purchase grant access — for
+    // staging only. Anything else records the purchase as ignored/test_mode.
+    SURECART_ACCEPT_TEST_MODE?: string;
+    // "off" stops the buyer notification email; anything else sends it once,
+    // on the first successful grant.
+    SURECART_NOTIFY?: string;
   }
 }
