@@ -164,7 +164,7 @@ describe('syncPurchaseById — a lease', () => {
     const r = await syncPurchaseById(env, URL_, 'p1', { eventType: 'purchase.revoked' });
     expect(r.action).toBe('revoked');
     expect(r.row).toMatchObject({ status: 'revoked', revoked_reason: 'surecart' });
-    expect(f.authies[1]).toEqual({ path: '/api/comp-grants/revoke', body: { source: 'surecart', source_ref: 'surecart-p1', email: 'buyer@example.org', revoked_by: 'surecart' } });
+    expect(f.authies[1]).toEqual({ path: '/api/comp-grants/revoke', body: { source: 'surecart', source_ref: 'surecart-p1', revoked_by: 'surecart' } });
   });
 
   it('a test-mode purchase is recorded as ignored and grants nothing', async () => {
@@ -321,13 +321,13 @@ describe('handleSurecartWebhook', () => {
     fixture = { ...fixture, subscription: { ...fixture.subscription, current_period_end_at: Date.UTC(2028, 10, 2) / 1000 } };
     const res = await handleSurecartWebhook(await signedRequest('whsec', EVENT('subscription.renewed', { id: 'sub1', object: 'subscription' })), env);
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ recorded: true, subscription: 'sub1', purchases: 1, actions: ['granted'] });
+    expect(await res.json()).toEqual({ recorded: true, subscription: 'sub1', purchases: 1, actions: ['granted'], error: null });
     expect(f.authies[1].body.expires_at).toBe('2028-11-02');
   });
 });
 
 describe('a staff revoke', () => {
-  it('survives later SureCart events and yields only to a forced resync', async () => {
+  it('survives later SureCart events and a forced retry; only reinstate lifts it', async () => {
     const db = makeDb(); const env = makeEnv(db);
     f = stubFetch(purchaseFixture());
     await syncPurchaseById(env, URL_, 'p1', {});
@@ -338,7 +338,116 @@ describe('a staff revoke', () => {
     expect(r.row).toMatchObject({ status: 'revoked', revoked_reason: 'staff' });
     expect(f.authies).toHaveLength(1);
     const forced = await syncPurchaseById(env, URL_, 'p1', { force: true });
-    expect(forced.action).toBe('granted');
-    expect(forced.row.status).toBe('active');
+    expect(forced.row.status).toBe('revoked');
+    const lifted = await syncPurchaseById(env, URL_, 'p1', { force: true, reinstate: true });
+    expect(lifted.action).toBe('granted');
+    expect(lifted.row.status).toBe('active');
+  });
+});
+
+// ─── Review fixes (2026-10-26) ────────────────────────────────────────────────
+
+function stubFetchAuthiesDown(surecart) {
+  const real = globalThis.fetch;
+  const authies = [];
+  globalThis.fetch = async (url, init = {}) => {
+    const u = String(url);
+    if (u.startsWith('https://api.surecart.com/')) {
+      const r = typeof surecart === 'function' ? surecart(u) : surecart;
+      return r instanceof Response ? r : new Response(JSON.stringify(r), { status: 200 });
+    }
+    authies.push({ path: new URL(u).pathname, body: JSON.parse(init.body) });
+    return new Response('down', { status: 503 });
+  };
+  return { authies, restore: () => { globalThis.fetch = real; } };
+}
+
+describe('a failed AuthIES call is retried and reported (review I1)', () => {
+  it('a push AuthIES refused is "failed", the webhook answers 500, and the next event retries it', async () => {
+    const db = makeDb(); const env = makeEnv(db, { SURECART_WEBHOOK_SECRET: 'whsec' });
+    f = stubFetchAuthiesDown(purchaseFixture());
+    const r = await syncPurchaseById(env, URL_, 'p1', {});
+    expect(r.ok).toBe(true);
+    expect(r.action).toBe('failed');
+    expect(r.row.authies_error).toMatch(/AuthIES answered 503/);
+    expect(env.sent).toHaveLength(0);
+    const res = await handleSurecartWebhook(await signedRequest('whsec', EVENT('purchase.updated', { id: 'p1', object: 'purchase' })), env);
+    expect(res.status).toBe(500);
+    expect(f.authies).toHaveLength(2);
+  });
+
+  it('a revoke that failed after a successful grant is retried by the next event', async () => {
+    const db = makeDb(); const env = makeEnv(db);
+    let fixture = purchaseFixture();
+    f = stubFetch(() => fixture);
+    await syncPurchaseById(env, URL_, 'p1', {});
+    f.restore();
+    fixture = purchaseFixture({ revoked: true, revoked_at: 1 });
+    f = stubFetchAuthiesDown(() => fixture);
+    const failed = await syncPurchaseById(env, URL_, 'p1', { eventType: 'purchase.revoked' });
+    expect(failed.action).toBe('failed');
+    expect(failed.row).toMatchObject({ status: 'revoked', authies_error: expect.stringMatching(/503/) });
+    f.restore();
+    f = stubFetch(() => fixture);
+    const again = await syncPurchaseById(env, URL_, 'p1', { eventType: 'purchase.updated' });
+    expect(again.action).toBe('revoked');
+    expect(f.authies[0].path).toBe('/api/comp-grants/revoke');
+  });
+});
+
+describe('the standard mapping is sticky and a catalogue failure is retryable (review I3)', () => {
+  it('a D1 failure while resolving the product answers retryable and writes nothing', async () => {
+    const db = makeDb(); const env = makeEnv(db);
+    const realPrepare = db.prepare.bind(db);
+    db.prepare = (sql) => (/FROM standards/.test(sql)
+      ? { bind: () => ({ all: async () => { throw new Error('D1_ERROR'); } }), all: async () => { throw new Error('D1_ERROR'); } }
+      : realPrepare(sql));
+    f = stubFetch(purchaseFixture());
+    expect(await syncPurchaseById(env, URL_, 'p1', {})).toMatchObject({ ok: false, retryable: true });
+    expect(db.rows.size).toBe(0);
+  });
+
+  it('a lease keeps its standard when the catalogue no longer matches the product', async () => {
+    const db = makeDb(); const env = makeEnv(db);
+    f = stubFetch(purchaseFixture());
+    await syncPurchaseById(env, URL_, 'p1', {});
+    f.restore();
+    f = stubFetch(purchaseFixture({ product: { id: 'prod-rp8', name: 'RP-8', sku: 'RENAMED', slug: 'renamed' } }));
+    const r = await syncPurchaseById(env, URL_, 'p1', { eventType: 'purchase.updated' });
+    expect(r.action).toBe('unchanged');
+    expect(r.row).toMatchObject({ kind: 'lease', standard_id: 'RP-8-25+E2', status: 'active' });
+    expect(f.authies).toHaveLength(0);
+  });
+});
+
+describe('revocation covers every address the purchase was granted to (review I4)', () => {
+  it('a revoke names the source_ref only, and an email change revokes the old address before granting the new one', async () => {
+    const db = makeDb(); const env = makeEnv(db);
+    let fixture = purchaseFixture();
+    f = stubFetch(() => fixture);
+    await syncPurchaseById(env, URL_, 'p1', {});
+    fixture = purchaseFixture({ customer: { id: 'c1', email: 'new@example.org', name: 'Pat' } });
+    const r = await syncPurchaseById(env, URL_, 'p1', { eventType: 'purchase.updated' });
+    expect(r.action).toBe('granted');
+    expect(f.authies.map(a => a.path)).toEqual(['/api/comp-grants', '/api/comp-grants/revoke', '/api/comp-grants']);
+    expect(f.authies[1].body).toEqual({ source: 'surecart', source_ref: 'surecart-p1', revoked_by: 'surecart' });
+    expect(f.authies[2].body.email).toBe('new@example.org');
+  });
+});
+
+describe('retry re-applies the row as it stands; only reinstate lifts a staff revoke (review I5)', () => {
+  it('a forced retry on a staff-revoked row re-revokes instead of granting', async () => {
+    const db = makeDb(); const env = makeEnv(db);
+    f = stubFetch(purchaseFixture());
+    await syncPurchaseById(env, URL_, 'p1', {});
+    const row = db.rows.get('p1');
+    row.status = 'revoked'; row.revoked_reason = 'staff'; row.authies_error = 'AuthIES unreachable';
+    const retry = await syncPurchaseById(env, URL_, 'p1', { force: true });
+    expect(retry.action).toBe('revoked');
+    expect(retry.row).toMatchObject({ status: 'revoked', revoked_reason: 'staff' });
+    expect(f.authies[1].path).toBe('/api/comp-grants/revoke');
+    const lifted = await syncPurchaseById(env, URL_, 'p1', { force: true, reinstate: true });
+    expect(lifted.action).toBe('granted');
+    expect(lifted.row.status).toBe('active');
   });
 });

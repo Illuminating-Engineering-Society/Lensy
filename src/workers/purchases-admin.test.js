@@ -141,6 +141,9 @@ describe('GET /api/admin/purchases', () => {
     expect((await callJson(handleAdminPurchases, env, '/api/admin/purchases?status=revoked')).body.purchases.map(p => p.id)).toEqual([8]);
     expect((await callJson(handleAdminPurchases, env, '/api/admin/purchases?q=other@')).body.purchases.map(p => p.id)).toEqual([8]);
     expect((await callJson(handleAdminPurchases, env, '/api/admin/purchases?pending=1')).body.purchases).toEqual([]);
+    const errRows = [{ ...ROW, authies_error: 'AuthIES answered 503' }];
+    expect((await callJson(handleAdminPurchases, makeEnv(makeRoute(errRows)), '/api/admin/purchases?pending=1')).body.purchases.map(p => p.id)).toEqual([7]);
+    expect((await callJson(handleAdminPurchases, makeEnv(makeRoute(errRows)), '/api/admin/purchases')).body.counts.pendingAuthies).toBe(1);
   });
 
   it('fails soft with a note when the table is missing', async () => {
@@ -159,7 +162,7 @@ describe('PATCH /api/admin/purchases/:id', () => {
     const { status, body } = await callJson(handleAdminPurchases, env, '/api/admin/purchases/7', { method: 'PATCH', body: { status: 'revoked', by: 'zoe@ies.org' } });
     expect(status).toBe(200);
     expect(body.ok).toBe(true);
-    expect(f.authies).toEqual([{ path: '/api/comp-grants/revoke', body: { source: 'surecart', source_ref: 'surecart-p1', email: 'buyer@example.org', revoked_by: 'surecart' } }]);
+    expect(f.authies).toEqual([{ path: '/api/comp-grants/revoke', body: { source: 'surecart', source_ref: 'surecart-p1', revoked_by: 'surecart' } }]);
     const update = env.DB.calls.find(c => /UPDATE purchases SET status = \?/.test(c.sql));
     expect(update.bindings).toEqual(['revoked', 'staff', 7]);
   });

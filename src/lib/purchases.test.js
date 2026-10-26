@@ -66,9 +66,9 @@ describe('resolveStandardForProduct', () => {
     expect(r?.id).toBe('RP-8-25+E2');
   });
 
-  it('an unknown product is null, and so is a D1 failure', async () => {
+  it('an unknown product is null; a D1 failure throws (never "unmapped")', async () => {
     expect(await resolveStandardForProduct(catalogDb(), { slug: 'ies-2017-acp', sku: 'IES-2017-ACP' })).toBeNull();
-    expect(await resolveStandardForProduct(makeDb(() => { throw new Error('boom'); }), { slug: 'x', sku: 'ANSI/IES RP-8-25+E2' })).toBeNull();
+    await expect(resolveStandardForProduct(makeDb(() => { throw new Error('boom'); }), { slug: 'x', sku: 'ANSI/IES RP-8-25+E2' })).rejects.toThrow('boom');
   });
 });
 

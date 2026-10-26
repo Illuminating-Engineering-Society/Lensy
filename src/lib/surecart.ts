@@ -65,6 +65,18 @@ export interface SurecartConfig {
   subscriptionDays: number;
   /** SureCart product ids that sell a Library subscription. */
   subscriptionProducts: Set<string>;
+  /**
+   * SureCart PRICE ids that sell a lease. Empty = any price of a mapped
+   * product is a lease. Set it when the same product carries other prices
+   * (a PDF, a print copy): only the listed ones grant access.
+   */
+  leasePrices: Set<string>;
+  /**
+   * YYYY-MM-DD. A purchase made before this day is recorded but grants
+   * nothing: before the 11/2/2026 cutover the same products sold PDFs, and a
+   * backfill must not turn every past PDF buyer into a lease holder.
+   */
+  purchasesSince: string;
   /** Let a live_mode=false purchase grant access (staging only). */
   acceptTestMode: boolean;
   /** Email the buyer on the first successful grant. */
@@ -73,14 +85,22 @@ export interface SurecartConfig {
 
 const DEFAULT_LEASE_DAYS = 1096;
 const DEFAULT_SUBSCRIPTION_DAYS = 365;
+/** Dan, Teams 2026-10-26: "11/2: PDF sales no longer an option." */
+const DEFAULT_PURCHASES_SINCE = '2026-11-02';
+
+function idSet(raw: string | undefined): Set<string> {
+  return new Set(String(raw || '').split(',').map(s => s.trim()).filter(Boolean));
+}
 
 export function readSurecartConfig(env: Partial<Env>): SurecartConfig {
   return {
     leaseDays: positiveInt(env.SURECART_LEASE_DAYS, DEFAULT_LEASE_DAYS),
     subscriptionDays: positiveInt(env.SURECART_SUBSCRIPTION_DAYS, DEFAULT_SUBSCRIPTION_DAYS),
-    subscriptionProducts: new Set(
-      String(env.SURECART_SUBSCRIPTION_PRODUCTS || '').split(',').map(s => s.trim()).filter(Boolean),
-    ),
+    subscriptionProducts: idSet(env.SURECART_SUBSCRIPTION_PRODUCTS),
+    leasePrices: idSet(env.SURECART_LEASE_PRICES),
+    purchasesSince: /^\d{4}-\d{2}-\d{2}$/.test(String(env.SURECART_PURCHASES_SINCE || '').trim())
+      ? String(env.SURECART_PURCHASES_SINCE).trim()
+      : DEFAULT_PURCHASES_SINCE,
     acceptTestMode: String(env.SURECART_ACCEPT_TEST_MODE || '').trim().toLowerCase() === 'on',
     notify: String(env.SURECART_NOTIFY || '').trim().toLowerCase() !== 'off',
   };
@@ -128,7 +148,13 @@ export interface SurecartPurchase {
   name: string | null;
   product: { id: string; name: string | null; sku: string | null; slug: string | null; recurring: boolean | null };
   priceId: string | null;
-  subscription: { id: string; status: string | null; currentPeriodEndAt: number | null; cancelAtPeriodEnd: boolean | null } | null;
+  subscription: {
+    id: string;
+    status: string | null;
+    currentPeriodStartAt: number | null;
+    currentPeriodEndAt: number | null;
+    cancelAtPeriodEnd: boolean | null;
+  } | null;
   orderId: string | null;
   orderNumber: string | null;
 }
@@ -145,6 +171,8 @@ export function normalizePurchase(raw: unknown): SurecartPurchase | null {
   const customer = asRecord(p.customer);
   const email = typeof customer?.email === 'string' ? customer.email.trim().toLowerCase() : '';
   if (!email) return null;
+  // The purchase day anchors every window; a guess would move it on each sync.
+  if (typeof p.created_at !== 'number' || !Number.isFinite(p.created_at)) return null;
 
   const product = asRecord(p.product);
   const productId = product ? str(product.id) : str(p.product);
@@ -156,7 +184,7 @@ export function normalizePurchase(raw: unknown): SurecartPurchase | null {
     id: p.id,
     liveMode: p.live_mode !== false,
     revoked: p.revoked === true,
-    createdAt: typeof p.created_at === 'number' ? p.created_at : Math.floor(Date.now() / 1000),
+    createdAt: p.created_at,
     customerId: str(customer?.id),
     email,
     name: str(customer?.name),
@@ -172,6 +200,7 @@ export function normalizePurchase(raw: unknown): SurecartPurchase | null {
       ? {
           id: subscriptionId,
           status: str(subscription?.status),
+          currentPeriodStartAt: typeof subscription?.current_period_start_at === 'number' ? subscription.current_period_start_at : null,
           currentPeriodEndAt: typeof subscription?.current_period_end_at === 'number' ? subscription.current_period_end_at : null,
           cancelAtPeriodEnd: typeof subscription?.cancel_at_period_end === 'boolean' ? subscription.cancel_at_period_end : null,
         }
@@ -185,7 +214,7 @@ export function normalizePurchase(raw: unknown): SurecartPurchase | null {
 
 export type PurchaseKind = 'lease' | 'subscription' | 'unmapped';
 export type PurchaseStatus = 'active' | 'revoked' | 'ignored';
-export type RevokedReason = 'surecart' | 'staff' | 'test_mode' | 'unmapped';
+export type RevokedReason = 'surecart' | 'staff' | 'test_mode' | 'unmapped' | 'before_cutover' | 'not_a_lease';
 
 export interface PurchasePlan {
   kind: PurchaseKind;
@@ -207,11 +236,17 @@ const ENDED_SUBSCRIPTION = new Set(['canceled', 'completed']);
  *                 purchase carries a SureCart subscription and maps to no
  *                 standard — window = the billing period (extended on each
  *                 renewal event), else `subscriptionDays`
- *   lease         the product mapped to a standard — `leaseDays` from the
- *                 purchase day, inclusive
- *   unmapped      nothing to grant; recorded for staff
+ *   lease         the product mapped to a standard (and, when
+ *                 `leasePrices` is set, a listed price) — `leaseDays` from
+ *                 the purchase day, inclusive
+ *   unmapped      nothing to grant; recorded for staff (`not_a_lease` when
+ *                 the product is a standard but the price is not a lease)
  *
- * Then the status: a test-mode purchase is ignored unless accepted; a purchase
+ * A subscription's window is its CURRENT billing period, so a renewal moves
+ * both ends and the grant never grows past AuthIES's window cap.
+ *
+ * Then the status: a purchase from before `purchasesSince` is ignored (it
+ * bought a PDF); a test-mode purchase is ignored unless accepted; a purchase
  * SureCart revoked (refund, period end) is revoked; a CANCELED subscription
  * stays active until its period ends — SureCart revokes the purchase then.
  */
@@ -221,16 +256,23 @@ export function planPurchase(
   cfg: SurecartConfig,
   now: Date,
 ): PurchasePlan {
-  const startDate = dayUtc(p.createdAt);
+  const purchaseDay = dayUtc(p.createdAt);
+  let startDate = purchaseDay;
   let kind: PurchaseKind;
   let standardId: string | null = null;
   let endDate: string;
+  let unmappedReason: RevokedReason = 'unmapped';
 
   if (cfg.subscriptionProducts.has(p.product.id) || (p.subscription && !standard)) {
     kind = 'subscription';
+    if (p.subscription?.currentPeriodStartAt) startDate = dayUtc(p.subscription.currentPeriodStartAt);
     endDate = p.subscription?.currentPeriodEndAt
       ? dayUtc(p.subscription.currentPeriodEndAt)
       : addDays(startDate, cfg.subscriptionDays - 1);
+  } else if (standard && cfg.leasePrices.size > 0 && !(p.priceId && cfg.leasePrices.has(p.priceId))) {
+    kind = 'unmapped';
+    unmappedReason = 'not_a_lease';
+    endDate = startDate;
   } else if (standard) {
     kind = 'lease';
     standardId = standard.id;
@@ -246,7 +288,10 @@ export function planPurchase(
     && p.subscription.currentPeriodEndAt * 1000 < now.getTime();
   if (kind === 'unmapped') {
     status = 'ignored';
-    revokedReason = 'unmapped';
+    revokedReason = unmappedReason;
+  } else if (purchaseDay < cfg.purchasesSince) {
+    status = 'ignored';
+    revokedReason = 'before_cutover';
   } else if (!p.liveMode && !cfg.acceptTestMode) {
     status = 'ignored';
     revokedReason = 'test_mode';

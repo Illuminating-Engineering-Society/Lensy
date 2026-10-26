@@ -596,7 +596,9 @@
           product that is no standard, is a <em>Lighting Library subscription</em>. Anything else is recorded as
           <em>unmapped</em> and grants nothing — fix the mapping, then press <strong>Resync</strong>.</p>
         <p>Access is matched by <strong>email address</strong> at sign-in. A row whose “IES Auth” column reads
-          <em>pending</em> could not be applied (the reason is on the row): fix the cause and press <strong>Resync</strong>.
+          <em>pending</em> or <em>out of date</em> could not be applied (the reason is on the row): the next SureCart
+          event retries it by itself, or fix the cause and press <strong>Resync</strong>. Resync re-applies the row as it
+          stands — a purchase you revoked stays revoked until <strong>Reinstate</strong>.
           A test-mode checkout is recorded as <em>ignored</em> and never grants access on this deployment.</p>
       </div>
 
@@ -2083,10 +2085,12 @@
               : '<span class="text-xs text-red-700 font-medium">no standard matched</span>';
         const applied = p.kind === 'unmapped' || p.effective_status === 'ignored'
           ? '<span class="text-xs text-gray-400">—</span>'
-          : p.authies_applied_at
-            ? `<span class="text-green-700 text-xs">✓ ${esc(day(p.authies_applied_at))}</span>`
-            : `<span class="text-xs text-amber-700 font-medium">pending</span>
-               ${p.authies_error ? `<p class="text-xs text-gray-500 max-w-[220px]" title="${esc(p.authies_error)}">${esc(p.authies_error)}</p>` : ''}`;
+          : p.authies_error
+            ? `<span class="text-xs text-amber-700 font-medium">${p.authies_applied_at ? 'out of date' : 'pending'}</span>
+               <p class="text-xs text-gray-500 max-w-[220px]" title="${esc(p.authies_error)}">${esc(p.authies_error)}</p>`
+            : p.authies_applied_at
+              ? `<span class="text-green-700 text-xs">✓ ${esc(day(p.authies_applied_at))}</span>`
+              : '<span class="text-xs text-amber-700 font-medium">pending</span>';
         const mail = p.notify_error
           ? `<span class="text-xs text-red-600" title="${esc(p.notify_error)}">failed ⚠</span>`
           : p.notify_sent_at

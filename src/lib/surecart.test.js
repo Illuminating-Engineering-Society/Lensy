@@ -49,7 +49,8 @@ describe('verifyWebhookSignature', () => {
 describe('readSurecartConfig', () => {
   it('reads defaults and overrides', () => {
     expect(readSurecartConfig({})).toEqual({
-      leaseDays: 1096, subscriptionDays: 365, subscriptionProducts: new Set(), acceptTestMode: false, notify: true,
+      leaseDays: 1096, subscriptionDays: 365, subscriptionProducts: new Set(), leasePrices: new Set(),
+      purchasesSince: '2026-11-02', acceptTestMode: false, notify: true,
     });
     const c = readSurecartConfig({
       SURECART_LEASE_DAYS: '30', SURECART_SUBSCRIPTION_DAYS: 'nope',
@@ -82,7 +83,7 @@ describe('parseWebhookEvent / normalizePurchase', () => {
   it('tolerates unexpanded product and subscription ids', () => {
     const p = purchase({ product: 'prod9', subscription: 'sub9' });
     expect(p.product).toEqual({ id: 'prod9', name: null, sku: null, slug: null, recurring: null });
-    expect(p.subscription).toEqual({ id: 'sub9', status: null, currentPeriodEndAt: null, cancelAtPeriodEnd: null });
+    expect(p.subscription).toEqual({ id: 'sub9', status: null, currentPeriodStartAt: null, currentPeriodEndAt: null, cancelAtPeriodEnd: null });
   });
 });
 
@@ -153,5 +154,41 @@ describe('dates and slugs', () => {
     expect(slugFromStoreUrl('https://store.ies.org/product/rp-1-24')).toBe('rp-1-24');
     expect(slugFromStoreUrl('https://store.ies.org/?s=RP-8')).toBeNull();
     expect(slugFromStoreUrl(null)).toBeNull();
+  });
+});
+
+// ─── Review fixes (2026-10-26) ────────────────────────────────────────────────
+
+describe('the cutover floor and the lease price allowlist (review C1)', () => {
+  it('a purchase made before SURECART_PURCHASES_SINCE is recorded as ignored and grants nothing', () => {
+    expect(readSurecartConfig({}).purchasesSince).toBe('2026-11-02');
+    const early = purchase({ created_at: Date.UTC(2026, 9, 15) / 1000 });
+    expect(planPurchase(early, { id: 'RP-8-25+E2' }, CFG, NOW)).toMatchObject({ kind: 'lease', status: 'ignored', revokedReason: 'before_cutover' });
+    const cfg = readSurecartConfig({ SURECART_PURCHASES_SINCE: '2026-10-01' });
+    expect(planPurchase(early, { id: 'RP-8-25+E2' }, cfg, NOW).status).toBe('active');
+  });
+
+  it('with SURECART_LEASE_PRICES set, only a listed price is a lease; another price of the same product is not', () => {
+    const cfg = readSurecartConfig({ SURECART_LEASE_PRICES: 'price-lease' });
+    expect(planPurchase(purchase({ price: { id: 'price-lease' } }), { id: 'RP-8-25+E2' }, cfg, NOW).kind).toBe('lease');
+    expect(planPurchase(purchase({ price: { id: 'price-pdf' } }), { id: 'RP-8-25+E2' }, cfg, NOW))
+      .toMatchObject({ kind: 'unmapped', status: 'ignored', revokedReason: 'not_a_lease' });
+    expect(planPurchase(purchase({ price: { id: 'price-pdf' } }), { id: 'RP-8-25+E2' }, CFG, NOW).kind).toBe('lease');
+  });
+});
+
+describe('a subscription window follows the current period (review I2)', () => {
+  it('starts at current_period_start_at when SureCart reports one', () => {
+    const p = purchase({ subscription: {
+      id: 's1', status: 'active',
+      current_period_start_at: Date.UTC(2029, 10, 2) / 1000, current_period_end_at: Date.UTC(2030, 10, 2) / 1000,
+    } });
+    expect(p.subscription.currentPeriodStartAt).toBe(Date.UTC(2029, 10, 2) / 1000);
+    const plan = planPurchase(p, null, CFG, new Date('2029-11-03T00:00:00Z'));
+    expect(plan).toMatchObject({ kind: 'subscription', startDate: '2029-11-02', endDate: '2030-11-02', status: 'active' });
+  });
+
+  it('a purchase with no numeric created_at is refused', () => {
+    expect(normalizePurchase({ id: 'p1', object: 'purchase', customer: { email: 'a@b.co' }, created_at: 'yesterday' })).toBeNull();
   });
 });

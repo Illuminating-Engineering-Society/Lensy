@@ -17,13 +17,20 @@ import {
 } from '../lib/surecart';
 import { fetchPurchase, surecartConfigured } from '../lib/surecart-api';
 import {
-  findPurchaseBySurecartId, listPurchasesBySubscription, resolveStandardForProduct, stampAuthies, stampNotify,
-  upsertPurchase, type PurchaseRow, type ResolvedStandard,
+  findPurchaseBySurecartId, listPurchasesBySubscription, resolveStandardById, resolveStandardForProduct, stampAuthies,
+  stampNotify, upsertPurchase, type PurchaseRow, type ResolvedStandard,
 } from '../lib/purchases';
 import { pushPurchaseGrant, revokePurchaseGrant } from '../lib/comp-grants';
 import { sendPurchaseEmail } from '../lib/email';
 
-export type SyncAction = 'granted' | 'revoked' | 'unchanged' | 'skipped';
+/**
+ * granted / revoked — AuthIES took the call; unchanged — nothing to do;
+ * skipped — nothing to push and nothing to retry (unmapped, test mode, no
+ * Vitrium id until the catalogue is fixed); failed — AuthIES refused or was
+ * unreachable: the row keeps the error and the NEXT event (or SureCart's
+ * retry of this one) tries again.
+ */
+export type SyncAction = 'granted' | 'revoked' | 'unchanged' | 'skipped' | 'failed';
 
 export type SyncResult =
   | { ok: true; row: PurchaseRow; action: SyncAction }
@@ -34,6 +41,8 @@ export interface SyncOptions {
   eventType?: string | null;
   /** Re-push to AuthIES even when nothing changed (staff Retry / Resync). */
   force?: boolean;
+  /** Lift a revoke made in /admin (staff Reinstate). Nothing else may. */
+  reinstate?: boolean;
 }
 
 /** Events whose `data.object` is a purchase. */
@@ -64,22 +73,28 @@ export async function syncPurchaseById(
   const purchase = fetched.purchase;
   const cfg = readSurecartConfig(env);
 
-  const standard = await resolveStandardForProduct(env.DB, purchase.product);
-  const plan = planPurchase(purchase, standard, cfg, new Date());
-
   let previous: PurchaseRow | null;
+  let standard: ResolvedStandard | null;
   let row: PurchaseRow;
   try {
     previous = await findPurchaseBySurecartId(env.DB, surecartPurchaseId);
+    standard = await resolveStandardForProduct(env.DB, purchase.product);
+    // The mapping is STICKY once a lease was recorded: a product renamed in
+    // the store or a lease link edited in the catalogue must not turn a
+    // paying customer's lease into "unmapped" and revoke it.
+    if (!standard && previous?.kind === 'lease' && previous.standard_id && !opts.force) {
+      standard = await resolveStandardById(env.DB, previous.standard_id);
+    }
+    const plan = planPurchase(purchase, standard, cfg, new Date());
     // A revoke made in /admin is a decision SureCart knows nothing about: no
-    // SureCart event may silently undo it. Only a staff action (force) can.
-    if (!opts.force && previous?.status === 'revoked' && previous.revoked_reason === 'staff') {
+    // SureCart event — and no plain Retry — may undo it. Only Reinstate can.
+    if (!opts.reinstate && previous?.status === 'revoked' && previous.revoked_reason === 'staff') {
       plan.status = 'revoked';
       plan.revokedReason = 'staff';
     }
     row = await upsertPurchase(env.DB, purchase, plan, opts.eventType ?? null);
   } catch (err) {
-    // Most likely migration 0024 not applied: SureCart should retry later.
+    // A D1 failure (or migration 0024 not applied): SureCart should retry.
     return { ok: false, error: `purchases unavailable: ${err instanceof Error ? err.message : String(err)}`, retryable: true };
   }
 
@@ -90,11 +105,22 @@ export async function syncPurchaseById(
     || previous.start_date !== row.start_date
     || previous.end_date !== row.end_date
     || previous.email !== row.email;
+  // Decided from what AuthIES HOLDS (the stamps), not only from what changed:
+  // a push or revoke that failed leaves authies_error set, and every later
+  // event retries it until AuthIES answers.
   const wantsGrant = row.status === 'active' && row.kind !== 'unmapped';
-  // A grant that never landed (AuthIES down, missing Vitrium id since fixed)
-  // is retried by any later event, not only by staff.
-  const pendingGrant = wantsGrant && !row.authies_applied_at;
-  if (!opts.force && !changed && !pendingGrant) return { ok: true, row, action: 'unchanged' };
+  const pending = !!row.authies_error || (wantsGrant && !row.authies_applied_at);
+  if (!opts.force && !changed && !pending) return { ok: true, row, action: 'unchanged' };
+
+  // The customer email moved: AuthIES keys grants on the email, so the old
+  // address's grant must be withdrawn before the new one is written.
+  if (previous && previous.email !== row.email && (previous.authies_applied_at || previous.authies_error)) {
+    const withdrawn = await revokePurchaseGrant(env, requestUrl, row.surecart_purchase_id);
+    if (!withdrawn.ok) {
+      await stampAuthies(env.DB, row.id, withdrawn);
+      return { ok: true, row: await reread(env, row), action: 'failed' };
+    }
+  }
 
   return applyPurchase(env, requestUrl, row, standard, cfg);
 }
@@ -125,11 +151,11 @@ export async function applyPurchase(
   const wantsGrant = row.status === 'active' && row.kind !== 'unmapped';
 
   if (!wantsGrant) {
-    // Nothing was ever pushed → nothing to withdraw.
-    if (!row.authies_applied_at) return { ok: true, row, action: 'skipped' };
-    const outcome = await revokePurchaseGrant(env, requestUrl, row.surecart_purchase_id, row.email);
+    // Nothing was ever pushed (and nothing failed) → nothing to withdraw.
+    if (!row.authies_applied_at && !row.authies_error) return { ok: true, row, action: 'skipped' };
+    const outcome = await revokePurchaseGrant(env, requestUrl, row.surecart_purchase_id);
     await stampAuthies(env.DB, row.id, outcome);
-    return { ok: true, row: await reread(env, row), action: outcome.ok ? 'revoked' : 'skipped' };
+    return { ok: true, row: await reread(env, row), action: outcome.ok ? 'revoked' : 'failed' };
   }
 
   if (row.kind === 'lease' && !standard?.vitriumDocId) {
@@ -153,7 +179,7 @@ export async function applyPurchase(
     note,
   });
   await stampAuthies(env.DB, row.id, outcome);
-  if (!outcome.ok) return { ok: true, row: await reread(env, row), action: 'skipped' };
+  if (!outcome.ok) return { ok: true, row: await reread(env, row), action: 'failed' };
 
   if (cfg.notify && !row.notify_sent_at) {
     const sent = await sendPurchaseEmail(env, {
@@ -182,8 +208,9 @@ export async function applyPurchase(
  *   200  processed — including a purchase recorded without a grant
  *        (unmapped product, test mode, missing Vitrium id): SureCart must
  *        NOT retry those, a retry would change nothing
- *   500  SureCart or D1 could not be reached: SureCart retries with a fresh
- *        signature, and the sync is idempotent when it lands
+ *   500  SureCart, D1 or AuthIES could not be reached / refused: SureCart
+ *        retries with a fresh signature, and the sync is idempotent when it
+ *        lands
  */
 export async function handleSurecartWebhook(request: Request, env: Env): Promise<Response> {
   const secret = (env.SURECART_WEBHOOK_SECRET || '').trim();
@@ -207,13 +234,19 @@ export async function handleSurecartWebhook(request: Request, env: Env): Promise
   if (PURCHASE_EVENTS.has(event.type)) {
     const r = await syncPurchaseById(env, request.url, event.objectId, { eventType: event.type });
     if (!r.ok) return json({ recorded: false, error: r.error }, r.retryable ? 500 : 200);
+    // Recorded, but AuthIES did not take it: 500 so SureCart retries the
+    // (idempotent) sync; the row already carries the error for staff.
+    if (r.action === 'failed') return json({ recorded: true, action: r.action, purchase: event.objectId, error: r.row.authies_error }, 500);
     return json({ recorded: true, action: r.action, purchase: event.objectId, kind: r.row.kind, status: r.row.status });
   }
   if (SUBSCRIPTION_EVENTS.has(event.type)) {
     const results = await syncSubscription(env, request.url, event.objectId, event.type);
-    const failed = results.filter((r): r is Extract<SyncResult, { ok: false }> => !r.ok);
-    if (failed.some(r => r.retryable)) return json({ recorded: false, error: failed[0].error }, 500);
-    return json({ recorded: true, subscription: event.objectId, purchases: results.length, actions: results.map(r => (r.ok ? r.action : 'error')) });
+    const retry = results.some(r => (r.ok ? r.action === 'failed' : r.retryable));
+    const firstError = results.map(r => (r.ok ? r.row.authies_error : r.error)).find(Boolean) ?? null;
+    return json(
+      { recorded: !retry, subscription: event.objectId, purchases: results.length, actions: results.map(r => (r.ok ? r.action : 'error')), error: firstError },
+      retry ? 500 : 200,
+    );
   }
   return json({ ignored: event.type }, 202);
 }

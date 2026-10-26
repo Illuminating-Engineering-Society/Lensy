@@ -106,7 +106,7 @@ async function listView(env: Env, url: URL): Promise<Response> {
   for (const p of purchases) {
     counts[p.effective_status]++;
     if (p.kind === 'unmapped') counts.unmapped++;
-    if (p.effective_status === 'active' && !p.authies_applied_at) counts.pendingAuthies++;
+    if (p.authies_error || (p.effective_status === 'active' && !p.authies_applied_at)) counts.pendingAuthies++;
   }
 
   let visible = purchases;
@@ -115,7 +115,7 @@ async function listView(env: Env, url: URL): Promise<Response> {
       ? visible.filter(p => p.kind === 'unmapped')
       : visible.filter(p => p.effective_status === statusFilter);
   }
-  if (pendingOnly) visible = visible.filter(p => p.effective_status === 'active' && !p.authies_applied_at);
+  if (pendingOnly) visible = visible.filter(p => p.authies_error || (p.effective_status === 'active' && !p.authies_applied_at));
   if (q) {
     visible = visible.filter(p =>
       [p.email, p.name, p.product_name, p.product_sku, p.standard_id, p.surecart_purchase_id, p.surecart_order_number, p.authies_error]
@@ -137,6 +137,7 @@ async function readBody(request: Request): Promise<Record<string, unknown>> {
 
 function syncResponse(r: SyncResult): Response {
   if (!r.ok) return json({ ok: false, error: r.error, retryable: r.retryable }, r.retryable ? 502 : 409);
+  if (r.action === 'failed') return json({ ok: false, action: r.action, error: r.row.authies_error, purchase: r.row }, 502);
   return json({ ok: true, action: r.action, purchase: r.row });
 }
 
@@ -178,10 +179,11 @@ async function importPage(request: Request, env: Env): Promise<Response> {
  *   { status: 'revoked', by? }  staff revoke: the row is marked revoked/staff
  *                               and the AuthIES grant withdrawn. Later SureCart
  *                               events leave it revoked (workers/surecart.ts).
- *   { status: 'active' }        reinstate: a forced resync — SureCart's copy
- *                               decides; a purchase SureCart itself revoked
- *                               comes back revoked/surecart.
- *   { retry: true }             re-apply: the same forced resync.
+ *   { status: 'active' }        reinstate: lifts a staff revoke and resyncs —
+ *                               SureCart's copy decides; a purchase SureCart
+ *                               itself revoked comes back revoked/surecart.
+ *   { retry: true }             re-apply the row as it stands (a staff revoke
+ *                               stays a revoke).
  */
 async function patchOne(request: Request, env: Env, rawId: string): Promise<Response> {
   const id = parseInt(rawId, 10);
@@ -193,15 +195,22 @@ async function patchOne(request: Request, env: Env, rawId: string): Promise<Resp
   if (body.status === 'revoked') {
     await setPurchaseStatus(env.DB, row.id, 'revoked', 'staff');
     let authies: { ok: true } | { ok: false; error: string } = { ok: true };
-    if (row.authies_applied_at) {
-      authies = await revokePurchaseGrant(env, request.url, row.surecart_purchase_id, row.email);
+    if (row.authies_applied_at || row.authies_error) {
+      authies = await revokePurchaseGrant(env, request.url, row.surecart_purchase_id);
       await stampAuthies(env.DB, row.id, authies);
     }
     return json({ ok: true, action: 'revoked', authies, by: typeof body.by === 'string' ? body.by : null });
   }
-  if (body.status === 'active' || body.retry === true) {
+  if (body.status === 'active') {
     return syncResponse(await syncPurchaseById(env, request.url, row.surecart_purchase_id, {
-      eventType: body.retry === true ? 'admin.retry' : 'admin.reinstate', force: true,
+      eventType: 'admin.reinstate', force: true, reinstate: true,
+    }));
+  }
+  if (body.retry === true) {
+    // Re-applies the row AS IT STANDS: a staff-revoked row is re-revoked,
+    // never re-granted — only {status:'active'} lifts a staff revoke.
+    return syncResponse(await syncPurchaseById(env, request.url, row.surecart_purchase_id, {
+      eventType: 'admin.retry', force: true,
     }));
   }
   return json({ error: 'Nothing to do: send {status: "revoked"|"active"} or {retry: true}' }, 400);

@@ -88,9 +88,9 @@ describe('pushPurchaseGrant / revokePurchaseGrant', () => {
   it('revokes by source + source_ref + email, and reports a refusal without throwing', async () => {
     const f = stubFetch();
     try {
-      expect(await revokePurchaseGrant(AUTH_ENV, 'https://lens.ies.org/', 'p1', 'buyer@example.org')).toEqual({ ok: true });
+      expect(await revokePurchaseGrant(AUTH_ENV, 'https://lens.ies.org/', 'p1')).toEqual({ ok: true });
       expect(f.calls[0].url).toBe('https://auth.ies.org/api/comp-grants/revoke');
-      expect(f.calls[0].body).toEqual({ source: 'surecart', source_ref: 'surecart-p1', email: 'buyer@example.org', revoked_by: 'surecart' });
+      expect(f.calls[0].body).toEqual({ source: 'surecart', source_ref: 'surecart-p1', revoked_by: 'surecart' });
     } finally { f.restore(); }
     const g = stubFetch(400);
     try {

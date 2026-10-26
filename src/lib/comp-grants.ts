@@ -128,11 +128,15 @@ export function pushPurchaseGrant(env: Env, requestUrl: string, g: PurchaseGrant
   });
 }
 
-export function revokePurchaseGrant(
-  env: Env, requestUrl: string, surecartPurchaseId: string, email: string,
-): Promise<PushOutcome> {
+/**
+ * Revoke EVERY grant of this purchase, whatever address it was granted to:
+ * AuthIES keys rows on (source, source_ref, email), so a purchase whose
+ * customer email changed holds two rows there, and a revoke scoped to the
+ * current email would leave the old address live.
+ */
+export function revokePurchaseGrant(env: Env, requestUrl: string, surecartPurchaseId: string): Promise<PushOutcome> {
   return callAuthies(env, requestUrl, '/api/comp-grants/revoke', {
-    source: 'surecart', source_ref: purchaseSourceRef(surecartPurchaseId), email, revoked_by: 'surecart',
+    source: 'surecart', source_ref: purchaseSourceRef(surecartPurchaseId), revoked_by: 'surecart',
   });
 }
 

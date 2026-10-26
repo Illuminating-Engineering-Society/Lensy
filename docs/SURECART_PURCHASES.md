@@ -67,11 +67,19 @@ for comps on 2026-10-20.
    `SURECART_SUBSCRIPTION_PRODUCTS` in `wrangler.toml` (comma-separated).
    Until this is set, only a RECURRING product that is not a standard counts
    as a subscription.
+4. **Lease vs PDF** — ask Manuel whether, after 11/2, the lease is the SAME
+   product (the PDF price simply disabled) or a separate price on it. If the
+   product keeps a PDF or print price, list the lease price ids in
+   `SURECART_LEASE_PRICES`; otherwise every purchase of a standard product
+   is a lease. Either way nothing before `SURECART_PURCHASES_SINCE` grants.
 
 SureCart expects an acknowledgement within ~10 s and retries on a non-2xx
-(each retry is freshly signed). The endpoint answers 500 only when SureCart or
-D1 could not be reached; a purchase recorded without a grant (unmapped, test
-mode, missing Vitrium id) is answered 200 so SureCart stops.
+(each retry is freshly signed). The endpoint answers 500 when SureCart, D1 or
+AuthIES could not be reached or refused the grant — the row keeps the error
+and the retry (or any later event for that purchase) applies it; a purchase
+recorded without a grant for a reason a retry cannot change (unmapped, test
+mode, before the cutover, missing Vitrium id) is answered 200 so SureCart
+stops.
 
 ## Lens configuration
 
@@ -86,6 +94,8 @@ Vars (`wrangler.toml [vars]`, defaults in `src/lib/surecart.ts`):
 | `SURECART_LEASE_DAYS` | `1096` | lease term, inclusive of the purchase day (three years incl. a leap day) |
 | `SURECART_SUBSCRIPTION_DAYS` | `365` | subscription term when SureCart reports no billing period |
 | `SURECART_SUBSCRIPTION_PRODUCTS` | empty | SureCart product ids that sell a Library subscription |
+| `SURECART_LEASE_PRICES` | empty | SureCart PRICE ids that sell a lease. Empty = any price of a standard product. **Set it if the lease and the PDF/print are different prices of the same product** — only listed prices then grant access; the rest are recorded as `unmapped / not_a_lease` |
+| `SURECART_PURCHASES_SINCE` | `2026-11-02` | purchases made before this day are recorded but never granted (they bought a PDF); the 11/2 cutover |
 | `SURECART_ACCEPT_TEST_MODE` | `off` | `on` lets `live_mode: false` checkouts grant access — staging only |
 | `SURECART_NOTIFY` | `on` | `off` stops the buyer email |
 
@@ -101,8 +111,11 @@ AuthIES: nothing to configure. `POST /api/comp-grants` accepts
 3. **SureCart**: create the webhook endpoint (step 2 above) LAST, so the
    first delivery lands on a deployed Worker.
 4. **Backfill**: /admin → Purchases → "Import from SureCart", page by page,
-   for purchases made before the endpoint existed. Only purchases this page
-   has not seen cost anything; re-running is harmless.
+   for purchases made after the cutover but before the endpoint existed.
+   Purchases dated before `SURECART_PURCHASES_SINCE` are recorded as
+   `ignored / before_cutover` and grant nothing — the same products sold
+   PDFs until 11/2. Only purchases this page has not seen cost anything;
+   re-running is harmless.
 
 ## First-purchase test plan
 
@@ -131,14 +144,22 @@ a SureCart endpoint pointing at the staging URL):
   standard. Fix the catalogue (Admin → Standards → Edit → "3-year lease link"
   = the product's store page, or correct the SKU in SureCart) and press
   **Resync** on the row.
-- **Pending IES Auth** lists active purchases AuthIES has not taken; the
-  reason is on the row (AuthIES unreachable, `COMP_GRANTS_API_SECRET` unset,
-  "No Vitrium document id synced for …"). Fix, then **Resync**.
+- **Pending IES Auth** lists purchases whose last AuthIES call failed or
+  never happened; the reason is on the row (AuthIES unreachable,
+  `COMP_GRANTS_API_SECRET` unset, "No Vitrium document id synced for …"). A
+  failed call is retried by the next SureCart event for that purchase on its
+  own; **Resync** does it now. A row that was applied once but whose later
+  push or revoke failed reads *out of date*.
 - **Revoke** on a row withdraws the grant and marks it `revoked · by staff`;
-  later SureCart events leave it revoked until **Reinstate**, which re-reads
-  SureCart's copy (a purchase SureCart itself revoked comes back revoked).
+  later SureCart events AND Resync leave it revoked (Resync re-applies the row
+  as it stands, so it re-revokes) until **Reinstate**, which lifts the staff
+  revoke and re-reads SureCart's copy (a purchase SureCart itself revoked
+  comes back revoked).
 - **Resync one SureCart purchase id** re-reads and re-applies a single
-  purchase, whatever the row says.
+  purchase as it stands.
+- A buyer whose SureCart email changes gets the grant moved: the old
+  address's grant is withdrawn and the new one written (AuthIES keys grants
+  on the email).
 - `GET /api/admin/purchases.csv` exports everything.
 
 ## Known limits
@@ -152,6 +173,9 @@ a SureCart endpoint pointing at the staging URL):
 - A canceled subscription stays active until its period ends — SureCart
   sends `purchase.revoked` then. A `subscription.canceled` event alone
   changes nothing, by design.
+- A subscription's window is its CURRENT billing period (start and end move
+  on every renewal), so a long-lived subscription never outgrows AuthIES's
+  1200-day window cap.
 
 ## Phase 2 (not built)
 
@@ -167,7 +191,8 @@ a SureCart endpoint pointing at the staging URL):
 ## Open with Manuel / Shane / Dan
 
 1. Which SureCart account sells the Library subscription and its product
-   id(s) → `SURECART_SUBSCRIPTION_PRODUCTS`.
+   id(s) → `SURECART_SUBSCRIPTION_PRODUCTS`; and whether the lease is a
+   separate PRICE on the standard products → `SURECART_LEASE_PRICES`.
 2. The lease term is exactly three years (webstore prototype: "3-year lease").
 3. The SureCart customer email is the buyer's IES account email (the store
    is an SP of the IdP, so it should be).

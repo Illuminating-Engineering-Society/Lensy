@@ -64,22 +64,15 @@ function baseEdition(id: string): string {
  *   3. the SKU's edition against the newest Active printing of that edition
  *      ("RP-8-25" sold, "RP-8-25+E2" indexed).
  * Deprecated editions still resolve on 1 and 2: a lease of RP-8-22 is a lease
- * of RP-8-22. Null for an unknown product, and null on any D1 failure (the
- * caller records the purchase as unmapped rather than failing the webhook).
+ * of RP-8-22. Null for an unknown product. A D1 failure THROWS: "no match"
+ * and "could not look" must stay distinct, or a D1 blip would turn a paying
+ * customer's lease into an unmapped purchase and revoke it.
  */
 export async function resolveStandardForProduct(
   db: D1Database,
   product: { slug: string | null; sku: string | null },
 ): Promise<ResolvedStandard | null> {
-  let rows: CatalogRow[];
-  try {
-    const res = await db.prepare(
-      'SELECT id, full_designation, title, status, buy_url, vitrium_doc_id, vitrium_web_url FROM standards',
-    ).all<CatalogRow>();
-    rows = res.results || [];
-  } catch {
-    return null;
-  }
+  const rows = await loadCatalogRows(db);
 
   const slug = product.slug ? product.slug.trim().toLowerCase() : null;
   const bySlug = slug ? rows.find(r => slugFromStoreUrl(r.buy_url) === slug) : undefined;
@@ -95,6 +88,20 @@ export async function resolveStandardForProduct(
     .filter(r => baseEdition(r.id).toLowerCase() === base && String(r.status || 'Active') === 'Active')
     .sort((a, b) => errataNumber(b.id) - errataNumber(a.id));
   return printings[0] ? shape(printings[0]) : null;
+}
+
+const CATALOG_SQL = 'SELECT id, full_designation, title, status, buy_url, vitrium_doc_id, vitrium_web_url FROM standards';
+
+async function loadCatalogRows(db: D1Database): Promise<CatalogRow[]> {
+  const res = await db.prepare(CATALOG_SQL).all<CatalogRow>();
+  return res.results || [];
+}
+
+/** One standard by id — the sticky mapping a recorded lease keeps (throws on D1 failure). */
+export async function resolveStandardById(db: D1Database, id: string): Promise<ResolvedStandard | null> {
+  const rows = await loadCatalogRows(db);
+  const row = rows.find(r => r.id.toLowerCase() === id.toLowerCase());
+  return row ? shape(row) : null;
 }
 
 function errataNumber(id: string): number {
