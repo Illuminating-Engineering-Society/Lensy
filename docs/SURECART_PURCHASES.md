@@ -49,6 +49,22 @@ slugs wholesale on every pass. A purchase SureCart made is invisible to
 Wicket, so it must live where AuthIES already looks: the grants table built
 for comps on 2026-10-20.
 
+## SureCart setup in one command (needs only the API token)
+
+```bash
+SURECART_API_KEY=sk_…  node scripts/surecart-setup.js products    # catalogue → suggested vars
+SURECART_API_KEY=sk_…  node scripts/surecart-setup.js webhook     # creates the endpoint, prints the secrets to set
+SURECART_API_KEY=sk_…  node scripts/surecart-setup.js endpoints   # what the account has, and whether it is erroring
+```
+
+`products` reads every store product with its prices, matches each to a
+Lens standard exactly as the Worker does, and prints the
+`SURECART_SUBSCRIPTION_PRODUCTS` / `SURECART_LEASE_PRICES` lines to paste
+into `wrangler.toml` (with the multi-price products flagged for a human
+decision). `webhook` creates the endpoint with the nine events (SureCart
+upserts on URL, so re-running is safe) and prints the two
+`wrangler secret put` commands. The manual equivalent follows.
+
 ## SureCart dashboard setup (whoever holds the SureCart account)
 
 1. **API token** — SureCart → Settings → Developer → API Tokens. Read access
