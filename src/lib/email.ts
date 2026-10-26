@@ -826,6 +826,116 @@ export async function sendCompAccessEmail(
   }
 }
 
+// ─── Webstore purchases (SureCart, 2026-10-26) ────────────────────────────────
+
+export interface PurchaseEmailContext {
+  to: string;
+  name: string | null;
+  kind: 'lease' | 'subscription';
+  /** The leased standard; null for a subscription. */
+  document: CompAccessDocument | null;
+  /** YYYY-MM-DD, inclusive. */
+  startDate: string;
+  endDate: string;
+  orderNumber: string | null;
+}
+
+/**
+ * The buyer's notification once AuthIES holds the grant. SureCart already
+ * sent the receipt; this mail is the one that says WHERE to read — the
+ * Library link for a lease, IES Lens + the Library for a subscription — and,
+ * as with comps, that the access is matched to the email they bought under.
+ */
+export function buildPurchaseEmail(ctx: PurchaseEmailContext): InviteEmailContent {
+  const lease = ctx.kind === 'lease';
+  const doc = lease ? ctx.document : null;
+  const label = doc ? (doc.title ? `${doc.designation} ${doc.title}` : doc.designation) : '';
+  const subject = lease
+    ? `Your 3-year lease is ready: ${doc?.designation ?? 'IES standard'}`
+    : 'Your Lighting Library subscription is active';
+  const heading = lease ? 'Your 3-year lease is ready' : 'Your Lighting Library subscription is active';
+  const order = ctx.orderNumber ? ` (order #${ctx.orderNumber})` : '';
+
+  const lines: string[] = [];
+  lines.push(lease
+    ? `Thank you for your purchase at the IES webstore${order}. Your 3-year lease of ${label} is ready to read in the IES Lighting Library.`
+    : `Thank you for your purchase at the IES webstore${order}. Your Lighting Library subscription is active: read every current IES standard in the Lighting Library and explore them with IES Lens.`);
+  lines.push(lease
+    ? `Your access runs from ${formatExpiry(ctx.startDate)} through ${formatExpiry(ctx.endDate)}. It covers this document only — it is not a Lighting Library subscription and does not include full access to IES Lens.`
+    : `Your access runs from ${formatExpiry(ctx.startDate)} through ${formatExpiry(ctx.endDate)} and renews with your subscription.`);
+  lines.push(
+    `Sign in to the Lighting Library with your IES account using this email address (${ctx.to}). If you do not have an IES account yet, create a free one at ies.org with this same address — your access applies the first time you sign in.`,
+  );
+  lines.push('If your access does not appear right away, refresh your browser page; if it is still missing, contact us at ies.org/contact-us.');
+
+  const subscribeHtml = lease ? `<p style="margin:0 0 16px;color:#444;font-size:15px;line-height:1.55"><a href="${SUBSCRIBE_URL}" style="color:${BRAND_PRIMARY};font-weight:700;text-decoration:none">Subscribe</a> for full access to every standard and to IES Lens.</p>` : '';
+  const subscribeText = lease ? [`Subscribe for full access: ${SUBSCRIBE_URL}`, ''] : [];
+  const docHtml = doc ? `<table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse;margin:0 0 22px">
+      <tr><td style="padding:10px 0;border-bottom:1px solid #eef1f4">
+        <div style="font-size:14px;color:${BRAND_SECONDARY};font-weight:600;line-height:1.45">${escapeHtml(label)}</div>
+        ${doc.libraryUrl ? `<div style="padding-top:5px"><a href="${escapeHtml(doc.libraryUrl)}" style="color:${BRAND_PRIMARY};font-size:13px;text-decoration:none">Open in the IES Lighting Library →</a></div>` : ''}
+      </td></tr>
+      </table>` : '';
+  const docText = doc ? [doc.libraryUrl ? `${label}\n    ${doc.libraryUrl}` : label, ''] : [];
+
+  const html = `<!doctype html><html><body style="margin:0;background:#f4f6f8;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif">
+  <div style="max-width:600px;margin:24px auto;background:#fff;border:1px solid #e2e6ea;border-radius:8px;overflow:hidden">
+    ${emailBanner()}
+    <div style="padding:24px 20px">
+      <h1 style="margin:0 0 14px;font-size:19px;color:${BRAND_SECONDARY}">${escapeHtml(heading)}</h1>
+      ${paragraph(greeting(ctx.name))}
+      ${lines.slice(0, 2).map(paragraph).join('\n      ')}
+      ${docHtml}
+      ${subscribeHtml}
+      ${lines.slice(2).map(paragraph).join('\n      ')}
+      ${lease ? '' : `<p style="margin:0 0 12px"><a href="${LENS_URL}" style="display:inline-block;background:${BRAND_PRIMARY};color:#fff;text-decoration:none;padding:12px 22px;border-radius:6px;font-weight:600;font-size:15px">Open IES Lens</a></p>`}
+      <p style="margin:0 0 20px"><a href="${doc?.libraryUrl ?? LIBRARY_URL}" style="display:inline-block;background:${BRAND_PRIMARY};color:#fff;text-decoration:none;padding:12px 22px;border-radius:6px;font-weight:600;font-size:15px">Open the IES Lighting Library</a></p>
+      ${resourceButtonsHtml()}
+      <p style="margin:0;font-size:13px;color:#666">Technical support: <a href="https://ies.org/contact-us/" style="color:${BRAND_SECONDARY}">ies.org/contact-us</a>.</p>
+    </div>
+    <div style="padding:14px 20px;background:#f4f6f8;color:#888;font-size:12px">Sent by IES Lens because of your purchase at the IES webstore${escapeHtml(order)} — please do not reply to this message.</div>
+  </div>
+</body></html>`;
+
+  const text = [
+    heading,
+    '',
+    greeting(ctx.name),
+    '',
+    ...lines.slice(0, 2).flatMap(l => [l, '']),
+    ...docText,
+    ...subscribeText,
+    ...lines.slice(2).flatMap(l => [l, '']),
+    ...(lease ? [] : [`Open IES Lens: ${LENS_URL}`, '']),
+    `Open the IES Lighting Library: ${doc?.libraryUrl ?? LIBRARY_URL}`,
+    '',
+    ...resourceLinesText(),
+    '',
+    'Technical support: https://ies.org/contact-us/',
+    '',
+    `Sent by IES Lens because of your purchase at the IES webstore${order} — please do not reply.`,
+  ].join('\n');
+
+  return { subject, html, text };
+}
+
+/** Send one purchase notification. Never throws — same contract as sendCompAccessEmail. */
+export async function sendPurchaseEmail(env: Env, ctx: PurchaseEmailContext): Promise<SendOutcome> {
+  const binding = env.SEND_EMAIL;
+  if (!binding) {
+    return { sent: false, error: 'SEND_EMAIL binding is not configured on this deployment.' };
+  }
+  const { subject, html, text } = buildPurchaseEmail(ctx);
+  try {
+    await binding.send({ to: ctx.to, from: { email: FROM_ADDRESS, name: FROM_NAME }, subject, html, text });
+    return { sent: true };
+  } catch (err) {
+    const error = describeSendError(err);
+    console.error('purchase_email_failed', { to: ctx.to, error });
+    return { sent: false, error };
+  }
+}
+
 /** Reject a malformed recipient before the binding does, with a usable message. */
 export function isEmailAddress(value: unknown): boolean {
   return typeof value === 'string' && /^[^\s@]+@[^\s@.]+(?:\.[^\s@.]+)+$/.test(value.trim());

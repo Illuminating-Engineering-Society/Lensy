@@ -1827,6 +1827,61 @@ No migration; no search-cache bump.
   store product 34579 IS the LM-79-24 listing; only its SKU field still reads
   "ANSI/IES LM-79-19-1" (webstore-side typo, there is no separate listing).
 
+### SureCart purchases grant Library access (Teams, 2026-10-26)
+
+Dan: after 11/2 the only ways to acquire a standard are a "lease" or a
+"subscription", "both of which grant access via Vitrium only"; Shane: "the
+purchase in SureCart just triggers the update in Vitrium" — nothing of the
+kind existed. Runbook (SureCart setup, secrets, deploy order, test plan):
+`docs/SURECART_PURCHASES.md`; design: `docs/superpowers/specs/2026-10-26-surecart-purchases-design.md`.
+Migration **0024** (`purchases`); AuthIES branch `feat/surecart-purchase-source`.
+
+- **The webhook lands in Lens** (`POST /api/webhooks/surecart`, public,
+  HMAC-SHA256 over `timestamp.body`, 5-min tolerance — `src/lib/surecart.ts`),
+  because Lens holds the catalogue (`standards.buy_url` slug → standard,
+  SKU designation second; `vitrium_doc_id`), the AuthIES push client, the
+  email builders and `/admin`. The body is only a trigger: the purchase is
+  RE-READ from the SureCart API (`src/lib/surecart-api.ts`, expanded customer
+  / product / price / subscription / order) before anything is recorded.
+- **The access is an AuthIES grant, not a role.** `comp_grants` with
+  `source = 'surecart'`, `source_ref = 'surecart-<purchase id>'` (AuthIES now
+  accepts the source and a 1200-day cap; audit `purchase_granted` /
+  `purchase_revoked`). A lease = `kind documents` on the standard's Vitrium
+  Doc ID for 1096 days inclusive; a subscription = `kind subscriber` through
+  SureCart's `current_period_end_at`, moved on every `subscription.*` event
+  under the same `source_ref`. A role in `users.roles_json` was rejected: the
+  Wicket sync replaces subscription slugs wholesale and would erase it.
+- **Lens tier:** `decideFor` lifts to `full` on `hasActivePurchasedSubscription`
+  (a live `purchases` row, kind subscription) exactly like a Lens comp.
+- **One reconcile** (`syncPurchaseById`, `src/workers/surecart.ts`) serves
+  the webhook, the admin Resync/Retry/Reinstate, and the page-by-page Import
+  (backfill). Idempotent per SureCart purchase id; a staff Revoke survives
+  later SureCart events until Reinstate; `live_mode: false` is recorded as
+  `ignored/test_mode` unless `SURECART_ACCEPT_TEST_MODE = "on"` (staging
+  only); an unmapped product is recorded and grants nothing — never
+  "everything to be safe". The buyer email goes once, on the first grant.
+- **Config:** secrets `SURECART_WEBHOOK_SECRET`, `SURECART_API_KEY`; vars
+  `SURECART_LEASE_DAYS` (1096), `SURECART_SUBSCRIPTION_DAYS` (365),
+  `SURECART_SUBSCRIPTION_PRODUCTS` (product ids — **still owed by Manuel**),
+  `SURECART_LEASE_PRICES` (price ids, empty = any price of a standard product
+  — set it if the PDF/print stay as other prices of the same product),
+  `SURECART_PURCHASES_SINCE` (`2026-11-02`: earlier purchases bought PDFs and
+  are recorded as `ignored/before_cutover`, never granted — the guard that
+  keeps a backfill from leasing every past PDF buyer), `SURECART_ACCEPT_TEST_MODE`,
+  `SURECART_NOTIFY`.
+- **Retries are stamp-driven (review 2026-10-26):** a push or revoke AuthIES
+  refused leaves `authies_error` on the row (`action: failed`, webhook 500 so
+  SureCart retries) and EVERY later event for that purchase re-applies it;
+  the mapping is sticky (a store rename never turns a lease into unmapped);
+  a subscription's window is its current billing period; a revoke names the
+  `source_ref` only (every address the purchase was granted to); admin Retry
+  re-applies the row as it stands and only Reinstate lifts a staff revoke.
+- **Not built, by decision:** writing purchases into Wicket (AuthIES's Wicket
+  client is read-only by policy; CRM mirroring needs IES approval and the
+  Full Access tier UUID). **Unverified until the first real purchase:** that
+  Vitrium's `DocumentId` equals the export's Doc ID in `vitrium_doc_id` (the
+  same assumption comps rest on; AuthIES logs it on every grant).
+
 ### The 10/22/26 Teams notes: notes open by default, deprecate without a successor (2026-10-22)
 
 No migration; no search-cache bump.

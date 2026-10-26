@@ -16,6 +16,7 @@
     "rename:deprecated": "node scripts/rename-deprecated.js",
     "extract": "node scripts/extract-applications-from-pdf.js",
     "sync-metadata": "node scripts/sync-metadata.js",
+    "surecart:setup": "node scripts/surecart-setup.js",
     "test:search": "node scripts/test-search.js",
     "test": "vitest run",
     "test:watch": "vitest",

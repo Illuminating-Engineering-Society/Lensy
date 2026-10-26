@@ -251,6 +251,24 @@ LENSY_CANONICAL_HOST = "lens.ies.org"
 # the FIRST click lands on the linked page instead of losing #page=N in
 # Vitrium's own sign-in bounce. "off" opens the links directly again.
 LENSY_LIBRARY_SSO_HOP = "on"
+# ── SureCart purchases → Lighting Library access (2026-10-26) ──────────────
+# POST /api/webhooks/surecart turns a paid lease into a 3-year per-document
+# grant and a paid subscription into a subscriber grant, both held in AuthIES
+# (comp_grants, source = 'surecart'). See docs/SURECART_PURCHASES.md.
+# Two secrets, set via `wrangler secret put`:
+#   SURECART_WEBHOOK_SECRET   the endpoint's signing secret (SureCart dashboard)
+#   SURECART_API_KEY          a SureCart API token with read access
+SURECART_LEASE_DAYS = "1096"
+SURECART_SUBSCRIPTION_DAYS = "365"
+# SureCart PRODUCT ids (comma-separated) that sell a Library subscription.
+SURECART_SUBSCRIPTION_PRODUCTS = ""
+# SureCart PRICE ids that sell a lease; empty = any price of a standard product.
+SURECART_LEASE_PRICES = ""
+# Purchases before this day (the 11/2 cutover) are recorded but never granted.
+SURECART_PURCHASES_SINCE = "2026-11-02"
+# "on" only on a staging deployment: test-mode checkouts then grant access.
+SURECART_ACCEPT_TEST_MODE = "off"
+SURECART_NOTIFY = "on"
 
 # Secrets set via `wrangler secret put`:
 # VITRIUM_API_KEY

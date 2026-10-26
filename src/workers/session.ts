@@ -39,7 +39,7 @@ import {
 } from '../lib/sso';
 import { sessionCapEnabled, enforceSessionCap } from '../lib/session-cap';
 import { readAccessMode } from '../lib/access-mode';
-import { hasActiveLensComp } from '../lib/comp-grants';
+import { hasActiveLensComp, hasActivePurchasedSubscription } from '../lib/comp-grants';
 import type { InvitedUserRow } from '../types';
 
 function allowMembersWithoutInvite(env: Env): boolean {
@@ -63,17 +63,21 @@ export async function staffOnlyActive(request: Request, env: Env): Promise<boole
 
 /** The invite row + access decision for one signed-in user. */
 async function decideFor(request: Request, env: Env, user: SsoUser) {
-  const [row, staffOnly, lensComp] = await Promise.all([
+  const [row, staffOnly, lensComp, purchasedSub] = await Promise.all([
     findInvite(env, user.email),
     staffOnlyActive(request, env),
     hasActiveLensComp(env, user.email),
+    hasActivePurchasedSubscription(env, user.email),
   ]);
   const decision = decideAccess(user, row, allowMembersWithoutInvite(env), Date.now(), staffOnly);
   // A live complimentary IES Lens grant (client 10/16/26 #6) is a full-tier
   // grant for its window, exactly like an invitation's tier: it only ever ADDS
   // (resolveTier takes the higher), and it never admits anyone the door — the
-  // staff-only lockdown included — would turn away.
-  if (lensComp && decision.authorized) decision.tier = 'full';
+  // staff-only lockdown included — would turn away. A Lighting Library
+  // subscription bought in the webstore (purchases, 2026-10-26) is the same
+  // grant for its billing period — Wicket never hears of SureCart purchases,
+  // so the cookie's roles cannot carry it.
+  if ((lensComp || purchasedSub) && decision.authorized) decision.tier = 'full';
   return { row, decision };
 }
 

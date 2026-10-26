@@ -43,6 +43,8 @@ import { outlineFromSectionMap } from '../lib/section-titles.js';
 import type { OutlineEntry } from '../types';
 import { toLibraryUrlOrNull } from '../lib/library-url.js';
 import { sendCollectionShareEmail, isEmailAddress, resolveAppUrl } from '../lib/email';
+import { handleSurecartWebhook } from './surecart';
+import { handleAdminPurchases, handleAdminPurchasesCsv } from './purchases-admin';
 
 // CORS: `*` with no Allow-Credentials, so a cross-origin page can never make a
 // cookie-authenticated call — every session-gated route is effectively
@@ -128,6 +130,15 @@ export default {
         return withCors(await handleDeviceResetRequest(request, env));
       }
 
+      // ── SureCart webhook (2026-10-26) ────────────────────────────────────
+      // PUBLIC by design: SureCart has no Lens session. The gate is the HMAC
+      // signature on every delivery (workers/surecart.ts), and the body is only
+      // a trigger — the purchase is re-read from the SureCart API before
+      // anything is recorded or granted.
+      if (path === '/api/webhooks/surecart' && request.method === 'POST') {
+        return withCors(await handleSurecartWebhook(request, env));
+      }
+
       // ── Cover fallback (client 10/13/26 #5) ─────────────────────────────
       // PUBLIC like the portal's own Thumbnail endpoint, which serves the same
       // kind of image without a credential: a cover discloses nothing the
@@ -200,6 +211,16 @@ export default {
       }
       if (path === '/api/admin/comp-access' || path.startsWith('/api/admin/comp-access/')) {
         return withCors(await handleAdminCompAccess(request, env, url));
+      }
+
+      // ── Admin: webstore purchases (SureCart, 2026-10-26) ─────────────────
+      // What each purchase mapped to and whether AuthIES took the grant;
+      // resync / import / revoke all go through workers/surecart.ts.
+      if (path === '/api/admin/purchases.csv' && request.method === 'GET') {
+        return withCors(await handleAdminPurchasesCsv(request, env));
+      }
+      if (path === '/api/admin/purchases' || path.startsWith('/api/admin/purchases/')) {
+        return withCors(await handleAdminPurchases(request, env, url));
       }
 
       // ── Admin: invited-users dashboard backend ───────────────────────────
