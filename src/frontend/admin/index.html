@@ -565,6 +565,93 @@
       </div>
     </section>
 
+    <!-- ── Purchases (SureCart → Lighting Library access, 2026-10-26) ──────── -->
+    <section id="panel-purchases" class="hidden fade-in">
+      <div class="flex flex-wrap items-center justify-between gap-3 mb-2">
+        <h2 class="font-display text-xl font-bold">Webstore purchases</h2>
+        <div class="flex items-center gap-2">
+          <a href="/api/admin/purchases.csv" class="px-3 py-2 text-sm rounded-lg border border-gray-300 bg-white hover:bg-gray-50 transition">Export CSV</a>
+          <button onclick="loadPurchases()" class="px-3 py-2 text-sm rounded-lg border border-gray-300 bg-white hover:bg-gray-50 transition">Refresh</button>
+        </div>
+      </div>
+      <p class="text-sm text-gray-500 mb-4">
+        Every lease and Lighting Library subscription paid in the IES webstore (SureCart). A purchase
+        arrives through the SureCart webhook, is read back from the SureCart API, mapped to a standard,
+        and handed to IES Auth as the grant Vitrium checks on every document open. Nothing here is done by
+        hand — this page shows what happened and lets you repair it.
+      </p>
+
+      <div class="rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 mb-6 text-sm text-gray-700 space-y-2">
+        <p><strong>SureCart setup</strong> (Developer → Webhooks): endpoint
+          <code id="pu-webhook-url" class="font-mono text-xs bg-white border border-gray-200 rounded px-1.5 py-0.5"></code>,
+          events <code class="font-mono text-xs">purchase.created</code>, <code class="font-mono text-xs">purchase.updated</code>,
+          <code class="font-mono text-xs">purchase.invoked</code>, <code class="font-mono text-xs">purchase.revoked</code>,
+          <code class="font-mono text-xs">subscription.renewed</code>, <code class="font-mono text-xs">subscription.updated</code>,
+          <code class="font-mono text-xs">subscription.made_active</code>, <code class="font-mono text-xs">subscription.canceled</code>,
+          <code class="font-mono text-xs">subscription.completed</code>; the endpoint’s signing secret and an API token are
+          the two Worker secrets (see docs/SURECART_PURCHASES.md).</p>
+        <p><strong>How a product is mapped:</strong> a product whose store page matches a standard’s lease link
+          (Admin → Standards → Edit) or whose SKU is a designation is a <em>3-year lease</em> of that standard;
+          a product listed in <code class="font-mono text-xs">SURECART_SUBSCRIPTION_PRODUCTS</code>, or a recurring
+          product that is no standard, is a <em>Lighting Library subscription</em>. Anything else is recorded as
+          <em>unmapped</em> and grants nothing — fix the mapping, then press <strong>Resync</strong>.</p>
+        <p>Access is matched by <strong>email address</strong> at sign-in. A row whose “IES Auth” column reads
+          <em>pending</em> could not be applied (the reason is on the row): fix the cause and press <strong>Resync</strong>.
+          A test-mode checkout is recorded as <em>ignored</em> and never grants access on this deployment.</p>
+      </div>
+
+      <!-- ── Import / resync ───────────────────────────────────────────── -->
+      <div class="bg-white rounded-xl shadow p-5 mb-8 space-y-3">
+        <h3 class="font-display font-bold">Import from SureCart</h3>
+        <p class="text-xs text-gray-500">Walks SureCart’s purchase list one page at a time (newest first) and records any
+          purchase this page has not seen — for purchases made before the webhook was connected, or after an outage.
+          A purchase already recorded costs one read and changes nothing.</p>
+        <div class="flex flex-wrap items-end gap-3">
+          <label class="text-sm">Page
+            <input id="pu-import-page" type="number" min="1" value="1" class="ml-2 w-20 px-2 py-1.5 text-sm border border-gray-300 rounded-lg" />
+          </label>
+          <button onclick="importPurchases()" id="pu-import-btn" class="px-3 py-2 text-sm rounded-lg bg-brand-secondary text-white hover:opacity-90 transition">Import this page</button>
+          <label class="text-sm ml-4">Resync one SureCart purchase id
+            <input id="pu-sync-id" type="text" placeholder="e.g. 1de882b6-…" class="ml-2 w-72 px-2 py-1.5 text-sm font-mono border border-gray-300 rounded-lg" />
+          </label>
+          <button onclick="resyncPurchaseById()" class="px-3 py-2 text-sm rounded-lg border border-gray-300 bg-white hover:bg-gray-50 transition">Resync</button>
+        </div>
+        <p id="pu-import-result" class="text-xs text-gray-600"></p>
+      </div>
+
+      <!-- ── Queue ─────────────────────────────────────────────────────── -->
+      <div class="flex flex-wrap items-center gap-3 mb-3">
+        <div id="pu-chips" class="flex flex-wrap gap-2"></div>
+        <div class="flex-1 min-w-[220px]">
+          <input id="pu-filter" type="search" placeholder="Filter by buyer, product, standard or order…" oninput="renderPurchases()"
+                 class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white focus:ring-2 focus:ring-brand-primary focus:border-transparent" />
+        </div>
+      </div>
+
+      <p id="pu-note" class="hidden text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-3"></p>
+
+      <div class="bg-white rounded-xl shadow overflow-hidden">
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead>
+              <tr class="text-left text-xs uppercase tracking-wide text-gray-500 border-b border-gray-200">
+                <th class="px-4 py-3">Buyer</th>
+                <th class="px-4 py-3">Product</th>
+                <th class="px-4 py-3">Grants</th>
+                <th class="px-4 py-3">Window</th>
+                <th class="px-4 py-3">IES Auth</th>
+                <th class="px-4 py-3">Email</th>
+                <th class="px-4 py-3">Status</th>
+                <th class="px-4 py-3 text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody id="pu-rows"></tbody>
+          </table>
+        </div>
+        <p id="pu-empty" class="hidden text-center text-gray-400 text-sm py-10">No purchases match this view.</p>
+      </div>
+    </section>
+
     <!-- ══ Index health ═════════════════════════════════════════════════════ -->
     <section id="panel-index" class="hidden fade-in">
       <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
@@ -970,6 +1057,7 @@
       ['analytics',   'Search analytics'],
       ['resets',      'Device resets'],
       ['comp-access', 'Comp access'],
+      ['purchases',   'Purchases'],
       ['index',       'Index health'],
       ['maintenance', 'Maintenance'],
     ];
@@ -1008,6 +1096,7 @@
           analytics: loadAnalytics,
           resets: loadResets,
           'comp-access': loadCompAccess,
+          purchases: loadPurchases,
           index: () => {},
           maintenance: () => {},
         })[id]();
@@ -1926,6 +2015,160 @@
       else if (data.authies && !data.authies.ok) alert(`Saved, but the Lighting Library half did not go through: ${data.authies.error}`);
       else if (patch.resend) alert('Notification re-sent.');
       await loadCompGrants();
+    }
+
+    // ── Purchases (SureCart, 2026-10-26) ──────────────────────────────────
+    // Read-mostly: the webhook writes the rows; this tab repairs them. Every
+    // action is a PATCH or POST on workers/purchases-admin.ts, which routes
+    // through the same reconcile the webhook uses.
+    let purchases = [];
+    let purchaseCounts = { all: 0, active: 0, revoked: 0, ignored: 0, expired: 0, unmapped: 0, pendingAuthies: 0 };
+    let purchaseFilter = 'all';
+
+    const PU_BADGE = {
+      active: 'bg-green-100 text-green-800',
+      expired: 'bg-gray-200 text-gray-600',
+      revoked: 'bg-red-100 text-red-700',
+      ignored: 'bg-amber-100 text-amber-800',
+    };
+    const PU_KIND = { lease: '3-year lease', subscription: 'Subscription', unmapped: 'Unmapped' };
+
+    async function loadPurchases() {
+      document.getElementById('pu-webhook-url').textContent = `${location.origin}/api/webhooks/surecart`;
+      const { data } = await api('/api/admin/purchases');
+      purchases = data.purchases || [];
+      purchaseCounts = data.counts || purchaseCounts;
+      const note = document.getElementById('pu-note');
+      note.classList.toggle('hidden', !data.note);
+      note.textContent = data.note || '';
+      renderPurchases();
+    }
+
+    function setPurchaseFilter(f) { purchaseFilter = f; renderPurchases(); }
+
+    function renderPurchases() {
+      const CHIPS = [
+        ['all', 'All'], ['active', 'Active'], ['pending', 'Pending IES Auth'], ['unmapped', 'Unmapped'],
+        ['expired', 'Expired'], ['revoked', 'Revoked'], ['ignored', 'Ignored'],
+      ];
+      document.getElementById('pu-chips').innerHTML = CHIPS.map(([s, label]) => {
+        const active = purchaseFilter === s;
+        const n = s === 'pending' ? purchaseCounts.pendingAuthies : purchaseCounts[s];
+        return `<button onclick="setPurchaseFilter('${s}')"
+          class="px-3 py-1.5 text-sm rounded-full border transition ${active
+            ? 'bg-brand-secondary text-white border-brand-secondary'
+            : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'}">
+          ${label} <span class="${active ? 'text-blue-200' : 'text-gray-400'}">${n ?? 0}</span>
+        </button>`;
+      }).join('');
+
+      const q = (document.getElementById('pu-filter').value || '').trim().toLowerCase();
+      const visible = purchases.filter(p => {
+        if (purchaseFilter === 'pending' && (p.authies_applied_at || p.effective_status !== 'active')) return false;
+        if (purchaseFilter === 'unmapped' && p.kind !== 'unmapped') return false;
+        if (!['all', 'pending', 'unmapped'].includes(purchaseFilter) && p.effective_status !== purchaseFilter) return false;
+        if (!q) return true;
+        return [p.email, p.name, p.product_name, p.product_sku, p.standard_id, p.surecart_order_number, p.surecart_purchase_id,
+          p.standard && p.standard.designation, p.authies_error]
+          .some(f => f && String(f).toLowerCase().includes(q));
+      });
+
+      document.getElementById('pu-rows').innerHTML = visible.map(p => {
+        const grants = p.kind === 'subscription'
+          ? '<span class="inline-block px-1.5 py-0.5 rounded bg-amber-100 text-amber-900 text-[11px] font-semibold">Full IES Lens + Library</span>'
+          : p.kind === 'lease' && p.standard
+            ? `<span class="inline-block px-1.5 py-0.5 rounded bg-gray-100 font-mono text-[11px]" title="${esc(p.standard.title || p.standard.designation)}">${esc(p.standard.id)}</span>`
+            : p.kind === 'lease'
+              ? `<span class="inline-block px-1.5 py-0.5 rounded bg-gray-100 font-mono text-[11px]">${esc(p.standard_id || '?')}</span>`
+              : '<span class="text-xs text-red-700 font-medium">no standard matched</span>';
+        const applied = p.kind === 'unmapped' || p.effective_status === 'ignored'
+          ? '<span class="text-xs text-gray-400">—</span>'
+          : p.authies_applied_at
+            ? `<span class="text-green-700 text-xs">✓ ${esc(day(p.authies_applied_at))}</span>`
+            : `<span class="text-xs text-amber-700 font-medium">pending</span>
+               ${p.authies_error ? `<p class="text-xs text-gray-500 max-w-[220px]" title="${esc(p.authies_error)}">${esc(p.authies_error)}</p>` : ''}`;
+        const mail = p.notify_error
+          ? `<span class="text-xs text-red-600" title="${esc(p.notify_error)}">failed ⚠</span>`
+          : p.notify_sent_at
+            ? `<span class="text-xs text-green-700">✓ ${esc(day(p.notify_sent_at))}</span>`
+            : '<span class="text-xs text-gray-400">not sent</span>';
+        const revoked = p.effective_status === 'revoked';
+        const actions = [
+          `<button onclick="purchaseAction(${p.id}, {retry:true})" class="text-brand-secondary hover:underline" title="Read the purchase back from SureCart and re-apply it">Resync</button>`,
+          revoked
+            ? `<button onclick="purchaseAction(${p.id}, {status:'active'})" class="text-brand-secondary hover:underline">Reinstate</button>`
+            : p.effective_status === 'active'
+              ? `<button onclick="purchaseAction(${p.id}, {status:'revoked'})" class="text-gray-400 hover:text-red-600 hover:underline">Revoke</button>`
+              : '',
+        ].filter(Boolean).join('\n');
+        const reasonText = p.revoked_reason === 'surecart' ? 'by SureCart'
+          : p.revoked_reason === 'staff' ? 'by staff'
+          : p.revoked_reason ? p.revoked_reason.replace('_', ' ') : '';
+        const reason = reasonText ? `<p class="text-xs text-gray-400">${esc(reasonText)}</p>` : '';
+        const orderLine = p.surecart_order_number
+          ? `<p class="text-xs text-gray-400">order #${esc(p.surecart_order_number)}${p.live_mode ? '' : ' · test mode'}</p>`
+          : (p.live_mode ? '' : '<p class="text-xs text-gray-400">test mode</p>');
+
+        return `<tr class="border-b border-gray-100 hover:bg-gray-50 align-top">
+          <td class="px-4 py-3">
+            <span class="font-mono text-xs">${esc(p.email)}</span>
+            ${p.name ? `<p class="text-xs text-gray-500">${esc(p.name)}</p>` : ''}
+            ${orderLine}
+          </td>
+          <td class="px-4 py-3 max-w-[240px]">
+            <p class="text-xs">${esc(p.product_name || '')}</p>
+            ${p.product_sku ? `<p class="text-xs text-gray-400 font-mono">${esc(p.product_sku)}</p>` : ''}
+            <p class="text-[11px] text-gray-400">${esc(PU_KIND[p.kind] || p.kind)}</p>
+          </td>
+          <td class="px-4 py-3 max-w-[200px]">${grants}</td>
+          <td class="px-4 py-3 text-xs whitespace-nowrap">${esc(p.start_date)} → ${esc(p.end_date)}</td>
+          <td class="px-4 py-3">${applied}</td>
+          <td class="px-4 py-3">${mail}</td>
+          <td class="px-4 py-3"><span class="inline-block px-2 py-0.5 rounded-full text-xs font-medium ${PU_BADGE[p.effective_status] || 'bg-gray-100 text-gray-600'}">${esc(p.effective_status)}</span>${reason}</td>
+          <td class="px-4 py-3 text-right whitespace-nowrap space-x-3 text-xs">${actions}</td>
+        </tr>`;
+      }).join('');
+      document.getElementById('pu-empty').classList.toggle('hidden', visible.length > 0);
+    }
+
+    async function purchaseAction(id, patch) {
+      if (patch.status === 'revoked' &&
+          !confirm('Revoke this purchase’s access? The Lighting Library grant is withdrawn now and stays withdrawn until you press Reinstate. SureCart is not changed (refund there separately if needed).')) return;
+      const { status, data } = await api(`/api/admin/purchases/${id}`, { method: 'PATCH', body: JSON.stringify(patch) });
+      if (status >= 400) alert(`Could not update: ${data.error || 'unknown error'}`);
+      else if (data.authies && !data.authies.ok) alert(`Saved, but the Lighting Library half did not go through: ${data.authies.error}`);
+      else if (patch.retry && data.action === 'skipped') alert(`Resynced, but nothing was granted: ${(data.purchase && data.purchase.authies_error) || 'see the row'}`);
+      await loadPurchases();
+    }
+
+    async function resyncPurchaseById() {
+      const id = (document.getElementById('pu-sync-id').value || '').trim();
+      const out = document.getElementById('pu-import-result');
+      if (!id) { out.textContent = 'Enter a SureCart purchase id first.'; return; }
+      out.textContent = 'Resyncing…';
+      const { status, data } = await api('/api/admin/purchases/sync', { method: 'POST', body: JSON.stringify({ purchase_id: id }) });
+      out.textContent = status >= 400 ? `Could not resync: ${data.error || 'unknown error'}` : `Resynced ${id}: ${data.action}.`;
+      await loadPurchases();
+    }
+
+    async function importPurchases() {
+      const pageEl = document.getElementById('pu-import-page');
+      const out = document.getElementById('pu-import-result');
+      const btn = document.getElementById('pu-import-btn');
+      const page = Math.max(1, parseInt(pageEl.value, 10) || 1);
+      btn.disabled = true; out.textContent = `Importing page ${page}…`;
+      try {
+        const { status, data } = await api('/api/admin/purchases/import', { method: 'POST', body: JSON.stringify({ page }) });
+        if (status >= 400) { out.textContent = `Could not import: ${data.error || 'unknown error'}`; return; }
+        const acts = Object.entries(data.actions || {}).map(([k, v]) => `${v} ${k}`).join(', ') || 'nothing to do';
+        const skipped = data.skipped ? `, ${data.skipped} without a customer email skipped` : '';
+        const failed = data.errors && data.errors.length ? `, ${data.errors.length} failed (${data.errors[0].error})` : '';
+        out.textContent = `Page ${page}: ${data.processed} purchases read (${acts})${skipped}${failed}. ${data.hasMore ? 'More pages remain — press Import again.' : 'That was the last page.'}`;
+        if (data.hasMore) pageEl.value = String(page + 1);
+      } finally {
+        btn.disabled = false;
+        await loadPurchases();
+      }
     }
 
     // ── Index health ──────────────────────────────────────────────────────
