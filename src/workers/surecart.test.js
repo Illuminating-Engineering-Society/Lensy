@@ -243,3 +243,85 @@ describe('syncPurchaseById / syncSubscription — a subscription', () => {
     expect(await syncSubscription(env, URL_, 'sub-unknown', 'subscription.renewed')).toEqual([]);
   });
 });
+
+// ─── The webhook endpoint ──────────────────────────────────────────────────────
+
+import { handleSurecartWebhook } from './surecart';
+
+async function hmacHex(secret, message) {
+  const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  const sig = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(message));
+  return [...new Uint8Array(sig)].map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+async function signedRequest(secret, event, { timestamp, signature } = {}) {
+  const body = JSON.stringify(event);
+  const ts = timestamp ?? String(Math.floor(Date.now() / 1000));
+  const sig = signature ?? await hmacHex(secret, `${ts}.${body}`);
+  return new Request(URL_, {
+    method: 'POST', body,
+    headers: { 'Content-Type': 'application/json', 'x-webhook-timestamp': ts, 'x-webhook-signature': sig },
+  });
+}
+const EVENT = (type, object) => ({ id: 'evt1', object: 'event', type, data: { object } });
+
+describe('handleSurecartWebhook', () => {
+  it('a correctly signed purchase.created is processed once', async () => {
+    const db = makeDb(); const env = makeEnv(db, { SURECART_WEBHOOK_SECRET: 'whsec' });
+    f = stubFetch(purchaseFixture());
+    const res = await handleSurecartWebhook(await signedRequest('whsec', EVENT('purchase.created', { id: 'p1', object: 'purchase', live_mode: true })), env);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ recorded: true, action: 'granted', purchase: 'p1', kind: 'lease', status: 'active' });
+    expect(f.authies).toHaveLength(1);
+  });
+
+  it('a bad signature is refused before SureCart is asked anything', async () => {
+    const db = makeDb(); const env = makeEnv(db, { SURECART_WEBHOOK_SECRET: 'whsec' });
+    f = stubFetch(() => { throw new Error('must not be called'); });
+    const wrong = await handleSurecartWebhook(await signedRequest('other', EVENT('purchase.created', { id: 'p1', object: 'purchase' })), env);
+    expect(wrong.status).toBe(401);
+    expect(await wrong.json()).toEqual({ error: 'bad_signature', reason: 'mismatch' });
+    const stale = await handleSurecartWebhook(await signedRequest('whsec', EVENT('purchase.created', { id: 'p1', object: 'purchase' }), { timestamp: '1641873601' }), env);
+    expect((await stale.json()).reason).toBe('stale');
+    expect(db.rows.size).toBe(0);
+  });
+
+  it('an event this integration does not act on is acknowledged with 202', async () => {
+    const env = makeEnv(makeDb(), { SURECART_WEBHOOK_SECRET: 'whsec' });
+    const res = await handleSurecartWebhook(await signedRequest('whsec', EVENT('order.paid', { id: 'o1', object: 'order' })), env);
+    expect(res.status).toBe(202);
+    expect(await res.json()).toEqual({ ignored: 'order.paid' });
+  });
+
+  it('no signing secret → 503; a non-event body → 400', async () => {
+    const res = await handleSurecartWebhook(await signedRequest('whsec', EVENT('purchase.created', { id: 'p1' })), makeEnv(makeDb()));
+    expect(res.status).toBe(503);
+    const env = makeEnv(makeDb(), { SURECART_WEBHOOK_SECRET: 'whsec' });
+    const bad = await handleSurecartWebhook(await signedRequest('whsec', { hello: 'world' }), env);
+    expect(bad.status).toBe(400);
+  });
+
+  it('a SureCart outage answers 500 so SureCart retries; an unmapped product answers 200 so it does not', async () => {
+    const db = makeDb(); const env = makeEnv(db, { SURECART_WEBHOOK_SECRET: 'whsec' });
+    f = stubFetch(() => new Response('oops', { status: 503 }));
+    const down = await handleSurecartWebhook(await signedRequest('whsec', EVENT('purchase.created', { id: 'p1', object: 'purchase' })), env);
+    expect(down.status).toBe(500);
+    f.restore();
+    f = stubFetch(purchaseFixture({ product: { id: 'x', name: 'Proceedings', sku: 'IES-2017-ACP', slug: 'acp' } }));
+    const unmapped = await handleSurecartWebhook(await signedRequest('whsec', EVENT('purchase.created', { id: 'p1', object: 'purchase' })), env);
+    expect(unmapped.status).toBe(200);
+    expect(await unmapped.json()).toMatchObject({ recorded: true, action: 'skipped', kind: 'unmapped' });
+  });
+
+  it('a subscription.renewed re-syncs the purchases of that subscription', async () => {
+    const db = makeDb(); const env = makeEnv(db, { SURECART_WEBHOOK_SECRET: 'whsec' });
+    let fixture = purchaseFixture({ subscription: { id: 'sub1', status: 'active', current_period_end_at: Date.UTC(2027, 10, 2) / 1000 }, product: { id: 'prod-sub', name: 'LL', sku: null, slug: 'll' } });
+    f = stubFetch(() => fixture);
+    await syncPurchaseById(env, URL_, 'p1', {});
+    fixture = { ...fixture, subscription: { ...fixture.subscription, current_period_end_at: Date.UTC(2028, 10, 2) / 1000 } };
+    const res = await handleSurecartWebhook(await signedRequest('whsec', EVENT('subscription.renewed', { id: 'sub1', object: 'subscription' })), env);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ recorded: true, subscription: 'sub1', purchases: 1, actions: ['granted'] });
+    expect(f.authies[1].body.expires_at).toBe('2028-11-02');
+  });
+});

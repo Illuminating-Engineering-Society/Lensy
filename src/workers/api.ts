@@ -43,6 +43,7 @@ import { outlineFromSectionMap } from '../lib/section-titles.js';
 import type { OutlineEntry } from '../types';
 import { toLibraryUrlOrNull } from '../lib/library-url.js';
 import { sendCollectionShareEmail, isEmailAddress, resolveAppUrl } from '../lib/email';
+import { handleSurecartWebhook } from './surecart';
 
 // CORS: `*` with no Allow-Credentials, so a cross-origin page can never make a
 // cookie-authenticated call — every session-gated route is effectively
@@ -126,6 +127,15 @@ export default {
       }
       if (path === '/api/library/device-reset' && request.method === 'POST') {
         return withCors(await handleDeviceResetRequest(request, env));
+      }
+
+      // ── SureCart webhook (2026-10-26) ────────────────────────────────────
+      // PUBLIC by design: SureCart has no Lens session. The gate is the HMAC
+      // signature on every delivery (workers/surecart.ts), and the body is only
+      // a trigger — the purchase is re-read from the SureCart API before
+      // anything is recorded or granted.
+      if (path === '/api/webhooks/surecart' && request.method === 'POST') {
+        return withCors(await handleSurecartWebhook(request, env));
       }
 
       // ── Cover fallback (client 10/13/26 #5) ─────────────────────────────

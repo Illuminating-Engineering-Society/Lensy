@@ -12,7 +12,9 @@
  * step follows: docs/superpowers/specs/2026-10-26-surecart-purchases-design.md.
  */
 
-import { planPurchase, readSurecartConfig, type SurecartConfig } from '../lib/surecart';
+import {
+  parseWebhookEvent, planPurchase, readSurecartConfig, verifyWebhookSignature, type SurecartConfig,
+} from '../lib/surecart';
 import { fetchPurchase, surecartConfigured } from '../lib/surecart-api';
 import {
   findPurchaseBySurecartId, listPurchasesBySubscription, resolveStandardForProduct, stampAuthies, stampNotify,
@@ -33,6 +35,13 @@ export interface SyncOptions {
   /** Re-push to AuthIES even when nothing changed (staff Retry / Resync). */
   force?: boolean;
 }
+
+/** Events whose `data.object` is a purchase. */
+const PURCHASE_EVENTS = new Set(['purchase.created', 'purchase.updated', 'purchase.invoked', 'purchase.revoked']);
+/** Events whose `data.object` is a subscription and that can move a period or end one. */
+const SUBSCRIPTION_EVENTS = new Set([
+  'subscription.renewed', 'subscription.updated', 'subscription.made_active', 'subscription.canceled', 'subscription.completed',
+]);
 
 // ── the reconcile ───────────────────────────────────────────────────────────
 
@@ -155,7 +164,59 @@ export async function applyPurchase(
   return { ok: true, row: await reread(env, row), action: 'granted' };
 }
 
+// ── the webhook ─────────────────────────────────────────────────────────────
+
+/**
+ * POST /api/webhooks/surecart — public by design; the signature is the gate.
+ *
+ *   503  no signing secret configured (nothing is recorded)
+ *   401  missing / stale / wrong signature
+ *   400  not a SureCart event envelope
+ *   202  an event type this integration does not act on
+ *   200  processed — including a purchase recorded without a grant
+ *        (unmapped product, test mode, missing Vitrium id): SureCart must
+ *        NOT retry those, a retry would change nothing
+ *   500  SureCart or D1 could not be reached: SureCart retries with a fresh
+ *        signature, and the sync is idempotent when it lands
+ */
+export async function handleSurecartWebhook(request: Request, env: Env): Promise<Response> {
+  const secret = (env.SURECART_WEBHOOK_SECRET || '').trim();
+  if (!secret) return json({ error: 'webhook_not_configured' }, 503);
+
+  const rawBody = await request.text();
+  const verdict = await verifyWebhookSignature(
+    secret,
+    request.headers.get('x-webhook-timestamp'),
+    rawBody,
+    request.headers.get('x-webhook-signature'),
+    Math.floor(Date.now() / 1000),
+  );
+  if (verdict !== 'ok') return json({ error: 'bad_signature', reason: verdict }, 401);
+
+  let parsed: unknown;
+  try { parsed = JSON.parse(rawBody); } catch { return json({ error: 'bad_json' }, 400); }
+  const event = parseWebhookEvent(parsed);
+  if (!event) return json({ error: 'bad_event' }, 400);
+
+  if (PURCHASE_EVENTS.has(event.type)) {
+    const r = await syncPurchaseById(env, request.url, event.objectId, { eventType: event.type });
+    if (!r.ok) return json({ recorded: false, error: r.error }, r.retryable ? 500 : 200);
+    return json({ recorded: true, action: r.action, purchase: event.objectId, kind: r.row.kind, status: r.row.status });
+  }
+  if (SUBSCRIPTION_EVENTS.has(event.type)) {
+    const results = await syncSubscription(env, request.url, event.objectId, event.type);
+    const failed = results.filter((r): r is Extract<SyncResult, { ok: false }> => !r.ok);
+    if (failed.some(r => r.retryable)) return json({ recorded: false, error: failed[0].error }, 500);
+    return json({ recorded: true, subscription: event.objectId, purchases: results.length, actions: results.map(r => (r.ok ? r.action : 'error')) });
+  }
+  return json({ ignored: event.type }, 202);
+}
+
 // ── helpers ─────────────────────────────────────────────────────────────────
+
+function json(data: unknown, status = 200): Response {
+  return new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } });
+}
 
 async function reread(env: Env, row: PurchaseRow): Promise<PurchaseRow> {
   try {
