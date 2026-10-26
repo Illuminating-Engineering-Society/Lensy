@@ -71,6 +71,12 @@ export async function syncPurchaseById(
   let row: PurchaseRow;
   try {
     previous = await findPurchaseBySurecartId(env.DB, surecartPurchaseId);
+    // A revoke made in /admin is a decision SureCart knows nothing about: no
+    // SureCart event may silently undo it. Only a staff action (force) can.
+    if (!opts.force && previous?.status === 'revoked' && previous.revoked_reason === 'staff') {
+      plan.status = 'revoked';
+      plan.revokedReason = 'staff';
+    }
     row = await upsertPurchase(env.DB, purchase, plan, opts.eventType ?? null);
   } catch (err) {
     // Most likely migration 0024 not applied: SureCart should retry later.

@@ -325,3 +325,20 @@ describe('handleSurecartWebhook', () => {
     expect(f.authies[1].body.expires_at).toBe('2028-11-02');
   });
 });
+
+describe('a staff revoke', () => {
+  it('survives later SureCart events and yields only to a forced resync', async () => {
+    const db = makeDb(); const env = makeEnv(db);
+    f = stubFetch(purchaseFixture());
+    await syncPurchaseById(env, URL_, 'p1', {});
+    const row = db.rows.get('p1');
+    row.status = 'revoked'; row.revoked_reason = 'staff';
+    const r = await syncPurchaseById(env, URL_, 'p1', { eventType: 'purchase.updated' });
+    expect(r.action).toBe('unchanged');
+    expect(r.row).toMatchObject({ status: 'revoked', revoked_reason: 'staff' });
+    expect(f.authies).toHaveLength(1);
+    const forced = await syncPurchaseById(env, URL_, 'p1', { force: true });
+    expect(forced.action).toBe('granted');
+    expect(forced.row.status).toBe('active');
+  });
+});

@@ -44,6 +44,7 @@ import type { OutlineEntry } from '../types';
 import { toLibraryUrlOrNull } from '../lib/library-url.js';
 import { sendCollectionShareEmail, isEmailAddress, resolveAppUrl } from '../lib/email';
 import { handleSurecartWebhook } from './surecart';
+import { handleAdminPurchases, handleAdminPurchasesCsv } from './purchases-admin';
 
 // CORS: `*` with no Allow-Credentials, so a cross-origin page can never make a
 // cookie-authenticated call — every session-gated route is effectively
@@ -210,6 +211,16 @@ export default {
       }
       if (path === '/api/admin/comp-access' || path.startsWith('/api/admin/comp-access/')) {
         return withCors(await handleAdminCompAccess(request, env, url));
+      }
+
+      // ── Admin: webstore purchases (SureCart, 2026-10-26) ─────────────────
+      // What each purchase mapped to and whether AuthIES took the grant;
+      // resync / import / revoke all go through workers/surecart.ts.
+      if (path === '/api/admin/purchases.csv' && request.method === 'GET') {
+        return withCors(await handleAdminPurchasesCsv(request, env));
+      }
+      if (path === '/api/admin/purchases' || path.startsWith('/api/admin/purchases/')) {
+        return withCors(await handleAdminPurchases(request, env, url));
       }
 
       // ── Admin: invited-users dashboard backend ───────────────────────────
