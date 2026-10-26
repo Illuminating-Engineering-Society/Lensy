@@ -88,6 +88,75 @@ export function revokeCompGrant(
   });
 }
 
+// ── SureCart purchases (2026-10-26) ─────────────────────────────────────────
+// A webstore lease or subscription takes the same road as a staff comp:
+// AuthIES's /api/comp-grants, with `source: 'surecart'` so the audit, the
+// window cap (three years) and the idempotency key are the purchase's own.
+// `source_ref` is derived from SureCart's purchase id, which is what makes a
+// renewal or a staff resync UPDATE the grant in place.
+
+export function purchaseSourceRef(surecartPurchaseId: string): string {
+  return `surecart-${surecartPurchaseId}`;
+}
+
+export interface PurchaseGrantPush {
+  surecartPurchaseId: string;
+  email: string;
+  /** 'documents' for a lease (one standard), 'subscriber' for a subscription. */
+  kind: 'subscriber' | 'documents';
+  /** standards.vitrium_doc_id values; documents only. */
+  documents: string[];
+  labels: string[];
+  /** YYYY-MM-DD, inclusive at both ends. */
+  startDate: string;
+  endDate: string;
+  note: string | null;
+}
+
+export function pushPurchaseGrant(env: Env, requestUrl: string, g: PurchaseGrantPush): Promise<PushOutcome> {
+  return callAuthies(env, requestUrl, '/api/comp-grants', {
+    email: g.email,
+    kind: g.kind,
+    ...(g.kind === 'documents' ? { documents: g.documents } : {}),
+    labels: g.labels,
+    starts_at: g.startDate,
+    expires_at: g.endDate,
+    source: 'surecart',
+    source_ref: purchaseSourceRef(g.surecartPurchaseId),
+    granted_by: 'surecart',
+    note: g.note,
+  });
+}
+
+export function revokePurchaseGrant(
+  env: Env, requestUrl: string, surecartPurchaseId: string, email: string,
+): Promise<PushOutcome> {
+  return callAuthies(env, requestUrl, '/api/comp-grants/revoke', {
+    source: 'surecart', source_ref: purchaseSourceRef(surecartPurchaseId), email, revoked_by: 'surecart',
+  });
+}
+
+/**
+ * Does this email hold a live PURCHASED Lighting Library subscription today?
+ * Read by the session gate beside `hasActiveLensComp`: a paid subscription
+ * is the `full` tier for its window. Fail-closed to false, same reasoning.
+ */
+export async function hasActivePurchasedSubscription(env: Env, email: string | null | undefined): Promise<boolean> {
+  const address = String(email || '').trim().toLowerCase();
+  if (!address) return false;
+  try {
+    const row = await env.DB.prepare(`
+      SELECT 1 AS ok FROM purchases
+      WHERE kind = 'subscription' AND status = 'active' AND email = ?
+        AND start_date <= date('now') AND end_date >= date('now')
+      LIMIT 1
+    `).bind(address).first<{ ok: number }>();
+    return !!row;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Does this email hold a live FULL IES Lens comp today? Fail-closed to false:
  * a D1 problem (or a database before migration 0023) leaves the reader on the
