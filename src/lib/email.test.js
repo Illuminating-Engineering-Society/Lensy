@@ -364,3 +364,36 @@ describe('the Lighting Library logo in every email (client 10/06/26 #2)', () => 
     }
   });
 });
+
+// ─── SureCart purchases (2026-10-26) ──────────────────────────────────────────
+
+import { buildPurchaseEmail } from './email';
+
+describe('buildPurchaseEmail', () => {
+  const doc = {
+    id: 'RP-8-25+E2', designation: 'ANSI/IES RP-8-25+E2',
+    title: 'Recommended Practice: Lighting Roadway and Parking Facilities',
+    libraryUrl: 'https://lighting.ies.org/2H4QTw',
+  };
+
+  it('a lease names the standard, its Library link, the end date, and what it does not include', () => {
+    const m = buildPurchaseEmail({ to: 'buyer@example.org', name: 'Pat', kind: 'lease', document: doc, startDate: '2026-11-02', endDate: '2029-11-01', orderNumber: '0042' });
+    expect(m.subject).toBe('Your 3-year lease is ready: ANSI/IES RP-8-25+E2');
+    expect(m.text).toContain('https://lighting.ies.org/2H4QTw');
+    expect(m.text).toContain('through 1 November 2029');
+    expect(m.text).toContain('create a free one at ies.org with this same address');
+    expect(m.text).toContain('does not include full access to IES Lens');
+    expect(m.text).toContain('order #0042');
+    expect(m.html).toContain('Open in the IES Lighting Library');
+    expect(m.text).not.toMatch(/complimentary|Lensy/);
+  });
+
+  it('a subscription opens IES Lens and the Library and names its end date', () => {
+    const m = buildPurchaseEmail({ to: 'buyer@example.org', name: null, kind: 'subscription', document: null, startDate: '2026-11-02', endDate: '2027-11-02', orderNumber: null });
+    expect(m.subject).toBe('Your Lighting Library subscription is active');
+    expect(m.text).toContain('Open IES Lens');
+    expect(m.text).toContain('through 2 November 2027');
+    expect(m.text).not.toMatch(/complimentary|Lensy|does not include/);
+    expect(m.html).toContain('https://lens.ies.org/');
+  });
+});
