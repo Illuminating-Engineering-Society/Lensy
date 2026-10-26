@@ -119,6 +119,7 @@ export interface PurchaseRow {
   id: number;
   surecart_purchase_id: string;
   surecart_order_id: string | null;
+  surecart_order_number: string | null;
   surecart_customer_id: string | null;
   surecart_product_id: string | null;
   surecart_price_id: string | null;
@@ -160,14 +161,15 @@ export async function upsertPurchase(
 ): Promise<PurchaseRow> {
   const row = await db.prepare(`
     INSERT INTO purchases (
-      surecart_purchase_id, surecart_order_id, surecart_customer_id, surecart_product_id,
+      surecart_purchase_id, surecart_order_id, surecart_order_number, surecart_customer_id, surecart_product_id,
       surecart_price_id, surecart_subscription_id, live_mode,
       email, name, product_name, product_sku, product_slug,
       kind, standard_id, start_date, end_date, status, revoked_reason, last_event_type,
       last_event_at, synced_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
     ON CONFLICT (surecart_purchase_id) DO UPDATE SET
       surecart_order_id = excluded.surecart_order_id,
+      surecart_order_number = excluded.surecart_order_number,
       surecart_customer_id = excluded.surecart_customer_id,
       surecart_product_id = excluded.surecart_product_id,
       surecart_price_id = excluded.surecart_price_id,
@@ -190,7 +192,7 @@ export async function upsertPurchase(
       updated_at = datetime('now')
     RETURNING *
   `).bind(
-    p.id, p.orderId, p.customerId, p.product.id || null,
+    p.id, p.orderId, p.orderNumber, p.customerId, p.product.id || null,
     p.priceId, p.subscription?.id ?? null, p.liveMode ? 1 : 0,
     p.email, p.name, p.product.name, p.product.sku, p.product.slug,
     plan.kind, plan.standardId, plan.startDate, plan.endDate, plan.status, plan.revokedReason, eventType,

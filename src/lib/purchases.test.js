@@ -83,7 +83,7 @@ const PLAN = { kind: 'lease', standardId: 'RP-8-25+E2', startDate: '2026-11-02',
 
 describe('upsertPurchase', () => {
   it('writes one row per SureCart purchase id, lowercased email, and keeps the push/notify stamps on conflict', async () => {
-    const db = makeDb((sql, b) => (/INSERT INTO purchases/.test(sql) ? { id: 7, surecart_purchase_id: b[0], email: b[7] } : null));
+    const db = makeDb((sql, b) => (/INSERT INTO purchases/.test(sql) ? { id: 7, surecart_purchase_id: b[0], email: b[8] } : null));
     const row = await upsertPurchase(db, PURCHASE, PLAN, 'purchase.created');
     expect(row).toMatchObject({ id: 7, email: 'buyer@example.org' });
     const { sql, bindings } = db.calls[0];
@@ -92,7 +92,7 @@ describe('upsertPurchase', () => {
     expect(sql).not.toMatch(/notify_sent_at = excluded/);
     expect(sql).toMatch(/RETURNING \*/);
     expect(bindings).toEqual([
-      'p1', 'o1', 'c1', 'prod1', 'price1', 'sub1', 1,
+      'p1', 'o1', '0042', 'c1', 'prod1', 'price1', 'sub1', 1,
       'buyer@example.org', 'Pat', 'RP-8', 'ANSI/IES RP-8-25+E2', 'rp-8',
       'lease', 'RP-8-25+E2', '2026-11-02', '2029-11-01', 'active', null, 'purchase.created',
     ]);

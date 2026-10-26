@@ -26,6 +26,7 @@ CREATE TABLE IF NOT EXISTS purchases (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   surecart_purchase_id TEXT NOT NULL UNIQUE,
   surecart_order_id TEXT,
+  surecart_order_number TEXT,
   surecart_customer_id TEXT,
   surecart_product_id TEXT,
   surecart_price_id TEXT,
