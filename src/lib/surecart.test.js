@@ -186,6 +186,20 @@ describe('the cutover floor and the lease price allowlist (review C1)', () => {
     expect(planPurchase(early, { id: 'RP-8-25+E2' }, cfg, NOW).status).toBe('active');
   });
 
+  // The floor exists because a standard bought before 11/2 was a PDF. A
+  // Library SUBSCRIPTION bought before 11/2 is a subscription all the same
+  // (the store sold "Lighting Library (Full Access)" on 2026-10-27): its
+  // window is its current billing period, so only a live period grants.
+  it('the cutover floor applies to leases only — an earlier subscription purchase is live for its period', () => {
+    const cfg = readSurecartConfig({ SURECART_SUBSCRIPTION_PRODUCTS: 'sub-prod' });
+    const early = purchase({
+      created_at: Date.UTC(2026, 9, 27) / 1000,
+      product: { id: 'sub-prod', name: 'Lighting Library (Full Access)', sku: null, slug: 'lighting-library', recurring: true },
+      subscription: { id: 's1', status: 'active', current_period_start_at: Date.UTC(2026, 9, 27) / 1000, current_period_end_at: Date.UTC(2027, 9, 27) / 1000 },
+    });
+    expect(planPurchase(early, null, cfg, NOW)).toMatchObject({ kind: 'subscription', status: 'active', startDate: '2026-10-27', endDate: '2027-10-27' });
+  });
+
   it('with SURECART_LEASE_PRICES set, only a listed price is a lease; another price of the same product is not', () => {
     const cfg = readSurecartConfig({ SURECART_LEASE_PRICES: 'price-lease' });
     expect(planPurchase(purchase({ price: { id: 'price-lease' } }), { id: 'RP-8-25+E2' }, cfg, NOW).kind).toBe('lease');

@@ -129,7 +129,7 @@ Vars (`wrangler.toml [vars]`, defaults in `src/lib/surecart.ts`):
 | `SURECART_SUBSCRIPTION_PRODUCTS` | empty | SureCart product ids that sell a Library subscription. **Set in production** (2026-10-27): `407b341b…` "Lighting Library (Full Access)" and `f30a54b3…` "Lighting Library with IES Lens (Full Access)". Once set, every other recurring product (the IES membership tiers, "Illuminance Selector") is `unmapped`; only while it is EMPTY does any recurring non-standard product count as a subscription |
 | `SURECART_LENS_PRODUCTS` | empty | the subscription product(s) that also unlock IES Lens (`full` tier). Empty = every purchased subscription does. Production: `f30a54b3…` (the "with IES Lens" product) |
 | `SURECART_LEASE_PRICES` | empty | SureCart PRICE ids that sell a lease. Empty = any price of a standard product. **Set it if the lease and the PDF/print are different prices of the same product** — only listed prices then grant access; the rest are recorded as `unmapped / not_a_lease` |
-| `SURECART_PURCHASES_SINCE` | `2026-11-02` | purchases made before this day are recorded but never granted (they bought a PDF); the 11/2 cutover |
+| `SURECART_PURCHASES_SINCE` | `2026-11-02` | LEASES bought before this day are recorded but never granted (they bought a PDF); the 11/2 cutover. A subscription bought earlier is granted for its current billing period like any other |
 | `SURECART_ACCEPT_TEST_MODE` | `off` | `on` lets `live_mode: false` checkouts grant access — staging only |
 | `SURECART_NOTIFY` | `on` | `off` stops the buyer email |
 
@@ -146,8 +146,9 @@ AuthIES: nothing to configure. `POST /api/comp-grants` accepts
    first delivery lands on a deployed Worker.
 4. **Backfill**: /admin → Purchases → "Import from SureCart", page by page,
    for purchases made after the cutover but before the endpoint existed.
-   Purchases dated before `SURECART_PURCHASES_SINCE` are recorded as
-   `ignored / before_cutover` and grant nothing — the same products sold
+   Standard purchases dated before `SURECART_PURCHASES_SINCE` are recorded as
+   `ignored / before_cutover` and grant nothing (subscriptions are granted
+   for their live billing period whenever bought) — the same products sold
    PDFs until 11/2. Only purchases this page has not seen cost anything;
    re-running is harmless.
 

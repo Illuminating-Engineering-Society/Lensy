@@ -273,7 +273,8 @@ SURECART_LENS_PRODUCTS = "f30a54b3-3fae-4f3e-8cec-7ca6f18a48bc"
 # Empty on purpose: a standard's two prices are "Member price" / "Non member
 # price" of the same lease, not lease vs PDF (checked 2026-10-27).
 SURECART_LEASE_PRICES = ""
-# Purchases before this day (the 11/2 cutover) are recorded but never granted.
+# Standard (lease) purchases before this day (the 11/2 cutover) are recorded
+# but never granted — they bought PDFs. Subscriptions are not floored.
 SURECART_PURCHASES_SINCE = "2026-11-02"
 # "on" only on a staging deployment: test-mode checkouts then grant access.
 SURECART_ACCEPT_TEST_MODE = "off"

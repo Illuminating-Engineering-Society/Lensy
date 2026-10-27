@@ -103,8 +103,9 @@ declare global {
     // same product also carries a PDF or print price — only the listed prices
     // then grant access; the rest are recorded as unmapped/not_a_lease.
     SURECART_LEASE_PRICES?: string;
-    // YYYY-MM-DD. Purchases made before this day are recorded but grant
-    // nothing (they bought a PDF). Unset → 2026-11-02, the client's cutover.
+    // YYYY-MM-DD. LEASE purchases made before this day are recorded but grant
+    // nothing (they bought a PDF); subscriptions are not floored. Unset →
+    // 2026-11-02, the client's cutover.
     SURECART_PURCHASES_SINCE?: string;
     // "on" lets a test-mode (live_mode = false) purchase grant access — for
     // staging only. Anything else records the purchase as ignored/test_mode.

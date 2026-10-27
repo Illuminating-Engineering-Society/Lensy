@@ -1871,8 +1871,9 @@ Migration **0024** (`purchases`); AuthIES branch `feat/surecart-purchase-source`
   Lens `full` tier), `SURECART_LEASE_PRICES` (price ids, empty = any price of
   a standard product; **empty on purpose** — a standard's two prices are
   "Member price"/"Non member price" of the same lease, not lease vs PDF),
-  `SURECART_PURCHASES_SINCE` (`2026-11-02`: earlier purchases bought PDFs and
-  are recorded as `ignored/before_cutover`, never granted — the guard that
+  `SURECART_PURCHASES_SINCE` (`2026-11-02`: earlier LEASE purchases bought
+  PDFs and are recorded as `ignored/before_cutover`, never granted — a
+  subscription bought earlier is live for its billing period — the guard that
   keeps a backfill from leasing every past PDF buyer), `SURECART_ACCEPT_TEST_MODE`,
   `SURECART_NOTIFY`.
 - **Retries are stamp-driven (review 2026-10-26):** a push or revoke AuthIES

@@ -298,7 +298,10 @@ export function planPurchase(
   if (kind === 'unmapped') {
     status = 'ignored';
     revokedReason = unmappedReason;
-  } else if (purchaseDay < cfg.purchasesSince) {
+  } else if (kind === 'lease' && purchaseDay < cfg.purchasesSince) {
+    // Leases only: before the cutover the standard products sold PDFs. A
+    // Library subscription bought earlier is a subscription all the same,
+    // and its window is its current billing period anyway.
     status = 'ignored';
     revokedReason = 'before_cutover';
   } else if (!p.liveMode && !cfg.acceptTestMode) {
