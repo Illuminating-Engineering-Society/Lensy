@@ -94,6 +94,10 @@ declare global {
     // SKU happens to match a standard. Unset/empty: only a purchase carrying a
     // SureCart subscription object (a recurring price) is a subscription.
     SURECART_SUBSCRIPTION_PRODUCTS?: string;
+    // Comma-separated SureCart PRODUCT ids, among the subscription products,
+    // whose purchase also unlocks IES Lens (the "… with IES Lens" product).
+    // Unset/empty: every purchased subscription is the Lens `full` tier.
+    SURECART_LENS_PRODUCTS?: string;
     // Comma-separated SureCart PRICE ids that sell a lease. Unset/empty: any
     // price of a product that maps to a standard is a lease. Set it when the
     // same product also carries a PDF or print price — only the listed prices

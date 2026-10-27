@@ -33,6 +33,9 @@ const CATALOG = [
   { id: 'LM-49-20', full_designation: 'IES LM-49-20', title: 'LM-49-20', status: 'Active', buy_url: null, vitrium_doc_id: 'doc-guid-lm49', vitrium_web_url: null },
   { id: 'LM-79-24', full_designation: 'ANSI/IES LM-79-24', title: 'Optical and Electrical Measurements', status: 'Active',
     buy_url: 'https://store.ies.org/product/lm-79-24-approved-method/', vitrium_doc_id: null, vitrium_web_url: 'https://view.protectedpdf.com/abc123' },
+  // The reaffirmed-and-errata printing id shape the catalogue actually holds.
+  { id: 'LS-4-20+R2023+E1', full_designation: 'ANSI/IES LS-4-20(R2023)+E1', title: 'Measurement of Light', status: 'Active',
+    buy_url: 'https://store.ies.org/product/lighting-science-measurement-of-light-the-science-of-photometry/?v=0b3b97fa6688', vitrium_doc_id: 'doc-guid-ls4', vitrium_web_url: null },
 ];
 const catalogDb = () => makeDb((sql) => (/FROM standards/.test(sql) ? CATALOG : null));
 
@@ -44,6 +47,24 @@ describe('skuToStandardId', () => {
     expect(skuToStandardId('ANSI/ASHRAE/IES 90.1-2025')).toBe('ASHRAE-IES-90.1-2025');
     expect(skuToStandardId('IES-2017-ACP')).toBeNull();
     expect(skuToStandardId(null)).toBeNull();
+  });
+
+  // The live store (read 2026-10-27): member/non-member duplicates carry a
+  // "-MEMBER" / "-NONMEMBER" suffix, reaffirmations print as "(R25)" as well
+  // as "(R2023)", joint standards carry the partner body after IES, and the
+  // 90.1 product appends "-Lighting Only".
+  it('reads the store\'s suffixes, two-digit reaffirmations and joint prefixes', () => {
+    expect(skuToStandardId('ANSI/IES LM-9-20 (R2023)-MEMBER')).toBe('LM-9-20');
+    expect(skuToStandardId('ANSI/IES LM-66-20(R2023)-MEMBER')).toBe('LM-66-20');
+    expect(skuToStandardId('ANSI/IES RP-30-25-MEMBER')).toBe('RP-30-25');
+    expect(skuToStandardId('ANSI/IES LM-91-22-NONMEMBER')).toBe('LM-91-22');
+    expect(skuToStandardId('IES TM-18-18-MEMBER')).toBe('TM-18-18');
+    expect(skuToStandardId('ANSI/IES LS-6-20(R25)')).toBe('LS-6-20');
+    expect(skuToStandardId('ANSI/IES TM-25-20(R25)')).toBe('TM-25-20');
+    expect(skuToStandardId('ANSI/IES/IUVA LM-92-22')).toBe('LM-92-22');
+    expect(skuToStandardId('ANSI/IES/ALA RP-11-26')).toBe('RP-11-26');
+    expect(skuToStandardId('ANSI/IES/AVIXA RP-38-17 (R2022)')).toBe('RP-38-17');
+    expect(skuToStandardId('ANSI/ASHRAE/IES-90.1-2025-Lighting Only')).toBe('ASHRAE-IES-90.1-2025');
   });
 });
 
@@ -64,6 +85,20 @@ describe('resolveStandardForProduct', () => {
   it('a SKU naming an edition with no row resolves to the newest Active printing of that edition', async () => {
     const r = await resolveStandardForProduct(catalogDb(), { slug: null, sku: 'ANSI/IES RP-8-25' });
     expect(r?.id).toBe('RP-8-25+E2');
+  });
+
+  // SureCart's product slug and the WordPress permalink in buy_url usually
+  // agree; the store's member-priced duplicates add "-member" to the slug.
+  it('a "-member" / "-non-member" product slug still finds the lease link', async () => {
+    const r = await resolveStandardForProduct(catalogDb(), { slug: 'recommended-practice-lighting-roadway-and-parking-facilities-member', sku: null });
+    expect(r?.id).toBe('RP-8-25+E2');
+    const r2 = await resolveStandardForProduct(catalogDb(), { slug: 'lm-79-24-approved-method-non-member', sku: null });
+    expect(r2?.id).toBe('LM-79-24');
+  });
+
+  it('a reaffirmed SKU resolves to the catalogue\'s "+R2023+E1" printing of that edition', async () => {
+    const r = await resolveStandardForProduct(catalogDb(), { slug: 'nothing-like-it', sku: 'ANSI/IES LS-4-20(R2023)' });
+    expect(r?.id).toBe('LS-4-20+R2023+E1');
   });
 
   it('an unknown product is null; a D1 failure throws (never "unmapped")', async () => {

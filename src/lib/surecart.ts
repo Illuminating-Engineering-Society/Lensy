@@ -234,8 +234,9 @@ const ENDED_SUBSCRIPTION = new Set(['canceled', 'completed']);
  *
  *   subscription  the product is listed as a subscription product, or the
  *                 purchase carries a SureCart subscription and maps to no
- *                 standard — window = the billing period (extended on each
- *                 renewal event), else `subscriptionDays`
+ *                 standard (that fallback ONLY while the list is empty) —
+ *                 window = the billing period (extended on each renewal
+ *                 event), else `subscriptionDays`
  *   lease         the product mapped to a standard (and, when
  *                 `leasePrices` is set, a listed price) — `leaseDays` from
  *                 the purchase day, inclusive
@@ -263,7 +264,15 @@ export function planPurchase(
   let endDate: string;
   let unmappedReason: RevokedReason = 'unmapped';
 
-  if (cfg.subscriptionProducts.has(p.product.id) || (p.subscription && !standard)) {
+  // Which products are the Library subscription is CONFIGURED. The "any
+  // recurring product that is no standard" reading applies only while the
+  // list is empty: the live store also sells IES memberships and the
+  // Illuminance Selector as recurring products (2026-10-27), and none of them
+  // buys the Lighting Library.
+  const isSubscription = cfg.subscriptionProducts.size > 0
+    ? cfg.subscriptionProducts.has(p.product.id)
+    : Boolean(p.subscription && !standard);
+  if (isSubscription) {
     kind = 'subscription';
     if (p.subscription?.currentPeriodStartAt) startDate = dayUtc(p.subscription.currentPeriodStartAt);
     endDate = p.subscription?.currentPeriodEndAt

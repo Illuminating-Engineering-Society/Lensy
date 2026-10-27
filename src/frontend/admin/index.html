@@ -592,9 +592,10 @@
           the two Worker secrets (see docs/SURECART_PURCHASES.md).</p>
         <p><strong>How a product is mapped:</strong> a product whose store page matches a standard’s lease link
           (Admin → Standards → Edit) or whose SKU is a designation is a <em>3-year lease</em> of that standard;
-          a product listed in <code class="font-mono text-xs">SURECART_SUBSCRIPTION_PRODUCTS</code>, or a recurring
-          product that is no standard, is a <em>Lighting Library subscription</em>. Anything else is recorded as
-          <em>unmapped</em> and grants nothing — fix the mapping, then press <strong>Resync</strong>.</p>
+          a product listed in <code class="font-mono text-xs">SURECART_SUBSCRIPTION_PRODUCTS</code> is a
+          <em>Lighting Library subscription</em> (only the ones in <code class="font-mono text-xs">SURECART_LENS_PRODUCTS</code>
+          also unlock IES Lens). Anything else — IES memberships, proceedings, courses — is recorded as
+          <em>unmapped</em> and grants nothing; fix the mapping, then press <strong>Resync</strong>.</p>
         <p>Access is matched by <strong>email address</strong> at sign-in. A row whose “IES Auth” column reads
           <em>pending</em> or <em>out of date</em> could not be applied (the reason is on the row): the next SureCart
           event retries it by itself, or fix the cause and press <strong>Resync</strong>. Resync re-applies the row as it

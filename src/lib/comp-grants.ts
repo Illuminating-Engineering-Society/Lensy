@@ -148,13 +148,19 @@ export function revokePurchaseGrant(env: Env, requestUrl: string, surecartPurcha
 export async function hasActivePurchasedSubscription(env: Env, email: string | null | undefined): Promise<boolean> {
   const address = String(email || '').trim().toLowerCase();
   if (!address) return false;
+  // The store sells the Library with and without IES Lens ("Lighting Library
+  // (Full Access)" / "… with IES Lens (Full Access)", 2026-10-27). Both are
+  // subscriber grants in Vitrium; only the products listed here are the
+  // Lens tier. Unset = every purchased subscription is.
+  const lensProducts = String(env.SURECART_LENS_PRODUCTS || '').split(',').map(s => s.trim()).filter(Boolean);
+  const productClause = lensProducts.length > 0 ? ` AND surecart_product_id IN (${lensProducts.map(() => '?').join(', ')})` : '';
   try {
     const row = await env.DB.prepare(`
       SELECT 1 AS ok FROM purchases
       WHERE kind = 'subscription' AND status = 'active' AND email = ?
-        AND start_date <= date('now') AND end_date >= date('now')
+        AND start_date <= date('now') AND end_date >= date('now')${productClause}
       LIMIT 1
-    `).bind(address).first<{ ok: number }>();
+    `).bind(address, ...lensProducts).first<{ ok: number }>();
     return !!row;
   } catch {
     return false;

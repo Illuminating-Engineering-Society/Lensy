@@ -260,9 +260,18 @@ LENSY_LIBRARY_SSO_HOP = "on"
 #   SURECART_API_KEY          a SureCart API token with read access
 SURECART_LEASE_DAYS = "1096"
 SURECART_SUBSCRIPTION_DAYS = "365"
-# SureCart PRODUCT ids (comma-separated) that sell a Library subscription.
-SURECART_SUBSCRIPTION_PRODUCTS = ""
+# SureCart PRODUCT ids (comma-separated) that sell a Library subscription —
+# read off the live store 2026-10-27 (`npm run surecart:setup products`):
+#   407b341b… "Lighting Library (Full Access)"               $549/yr
+#   f30a54b3… "Lighting Library with IES Lens (Full Access)" $649/yr
+# Every other recurring product (IES memberships, Illuminance Selector) is
+# recorded as unmapped and grants nothing.
+SURECART_SUBSCRIPTION_PRODUCTS = "407b341b-9af6-4ee2-a66f-489de951f847,f30a54b3-3fae-4f3e-8cec-7ca6f18a48bc"
+# Of those, the product(s) that include IES Lens (the `full` Lens tier).
+SURECART_LENS_PRODUCTS = "f30a54b3-3fae-4f3e-8cec-7ca6f18a48bc"
 # SureCart PRICE ids that sell a lease; empty = any price of a standard product.
+# Empty on purpose: a standard's two prices are "Member price" / "Non member
+# price" of the same lease, not lease vs PDF (checked 2026-10-27).
 SURECART_LEASE_PRICES = ""
 # Purchases before this day (the 11/2 cutover) are recorded but never granted.
 SURECART_PURCHASES_SINCE = "2026-11-02"

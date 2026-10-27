@@ -123,6 +123,20 @@ describe('hasActivePurchasedSubscription', () => {
     expect(e.calls[0].sql).toMatch(/start_date <= date\('now'\) AND end_date >= date\('now'\)/);
   });
 
+  // The store sells "Lighting Library (Full Access)" AND "Lighting Library
+  // with IES Lens (Full Access)" (read 2026-10-27): both are Library
+  // subscriptions in Vitrium, only the second includes IES Lens.
+  it('with SURECART_LENS_PRODUCTS set, only those subscription products lift the Lens tier', async () => {
+    const e = env(() => ({ ok: 1 }));
+    e.SURECART_LENS_PRODUCTS = ' prod-lens, prod-lens-2 ,';
+    expect(await hasActivePurchasedSubscription(e, 'buyer@example.org')).toBe(true);
+    expect(e.calls[0].sql).toMatch(/surecart_product_id IN \(\?, \?\)/);
+    expect(e.calls[0].b).toEqual(['buyer@example.org', 'prod-lens', 'prod-lens-2']);
+    const plain = env(() => ({ ok: 1 }));
+    await hasActivePurchasedSubscription(plain, 'buyer@example.org');
+    expect(plain.calls[0].sql).not.toMatch(/surecart_product_id/);
+  });
+
   it('is false without a row, without an email, and when D1 fails (a purchase only ever adds)', async () => {
     expect(await hasActivePurchasedSubscription(env(() => null), 'a@b.org')).toBe(false);
     expect(await hasActivePurchasedSubscription(env(() => ({ ok: 1 })), '')).toBe(false);

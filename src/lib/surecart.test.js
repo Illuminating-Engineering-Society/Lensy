@@ -110,6 +110,24 @@ describe('planPurchase', () => {
     expect(planPurchase(p, null, cfg, NOW)).toMatchObject({ kind: 'subscription', endDate: '2027-11-01' });
   });
 
+  // The live store (2026-10-27) sells IES memberships (Bronze $1,350, Student
+  // $35, Diamond $25,000…) and the Illuminance Selector as recurring products
+  // too. Once the Library subscription products are listed, nothing else
+  // recurring may grant Library access.
+  it('with SURECART_SUBSCRIPTION_PRODUCTS set, a recurring product NOT listed is unmapped, not a subscription', () => {
+    const cfg = readSurecartConfig({ SURECART_SUBSCRIPTION_PRODUCTS: 'sub-prod' });
+    const bronze = purchase({
+      product: { id: 'bronze', name: 'Bronze', sku: null, slug: 'bronze', recurring: true },
+      subscription: { id: 's9', status: 'active', current_period_end_at: Date.UTC(2027, 10, 2) / 1000 },
+    });
+    expect(planPurchase(bronze, null, cfg, NOW)).toMatchObject({ kind: 'unmapped', status: 'ignored', revokedReason: 'unmapped' });
+    const listed = purchase({
+      product: { id: 'sub-prod', name: 'Lighting Library (Full Access)', sku: null, slug: 'lighting-library', recurring: true },
+      subscription: { id: 's1', status: 'active', current_period_end_at: Date.UTC(2027, 10, 2) / 1000 },
+    });
+    expect(planPurchase(listed, null, cfg, NOW).kind).toBe('subscription');
+  });
+
   it('a listed subscription product is a subscription even when it maps to a standard', () => {
     const cfg = readSurecartConfig({ SURECART_SUBSCRIPTION_PRODUCTS: 'prod1' });
     expect(planPurchase(purchase(), { id: 'RP-8-25+E2' }, cfg, NOW).kind).toBe('subscription');

@@ -41,8 +41,15 @@ export function skuToStandardId(sku: string | null | undefined): string | null {
   const raw = String(sku || '').trim();
   if (!raw) return null;
   const stripped = raw
-    .replace(/\s*\(\s*R\s*\d{4}\s*\)\s*$/i, '')     // "(R2023)"
-    .replace(/^(?:ANSI\s*\/\s*)?IES\s+/i, '')         // "ANSI/IES " / "IES "
+    // The store's own suffixes (read 2026-10-27): member-priced duplicates
+    // ("…-MEMBER", "…-NONMEMBER") and 90.1's "-Lighting Only" product.
+    .replace(/\s*-\s*(?:non-?\s*member|member|lighting\s+only)\s*$/i, '')
+    .replace(/\s*\(\s*R\s*\d{2,4}\s*\)\s*$/i, '')   // "(R2023)", "(R25)"
+    // "ANSI/IES ", "IES ", and a joint IES standard's partner body after IES
+    // ("ANSI/IES/IUVA LM-92-22" is indexed as LM-92-22). "ANSI/ASHRAE/IES"
+    // is a different shape — IES is last — and normalizeStandardIdInput
+    // turns it into the ASHRAE-IES-… id.
+    .replace(/^(?:ANSI\s*\/\s*)?IES(?:\s*\/\s*[A-Z]{2,8})*\s+/i, '')
     .trim();
   const id = normalizeStandardIdInput(stripped);
   if (!STANDARD_ID_RE.test(id)) return null;
@@ -51,9 +58,24 @@ export function skuToStandardId(sku: string | null | undefined): string | null {
   return /^[A-Z]{1,6}(?:-[A-Z]{1,6}){0,2}-\d+(?:\.\d+)?-\d{2,4}(?:\+E\d+)?$/i.test(id) ? id : null;
 }
 
-/** "RP-8-25+E2" → "RP-8-25": the edition without its errata printing. */
+/**
+ * "RP-8-25+E2" → "RP-8-25", "LS-4-20+R2023+E1" → "LS-4-20": the edition
+ * without its reaffirmation and errata printing markers.
+ */
 function baseEdition(id: string): string {
-  return id.replace(/\+E\d+$/i, '');
+  return id.replace(/(?:\+R\d{2,4}|\(R\d{2,4}\))?(?:\+E\d+)?$/i, '');
+}
+
+/**
+ * The slugs a SureCart product may carry for one permalink: the slug itself,
+ * and — for the store's member-priced duplicates — the slug without its
+ * "-member" / "-non-member" tail.
+ */
+function slugCandidates(slug: string | null): string[] {
+  const s = slug ? slug.trim().toLowerCase() : '';
+  if (!s) return [];
+  const bare = s.replace(/-(?:non-?member|member)$/, '');
+  return bare !== s ? [s, bare] : [s];
 }
 
 /**
@@ -74,9 +96,10 @@ export async function resolveStandardForProduct(
 ): Promise<ResolvedStandard | null> {
   const rows = await loadCatalogRows(db);
 
-  const slug = product.slug ? product.slug.trim().toLowerCase() : null;
-  const bySlug = slug ? rows.find(r => slugFromStoreUrl(r.buy_url) === slug) : undefined;
-  if (bySlug) return shape(bySlug);
+  for (const slug of slugCandidates(product.slug)) {
+    const bySlug = rows.find(r => slugFromStoreUrl(r.buy_url) === slug);
+    if (bySlug) return shape(bySlug);
+  }
 
   const skuId = skuToStandardId(product.sku);
   if (!skuId) return null;

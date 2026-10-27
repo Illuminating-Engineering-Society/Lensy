@@ -8,8 +8,8 @@
  *       Lists every store product with its prices, matches each to a Lens
  *       standard the way the Worker does (lease link slug first, SKU second),
  *       and prints the wrangler.toml lines to review:
- *       SURECART_SUBSCRIPTION_PRODUCTS (recurring or "Lighting Library" products
- *       that are no standard) and SURECART_LEASE_PRICES (only when a standard
+ *       SURECART_SUBSCRIPTION_PRODUCTS (recurring "Lighting Library" products),
+ *       SURECART_LENS_PRODUCTS (those that say "IES Lens") and SURECART_LEASE_PRICES (only when a standard
  *       product carries more than one price — then staff must pick the lease).
  *
  *   SURECART_API_KEY=sk_… node scripts/surecart-setup.js webhook [--url URL]
@@ -55,10 +55,27 @@ export function slugFromStoreUrl(url) {
 export function skuToStandardId(sku) {
   const raw = String(sku || '').trim();
   if (!raw) return null;
-  const stripped = raw.replace(/\s*\(\s*R\s*\d{4}\s*\)\s*$/i, '').replace(/^(?:ANSI\s*\/\s*)?IES\s+/i, '').trim();
+  const stripped = raw
+    .replace(/\s*-\s*(?:non-?\s*member|member|lighting\s+only)\s*$/i, '')   // "…-MEMBER", "…-Lighting Only"
+    .replace(/\s*\(\s*R\s*\d{2,4}\s*\)\s*$/i, '')                            // "(R2023)", "(R25)"
+    .replace(/^(?:ANSI\s*\/\s*)?IES(?:\s*\/\s*[A-Z]{2,8})*\s+/i, '')          // "ANSI/IES ", "ANSI/IES/IUVA "
+    .trim();
   const id = normalizeStandardIdInput(stripped);
   if (!STANDARD_ID_RE.test(id)) return null;
   return /^[A-Z]{1,6}(?:-[A-Z]{1,6}){0,2}-\d+(?:\.\d+)?-\d{2,4}(?:\+E\d+)?$/i.test(id) ? id : null;
+}
+
+/** "RP-8-25+E2" → "RP-8-25", "LS-4-20+R2023+E1" → "LS-4-20". Mirrors lib/purchases.ts. */
+function baseEdition(id) {
+  return String(id).replace(/(?:\+R\d{2,4}|\(R\d{2,4}\))?(?:\+E\d+)?$/i, '');
+}
+
+/** The product slug, plus the slug without the store's "-member"/"-non-member" tail. */
+function slugCandidates(slug) {
+  const s = slug ? String(slug).trim().toLowerCase() : '';
+  if (!s) return [];
+  const bare = s.replace(/-(?:non-?member|member)$/, '');
+  return bare !== s ? [s, bare] : [s];
 }
 
 /**
@@ -67,8 +84,7 @@ export function skuToStandardId(sku) {
  * Worker: lease-link slug, exact SKU, newest Active printing of the SKU's edition.
  */
 export function matchProductToStandard(product, standards) {
-  const slug = product.slug ? String(product.slug).trim().toLowerCase() : null;
-  if (slug) {
+  for (const slug of slugCandidates(product.slug)) {
     const bySlug = standards.find(s => slugFromStoreUrl(s.buy_url) === slug);
     if (bySlug) return { id: bySlug.id, via: 'lease link' };
   }
@@ -76,18 +92,26 @@ export function matchProductToStandard(product, standards) {
   if (!skuId) return null;
   const exact = standards.find(s => s.id.toLowerCase() === skuId.toLowerCase());
   if (exact) return { id: exact.id, via: 'sku' };
-  const base = skuId.replace(/\+E\d+$/i, '').toLowerCase();
+  const base = baseEdition(skuId).toLowerCase();
   const printings = standards
-    .filter(s => s.id.replace(/\+E\d+$/i, '').toLowerCase() === base && String(s.status || 'Active') === 'Active')
+    .filter(s => baseEdition(s.id).toLowerCase() === base && String(s.status || 'Active') === 'Active')
     .sort((a, b) => errata(b.id) - errata(a.id));
   return printings[0] ? { id: printings[0].id, via: 'sku edition' } : null;
 }
 function errata(id) { const m = /\+E(\d+)$/i.exec(id); return m ? Number(m[1]) : 0; }
 
-/** Looks like the Library subscription rather than a standard. */
+/**
+ * Looks like the Library subscription: a recurring product whose NAME says
+ * so. IES memberships (Bronze, Student, Fellow…) are recurring too and are
+ * not Library subscriptions; RP-4-26 "Lighting Library Spaces" is a standard.
+ */
 export function looksLikeSubscriptionProduct(product) {
-  const name = String(product.name || '');
-  return product.recurring === true || /lighting\s*library|subscription|full\s*access/i.test(name);
+  return product.recurring === true && /lighting\s*library|subscription|full\s*access/i.test(String(product.name || ''));
+}
+
+/** The subscription product that also includes IES Lens ("… with IES Lens"). */
+export function includesLens(product) {
+  return /\bIES\s+Lens\b|\bLens\b/i.test(String(product.name || ''));
 }
 
 /**
@@ -97,19 +121,22 @@ export function looksLikeSubscriptionProduct(product) {
 export function suggestConfig(products, standards) {
   const leases = [];
   const subscriptions = [];
+  const otherRecurring = [];
   const unmapped = [];
   for (const p of products) {
     if (p.archived) continue;
     const prices = (p.prices || []).filter(pr => !pr.archived);
-    const standard = matchProductToStandard(p, standards);
-    if (standard && !looksLikeSubscriptionProduct(p)) leases.push({ product: p, standard, prices });
+    const standard = p.recurring ? null : matchProductToStandard(p, standards);
+    if (standard) leases.push({ product: p, standard, prices });
     else if (looksLikeSubscriptionProduct(p)) subscriptions.push({ product: p, prices });
+    else if (p.recurring) otherRecurring.push({ product: p, prices });
     else unmapped.push({ product: p, prices });
   }
   const multiPrice = leases.filter(l => l.prices.length > 1);
   return {
-    leases, subscriptions, unmapped, multiPrice,
+    leases, subscriptions, otherRecurring, unmapped, multiPrice,
     subscriptionProducts: subscriptions.map(s => s.product.id),
+    lensProducts: subscriptions.filter(s => includesLens(s.product)).map(s => s.product.id),
     // Only meaningful when some standard product has several prices; then
     // every lease price must be listed, including the single-price ones.
     leasePrices: multiPrice.length > 0 ? leases.flatMap(l => l.prices.map(pr => pr.id)) : [],
@@ -165,7 +192,7 @@ function normalizeProduct(p) {
   const prices = Array.isArray(p.prices?.data) ? p.prices.data : Array.isArray(p.prices) ? p.prices : [];
   return {
     id: p.id, name: p.name || '', sku: p.sku || null, slug: p.slug || null,
-    recurring: p.recurring === true, archived: p.archived === true,
+    recurring: p.recurring === true, archived: p.archived === true, status: p.status || null,
     prices: prices.map(pr => ({
       id: pr.id, name: pr.name || null, amount: typeof pr.amount === 'number' ? pr.amount : null,
       recurring: pr.recurring === true, archived: pr.archived === true, interval: pr.recurring_interval || null,
@@ -190,21 +217,25 @@ async function cmdProducts() {
   if (wantJson) { console.log(JSON.stringify(s, null, 2)); return; }
 
   console.log(`\n${products.length} products in SureCart, ${standards.length} standards in Lens (${lens})\n`);
+  const tag = p => (p.status && p.status !== 'published' ? `  (${p.status})` : '');
   console.log(`── ${s.leases.length} products map to a standard (a purchase = 3-year lease) ──`);
   for (const l of s.leases) {
-    console.log(`  ${l.standard.id.padEnd(16)} ← ${l.product.name}  [${l.product.sku || 'no SKU'}] via ${l.standard.via}`);
+    console.log(`  ${l.standard.id.padEnd(16)} ← ${l.product.name}  [${l.product.sku || 'no SKU'}] via ${l.standard.via}${tag(l.product)}`);
     for (const pr of l.prices) console.log(`      price ${pr.id}  ${money(pr)}${pr.name ? `  "${pr.name}"` : ''}`);
   }
   console.log(`\n── ${s.subscriptions.length} products look like the Library subscription ──`);
   for (const x of s.subscriptions) {
-    console.log(`  ${x.product.id}  ${x.product.name}${x.product.recurring ? '  (recurring)' : ''}`);
+    console.log(`  ${x.product.id}  ${x.product.name}${includesLens(x.product) ? '  [includes IES Lens]' : ''}${tag(x.product)}`);
     for (const pr of x.prices) console.log(`      price ${pr.id}  ${money(pr)}`);
   }
+  console.log(`\n── ${s.otherRecurring.length} other recurring products (memberships etc. — not Library subscriptions, grant nothing) ──`);
+  for (const x of s.otherRecurring) console.log(`  ${x.product.id}  ${x.product.name}${tag(x.product)}`);
   console.log(`\n── ${s.unmapped.length} products map to nothing (recorded as unmapped, never granted) ──`);
-  for (const x of s.unmapped) console.log(`  ${x.product.name}  [${x.product.sku || 'no SKU'}]`);
+  for (const x of s.unmapped) console.log(`  ${x.product.name}  [${x.product.sku || 'no SKU'}]${tag(x.product)}`);
 
   console.log('\n── wrangler.toml [vars] to review ──');
   console.log(`SURECART_SUBSCRIPTION_PRODUCTS = "${s.subscriptionProducts.join(',')}"`);
+  console.log(`SURECART_LENS_PRODUCTS = "${s.lensProducts.join(',')}"   # the subscription product(s) that include IES Lens; empty = all of them`);
   if (s.multiPrice.length > 0) {
     console.log(`# ${s.multiPrice.length} standard product(s) carry more than one price — ONLY the lease price may grant.`);
     console.log('# Remove the PDF/print price ids from this list before setting it:');

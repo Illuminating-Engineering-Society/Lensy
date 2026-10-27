@@ -17,7 +17,7 @@ access with no staff step:
 | Product | Becomes | Where it is held |
 |---|---|---|
 | a standard (SKU is the designation, or the product page is the standard's lease link) | a **3-year lease** of that one standard | AuthIES `comp_grants`, `kind = documents`, `source = surecart` |
-| a Lighting Library subscription (a product listed in `SURECART_SUBSCRIPTION_PRODUCTS`, or any recurring product that is not a standard) | **subscriber-level** Library access for the billing period, renewed on each SureCart renewal, plus the `full` tier in IES Lens | AuthIES `comp_grants`, `kind = subscriber`, `source = surecart`; Lens `purchases` for the tier |
+| a Lighting Library subscription (a product listed in `SURECART_SUBSCRIPTION_PRODUCTS`; the "any recurring non-standard product" fallback applies only while that list is empty) | **subscriber-level** Library access for the billing period, renewed on each SureCart renewal, plus the `full` tier in IES Lens when the product is in `SURECART_LENS_PRODUCTS` (the "… with IES Lens" product) | AuthIES `comp_grants`, `kind = subscriber`, `source = surecart`; Lens `purchases` for the tier |
 | anything else (conference proceedings, a product with no mapping) | nothing — recorded as **unmapped** for staff | Lens `purchases` only |
 
 The flow, end to end:
@@ -80,14 +80,31 @@ upserts on URL, so re-running is safe) and prints the two
      (Each endpoint has its own; a staging endpoint gets its own secret.)
 3. **Subscription product ids** — open each Lighting Library subscription
    product in SureCart and copy its id (a UUID) into
-   `SURECART_SUBSCRIPTION_PRODUCTS` in `wrangler.toml` (comma-separated).
-   Until this is set, only a RECURRING product that is not a standard counts
-   as a subscription.
-4. **Lease vs PDF** — ask Manuel whether, after 11/2, the lease is the SAME
-   product (the PDF price simply disabled) or a separate price on it. If the
-   product keeps a PDF or print price, list the lease price ids in
-   `SURECART_LEASE_PRICES`; otherwise every purchase of a standard product
-   is a lease. Either way nothing before `SURECART_PURCHASES_SINCE` grants.
+   `SURECART_SUBSCRIPTION_PRODUCTS` in `wrangler.toml` (comma-separated), and
+   the one(s) that include IES Lens into `SURECART_LENS_PRODUCTS`. **Done
+   2026-10-27** from the live store: "Lighting Library (Full Access)"
+   (`407b341b…`, $549/yr) and "Lighting Library with IES Lens (Full Access)"
+   (`f30a54b3…`, $649/yr, the only Lens one). The store's other recurring
+   products are IES membership tiers (Bronze … Diamond, Student, Fellow,
+   Retired, University, Allied Organization, Emerging Professional, Member
+   Grade) and the Illuminance Selector — none is a Library subscription, and
+   with the list set they are recorded as `unmapped`. A new subscription
+   product in the store means a new id in this var.
+4. **Lease vs PDF** — **answered by the catalogue (2026-10-27):** every
+   standard product carries two prices, "Member price" and "Non member
+   price", of the same item; there is no separate PDF or print price. So
+   `SURECART_LEASE_PRICES` stays empty and any purchase of a standard product
+   is a lease. Nothing before `SURECART_PURCHASES_SINCE` grants either way;
+   re-check with `npm run surecart:setup products` if Manuel adds prices.
+5. **What the live store taught the SKU reader** (`skuToStandardId`): the
+   member-priced duplicates carry a `-MEMBER` / `-NONMEMBER` suffix, some
+   reaffirmations print `(R25)`, joint standards print the partner body after
+   IES (`ANSI/IES/IUVA LM-92-22` → `LM-92-22`), and the 90.1 product is
+   `ANSI/ASHRAE/IES-90.1-2025-Lighting Only`. SureCart's product slug and the
+   WordPress permalink in `buy_url` usually agree; the duplicates add
+   `-member` to the slug, which the slug match also strips. Genuinely
+   unmapped and meant to be: conference proceedings, courses, research
+   reports, symposia, MLO, "Lighting Your Way to Better Vision".
 
 SureCart expects an acknowledgement within ~10 s and retries on a non-2xx
 (each retry is freshly signed). The endpoint answers 500 when SureCart, D1 or
@@ -109,7 +126,8 @@ Vars (`wrangler.toml [vars]`, defaults in `src/lib/surecart.ts`):
 |---|---|---|
 | `SURECART_LEASE_DAYS` | `1096` | lease term, inclusive of the purchase day (three years incl. a leap day) |
 | `SURECART_SUBSCRIPTION_DAYS` | `365` | subscription term when SureCart reports no billing period |
-| `SURECART_SUBSCRIPTION_PRODUCTS` | empty | SureCart product ids that sell a Library subscription |
+| `SURECART_SUBSCRIPTION_PRODUCTS` | empty | SureCart product ids that sell a Library subscription. **Set in production** (2026-10-27): `407b341b…` "Lighting Library (Full Access)" and `f30a54b3…` "Lighting Library with IES Lens (Full Access)". Once set, every other recurring product (the IES membership tiers, "Illuminance Selector") is `unmapped`; only while it is EMPTY does any recurring non-standard product count as a subscription |
+| `SURECART_LENS_PRODUCTS` | empty | the subscription product(s) that also unlock IES Lens (`full` tier). Empty = every purchased subscription does. Production: `f30a54b3…` (the "with IES Lens" product) |
 | `SURECART_LEASE_PRICES` | empty | SureCart PRICE ids that sell a lease. Empty = any price of a standard product. **Set it if the lease and the PDF/print are different prices of the same product** — only listed prices then grant access; the rest are recorded as `unmapped / not_a_lease` |
 | `SURECART_PURCHASES_SINCE` | `2026-11-02` | purchases made before this day are recorded but never granted (they bought a PDF); the 11/2 cutover |
 | `SURECART_ACCEPT_TEST_MODE` | `off` | `on` lets `live_mode: false` checkouts grant access — staging only |

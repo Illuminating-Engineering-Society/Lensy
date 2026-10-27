@@ -1862,9 +1862,15 @@ Migration **0024** (`purchases`); AuthIES branch `feat/surecart-purchase-source`
   "everything to be safe". The buyer email goes once, on the first grant.
 - **Config:** secrets `SURECART_WEBHOOK_SECRET`, `SURECART_API_KEY`; vars
   `SURECART_LEASE_DAYS` (1096), `SURECART_SUBSCRIPTION_DAYS` (365),
-  `SURECART_SUBSCRIPTION_PRODUCTS` (product ids — **still owed by Manuel**),
-  `SURECART_LEASE_PRICES` (price ids, empty = any price of a standard product
-  — set it if the PDF/print stay as other prices of the same product),
+  `SURECART_SUBSCRIPTION_PRODUCTS` (product ids — **set 2026-10-27 from the
+  live store**: "Lighting Library (Full Access)" $549 and "Lighting Library
+  with IES Lens (Full Access)" $649; once set, no other recurring product —
+  the store also sells IES membership tiers and the Illuminance Selector as
+  subscriptions — can grant Library access), `SURECART_LENS_PRODUCTS` (the
+  "with IES Lens" product only: the other one is Vitrium access without the
+  Lens `full` tier), `SURECART_LEASE_PRICES` (price ids, empty = any price of
+  a standard product; **empty on purpose** — a standard's two prices are
+  "Member price"/"Non member price" of the same lease, not lease vs PDF),
   `SURECART_PURCHASES_SINCE` (`2026-11-02`: earlier purchases bought PDFs and
   are recorded as `ignored/before_cutover`, never granted — the guard that
   keeps a backfill from leasing every past PDF buyer), `SURECART_ACCEPT_TEST_MODE`,
