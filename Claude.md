@@ -1836,6 +1836,16 @@ kind existed. Runbook (SureCart setup, secrets, deploy order, test plan):
 `docs/SURECART_PURCHASES.md`; design: `docs/superpowers/specs/2026-10-26-surecart-purchases-design.md`.
 Migration **0024** (`purchases`); AuthIES branch `feat/surecart-purchase-source`.
 
+- **Live since 2026-10-27.** SureCart webhook endpoint
+  `e8e4326c-4631-422a-bbff-101b009655f1` → `https://lens.ies.org/api/webhooks/surecart`
+  (created by API, nine events), both Worker secrets set. SureCart's own test
+  delivery verified the signature format (answered 202), and a signed
+  `purchase.updated` for that day's "Lighting Library (Full Access)" purchase
+  went end to end: `purchases` row active, AuthIES `comp_grants` row
+  `source = surecart`, buyer email sent. A real "Illuminance Selector" delivery
+  was recorded `unmapped/ignored`, as intended. **No lease has been granted
+  yet** (first after 11/2) — that is where the Vitrium `DocumentId` assumption
+  gets tested.
 - **The webhook lands in Lens** (`POST /api/webhooks/surecart`, public,
   HMAC-SHA256 over `timestamp.body`, 5-min tolerance — `src/lib/surecart.ts`),
   because Lens holds the catalogue (`standards.buy_url` slug → standard,
