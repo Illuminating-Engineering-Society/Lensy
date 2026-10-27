@@ -278,7 +278,10 @@ SURECART_LEASE_PRICES = ""
 SURECART_PURCHASES_SINCE = "2026-11-02"
 # "on" only on a staging deployment: test-mode checkouts then grant access.
 SURECART_ACCEPT_TEST_MODE = "off"
-SURECART_NOTIFY = "on"
+# "off" during the 2026-10-27 backfill (Import) so existing subscribers are
+# not emailed about a subscription they have had for months; back to "on"
+# once the import is done.
+SURECART_NOTIFY = "off"
 
 # Secrets set via `wrangler secret put`:
 # VITRIUM_API_KEY
