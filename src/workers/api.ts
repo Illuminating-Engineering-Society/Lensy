@@ -30,6 +30,7 @@ import { handleAdminAccessMode, handleAdminScanOrphans, handleAdminEnumerateIds,
 import { handleLibraryDocumentLookup, handleDeviceResetRequest } from './library-support';
 import { handleAdminCompAccess, handleAdminCompAccessCsv } from './comp-access';
 import { handleIngestJobs, serveCover, handleAdminStandards } from './staff-ingest';
+import { serveTutorialMedia, handleTutorialManifest, handleAdminTutorialDelete, tutorialPageSlug } from './tutorials';
 import { handleEvent } from './events';
 import { handlePreferences } from './preferences';
 import { handleAdminUsers } from './users';
@@ -147,6 +148,19 @@ export default {
       // store does not show. Written only by the staff dashboard.
       if (path.startsWith('/api/covers/') && request.method === 'GET') {
         return await serveCover(env, path.slice('/api/covers/'.length));
+      }
+
+      // ── Tutorial videos (client, 2026-10-28) ────────────────────────────
+      // PUBLIC like /tutorials itself — see workers/tutorials.ts. Uploads go
+      // through the admin-only r2-multipart route; removal is admin-only too.
+      if (path === '/api/tutorials/media' && request.method === 'GET') {
+        return withCors(await handleTutorialManifest(env));
+      }
+      if (path.startsWith('/api/tutorials/media/') && (request.method === 'GET' || request.method === 'HEAD')) {
+        return await serveTutorialMedia(request, env, path.slice('/api/tutorials/media/'.length));
+      }
+      if (path.startsWith('/api/admin/tutorials/') && request.method === 'DELETE') {
+        return withCors(await handleAdminTutorialDelete(request, env, path.slice('/api/admin/tutorials/'.length)));
       }
 
       // ── Ingest (internal/admin only) ─────────────────────────────────────
@@ -291,6 +305,11 @@ export default {
 
       // Everything that is not an API route is a page or an asset (the Worker
       // runs first only so the canonical-host redirect above covers them).
+      // One permanent URL per tutorial (/tutorials/<slug>): the same page,
+      // which reads the slug off its own path and shows that tutorial alone.
+      if (tutorialPageSlug(path) && env.ASSETS) {
+        return await env.ASSETS.fetch(new Request(new URL('/tutorials', url), request));
+      }
       if (!path.startsWith('/api/') && env.ASSETS) {
         const asset = await env.ASSETS.fetch(request);
         return isEmbeddableContents(url) ? allowFramingByIes(asset) : asset;

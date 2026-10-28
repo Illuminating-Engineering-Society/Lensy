@@ -19,12 +19,17 @@
     Tutorials button on every login, and a reader who has not signed in yet is
     exactly who a "how do I get in" tutorial is for.
 
-    HOW TO FILL IT IN: edit the TUTORIALS array at the bottom of this file. One
-    entry per tutorial: title, one-line summary, the Loom share URL (any
-    https://www.loom.com/share/… link) and, when Loom has generated it, the URL
-    of the step-by-step document. An entry with neither URL renders as "coming
-    soon" rather than a dead link, so the outline can be written before the
-    videos exist. Sections group the entries (Vitrium first, IES Lens second).
+    Self-hosted since 2026-10-28 (client: "so the URLs remain static with
+    eventual content updates, and to remove Loom branding"). This one page
+    serves two URLs: /tutorials (every tutorial) and /tutorials/<slug> (one
+    tutorial, its permanent link — the Worker hands that path this same file).
+    A tutorial plays from our own server once staff upload its video in
+    /admin → Maintenance → Tutorial videos (R2 tutorials/<slug>.mp4); until
+    then it falls back to the Loom embed. The guide sits in a drop-down below
+    the video and its timestamps seek the self-hosted player.
+
+    HOW TO FILL IT IN: src/frontend/utils/tutorials-catalogue.js — the admin
+    dashboard reads the same list. Never rename a published slug.
   -->
   <script src="/vendor/tailwind/tailwindcss-3.4.17.js"></script>
   <script>
@@ -48,9 +53,17 @@
     h1, h2, h3 { font-family: 'Nohemi', 'Inter', -apple-system, sans-serif; }
     .nav-item { color: #84898f; }
     .nav-item:hover { color: #30363D; background: rgba(48,54,61,0.07); }
-    /* A Loom embed keeps the 16:9 frame Loom exports. */
+    /* Every player keeps the 16:9 frame the recordings are exported at. */
     .video-frame { position: relative; padding-bottom: 56.25%; height: 0; }
-    .video-frame iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
+    .video-frame iframe, .video-frame video { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; background: #000; }
+    /* The step-by-step guide drop-down (same dress as FROM THE STANDARD). */
+    .guide > summary { list-style: none; }
+    .guide > summary::-webkit-details-marker { display: none; }
+    .guide .caret-closed { display: inline; } .guide .caret-open { display: none; }
+    .guide[open] .caret-closed { display: none; } .guide[open] .caret-open { display: inline; }
+    .guide .label-closed { display: inline; } .guide .label-open { display: none; }
+    .guide[open] .label-closed { display: none; } .guide[open] .label-open { display: inline; }
+    .guide ul ul { list-style: circle; }
   </style>
 </head>
 <body class="bg-lens-page min-h-screen text-ink">
@@ -75,11 +88,15 @@
   </header>
 
   <main class="max-w-5xl mx-auto px-4 py-8">
+    <!-- One tutorial (/tutorials/<slug>); filled by renderSingle(). -->
+    <div id="single" class="hidden"></div>
+
+    <div id="list-view">
     <div class="mb-8">
       <h1 class="text-2xl font-bold text-gray-900">Tutorials</h1>
       <p class="text-sm text-gray-500 mt-1">
         Short walkthroughs of the IES Lighting Library and IES Lens. Every tutorial comes as a video and,
-        where available, as a step-by-step written guide.
+        where available, as a step-by-step written guide below it.
       </p>
     </div>
 
@@ -110,6 +127,7 @@
           <p class="text-sm text-gray-600 mt-2"><a href="https://elearning.ies.org/" target="_blank" rel="noopener" class="text-ies-blue hover:underline">IES eLearning</a> is the education hub for IES expertise: in-depth courses, archived webinars and symposia, and more. For technical support, please complete the <a href="https://ies.org/contact-us/" target="_blank" rel="noopener" class="text-ies-blue hover:underline">IES support form</a>.</p></details>
       </div>
     </section>
+    </div>
   </main>
 
   <footer class="bg-footer-band text-center text-xs py-8 mt-8">
@@ -121,39 +139,14 @@
     </p>
   </footer>
 
+  <script src="/utils/tutorials-catalogue.js"></script>
   <script>
-    // ── The table of contents ─────────────────────────────────────────────────
-    // Fill in `video` (a Loom share URL) and `doc` (the Loom-generated
-    // step-by-step document) as they are produced. Leave either null until then.
-    const TUTORIALS = [
-      {
-        section: 'Getting started',
-        items: [
-          { title: 'Video overview: the Lighting Library with IES Lens', summary: 'A short tour of reading, asking and learning with IES resources.', video: 'https://www.loom.com/share/7fc113be55b04f3588d0f549809c3028', doc: null },
-          { title: 'Signing in with your IES account', summary: 'One IES sign-in for the Lighting Library and IES Lens.', video: null, doc: null },
-          { title: 'What a Lighting Library subscription includes', summary: 'Subscriber and non-subscriber access, and how to subscribe.', video: null, doc: null },
-        ],
-      },
-      {
-        section: 'The IES Lighting Library (Vitrium)',
-        items: [
-          { title: 'Opening and reading a standard', summary: 'The viewer, page navigation and bookmarks.', video: null, doc: null },
-          { title: 'Annotations and highlights', summary: 'Marking up a standard and exporting your notes.', video: null, doc: null },
-          { title: 'Reading offline and on more than one device', summary: 'Device limits and what to do when you hit one.', video: null, doc: null },
-        ],
-      },
-      {
-        section: 'IES Lens',
-        items: [
-          { title: 'Asking a question', summary: 'Natural-language search, the AI Guide and the result cards.', video: null, doc: null },
-          { title: 'Illuminance tables', summary: 'Reading an Illuminance Table card and its notes.', video: null, doc: null },
-          { title: 'Filtering and sorting results', summary: 'Contents filters, Interior/Exterior, and the Documents lists.', video: null, doc: null },
-          { title: 'Comparing versions of a standard', summary: 'What changed between the current edition and the one it replaced.', video: null, doc: null },
-          { title: 'Bookmarks and sharing', summary: 'Saving results into collections and sharing them.', video: null, doc: null },
-          { title: 'List Standards', summary: 'Every current standard, its table of contents and where to buy it.', video: null, doc: null },
-        ],
-      },
-    ];
+    // The catalogue (title, summary, Loom fallback, guide) lives in
+    // /utils/tutorials-catalogue.js; which videos we host comes from
+    // GET /api/tutorials/media.
+    const TUTORIALS = (window.LENS_TUTORIALS || [])
+      .filter(s => s && s.section && Array.isArray(s.items) && s.items.length > 0);
+    let MEDIA = {};
 
     function escapeHtml(str) {
       if (str == null) return '';
@@ -161,59 +154,192 @@
         .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
     }
 
-    /** A Loom share URL → its embed URL; anything else → null (never framed). */
+    /** Escape, then the one piece of markup the guides use: **bold**. */
+    function inline(text) {
+      return escapeHtml(text).replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+    }
+
+    /**
+     * A Loom share URL → its embed URL with Loom's own chrome turned down
+     * (owner, share button, title bar); anything else → null (never framed).
+     * Only used until the tutorial's video is uploaded to our server.
+     */
     function loomEmbedUrl(url) {
       const m = /^https:\/\/(?:www\.)?loom\.com\/(?:share|embed)\/([A-Za-z0-9]+)/.exec(String(url || ''));
-      return m ? `https://www.loom.com/embed/${m[1]}` : null;
+      return m ? `https://www.loom.com/embed/${m[1]}?hide_owner=true&hide_share=true&hide_title=true&hideEmbedTopBar=true` : null;
     }
 
     function slug(text) {
       return String(text).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
     }
 
-    function renderItem(item, sectionSlug, i) {
-      const id = `${sectionSlug}-${i + 1}`;
-      const embed = loomEmbedUrl(item.video);
-      const ready = !!(embed || item.doc);
-      const links = [
-        embed ? `<a href="${escapeHtml(item.video)}" target="_blank" rel="noopener" class="text-ies-blue hover:underline font-medium">Watch on Loom ↗</a>` : '',
-        item.doc ? `<a href="${escapeHtml(item.doc)}" target="_blank" rel="noopener" class="text-ies-blue hover:underline font-medium">Step-by-step guide ↗</a>` : '',
-      ].filter(Boolean).join('<span class="mx-2 text-gray-300">·</span>');
+    /** "1:32" → 92 seconds; null when unreadable. */
+    function seconds(t) {
+      const m = /^(\d+):(\d{2})$/.exec(String(t || ''));
+      return m ? Number(m[1]) * 60 + Number(m[2]) : null;
+    }
 
+    function hosted(item) {
+      return (MEDIA[item.slug] && MEDIA[item.slug].video) || null;
+    }
+
+    function isReady(item) {
+      return !!(hosted(item) || loomEmbedUrl(item.loom));
+    }
+
+    function playerHtml(item, { lazy }) {
+      const video = hosted(item);
+      if (video) {
+        // ?v= changes with each upload, so a replaced video is never served
+        // from a stale browser cache under the same permanent URL.
+        const v = encodeURIComponent(video.uploaded);
+        const poster = MEDIA[item.slug].poster ? `/api/tutorials/media/${item.slug}.jpg?v=${v}` : '';
+        return `<div class="video-frame rounded-lg overflow-hidden">
+          <video id="player-${escapeHtml(item.slug)}" controls playsinline
+            preload="${poster && lazy ? 'none' : 'metadata'}" ${poster ? `poster="${escapeHtml(poster)}"` : ''}
+            src="/api/tutorials/media/${escapeHtml(item.slug)}.mp4?v=${v}" title="${escapeHtml(item.title)}"></video>
+        </div>`;
+      }
+      const embed = loomEmbedUrl(item.loom);
+      if (embed) {
+        return `<div class="video-frame rounded-lg overflow-hidden bg-gray-100"><iframe src="${escapeHtml(embed)}" title="${escapeHtml(item.title)}" allowfullscreen ${lazy ? 'loading="lazy"' : ''}></iframe></div>`;
+      }
+      return `<div class="video-frame rounded-lg overflow-hidden bg-gray-100">
+        <div class="absolute inset-0 flex items-center justify-center text-sm text-gray-400">Video coming soon</div>
+      </div>`;
+    }
+
+    function pointHtml(p) {
+      if (p && typeof p === 'object') {
+        return `<li>${inline(p.text)}<ul class="ml-5 mt-1 space-y-0.5">${(p.items || []).map(pointHtml).join('')}</ul></li>`;
+      }
+      return `<li>${inline(p)}</li>`;
+    }
+
+    /** The guide drop-down below the video. Timestamps seek the hosted player. */
+    function guideHtml(item, { open }) {
+      if (!item.guide || !Array.isArray(item.guide.steps) || item.guide.steps.length === 0) return '';
+      const seekable = !!hosted(item);
+      const steps = item.guide.steps.map((s, i) => {
+        const secs = seconds(s.t);
+        const stamp = s.t
+          ? (seekable && secs != null
+            ? `<button type="button" class="ml-2 text-xs font-medium text-ies-blue hover:underline" data-seek="${escapeHtml(item.slug)}" data-t="${secs}" title="Play the video from ${escapeHtml(s.t)}">▶ ${escapeHtml(s.t)}</button>`
+            : `<span class="ml-2 text-xs text-gray-400">${escapeHtml(s.t)}</span>`)
+          : '';
+        return `<li>
+          <h4 class="font-semibold text-gray-900">${i + 1}. ${inline(s.title)}${stamp}</h4>
+          <ul class="list-disc ml-5 mt-1 space-y-0.5 text-gray-700">${(s.points || []).map(pointHtml).join('')}</ul>
+        </li>`;
+      }).join('');
+      return `<details class="guide mt-4" ${open ? 'open' : ''}>
+        <summary class="flex items-center justify-between gap-3 cursor-pointer select-none border border-gray-200 rounded-lg px-3 py-2 hover:bg-gray-50">
+          <span class="flex items-center gap-2 text-sm font-bold text-gray-900">
+            <span class="inline-flex items-center justify-center w-5 h-5 rounded bg-gray-800 text-white text-[10px]"><span class="caret-closed">▼</span><span class="caret-open">▲</span></span>
+            STEP-BY-STEP GUIDE
+          </span>
+          <span class="text-xs text-gray-500"><span class="label-closed">Show</span><span class="label-open">Hide</span></span>
+        </summary>
+        <div class="pt-4 px-1 text-sm">
+          <h3 class="text-base font-bold text-gray-900 mb-3">${inline(item.guide.title)}</h3>
+          <ol class="space-y-4">${steps}</ol>
+        </div>
+      </details>`;
+    }
+
+    function renderItem(item) {
+      const ready = isReady(item);
       return `
-        <article id="${escapeHtml(id)}" class="bg-white rounded-xl border border-gray-100 p-4 sm:p-5">
-          <div class="flex items-start justify-between gap-3 flex-wrap">
+        <article id="${escapeHtml(item.slug)}" class="bg-white rounded-xl border border-gray-100 p-4 sm:p-5">
+          <div class="flex items-start justify-between gap-3 flex-wrap mb-4">
             <div class="min-w-0">
-              <h3 class="text-base font-bold text-gray-900">${escapeHtml(item.title)}</h3>
-              ${item.summary ? `<p class="text-sm text-gray-600 mt-0.5">${escapeHtml(item.summary)}</p>` : ''}
+              <h3 class="text-base font-bold text-gray-900"><a href="/tutorials/${escapeHtml(item.slug)}" class="hover:text-ies-blue hover:underline">${escapeHtml(item.title)}</a></h3>
+              ${item.summary ? `<p class="text-sm text-gray-600 mt-1 line-clamp-3" title="${escapeHtml(item.summary)}">${escapeHtml(item.summary)}</p>` : ''}
             </div>
             ${ready ? '' : '<span class="text-[11px] font-semibold uppercase tracking-wide text-gray-400 border border-gray-200 rounded-full px-2 py-0.5 shrink-0">Coming soon</span>'}
           </div>
-          ${embed ? `<div class="video-frame mt-4 rounded-lg overflow-hidden bg-gray-100"><iframe src="${escapeHtml(embed)}" title="${escapeHtml(item.title)}" allowfullscreen loading="lazy"></iframe></div>` : ''}
-          ${links ? `<p class="mt-3 text-sm">${links}</p>` : ''}
+          ${ready ? playerHtml(item, { lazy: true }) : ''}
+          ${guideHtml(item, { open: false })}
         </article>`;
     }
 
-    function render() {
-      const sections = TUTORIALS.filter(s => s && s.section && Array.isArray(s.items) && s.items.length > 0);
+    function renderList() {
       document.getElementById('toc').innerHTML = `
         <p class="text-[10px] uppercase tracking-wide text-gray-400 mb-2">Contents</p>
         <ol class="grid sm:grid-cols-2 gap-x-6 gap-y-1">
-          ${sections.map(s => `
+          ${TUTORIALS.map(s => `
             <li><a href="#${escapeHtml(slug(s.section))}" class="font-semibold text-gray-800 hover:text-ies-blue hover:underline">${escapeHtml(s.section)}</a>
               <ol class="ml-4 mt-0.5 space-y-0.5">
-                ${s.items.map((it, i) => `<li><a href="#${escapeHtml(slug(s.section))}-${i + 1}" class="text-gray-600 hover:text-ies-blue hover:underline">${escapeHtml(it.title)}</a>${(loomEmbedUrl(it.video) || it.doc) ? '' : ' <span class="text-[10px] text-gray-400">(soon)</span>'}</li>`).join('')}
+                ${s.items.map(it => `<li><a href="#${escapeHtml(it.slug)}" class="text-gray-600 hover:text-ies-blue hover:underline">${escapeHtml(it.title)}</a>${isReady(it) ? '' : ' <span class="text-[10px] text-gray-400">(soon)</span>'}</li>`).join('')}
               </ol>
             </li>`).join('')}
         </ol>`;
-      document.getElementById('sections').innerHTML = sections.map(s => `
+      document.getElementById('sections').innerHTML = TUTORIALS.map(s => `
         <section id="${escapeHtml(slug(s.section))}">
           <h2 class="text-lg font-bold text-gray-900 mb-3">${escapeHtml(s.section)}</h2>
-          <div class="space-y-3">${s.items.map((it, i) => renderItem(it, slug(s.section), i)).join('')}</div>
+          <div class="grid md:grid-cols-2 gap-4 items-start">${s.items.map(renderItem).join('')}</div>
         </section>`).join('');
     }
 
-    render();
+    /** /tutorials/<slug>: one tutorial, guide open, with previous/next. */
+    function renderSingle(wanted) {
+      const flat = TUTORIALS.flatMap(s => s.items.map(it => ({ ...it, section: s.section })));
+      const idx = flat.findIndex(it => it.slug === wanted);
+      const box = document.getElementById('single');
+      document.getElementById('list-view').classList.add('hidden');
+      box.classList.remove('hidden');
+      const back = '<a href="/tutorials" class="text-sm text-ies-blue hover:underline">← All tutorials</a>';
+      if (idx < 0) {
+        document.title = 'Tutorial not found — IES Lighting Library | IES Lens';
+        box.innerHTML = `${back}<h1 class="text-2xl font-bold text-gray-900 mt-4">Tutorial not found</h1>
+          <p class="text-sm text-gray-500 mt-1">This tutorial may have moved. Every tutorial is listed on the <a href="/tutorials" class="text-ies-blue hover:underline">Tutorials</a> page.</p>`;
+        return;
+      }
+      const item = flat[idx];
+      const prev = flat[idx - 1];
+      const next = flat[idx + 1];
+      document.title = `${item.title} — Tutorials | IES Lens`;
+      const navLink = (it, label, align) => it
+        ? `<a href="/tutorials/${escapeHtml(it.slug)}" class="block ${align} text-sm hover:text-ies-blue"><span class="text-xs text-gray-400">${label}</span><br><span class="font-medium">${escapeHtml(it.title)}</span></a>`
+        : '<span></span>';
+      box.innerHTML = `
+        ${back}
+        <p class="text-xs uppercase tracking-wide text-gray-400 mt-4">${escapeHtml(item.section)}</p>
+        <h1 class="text-2xl font-bold text-gray-900 mt-1">${escapeHtml(item.title)}</h1>
+        ${item.summary ? `<p class="text-sm text-gray-600 mt-2">${escapeHtml(item.summary)}</p>` : ''}
+        <div class="bg-white rounded-xl border border-gray-100 p-4 sm:p-5 mt-5">
+          ${playerHtml(item, { lazy: false })}
+          ${guideHtml(item, { open: true })}
+        </div>
+        <nav class="grid grid-cols-2 gap-4 mt-6" aria-label="More tutorials">
+          ${navLink(prev, '← Previous', 'text-left')}${navLink(next, 'Next →', 'text-right')}
+        </nav>`;
+    }
+
+    // A timestamp in a guide plays the video from that moment.
+    document.addEventListener('click', e => {
+      const btn = e.target.closest('[data-seek]');
+      if (!btn) return;
+      const video = document.getElementById(`player-${btn.dataset.seek}`);
+      if (!video) return;
+      video.currentTime = Number(btn.dataset.t) || 0;
+      video.play().catch(() => { /* autoplay refused — the seek still stands */ });
+      video.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    });
+
+    async function boot() {
+      try {
+        const res = await fetch('/api/tutorials/media');
+        if (res.ok) MEDIA = (await res.json()).media || {};
+      } catch { /* nothing hosted → every tutorial falls back to Loom */ }
+      const m = /^\/tutorials\/([a-z0-9-]+)\/?$/.exec(location.pathname);
+      if (m) renderSingle(m[1]);
+      else renderList();
+      // Old /tutorials#<anchor> links land after the list renders.
+      if (!m && location.hash) document.getElementById(location.hash.slice(1))?.scrollIntoView();
+    }
+
+    boot();
   </script>
 </body>
 </html>

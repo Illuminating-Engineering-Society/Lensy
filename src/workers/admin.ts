@@ -600,9 +600,10 @@ export async function handleAdminR2Multipart(request: Request, env: Env): Promis
 
   // Same namespaces the ingest pipeline writes to — plus the staff dashboard's
   // job staging (ingest-jobs/<jobId>/source.pdf), for files too large for a
-  // single-request upload. Nothing else is writable.
-  if (!/^(standards|deprecated)\/[^/]+\.pdf$|^ingest-jobs\/[^/]+\/source\.pdf$/.test(key)) {
-    return jsonResponse({ error: 'key must be standards/<file>.pdf, deprecated/<file>.pdf or ingest-jobs/<jobId>/source.pdf' }, 400);
+  // single-request upload — and the self-hosted tutorial videos and posters
+  // (tutorials/<slug>.mp4|.jpg, workers/tutorials.ts). Nothing else is writable.
+  if (!/^(standards|deprecated)\/[^/]+\.pdf$|^ingest-jobs\/[^/]+\/source\.pdf$|^tutorials\/[a-z0-9]+(?:-[a-z0-9]+)*\.(?:mp4|jpg)$/.test(key)) {
+    return jsonResponse({ error: 'key must be standards/<file>.pdf, deprecated/<file>.pdf, ingest-jobs/<jobId>/source.pdf or tutorials/<slug>.mp4|.jpg' }, 400);
   }
 
   if (action === 'create') {

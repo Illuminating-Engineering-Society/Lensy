@@ -1934,6 +1934,46 @@ cron trigger (`0 10 * * *`, `scheduled` in api.ts). No search-cache bump.
 - **`SURECART_LENS_PRODUCTS` now names both Library products** — Dan: everyone
   who subscribed through 11/1 is converted to "Lighting Library with IES Lens".
 
+### Tutorials are self-hosted, one permanent URL each (client, 2026-10-28)
+
+"Can you create WP pages for each (or embed video files from our server …) so
+the URLs remain static with eventual content updates, and to remove Loom
+branding?" (`pdfs/Others/Tutorials.pdf` holds the Loom How-To Guides.) Built on
+lens.ies.org, not WordPress: no WP access was needed and the page was already ours.
+
+- **One page, two URLs.** `/tutorials` lists everything; `/tutorials/<slug>`
+  is that tutorial alone (guide open, previous/next). The Worker hands the slug
+  path the same `tutorials.html` (`tutorialPageSlug` in `workers/tutorials.ts`),
+  which reads the slug off `location.pathname`.
+- **The catalogue** is `src/frontend/utils/tutorials-catalogue.js`
+  (`window.LENS_TUTORIALS`) — titles, summaries, the Loom fallback URL and the
+  transcribed guides. The admin dashboard reads the same file. **Never rename
+  a published slug**: it is the URL in emails and the R2 key.
+- **Videos live in R2** at `tutorials/<slug>.mp4` (+ optional poster
+  `tutorials/<slug>.jpg`), uploaded in /admin → Maintenance → Tutorial videos
+  through the existing `r2-multipart` route (its key regex now admits that
+  namespace) and removed with `DELETE /api/admin/tutorials/<slug>?kind=`.
+  Public `GET /api/tutorials/media` lists what is hosted; `GET|HEAD
+  /api/tutorials/media/<slug>.mp4` streams with a real **206 + Content-Range**
+  (Safari will not play an MP4 without it, and seeking needs it). The page adds
+  `?v=<uploaded>` so a replaced video is never a stale cache hit.
+- **Loom is the fallback only** — a tutorial with no upload embeds Loom with its
+  chrome turned down (`hide_owner`, `hide_share`, `hide_title`,
+  `hideEmbedTopBar`); nothing links to loom.com any more. The guide's step
+  timestamps seek the self-hosted player (plain text under Loom). The guides'
+  screenshots are not reproduced; the timestamp plays that moment instead.
+- **"Video Overview"** (welcome window + every email, `VIDEO_OVERVIEW_URL`) now
+  points at `/tutorials/overview`, so sent emails survive a re-recorded video.
+- **Edits to the Loom AI text:** "This Loom …" → "This video …", "IS Lighting
+  Library" → "IES", a garbled sentence in the Shapes summary fixed. The
+  Lighting Library tutorials were reordered (troubleshooting → highlighting →
+  underlining → notes, as the notes guide itself recommends), and the old
+  invented "IES Lens" placeholder entries were dropped.
+- **Still owed by IES:** the MP4s (Loom → Download, then upload), the
+  Transition video (slug `transition`, title a placeholder), and How-To Guides
+  for the overview and the two membership videos. Tests:
+  `src/workers/tutorials.test.js`.
+
 ### The 10/22/26 Teams notes: notes open by default, deprecate without a successor (2026-10-22)
 
 No migration; no search-cache bump.

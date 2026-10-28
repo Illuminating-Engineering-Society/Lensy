@@ -14,6 +14,8 @@
        thing server-side (requireAdminAccess), so this is UX only. -->
   <script src="/utils/auth-gate.js" data-require-admin></script>
   <script src="/vendor/tailwind/tailwindcss-3.4.17.js"></script>
+  <!-- The tutorial list for Maintenance → Tutorial videos (same file /tutorials reads). -->
+  <script src="/utils/tutorials-catalogue.js"></script>
   <script>
     // IES brand design tokens — duplicated per page (no shared build step yet;
     // see the note in index.html).
@@ -775,6 +777,29 @@
           </ul>
         </div>
 
+        <!-- Client 2026-10-28: tutorials play from our own server, at a URL
+             that never changes (workers/tutorials.ts). -->
+        <div class="bg-white rounded-xl shadow p-5 md:col-span-2">
+          <h3 class="font-display font-bold mb-1">Tutorial videos</h3>
+          <p class="text-sm text-gray-500 mb-3">
+            Each tutorial has a permanent page at <code class="font-mono text-xs">/tutorials/&lt;slug&gt;</code>.
+            Upload its MP4 here (download it from Loom first) and the page plays it from IES Lens instead of
+            the Loom embed. To update a video, upload the new file to the same tutorial: the URL stays the same.
+            A poster (JPEG) is optional — without one the first frame is shown. Titles, summaries and guides
+            are edited in <code class="font-mono text-xs">src/frontend/utils/tutorials-catalogue.js</code>.
+          </p>
+          <div class="overflow-x-auto">
+            <table class="w-full text-sm">
+              <thead class="text-left text-xs uppercase tracking-wide text-gray-400 border-b border-gray-100">
+                <tr><th class="py-2 pr-3">Tutorial</th><th class="py-2 pr-3">Playing from</th><th class="py-2 pr-3">Poster</th><th class="py-2">Actions</th></tr>
+              </thead>
+              <tbody id="tv-rows"><tr><td colspan="4" class="py-3 text-gray-400">Loading…</td></tr></tbody>
+            </table>
+          </div>
+          <p id="tv-status" class="mt-3 text-sm text-gray-500"></p>
+          <input type="file" id="tv-file" class="hidden" onchange="tutorialFileChosen(this)">
+        </div>
+
         <div class="bg-white rounded-xl shadow p-5">
           <h3 class="font-display font-bold mb-1">Runbook pointers</h3>
           <ul class="text-sm space-y-2 text-gray-600">
@@ -1116,7 +1141,7 @@
           'comp-access': loadCompAccess,
           purchases: loadPurchases,
           index: () => {},
-          maintenance: () => {},
+          maintenance: loadTutorialMedia,
         })[id]();
       }
     }
@@ -2366,6 +2391,103 @@
       } finally {
         btn.disabled = false;
       }
+    }
+
+    // ── Tutorial videos (Maintenance) ─────────────────────────────────────
+    // Files land at R2 tutorials/<slug>.mp4|.jpg through the same multipart
+    // route the Standards tab uses for large PDFs; the public page picks them
+    // up from GET /api/tutorials/media.
+    const TUTORIAL_PART_SIZE = 32 * 1024 * 1024; // R2 parts: ≥5 MB except the last
+    let tutorialUpload = null; // { slug, kind } while the file picker is open
+
+    async function loadTutorialMedia() {
+      const rows = document.getElementById('tv-rows');
+      const items = (window.LENS_TUTORIALS || []).flatMap(s => s.items || []);
+      let media = {};
+      try {
+        const res = await fetch('/api/tutorials/media', { cache: 'no-store' });
+        media = (await res.json()).media || {};
+      } catch { /* shown as nothing uploaded */ }
+      rows.innerHTML = items.map(it => {
+        const m = media[it.slug] || {};
+        const source = m.video
+          ? `<span class="text-green-700 font-medium">IES Lens</span> <span class="text-gray-400">· ${(m.video.size / 1024 / 1024).toFixed(1)} MB · ${esc(new Date(m.video.uploaded).toLocaleDateString())}</span>`
+          : it.loom ? '<span class="text-amber-700">Loom (fallback)</span>' : '<span class="text-gray-400">Not recorded</span>';
+        const btn = (label, onclick, cls = 'text-brand-secondary') =>
+          `<button type="button" onclick="${onclick}" class="${cls} hover:underline mr-3">${label}</button>`;
+        return `<tr class="border-b border-gray-50 align-top">
+          <td class="py-2 pr-3"><a href="/tutorials/${esc(it.slug)}" target="_blank" rel="noopener" class="text-brand-secondary hover:underline">${esc(it.title)}</a>
+            <div class="font-mono text-xs text-gray-400">/tutorials/${esc(it.slug)}</div></td>
+          <td class="py-2 pr-3">${source}</td>
+          <td class="py-2 pr-3">${m.poster ? '✓' : '<span class="text-gray-400">—</span>'}</td>
+          <td class="py-2 whitespace-nowrap">
+            ${btn(m.video ? 'Replace video' : 'Upload video', `pickTutorialFile('${esc(it.slug)}','video')`)}
+            ${btn(m.poster ? 'Replace poster' : 'Upload poster', `pickTutorialFile('${esc(it.slug)}','poster')`)}
+            ${m.video ? btn('Remove video', `removeTutorialFile('${esc(it.slug)}','video')`, 'text-red-600') : ''}
+            ${m.poster ? btn('Remove poster', `removeTutorialFile('${esc(it.slug)}','poster')`, 'text-red-600') : ''}
+          </td>
+        </tr>`;
+      }).join('') || '<tr><td colspan="4" class="py-3 text-gray-400">No tutorials in the catalogue.</td></tr>';
+    }
+
+    function pickTutorialFile(slug, kind) {
+      tutorialUpload = { slug, kind };
+      const input = document.getElementById('tv-file');
+      input.value = '';
+      input.accept = kind === 'video' ? 'video/mp4,.mp4' : 'image/jpeg,.jpg,.jpeg';
+      input.click();
+    }
+
+    async function tutorialFileChosen(input) {
+      const file = input.files && input.files[0];
+      const target = tutorialUpload;
+      tutorialUpload = null;
+      if (!file || !target) return;
+      const status = document.getElementById('tv-status');
+      const isVideo = target.kind === 'video';
+      if (isVideo ? !/\.mp4$/i.test(file.name) : !/\.jpe?g$/i.test(file.name)) {
+        status.innerHTML = `<span class="text-red-600">${isVideo ? 'Choose an .mp4 file' : 'Choose a .jpg poster'}.</span>`;
+        return;
+      }
+      const key = `tutorials/${target.slug}.${isVideo ? 'mp4' : 'jpg'}`;
+      const enc = encodeURIComponent(key);
+      status.textContent = `Uploading ${file.name}…`;
+      let uploadId = null;
+      try {
+        const create = await api(`/api/admin/r2-multipart?action=create&key=${enc}`, { method: 'POST' });
+        if (create.status >= 400) throw new Error(create.data.error || 'Upload could not start');
+        uploadId = create.data.uploadId;
+        const parts = [];
+        let partNumber = 1;
+        for (let off = 0; off < file.size; off += TUTORIAL_PART_SIZE, partNumber++) {
+          const res = await fetch(
+            `/api/admin/r2-multipart?action=part&key=${enc}&uploadId=${encodeURIComponent(uploadId)}&partNumber=${partNumber}`,
+            { method: 'POST', body: file.slice(off, Math.min(file.size, off + TUTORIAL_PART_SIZE)) });
+          if (!res.ok) throw new Error(`Upload part ${partNumber} failed (${res.status})`);
+          const part = await res.json();
+          parts.push({ partNumber: part.partNumber, etag: part.etag });
+          status.textContent = `Uploading ${file.name}… ${Math.round(Math.min(file.size, off + TUTORIAL_PART_SIZE) / file.size * 100)}%`;
+        }
+        const done = await api(`/api/admin/r2-multipart?action=complete&key=${enc}`,
+          { method: 'POST', body: JSON.stringify({ uploadId, parts }) });
+        if (done.status >= 400) throw new Error(done.data.error || 'Upload could not be completed');
+        status.innerHTML = `<span class="text-green-700">✓ ${esc(file.name)} is live at /tutorials/${esc(target.slug)} (${(file.size / 1024 / 1024).toFixed(1)} MB).</span>`;
+      } catch (err) {
+        if (uploadId) {
+          await api(`/api/admin/r2-multipart?action=abort&key=${enc}`,
+            { method: 'POST', body: JSON.stringify({ uploadId }) }).catch(() => {});
+        }
+        status.innerHTML = `<span class="text-red-600">${esc(err.message)}</span>`;
+      }
+      loadTutorialMedia();
+    }
+
+    async function removeTutorialFile(slug, kind) {
+      const what = kind === 'video' ? 'video (the page goes back to the Loom embed, or "coming soon")' : 'poster';
+      if (!confirm(`Remove the ${what} for /tutorials/${slug}?`)) return;
+      const { status, data } = await api(`/api/admin/tutorials/${encodeURIComponent(slug)}?kind=${kind}`, { method: 'DELETE' });
+      document.getElementById('tv-status').textContent = status < 400 ? `Removed ${data.deleted}.` : `Failed: ${data.error || status}`;
+      loadTutorialMedia();
     }
 
     // ── Boot ──────────────────────────────────────────────────────────────

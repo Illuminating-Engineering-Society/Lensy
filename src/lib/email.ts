@@ -104,9 +104,11 @@ function greeting(name: string | null): string {
  * "Near bottom, add 2 buttons: 'Video Overview' and 'Tutorials'" (client,
  * 10/20/26) — on every message a reader receives. The video is the one the
  * welcome window opens (index.html WELCOME_LINKS); keep the two in step.
+ * Since 2026-10-28 it is the overview's permanent tutorial page, not the Loom
+ * share URL: an email already sent keeps working when the video is replaced.
  */
-export const VIDEO_OVERVIEW_URL = 'https://www.loom.com/share/7fc113be55b04f3588d0f549809c3028';
 const CANONICAL_APP_URL = 'https://lens.ies.org';
+export const VIDEO_OVERVIEW_URL = `${CANONICAL_APP_URL}/tutorials/overview`;
 
 function tutorialsUrl(appUrl?: string): string {
   return `${(appUrl || CANONICAL_APP_URL).replace(/\/+$/, '')}/tutorials`;
