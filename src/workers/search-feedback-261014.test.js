@@ -250,6 +250,27 @@ describe('editing a standard record (client 10/14/26 #2)', () => {
     expect(validateStandardEdit({ leaseUrl: 'http://store.ies.org/x' }).error).toBeTruthy();
     expect(validateStandardEdit({ leaseUrl: 'not a url' }).error).toMatch(/not a URL/);
   });
+
+  // 2026-10-28: every field sync-metadata writes is editable in the admin.
+  it('edits the Vitrium Doc ID (a GUID, stored lowercase) and clears it when empty', () => {
+    expect(validateStandardEdit({ vitriumDocId: ' 98173938-2BFC-4745-8F4A-11D3DA2AA8E4 ' }).fields)
+      .toEqual({ vitrium_doc_id: '98173938-2bfc-4745-8f4a-11d3da2aa8e4' });
+    expect(validateStandardEdit({ vitriumDocId: '' }).fields).toEqual({ vitrium_doc_id: null });
+    expect(validateStandardEdit({ vitriumDocId: '2H4QTw' }).error).toMatch(/GUID/);
+  });
+
+  it('edits title, designation, committee and description', () => {
+    expect(validateStandardEdit({
+      title: '  Recommended Practice:  Lighting Office Spaces ', fullDesignation: 'ANSI/IES RP-1-24',
+      author: 'Office Lighting Committee', description: '',
+    }).fields).toEqual({
+      title: 'Recommended Practice: Lighting Office Spaces', full_designation: 'ANSI/IES RP-1-24',
+      author: 'Office Lighting Committee', description: null,
+    });
+    // The title column is never blanked — an empty box means unchanged.
+    expect(validateStandardEdit({ title: '', author: 'X Committee' }).fields).toEqual({ author: 'X Committee' });
+    expect(validateStandardEdit({ description: 'x'.repeat(4001) }).error).toMatch(/too long/);
+  });
 });
 
 describe('deleting a standard removes every trace of it', () => {

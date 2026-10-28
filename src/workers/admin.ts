@@ -66,6 +66,11 @@ interface IndexStatusRow {
   /** Catalogue gaps staff fix in Edit (client 10/15/26 #1). */
   missingLibraryLink: boolean;
   missingPublishedDate: boolean;
+  /**
+   * A current standard with no Vitrium Doc ID cannot be granted: a webstore
+   * lease or a comp is recorded and the reader still cannot open it (2026-10-28).
+   */
+  missingVitriumDocId: boolean;
   /** The webstore's 3-year-lease page is on record (client 10/15/26 #3). */
   hasLeaseLink: boolean;
   warnings: string[];
@@ -410,7 +415,7 @@ export async function handleAdminIndexStatus(request: Request, env: Env): Promis
   const [standardsRes, appCountsRes, appEndsRes] = await Promise.all([
     env.DB.prepare(`
       SELECT id, title, full_designation, status, chunk_count, page_count,
-             coverage_json, indexed_at, vitrium_web_url, published_date, buy_url
+             coverage_json, indexed_at, vitrium_web_url, published_date, buy_url, vitrium_doc_id
       FROM standards ORDER BY id
     `).all<StandardRow>(),
     env.DB.prepare(`
@@ -448,6 +453,8 @@ export async function handleAdminIndexStatus(request: Request, env: Env): Promis
       appVectorSpotCheck: null,
       missingLibraryLink: !String(std.vitrium_web_url ?? '').trim(),
       missingPublishedDate: !String(std.published_date ?? '').trim(),
+      // LS-1 is the free ies.org glossary: nothing to grant.
+      missingVitriumDocId: std.status !== 'Deprecated' && std.id !== 'LS-1' && !String(std.vitrium_doc_id ?? '').trim(),
       hasLeaseLink: !!String(std.buy_url ?? '').trim(),
       warnings: [],
     };
@@ -461,6 +468,9 @@ export async function handleAdminIndexStatus(request: Request, env: Env): Promis
     }
     if (row.missingPublishedDate) {
       row.warnings.push('No publication date — List Standards falls back to the edition year. Add it in Edit.');
+    }
+    if (row.missingVitriumDocId) {
+      row.warnings.push('No Vitrium Doc ID — a webstore lease or comp of it cannot be granted. Add it in Edit.');
     }
 
     if (std.chunk_count == null) {

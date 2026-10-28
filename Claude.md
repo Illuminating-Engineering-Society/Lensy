@@ -1933,6 +1933,21 @@ cron trigger (`0 10 * * *`, `scheduled` in api.ts). No search-cache bump.
   (stamp `expiry_reminder_sent_at`); `SURECART_NOTIFY=off` silences it too.
 - **`SURECART_LENS_PRODUCTS` now names both Library products** — Dan: everyone
   who subscribed through 11/1 is converted to "Lighting Library with IES Lens".
+- **Every catalogue field is editable in Admin → Standards → Edit** (Alex,
+  2026-10-28: "todo debería ser posible desde el admin"): title, full
+  designation, authoring committee, description, cover (upload, R2
+  `covers/<id>`, `thumbnail_url = /api/covers/<id>?v=<ts>` so the day-long
+  cache cannot show the old one), **Vitrium Doc ID** (GUID; also written to
+  `applications.Vitrium_Doc_ID`, as sync-metadata does) — alongside the
+  existing link/date/lease/collection. A current standard with no Doc ID is a
+  warning + "No Vitrium Doc ID" chip: a webstore lease or comp of it is
+  recorded but never granted. The Doc ID is the portal JSON's `Id` (verified
+  on G-1-22). sync-metadata stays for BULK imports only.
+- **D1 `buy_url` = the SureCart lease product page** (58 rows rewritten
+  2026-10-28 from `surecart:setup products`). The purchase mapping is
+  slug-first, so this column IS the product → standard mapping: it is what
+  makes LM-28-20 / LM-37-20 (store SKU wrongly `LM-48-20`) and LS-6-20+E1 (SKU
+  resolves to the deprecated LS-6-20) grant the right document.
 
 ### Tutorials are self-hosted, one permanent URL each (client, 2026-10-28)
 

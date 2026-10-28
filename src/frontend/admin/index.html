@@ -951,12 +951,55 @@
         <button onclick="closeStdEdit()" class="text-gray-400 hover:text-gray-600 text-xl leading-none">&times;</button>
       </div>
       <form onsubmit="return saveStdEdit(event)" class="px-6 py-5 space-y-4">
+        <p class="text-xs font-semibold uppercase tracking-wide text-gray-400">Document</p>
+        <div class="flex gap-4 items-start">
+          <div class="shrink-0 text-center">
+            <img id="se-cover" alt="" class="hidden w-20 h-28 object-cover rounded border border-gray-200 bg-gray-50" />
+            <div id="se-cover-none" class="w-20 h-28 rounded border border-dashed border-gray-300 text-[10px] text-gray-400 flex items-center justify-center">No cover</div>
+            <label class="mt-1.5 inline-block text-xs text-brand-secondary hover:underline cursor-pointer">
+              Replace…
+              <input id="se-cover-file" type="file" accept="image/jpeg,image/png" class="hidden" onchange="uploadStdCover(this)" />
+            </label>
+          </div>
+          <div class="flex-1 space-y-3">
+            <div>
+              <label for="se-title" class="block text-xs font-medium text-gray-600 mb-1">Title</label>
+              <input id="se-title" type="text" maxlength="300" placeholder="Recommended Practice: Lighting Office Spaces"
+                     class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg" />
+            </div>
+            <div>
+              <label for="se-designation" class="block text-xs font-medium text-gray-600 mb-1">Full designation</label>
+              <input id="se-designation" type="text" maxlength="120" placeholder="ANSI/IES RP-1-24"
+                     class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg" />
+            </div>
+          </div>
+        </div>
+        <div>
+          <label for="se-author" class="block text-xs font-medium text-gray-600 mb-1">Authoring committee</label>
+          <input id="se-author" type="text" maxlength="150" placeholder="Office Lighting Committee"
+                 class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg" />
+          <p class="mt-1 text-xs text-gray-400">Shown under the title and used to group List Standards. Type it the way it should read, e.g. "Nomenclature Committee" or "ASHRAE/IES".</p>
+        </div>
+        <div>
+          <label for="se-description" class="block text-xs font-medium text-gray-600 mb-1">Description</label>
+          <textarea id="se-description" rows="3" maxlength="4000"
+                    class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg"></textarea>
+        </div>
+
+        <p class="text-xs font-semibold uppercase tracking-wide text-gray-400 pt-2 border-t border-gray-100">Lighting Library (Vitrium)</p>
+        <div>
+          <label for="se-docid" class="block text-xs font-medium text-gray-600 mb-1">Vitrium Doc ID</label>
+          <input id="se-docid" type="text" placeholder="98173938-2bfc-4745-8f4a-11d3da2aa8e4" spellcheck="false"
+                 class="w-full px-3 py-2 text-sm font-mono border border-gray-300 rounded-lg" />
+          <p class="mt-1 text-xs text-gray-400">Vitrium admin → the document → its <strong>Doc ID</strong>. Needed for webstore leases and comp access: without it a purchased lease is recorded but the buyer cannot open the document.</p>
+        </div>
         <div>
           <label for="se-url" class="block text-xs font-medium text-gray-600 mb-1">Lighting Library link</label>
           <input id="se-url" type="url" placeholder="https://lighting.ies.org/AbC123"
                  class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg" />
           <p class="mt-1 text-xs text-gray-400">The document's short link in the Lighting Library. Empty = no link.</p>
         </div>
+        <p class="text-xs font-semibold uppercase tracking-wide text-gray-400 pt-2 border-t border-gray-100">Catalogue</p>
         <div>
           <label for="se-date" class="block text-xs font-medium text-gray-600 mb-1">Publication date</label>
           <input id="se-date" type="date" class="px-3 py-2 text-sm border border-gray-300 rounded-lg" />
@@ -2579,7 +2622,7 @@
     // current standards only — a deprecated edition is not for sale, and LS-1
     // is the free ies.org glossary.
     const STD_CHIPS = [['all', 'All'], ['active', 'Active'], ['deprecated', 'Deprecated'], ['warnings', 'Warnings'],
-      ['nolink', 'No Library link'], ['nodate', 'No publication date'], ['nolease', 'No lease link']];
+      ['nolink', 'No Library link'], ['nodocid', 'No Vitrium Doc ID'], ['nodate', 'No publication date'], ['nolease', 'No lease link']];
     const LEASE_EXEMPT = new Set(['LS-1', 'LS-1-25']);
     const needsLease = s => s.status !== 'Deprecated' && !LEASE_EXEMPT.has(s.id) && !s.hasLeaseLink;
 
@@ -2598,6 +2641,7 @@
         deprecated: standards.filter(s => s.status === 'Deprecated').length,
         warnings: standards.filter(s => (s.warnings || []).length > 0).length,
         nolink: standards.filter(s => s.missingLibraryLink).length,
+        nodocid: standards.filter(s => s.missingVitriumDocId).length,
         nodate: standards.filter(s => s.missingPublishedDate).length,
         nolease: standards.filter(needsLease).length,
       };
@@ -2617,6 +2661,7 @@
         if (stdFilter === 'deprecated' && s.status !== 'Deprecated') return false;
         if (stdFilter === 'warnings' && !(s.warnings || []).length) return false;
         if (stdFilter === 'nolink' && !s.missingLibraryLink) return false;
+        if (stdFilter === 'nodocid' && !s.missingVitriumDocId) return false;
         if (stdFilter === 'nodate' && !s.missingPublishedDate) return false;
         if (stdFilter === 'nolease' && !needsLease(s)) return false;
         if (!q) return true;
@@ -2631,6 +2676,7 @@
         // they are the warnings staff can fix themselves, in Edit.
         const gaps = [
           s.missingLibraryLink && 'No Library link',
+          s.missingVitriumDocId && 'No Vitrium Doc ID',
           s.missingPublishedDate && 'No publication date',
         ].filter(Boolean).map(t =>
           `<span class="inline-block mt-1 mr-1 px-1.5 py-px rounded text-[10px] font-semibold bg-amber-100 text-amber-800">${t}</span>`).join('');
@@ -3271,6 +3317,12 @@
       const s = data.standard;
       editingStdId = s.id;
       document.getElementById('se-id').textContent = s.id;
+      document.getElementById('se-title').value = s.title || '';
+      document.getElementById('se-designation').value = s.fullDesignation || '';
+      document.getElementById('se-author').value = s.author || '';
+      document.getElementById('se-description').value = s.description || '';
+      document.getElementById('se-docid').value = s.vitriumDocId || '';
+      showStdCover(s.coverUrl);
       document.getElementById('se-url').value = s.libraryUrl || '';
       document.getElementById('se-date').value = s.publishedDate || '';
       document.getElementById('se-date').max = new Date().toISOString().slice(0, 10);
@@ -3293,6 +3345,28 @@
       document.getElementById('std-edit-modal').classList.remove('hidden');
     }
 
+    function showStdCover(url) {
+      const img = document.getElementById('se-cover');
+      img.classList.toggle('hidden', !url);
+      document.getElementById('se-cover-none').classList.toggle('hidden', !!url);
+      if (url) img.src = url; else img.removeAttribute('src');
+    }
+
+    // The cover is saved on pick, not on Save: it is a file, not a field.
+    async function uploadStdCover(input) {
+      const file = input.files && input.files[0];
+      input.value = '';
+      if (!file || !editingStdId) return;
+      if (file.size > 2 * 1024 * 1024) { toast('The cover image must be 2 MB or smaller.', 'err'); return; }
+      const res = await fetch(`/api/admin/standards/${encodeURIComponent(editingStdId)}/cover`, {
+        method: 'POST', headers: { 'Content-Type': file.type }, body: file,
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) { toast(data.error || 'Could not upload the cover', 'err'); return; }
+      showStdCover(data.coverUrl);
+      toast(`Cover updated for ${editingStdId}`);
+    }
+
     function closeStdEdit() {
       editingStdId = null;
       document.getElementById('std-edit-modal').classList.add('hidden');
@@ -3302,6 +3376,11 @@
       ev.preventDefault();
       if (!editingStdId) return false;
       const body = {
+        title: document.getElementById('se-title').value.trim(),
+        fullDesignation: document.getElementById('se-designation').value.trim(),
+        author: document.getElementById('se-author').value.trim(),
+        description: document.getElementById('se-description').value.trim(),
+        vitriumDocId: document.getElementById('se-docid').value.trim(),
         libraryUrl: document.getElementById('se-url').value.trim(),
         publishedDate: document.getElementById('se-date').value,
         leaseUrl: document.getElementById('se-lease').value.trim(),

@@ -1107,6 +1107,8 @@ const STORE_HOSTS = new Set(['store.ies.org']);
 // would read as orphans (the 2026-08-29 incident). Never deletable from here.
 const UNDELETABLE = new Set(['LS-1', 'LS-1-25']);
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
 export function validateStandardEdit(body: any): { fields: Record<string, string | null>; error?: string } {
   const fields: Record<string, string | null> = {};
   if ('libraryUrl' in body) {
@@ -1158,13 +1160,44 @@ export function validateStandardEdit(body: any): { fields: Record<string, string
     if (raw.length > 80) return { fields, error: 'The collection name is too long.' };
     fields.collection = raw || null;
   }
+  // Everything sync-metadata writes is editable here too (2026-10-28: "todo
+  // debería ser posible desde el admin"), so a standard Vitrium's export has
+  // not reached yet needs no script.
+  //
+  // The Vitrium Doc ID is what a webstore lease grants (SureCart → AuthIES →
+  // Vitrium): without it a paid lease is recorded and NOT granted.
+  if ('vitriumDocId' in body) {
+    const raw = String(body.vitriumDocId ?? '').trim().toLowerCase();
+    if (raw && !UUID_RE.test(raw)) {
+      return { fields, error: 'The Vitrium Doc ID is a GUID like 98173938-2bfc-4745-8f4a-11d3da2aa8e4.' };
+    }
+    fields.vitrium_doc_id = raw || null;
+  }
+  // `keepWhenEmpty`: the title column is NOT NULL and the ingest stores the id
+  // there when a cover could not be read — an empty box means "unchanged".
+  const text = (key: string, col: string, label: string, max: number, keepWhenEmpty = false): string | null => {
+    if (!(key in body)) return null;
+    const raw = String(body[key] ?? '').trim().replace(/[ \t]+/g, ' ');
+    if (raw.length > max) return `The ${label} is too long (${max} characters at most).`;
+    if (!raw && keepWhenEmpty) return null;
+    fields[col] = raw || null;
+    return null;
+  };
+  const textError = text('title', 'title', 'title', 300, true)
+    || text('fullDesignation', 'full_designation', 'full designation', 120)
+    || text('author', 'author', 'authoring committee', 150)
+    || text('description', 'description', 'description', 4000);
+  if (textError) return { fields, error: textError };
   if (Object.keys(fields).length === 0) return { fields, error: 'Nothing to change.' };
   return { fields };
 }
 
 /**
  *   GET    /api/admin/standards/:id   the editable fields
- *   PATCH  /api/admin/standards/:id   { libraryUrl?, publishedDate?, leaseUrl?, collection? }
+ *   PATCH  /api/admin/standards/:id   { libraryUrl?, publishedDate?, leaseUrl?, collection?,
+ *                                       vitriumDocId?, title?, fullDesignation?, author?, description? }
+ *   POST   /api/admin/standards/:id/cover  (image/jpeg | image/png body) — the cover
+ *          List Standards and the result cards show; replaces any portal cover
  *   DELETE /api/admin/standards/:id   { confirm: "<id>" } — removes it entirely
  *   POST   /api/admin/standards/:id/deprecate  { confirm: "<id>" } — demotes it
  *          with no successor (an edition IES withdrew without replacing)
@@ -1176,10 +1209,13 @@ export async function handleAdminStandards(request: Request, env: Env, url: URL)
   const id = safeDecode(url.pathname.replace(/^\/api\/admin\/standards\/?/, '').split('/')[0] || '');
   if (!id) return jsonResponse({ error: 'Standard id required' }, 400);
   const row = await env.DB.prepare(
-    'SELECT id, status, chunk_count, vitrium_web_url, published_date, buy_url, collection, superseded_by FROM standards WHERE id = ?',
+    'SELECT id, status, chunk_count, vitrium_web_url, published_date, buy_url, collection, superseded_by,'
+    + ' vitrium_doc_id, title, full_designation, author, description, thumbnail_url FROM standards WHERE id = ?',
   ).bind(id).first<{
     id: string; status: string; chunk_count: number | null; vitrium_web_url: string | null;
     published_date: string | null; buy_url: string | null; collection: string | null; superseded_by: string | null;
+    vitrium_doc_id: string | null; title: string | null; full_designation: string | null;
+    author: string | null; description: string | null; thumbnail_url: string | null;
   }>();
   if (!row) return jsonResponse({ error: `No standard "${id}"` }, 404);
 
@@ -1189,6 +1225,11 @@ export async function handleAdminStandards(request: Request, env: Env, url: URL)
         id: row.id, status: row.status, libraryUrl: row.vitrium_web_url,
         publishedDate: row.published_date, leaseUrl: row.buy_url,
         collection: row.collection, supersededBy: row.superseded_by,
+        vitriumDocId: row.vitrium_doc_id,
+        // The ingest stores the id as the title when a cover could not be read.
+        title: row.title && row.title !== row.id ? row.title : '',
+        fullDesignation: row.full_designation, author: row.author,
+        description: row.description, coverUrl: row.thumbnail_url,
         deletable: !UNDELETABLE.has(row.id),
       },
     });
@@ -1198,11 +1239,33 @@ export async function handleAdminStandards(request: Request, env: Env, url: URL)
     const { fields, error } = validateStandardEdit(await safeJson(request));
     if (error) return jsonResponse({ error }, 400);
     const cols = Object.keys(fields);
-    await env.DB.prepare(
+    const statements = [env.DB.prepare(
       `UPDATE standards SET ${cols.map(c => `${c} = ?`).join(', ')}, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-    ).bind(...cols.map(c => fields[c]), id).run();
+    ).bind(...cols.map(c => fields[c]), id)];
+    // The illuminance rows carry the Doc ID too (sync-metadata writes both).
+    if ('vitrium_doc_id' in fields) {
+      statements.push(env.DB.prepare('UPDATE applications SET Vitrium_Doc_ID = ? WHERE Standard = ?')
+        .bind(fields.vitrium_doc_id, id));
+    }
+    await env.DB.batch(statements);
     await bumpDataVersion(env.SESSIONS);
     return jsonResponse({ success: true, updated: cols });
+  }
+
+  if (request.method === 'POST' && /\/cover\/?$/.test(url.pathname)) {
+    const type = (request.headers.get('Content-Type') || '').split(';')[0].trim().toLowerCase();
+    if (!COVER_TYPES.has(type)) return jsonResponse({ error: 'The cover must be a JPEG or PNG image.' }, 400);
+    const bytes = await request.arrayBuffer();
+    if (bytes.byteLength === 0) return jsonResponse({ error: 'Empty cover image.' }, 400);
+    if (bytes.byteLength > MAX_COVER_BYTES) return jsonResponse({ error: 'Cover image is larger than 2 MB.' }, 413);
+    await env.PDFS.put(coverKeyFor(row.id), bytes, { httpMetadata: { contentType: type } });
+    // A version on the URL: /api/covers is cached for a day, and the path
+    // alone would keep showing the old image.
+    const coverUrl = `${coverUrlFor(row.id)}?v=${Date.now()}`;
+    await env.DB.prepare('UPDATE standards SET thumbnail_url = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+      .bind(coverUrl, row.id).run();
+    await bumpDataVersion(env.SESSIONS);
+    return jsonResponse({ success: true, coverUrl });
   }
 
   if (request.method === 'DELETE') {
