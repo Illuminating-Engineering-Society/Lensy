@@ -2178,7 +2178,7 @@ describe('IES Standards Toolbox calculator notes', () => {
     run(`renderAISummary({ text: 'Use ANSI/IES TM-30-24.', disclaimer: '', watermark: '' })`);
     const notes = elements.get('ai-toolbox-notes');
     expect(notes.innerHTML).toContain('Access the official IES TM-30 calculator');
-    expect(notes.innerHTML).toContain('tm-30-spectral-calculator');
+    expect(notes.innerHTML).toContain('https://www.ies.org/standards/standards-toolbox/');
     run(`renderAISummary({ text: 'Use ANSI/IES RP-1-24.', disclaimer: '', watermark: '' })`);
     expect(notes.innerHTML.trim()).toBe('');
     expect(notes.classList.contains('hidden')).toBe(true);

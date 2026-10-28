@@ -1919,8 +1919,8 @@ cron trigger (`0 10 * * *`, `scheduled` in api.ts). No search-cache bump.
   menu + site-menu.js `FEEDBACK_URL`). "Technical support" stays ies.org/contact-us.
 - **IES Standards Toolbox** in every tools menu (`TOOLBOX_URL`, index.html +
   site-menu.js), and under the AI Guide a note per TM-30 / TM-35 / TM-21 the
-  answer names (`TOOLBOX_CALCULATORS` in index.html; TM-30 links its spectral
-  calculator, the other two the Toolbox until IES gives their pages).
+  answer names (`TOOLBOX_CALCULATORS` in index.html; all three link the
+  Toolbox page, where the calculators are listed — Dan, 10/28/26).
 - **Analytics (10/27 (D)):** "AI Guide on" = share of searches whose request had
   the toggle on (`guideRequested`, before any suppression); "Accounts with Guide
   off" = `user_preferences` rows whose saved `ai_guide` is false (default on,
