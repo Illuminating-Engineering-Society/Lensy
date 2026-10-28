@@ -359,6 +359,15 @@
               </svg>
               List Standards
             </a>
+            <!-- 10/27/26 (A): the IES Standards Toolbox in every tools menu —
+                 keep in step with TOOLBOX_URL in site-menu.js. -->
+            <a href="https://www.ies.org/standards/standards-toolbox/" target="_blank" rel="noopener" class="menu-item"
+               title="IES calculators and tools for applying the standards (TM-30, TM-21 and more)">
+              <svg class="w-4 h-4 text-gray-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M3 9h18v10a1 1 0 01-1 1H4a1 1 0 01-1-1V9zm5 0V6a1 1 0 011-1h6a1 1 0 011 1v3M3 13h18"/>
+              </svg>
+              IES Standards Toolbox
+            </a>
             <!-- 10/02/26 #1 + 9/29/26 DO#4: Tutorials and FAQ in every tools menu.
                  Both open the tutorials page until IES hosts its own. -->
             <a href="/tutorials" target="_blank" rel="noopener" class="menu-item border-t border-gray-100"
@@ -458,9 +467,10 @@
               </svg>
               Just subscribed? Refresh access
             </a>
-            <!-- 9/29/26 DO#3: "Share feedback" — the IES contact form, which has
-                 a "The Lighting Library" department. -->
-            <a href="https://ies.org/contact-us/" target="_blank" rel="noopener" class="menu-item"
+            <!-- 9/29/26 DO#3: "Share feedback". Since 10/27/26 the IES feedback
+                 form (Microsoft Forms); "Technical support" stays on the IES
+                 contact form. Keep in step with FEEDBACK_URL in site-menu.js. -->
+            <a href="https://forms.cloud.microsoft/r/TCRkdRe2Tx" target="_blank" rel="noopener" class="menu-item"
                title="Send feedback about the IES Lighting Library and IES Lens">
               <svg class="w-4 h-4 text-gray-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                 <path stroke-linecap="round" stroke-linejoin="round" d="M8 10h8M8 14h5M21 12a8.5 8.5 0 01-12.6 7.4L3 21l1.6-5.4A8.5 8.5 0 1121 12z"/>
@@ -946,6 +956,9 @@
                  copyrighted material, so it is the last thing that should leave
                  via a reflex copy or a print (client DO36). -->
             <div id="ai-summary-text" class="copy-guard print-withhold text-sm text-gray-700 leading-relaxed"></div>
+            <!-- Official IES calculators for the standards the answer names
+                 (client 10/27/26 (B)); see TOOLBOX_CALCULATORS. -->
+            <div id="ai-toolbox-notes" class="hidden mt-3 space-y-1.5 no-print"></div>
             <p class="print-notice text-xs text-gray-500 italic">
               The AI Guide response is omitted from printed pages. Refer to the cited standards in the IES Lighting Library.
             </p>
@@ -3894,6 +3907,21 @@
       window.scrollTo({ top, behavior: 'smooth' });
     }
 
+    // The standards with an official calculator in the IES Standards Toolbox
+    // (client 10/27/26 (B)). TM-30 links its own calculator page; TM-35 and
+    // TM-21 the Toolbox itself until IES confirms their pages. Order = display.
+    const TOOLBOX_URL = 'https://www.ies.org/standards/standards-toolbox/';
+    const TOOLBOX_CALCULATORS = [
+      { family: 'TM-30', url: 'https://www.ies.org/standards/standards-toolbox/tm-30-spectral-calculator/' },
+      { family: 'TM-35', url: TOOLBOX_URL },
+      { family: 'TM-21', url: TOOLBOX_URL },
+    ];
+    /** The calculators whose standard the AI Guide's answer names ("TM-30-24", "TM-30"). */
+    function toolboxCalculatorsFor(text) {
+      const s = String(text || '');
+      return TOOLBOX_CALCULATORS.filter(c => new RegExp(`\\b${c.family}(?!\\.?\\d)`, 'i').test(s));
+    }
+
     function renderAISummary(summary) {
       document.getElementById('ai-disclaimer').textContent = summary.disclaimer || '';
       // One name for the feature everywhere (client DO42, "harmonize language for
@@ -3939,6 +3967,18 @@
       // A translated answer (client note, 2026-09-01) declares its language so
       // screen readers pronounce it correctly; everything else is English.
       textEl.setAttribute('lang', summary.language || 'en');
+
+      // The English original is the one to scan: designations survive
+      // translation, but it is the text the citation logic already trusts.
+      const toolbox = document.getElementById('ai-toolbox-notes');
+      const calculators = toolboxCalculatorsFor(summary.textEnglish || summary.text || '');
+      toolbox.innerHTML = calculators.map(c => `
+        <p class="text-xs text-gray-700 bg-white/70 border border-amber-200 rounded-lg px-3 py-2">
+          Access the official IES ${escapeHtml(c.family)} calculator in the
+          <a href="${escapeHtml(c.url)}" target="_blank" rel="noopener"
+             class="text-ies-blue hover:underline font-medium">IES Standards Toolbox</a>.
+        </p>`).join('');
+      toolbox.classList.toggle('hidden', calculators.length === 0);
 
       document.getElementById('ai-watermark').textContent = summary.watermark || '';
       document.getElementById('ai-summary-card').classList.remove('hidden');

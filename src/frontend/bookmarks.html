@@ -956,6 +956,30 @@
       references: 'References',
       definitions: 'Definitions',
     };
+    // Reader tier for the item buttons, as List Standards reads it: a signed-out
+    // visitor (public share link) is a Guest, never a subscriber; an IES member
+    // ('lite') may open the current Lighting Science Collection.
+    const SUBSCRIBE_URL = 'https://ies.org/products/lighting-library/';
+    const STORE_URL = 'https://store.ies.org/';
+    const DEFINITIONS_SOURCE_ID = 'LS-1';
+    function readerTier() {
+      return (window.lensyUser && window.lensyUser.tier) || 'none';
+    }
+    function readerMayOpenItem(item) {
+      const tier = readerTier();
+      if (!(tier === 'lite' || tier === 'guest' || tier === 'none')) return true;
+      if (item.standard_id === DEFINITIONS_SOURCE_ID) return true;
+      return tier === 'lite' && !!item.lighting_science && !!item.standard_current;
+    }
+    function storeSearchUrl(id) {
+      const q = String(id || '').replace(/\+E\d+$/i, '').replace(/\(R\d+\)$/i, '');
+      return `${STORE_URL}?s=${encodeURIComponent(q)}&post_type=sc_product`;
+    }
+    // The tier can arrive after the list rendered; repaint the buttons then.
+    document.addEventListener('lensy:auth', () => {
+      if (currentProject && document.getElementById('detail-apps-table')) renderItemList();
+    });
+
     const ITEM_TYPE_CHIPS = {
       body: 'bg-sky-50 text-sky-700 border-sky-200',
       tables: 'bg-gray-50 text-gray-600 border-gray-200',
@@ -986,20 +1010,33 @@
         ? `<p class="text-xs text-amber-700 mt-1">⚠ Source table re-numbered — re-check against the standard.</p>`
         : '';
 
-      const openBtn = appEntry.library_url ? `
-        <a href="${escapeHtml(appEntry.library_url)}" target="_blank" rel="noopener"
-           class="text-xs px-2.5 py-1 bg-action text-action-ink rounded-lg hover:bg-action-dark transition font-medium whitespace-nowrap">
-          Open in Library ↗
-        </a>` : '';
-      // "Add to Cart" (client 9/25/26 DO#3 + DO#5: a standard is bought as a
-      // 3-year lease in the webstore, nothing else) — the store URL for this
-      // standard. Rendered only when DO35's metadata sync has supplied one.
-      const buyBtn = appEntry.buy_url ? `
-        <a href="${escapeHtml(appEntry.buy_url)}" target="_blank" rel="noopener"
-           title="Add the 3-year lease of this standard to your IES webstore cart"
-           class="text-xs px-2.5 py-1 border border-gray-200 rounded-lg text-gray-600 hover:bg-gray-50 transition font-medium whitespace-nowrap">
-          Lease Standard
-        </a>` : '';
+      // Open in Library / Subscribe / Lease Standard exactly as List Standards
+      // decides them (client 10/22/26 #4, contents.html renderCard): a reader who
+      // may not open the document is offered the subscription instead, and a
+      // CURRENT edition (never LS-1, the free glossary) is offered for lease —
+      // its webstore product when synced, else a store search. The standard
+      // facts arrive with the item (withStandardFacts in api.ts); an item whose
+      // standard is unknown keeps the plain Library link it was saved with.
+      const stdId = appEntry.standard_id || '';
+      const known = typeof appEntry.standard_current === 'boolean';
+      const subscribeInstead = known && !readerMayOpenItem(appEntry);
+      const btnBase = 'text-xs px-2.5 py-1 rounded-lg transition font-semibold whitespace-nowrap text-center hover:brightness-95';
+      const openBtn = subscribeInstead
+        ? `<a href="${SUBSCRIBE_URL}" target="_blank" rel="noopener" class="${btnBase}"
+             style="background-color: #FFAA00; color: #30363D;"
+             title="Subscribe to the Lighting Library to open ${escapeHtml(stdId)}">Subscribe</a>`
+        : appEntry.library_url
+        ? `<a href="${escapeHtml(appEntry.library_url)}" target="_blank" rel="noopener" class="${btnBase}"
+             style="background-color: #FFAA00; color: #30363D;"
+             title="Open ${escapeHtml(stdId || 'this standard')} in the IES Lighting Library">Open in Library</a>`
+        : '';
+      const leaseCls = 'text-xs px-2.5 py-1 border border-gray-200 rounded-lg text-gray-600 hover:bg-gray-50 transition font-medium whitespace-nowrap text-center';
+      const buyBtn = (!known || !appEntry.standard_current || stdId === DEFINITIONS_SOURCE_ID) ? ''
+        : appEntry.buy_url
+          ? `<a href="${escapeHtml(appEntry.buy_url)}" target="_blank" rel="noopener" class="${leaseCls}"
+               title="Add the 3-year lease of ${escapeHtml(stdId)} to your IES webstore cart">Lease Standard</a>`
+          : `<a href="${escapeHtml(storeSearchUrl(stdId))}" target="_blank" rel="noopener" class="${leaseCls}"
+               title="Find the 3-year lease of ${escapeHtml(stdId)} in the IES webstore">Lease Standard ↗</a>`;
 
       const field = (name, value, extraClass = '') => value
         ? `<div class="mt-1.5">
@@ -1012,8 +1049,8 @@
         <div class="bg-white rounded-xl border border-gray-100 shadow-sm p-4">
           <div class="flex items-start justify-between gap-3 flex-wrap">
             <span class="text-xs px-2 py-0.5 rounded-full font-medium border ${ITEM_TYPE_CHIPS[type] || ''}">${escapeHtml(label)}</span>
-            <div class="flex items-center gap-2 no-print">
-              ${openBtn}${buyBtn}
+            <div class="flex items-start gap-2 no-print">
+              <div class="flex flex-col items-stretch gap-1.5">${openBtn}${buyBtn}</div>
               ${readOnlyCollection ? '' : `<button onclick="removeApplication(${projectId}, '${escapeHtml(appEntry.application_code)}')"
                 class="p-1.5 text-gray-300 hover:text-red-400 hover:bg-red-50 rounded-md transition" title="Remove from this collection">
                 <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">

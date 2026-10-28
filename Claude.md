@@ -1899,6 +1899,41 @@ Migration **0024** (`purchases`); AuthIES branch `feat/surecart-purchase-source`
   Vitrium's `DocumentId` equals the export's Doc ID in `vitrium_doc_id` (the
   same assumption comps rest on; AuthIES logs it on every grant).
 
+### The 10/22–10/27/26 Teams notes: shared-bookmark buttons, Toolbox, analytics, lease reminders (2026-10-28)
+
+Migration **0025** (`search_log.ai_guide`, `purchases.expiry_reminder_*`); first
+cron trigger (`0 10 * * *`, `scheduled` in api.ts). No search-cache bump.
+
+- **Saved-item buttons follow List Standards (10/22 #4).** `withStandardFacts`
+  (api.ts) attaches `standard_current`, `buy_url`, `lighting_science` to the
+  owner's and the shared collection reads, live (a superseded standard stops
+  offering a lease). bookmarks.html: Subscribe instead of Open in Library for
+  a reader who may not open it (anonymous/guest/none; a member only opens the
+  current Lighting Science Collection; LS-1 always open), Lease Standard for a
+  current edition (store search when no `buy_url`). Unknown standard → the
+  saved link, no lease.
+- **Committees (10/23 #1):** D1 `author` set by hand — LS-1 "Nomenclature
+  Committee", ASHRAE-IES-90.1-2025 "ASHRAE/IES". `isJointBodyCredit`
+  (committees.js) prints an acronym/acronym credit as typed, no "IES" prefix.
+- **Share feedback → `https://forms.cloud.microsoft/r/TCRkdRe2Tx`** (index.html
+  menu + site-menu.js `FEEDBACK_URL`). "Technical support" stays ies.org/contact-us.
+- **IES Standards Toolbox** in every tools menu (`TOOLBOX_URL`, index.html +
+  site-menu.js), and under the AI Guide a note per TM-30 / TM-35 / TM-21 the
+  answer names (`TOOLBOX_CALCULATORS` in index.html; TM-30 links its spectral
+  calculator, the other two the Toolbox until IES gives their pages).
+- **Analytics (10/27 (D)):** "AI Guide on" = share of searches whose request had
+  the toggle on (`guideRequested`, before any suppression); "Accounts with Guide
+  off" = `user_preferences` rows whose saved `ai_guide` is false (default on,
+  only a press is saved). Trending topics: `src/lib/trending-topics.ts` — the
+  70B model only GROUPS the top 250 queries of the last 7 days (30 if <100
+  searches); counts are summed from search_log; stored in KV
+  `analytics:trending-topics` by the daily cron or "Regenerate now".
+- **Lease reminders:** `src/workers/lease-reminders.ts`, daily — a granted,
+  active lease ending within 30 days gets `buildLeaseExpiryEmail` once
+  (stamp `expiry_reminder_sent_at`); `SURECART_NOTIFY=off` silences it too.
+- **`SURECART_LENS_PRODUCTS` now names both Library products** — Dan: everyone
+  who subscribed through 11/1 is converted to "Lighting Library with IES Lens".
+
 ### The 10/22/26 Teams notes: notes open by default, deprecate without a successor (2026-10-22)
 
 No migration; no search-cache bump.

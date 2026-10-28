@@ -268,7 +268,11 @@ SURECART_SUBSCRIPTION_DAYS = "365"
 # recorded as unmapped and grants nothing.
 SURECART_SUBSCRIPTION_PRODUCTS = "407b341b-9af6-4ee2-a66f-489de951f847,f30a54b3-3fae-4f3e-8cec-7ca6f18a48bc"
 # Of those, the product(s) that include IES Lens (the `full` Lens tier).
-SURECART_LENS_PRODUCTS = "f30a54b3-3fae-4f3e-8cec-7ca6f18a48bc"
+# Both, since 2026-10-28 (Dan: "Anyone who ever subscribed through 11/1 is
+# automatically converted to 'Lighting Library with IES Lens'"). A Full Access
+# subscriber already had the Lens `full` tier through the Wicket role
+# (LENSY_SUBSCRIBER_ROLES); this makes a SureCart-recorded one agree with it.
+SURECART_LENS_PRODUCTS = "407b341b-9af6-4ee2-a66f-489de951f847,f30a54b3-3fae-4f3e-8cec-7ca6f18a48bc"
 # SureCart PRICE ids that sell a lease; empty = any price of a standard product.
 # Empty on purpose: a standard's two prices are "Member price" / "Non member
 # price" of the same lease, not lease vs PDF (checked 2026-10-27).
@@ -333,7 +337,10 @@ pattern = "lens.ies.org"
 custom_domain = true
 
 [triggers]
-crons = []  # Add scheduled tasks here if needed
+# Daily at 10:00 UTC (06:00 ET): AI-grouped trending search topics for
+# /admin → Search analytics, and the one-month lease-expiry reminders
+# (src/workers/api.ts `scheduled`).
+crons = ["0 10 * * *"]
 
 # ─── Development ──────────────────────────────────────────────────────────────
 [dev]

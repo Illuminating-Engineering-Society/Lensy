@@ -139,3 +139,16 @@ describe('applyTypeFloors', () => {
     expect(applyTypeFloors([])).toEqual([]);
   });
 });
+
+// Client 10/23/26 #1: a jointly published standard credits its bodies as entered.
+describe('resolveCommittee — joint publishing bodies', () => {
+  it('keeps "ASHRAE/IES" as typed, with no IES prefix', () => {
+    expect(resolveCommittee('ASHRAE/IES')).toMatchObject({ name: 'ASHRAE/IES', exact: false });
+  });
+
+  it('still resolves "Nomenclature Committee" to the IES committee page', () => {
+    expect(resolveCommittee('Nomenclature Committee')).toMatchObject({
+      name: 'IES Nomenclature Committee', exact: true,
+    });
+  });
+});

@@ -25,7 +25,11 @@
   'use strict';
 
   var SUBSCRIBE_URL = 'https://ies.org/products/lighting-library/';
-  var FEEDBACK_URL = 'https://ies.org/contact-us/';
+  // The IES feedback form (client, 2026-10-27); keep in step with index.html.
+  var FEEDBACK_URL = 'https://forms.cloud.microsoft/r/TCRkdRe2Tx';
+  // "IES Standards Toolbox" in every Lighting Library Tools menu (client,
+  // 2026-10-27); keep in step with index.html.
+  var TOOLBOX_URL = 'https://www.ies.org/standards/standards-toolbox/';
   var GUIDE_KEY = 'lensy.pref.aiGuide';
   var UNITS_KEY = 'lensy.pref.units';
   var MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -43,6 +47,7 @@
     units: 'M4 7h16M4 12h10M4 17h6M17 14l3 3-3 3',
     bookmark: 'M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z',
     feedback: 'M8 10h8M8 14h5M21 12a8.5 8.5 0 01-12.6 7.4L3 21l1.6-5.4A8.5 8.5 0 1121 12z',
+    toolbox: 'M3 9h18v10a1 1 0 01-1 1H4a1 1 0 01-1-1V9zm5 0V6a1 1 0 011-1h6a1 1 0 011 1v3M3 13h18',
     signout: 'M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1',
     login: 'M11 16l-4-4m0 0l4-4m-4 4h14m-5 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h7a3 3 0 013 3v1',
   };
@@ -114,6 +119,7 @@
       // (client 10/20/26 #3; see lockMenuItem and the auth handler below).
       link({ href: '/?compare=1', icon: 'compare', label: 'Compare Versions', id: 'menu-compare', title: 'Compare Versions — AI summary of changes between a standard and its previous edition' }),
       link({ href: '/contents', icon: 'list', label: 'List Standards', current: current === 'contents', title: 'Every current IES standard in the Lighting Library' }),
+      link({ href: TOOLBOX_URL, icon: 'toolbox', label: 'IES Standards Toolbox', newTab: true, title: 'IES calculators and tools for applying the standards (TM-30, TM-21 and more)' }),
       link({ href: '/tutorials', icon: 'video', label: 'Tutorials', newTab: true, cls: 'border-t border-gray-100', title: 'Video tutorials for the IES Lighting Library and IES Lens' }),
       link({ href: '/tutorials#faq', icon: 'faq', label: 'FAQ', newTab: true, title: 'Frequently asked questions' }),
     ].join('');

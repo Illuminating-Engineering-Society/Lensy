@@ -163,9 +163,62 @@ describe('saved item rows', () => {
     expect(html).toContain('item-note');
   });
 
-  it('shows the Buy button only when a webstore URL exists', () => {
-    expect(run(`renderApplicationRow(${item()}, 1)`)).not.toContain('>Buy<');
-    expect(run(`renderApplicationRow(${item({ buy_url: 'https://store.ies.org/p/1' })}, 1)`)).toContain('Lease Standard');
+  // Client 10/22/26 #4: the List Standards rules, read off the standard facts
+  // the API attaches (standard_current, buy_url, lighting_science).
+  describe('Open in Library / Subscribe / Lease Standard', () => {
+    const asTier = (tier) => run(`window.lensyUser = ${tier ? JSON.stringify({ tier }) : 'undefined'}`);
+    const current = { standard_current: true, lighting_science: false, buy_url: 'https://store.ies.org/product/rp-2' };
+
+    it('a subscriber opens the document, and a current edition can be leased', () => {
+      asTier('full');
+      const html = run(`renderApplicationRow(${item(current)}, 1)`);
+      expect(html).toContain('>Open in Library<');
+      expect(html).toContain('href="https://store.ies.org/product/rp-2"');
+      expect(html).toContain('Lease Standard');
+    });
+
+    it('a signed-out visitor or a guest is offered the subscription instead', () => {
+      for (const tier of [null, 'guest', 'none']) {
+        asTier(tier);
+        const html = run(`renderApplicationRow(${item(current)}, 1)`);
+        expect(html).toContain('>Subscribe<');
+        expect(html).not.toContain('Open in Library');
+        expect(html).toContain('Lease Standard');
+      }
+    });
+
+    it('an IES member opens the Lighting Science Collection, and nothing else', () => {
+      asTier('lite');
+      expect(run(`renderApplicationRow(${item({ ...current, lighting_science: true })}, 1)`)).toContain('>Open in Library<');
+      expect(run(`renderApplicationRow(${item(current)}, 1)`)).toContain('>Subscribe<');
+    });
+
+    it('a deprecated edition is never offered for lease', () => {
+      asTier('full');
+      expect(run(`renderApplicationRow(${item({ ...current, standard_current: false })}, 1)`)).not.toContain('Lease Standard');
+    });
+
+    it('a current edition with no synced product falls back to a store search', () => {
+      asTier('full');
+      const html = run(`renderApplicationRow(${item({ ...current, buy_url: null })}, 1)`);
+      expect(html).toContain('store.ies.org/?s=RP-2-20');
+      expect(html).toContain('Lease Standard ↗');
+    });
+
+    it('LS-1 stays open to everyone and is never leased', () => {
+      asTier('guest');
+      const html = run(`renderApplicationRow(${item({ ...current, standard_id: 'LS-1' })}, 1)`);
+      expect(html).toContain('>Open in Library<');
+      expect(html).not.toContain('Lease Standard');
+    });
+
+    it('an item whose standard is unknown keeps its saved link and offers no lease', () => {
+      asTier('guest');
+      const html = run(`renderApplicationRow(${item()}, 1)`);
+      expect(html).toContain('>Open in Library<');
+      expect(html).not.toContain('Lease Standard');
+      asTier('full');
+    });
   });
 
   it('warns when a re-ingest moved or removed the underlying row', () => {

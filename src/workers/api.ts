@@ -26,7 +26,7 @@
 
 import { handleSearch, liteAllowedStandards } from './search';
 import { handleIngest } from './ingest';
-import { handleAdminAccessMode, handleAdminScanOrphans, handleAdminEnumerateIds, handleAdminDeleteOrphans, handleAdminFlushCache, handleAdminSearchLog, handleAdminSearchEvents, handleAdminR2Multipart, handleAdminIndexStatus, handleAdminAnalytics, handleAdminDeviceResets, handleAdminDeviceResetsList, handleAdminDeviceResetUpdate } from './admin';
+import { handleAdminAccessMode, handleAdminScanOrphans, handleAdminEnumerateIds, handleAdminDeleteOrphans, handleAdminFlushCache, handleAdminSearchLog, handleAdminSearchEvents, handleAdminR2Multipart, handleAdminIndexStatus, handleAdminAnalytics, handleAdminRefreshTopics,handleAdminDeviceResets, handleAdminDeviceResetsList, handleAdminDeviceResetUpdate } from './admin';
 import { handleLibraryDocumentLookup, handleDeviceResetRequest } from './library-support';
 import { handleAdminCompAccess, handleAdminCompAccessCsv } from './comp-access';
 import { handleIngestJobs, serveCover, handleAdminStandards } from './staff-ingest';
@@ -45,6 +45,8 @@ import { toLibraryUrlOrNull } from '../lib/library-url.js';
 import { sendCollectionShareEmail, isEmailAddress, resolveAppUrl } from '../lib/email';
 import { handleSurecartWebhook } from './surecart';
 import { handleAdminPurchases, handleAdminPurchasesCsv } from './purchases-admin';
+import { sendLeaseExpiryReminders } from './lease-reminders';
+import { refreshTrendingTopics } from '../lib/trending-topics';
 
 // CORS: `*` with no Allow-Credentials, so a cross-origin page can never make a
 // cookie-authenticated call — every session-gated route is effectively
@@ -193,6 +195,9 @@ export default {
       if (path === '/api/admin/analytics' && request.method === 'GET') {
         return withCors(await handleAdminAnalytics(request, env));
       }
+      if (path === '/api/admin/analytics/topics' && request.method === 'POST') {
+        return withCors(await handleAdminRefreshTopics(request, env));
+      }
       if (path === '/api/admin/device-resets.csv' && request.method === 'GET') {
         return withCors(await handleAdminDeviceResets(request, env));
       }
@@ -298,6 +303,15 @@ export default {
       const detail = env.ENVIRONMENT === 'production' ? undefined : (err instanceof Error ? err.message : String(err));
       return withCors(json({ error: 'Internal server error', ...(detail ? { detail } : {}) }, 500));
     }
+  },
+
+  // The daily cron ([triggers] in wrangler.toml). Each job is independent and
+  // fail-soft: one failing never stops the other.
+  async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+    ctx.waitUntil(Promise.allSettled([
+      refreshTrendingTopics(env).then(r => console.log('trending topics:', r ? `${r.topics.length} topics over ${r.windowDays}d` : 'not refreshed')),
+      sendLeaseExpiryReminders(env).then(r => console.log('lease reminders:', JSON.stringify(r))),
+    ]));
   },
 };
 
@@ -745,7 +759,7 @@ async function getProject(env: Env, projectId: string): Promise<Response> {
     return { ...row, ...fromSnapshot, removedFromCorpus: removed, reindexed: moved };
   });
 
-  return json({ project, applications });
+  return json({ project, applications: await withStandardFacts(env, applications) });
 }
 
 /** project_applications.snapshot_data → the 68-column row saved at add time. */
@@ -851,6 +865,49 @@ async function collectionItems(env: Env, projectId: string) {
 }
 
 /**
+ * The facts a saved item's buttons need about its standard, read live (client
+ * 10/22/26 #4: the Shared With You page uses List Standards' Open in Library /
+ * Subscribe / Lease Standard logic): whether the edition is current, its lease
+ * URL, and whether an IES member may open it (the Lighting Science Collection —
+ * the same set /api/standards marks). Never stored on the item: a standard
+ * that is superseded after the save must stop offering a lease.
+ *
+ * Legacy illuminance rows carry no standard_id; their code is `<STDID>_<row>`.
+ * Fail-soft: on any error the items go back unchanged, and the page falls back
+ * to the stored library_url alone.
+ */
+async function withStandardFacts(env: Env, items: Record<string, any>[]): Promise<Record<string, any>[]> {
+  const idOf = (it: Record<string, any>): string | null =>
+    it.standard_id || (/^(.+)_\d+$/.exec(String(it.application_code || ''))?.[1] ?? null);
+  const ids = [...new Set(items.map(idOf).filter((v): v is string => !!v))];
+  if (ids.length === 0) return items;
+  try {
+    const [rows, lighting] = await Promise.all([
+      env.DB.prepare(
+        `SELECT id, status, buy_url FROM standards WHERE id IN (${ids.map(() => '?').join(',')})`
+      ).bind(...ids).all<{ id: string; status: string; buy_url: string | null }>(),
+      liteAllowedStandards(env).catch(() => new Set<string>()),
+    ]);
+    const byId = new Map((rows.results || []).map(r => [r.id, r]));
+    return items.map(it => {
+      const id = idOf(it);
+      const s = id ? byId.get(id) : undefined;
+      if (!s) return it;
+      return {
+        ...it,
+        standard_id: id,
+        standard_current: String(s.status || '').toLowerCase() === 'active',
+        buy_url: s.buy_url || null,
+        lighting_science: lighting.has(s.id),
+      };
+    });
+  } catch (err) {
+    console.error('saved-item standard facts failed (non-fatal):', err instanceof Error ? err.message : String(err));
+    return items;
+  }
+}
+
+/**
  * Mint (or reuse) the share token for a collection.
  *
  * The link COPIES the collection into the recipient's account rather than giving
@@ -925,7 +982,8 @@ async function getSharedCollection(env: Env, token: string): Promise<Response> {
   const shared = await resolveSharedProject(env, token);
   if ('error' in shared) return json({ error: shared.error }, shared.status);
   const project = shared.project;
-  return json({ collection: project, applications: await collectionItems(env, String(project.id)), shared: true });
+  const items = await withStandardFacts(env, await collectionItems(env, String(project.id)));
+  return json({ collection: project, applications: items, shared: true });
 }
 
 /** The collection a share token opens, or why it opens nothing. */

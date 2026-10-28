@@ -83,9 +83,20 @@ export function resolveCommittee(author) {
     };
   }
 
+  // A jointly published standard credits its publishing bodies, printed as
+  // staff entered them (client 10/23/26 #1: ANSI/ASHRAE/IES 90.1-2025 →
+  // "ASHRAE/IES"). Not an IES committee, so no "IES" prefix and no committee
+  // page — the root list, as for any unmatched name.
+  if (isJointBodyCredit(raw)) return { name: raw, url: COMMITTEES_ROOT_URL, exact: false };
+
   if (!looksLikeCommittee(raw)) return null;
 
   return { name: formatCommitteeName(raw), url: COMMITTEES_ROOT_URL, exact: false };
+}
+
+/** "ASHRAE/IES", "IES/IUVA": two or three organization acronyms joined by "/". */
+export function isJointBodyCredit(raw) {
+  return /^[A-Z]{2,8}(?:\/[A-Z]{2,8}){1,2}$/.test(String(raw || '').trim());
 }
 
 /** Does this author string name a committee (or working group) at all? */

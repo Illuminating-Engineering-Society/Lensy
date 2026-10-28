@@ -397,3 +397,27 @@ describe('buildPurchaseEmail', () => {
     expect(m.html).toContain('https://lens.ies.org/');
   });
 });
+
+// ─── Lease-expiry reminder (client, 2026-10-27) ───────────────────────────────
+
+import { buildLeaseExpiryEmail } from './email';
+
+describe('buildLeaseExpiryEmail', () => {
+  const m = buildLeaseExpiryEmail({
+    to: 'reader@example.com', name: 'Dana Reader',
+    document: { id: 'RP-8-25+E2', designation: 'ANSI/IES RP-8-25+E2', title: 'Recommended Practice: Lighting Roadway and Parking Facilities', libraryUrl: 'https://lighting.ies.org/abc123' },
+    endDate: '2029-11-01',
+  });
+
+  it('names the standard and the last day, and says it does not renew', () => {
+    expect(m.subject).toBe('Your 3-year lease of ANSI/IES RP-8-25+E2 ends on 1 November 2029');
+    expect(m.text).toContain('Hello Dana,');
+    expect(m.text).toContain('do not renew automatically');
+  });
+
+  it('offers the Lighting Library subscription for continued access', () => {
+    expect(m.html).toContain('https://ies.org/products/lighting-library/');
+    expect(m.text).toContain('Subscribe to the Lighting Library: https://ies.org/products/lighting-library/');
+    expect(m.html).toContain('https://lighting.ies.org/abc123');
+  });
+});

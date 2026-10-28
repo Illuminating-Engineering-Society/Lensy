@@ -337,6 +337,9 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
     units = 'both',
   } = body;
   let includeAISummary = body.includeAISummary === true;
+  // The reader's AI Guide toggle as sent, before any suppression below — what
+  // search analytics reports as "searches with the AI Guide on" (10/27/26 (D)).
+  const guideRequested = includeAISummary;
   // How long an answer the Guide should write (client note, 2026-08-20: "Not
   // every search will demand references to multiple standards. Some users just
   // want a single specific answer which exists in only one standard … We need
@@ -450,7 +453,7 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
       sectionLinks: {},
       timestamp: new Date().toISOString(),
     };
-    const logWrite = logSearch(env, refusedPayload, false);
+    const logWrite = logSearch(env, refusedPayload, false, guideRequested);
     if (ctx?.waitUntil) ctx.waitUntil(logWrite); else await logWrite;
     return jsonResponse({ ...refusedPayload, cached: false });
   };
@@ -495,7 +498,7 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
       sectionLinks: {},
       timestamp: new Date().toISOString(),
     };
-    const logWrite = logSearch(env, productPayload, false);
+    const logWrite = logSearch(env, productPayload, false, guideRequested);
     if (ctx?.waitUntil) ctx.waitUntil(logWrite); else await logWrite;
     return jsonResponse({ ...productPayload, cached: false });
   }
@@ -530,7 +533,7 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
   if (cachedPayload) {
     // Cache hits are logged too — staff analytics must see every query, not
     // only the ones that missed the cache.
-    const logWrite = logSearch(env, cachedPayload, true);
+    const logWrite = logSearch(env, cachedPayload, true, guideRequested);
     if (ctx?.waitUntil) ctx.waitUntil(logWrite); else await logWrite;
     // searchCap is PERSONAL state (this reader's daily-window count) attached
     // outside the shared cached payload — a cached answer still spent a search.
@@ -1264,7 +1267,7 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
     || (includeAISummary && queryLang.translated && aiSummary != null
         && (aiSummary as { language?: string }).language !== queryLang.language);
   const cacheWrite = skipCache ? Promise.resolve() : putCachedSearch(kv, cacheKey, payload);
-  const logWrite = logSearch(env, payload, false);
+  const logWrite = logSearch(env, payload, false, guideRequested);
   if (ctx?.waitUntil) {
     ctx.waitUntil(cacheWrite);
     ctx.waitUntil(logWrite);
@@ -2341,7 +2344,7 @@ async function embedQueryText(env: Env, text: string): Promise<number[]> {
  * Fail-open: a missing table or a D1 hiccup never breaks search, and a database
  * without the 0022 column still gets the row, without its tier.
  */
-async function logSearch(env: Env, payload: { query: string; results?: SearchResult[]; noStrongMatch?: boolean; tier?: string }, cached: boolean): Promise<void> {
+async function logSearch(env: Env, payload: { query: string; results?: SearchResult[]; noStrongMatch?: boolean; tier?: string }, cached: boolean, aiGuide?: boolean): Promise<void> {
   const standards = [
     ...new Set((payload.results || [])
       .map(r => r.application?.standard)
@@ -2356,11 +2359,12 @@ async function logSearch(env: Env, payload: { query: string; results?: SearchRes
   ];
   try {
     await env.DB.prepare(`
-      INSERT INTO search_log (query, result_count, standards_referenced, no_strong_match, cached, tier)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `).bind(...values, payload.tier ?? null).run();
+      INSERT INTO search_log (query, result_count, standards_referenced, no_strong_match, cached, tier, ai_guide)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).bind(...values, payload.tier ?? null, aiGuide == null ? null : (aiGuide ? 1 : 0)).run();
   } catch (err) {
-    if (!/no column named tier|has no column/i.test(errMsg(err))) {
+    // Before migrations 0022/0025: retry with the original columns only.
+    if (!/no column named (?:tier|ai_guide)|has no column/i.test(errMsg(err))) {
       console.error('search log write failed (non-fatal):', errMsg(err));
       return;
     }

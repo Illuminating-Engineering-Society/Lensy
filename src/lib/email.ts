@@ -936,6 +936,85 @@ export async function sendPurchaseEmail(env: Env, ctx: PurchaseEmailContext): Pr
   }
 }
 
+export interface LeaseExpiryEmailContext {
+  to: string;
+  name: string | null;
+  document: CompAccessDocument;
+  /** YYYY-MM-DD, the last day of access (inclusive). */
+  endDate: string;
+}
+
+/**
+ * One month before a 3-year lease ends (client, 2026-10-27: "no auto-renewal.
+ * However … automate emails to the user 1 month from end of lease that it is
+ * about to expire and they can subscribe to the entire Lighting Library for
+ * continued access"). Sent once per lease by the daily cron
+ * (workers/lease-reminders.ts).
+ */
+export function buildLeaseExpiryEmail(ctx: LeaseExpiryEmailContext): InviteEmailContent {
+  const doc = ctx.document;
+  const label = doc.title ? `${doc.designation} ${doc.title}` : doc.designation;
+  const ends = formatExpiry(ctx.endDate);
+  const subject = `Your 3-year lease of ${doc.designation} ends on ${ends}`;
+  const heading = 'Your 3-year lease ends soon';
+
+  const lines = [
+    `Your 3-year lease of ${label} in the IES Lighting Library ends on ${ends}. Leases do not renew automatically, so your access to this document stops after that day.`,
+    'For continued access, subscribe to the Lighting Library: every current IES standard, including this one, with IES Lens to search and explore them.',
+  ];
+
+  const html = `<!doctype html><html><body style="margin:0;background:#f4f6f8;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif">
+  <div style="max-width:600px;margin:24px auto;background:#fff;border:1px solid #e2e6ea;border-radius:8px;overflow:hidden">
+    ${emailBanner()}
+    <div style="padding:24px 20px">
+      <h1 style="margin:0 0 14px;font-size:19px;color:${BRAND_SECONDARY}">${escapeHtml(heading)}</h1>
+      ${paragraph(greeting(ctx.name))}
+      ${lines.map(paragraph).join('\n      ')}
+      <p style="margin:0 0 20px"><a href="${SUBSCRIBE_URL}" style="display:inline-block;background:${BRAND_PRIMARY};color:#fff;text-decoration:none;padding:12px 22px;border-radius:6px;font-weight:600;font-size:15px">Subscribe to the Lighting Library</a></p>
+      ${doc.libraryUrl ? `<p style="margin:0 0 18px;font-size:14px"><a href="${escapeHtml(doc.libraryUrl)}" style="color:${BRAND_SECONDARY}">Open ${escapeHtml(doc.designation)} in the Lighting Library →</a></p>` : ''}
+      ${resourceButtonsHtml()}
+      <p style="margin:0;font-size:13px;color:#666">Technical support: <a href="https://ies.org/contact-us/" style="color:${BRAND_SECONDARY}">ies.org/contact-us</a>.</p>
+    </div>
+    <div style="padding:14px 20px;background:#f4f6f8;color:#888;font-size:12px">Sent by IES Lens because of your 3-year lease at the IES webstore — please do not reply to this message.</div>
+  </div>
+</body></html>`;
+
+  const text = [
+    heading,
+    '',
+    greeting(ctx.name),
+    '',
+    ...lines.flatMap(l => [l, '']),
+    `Subscribe to the Lighting Library: ${SUBSCRIBE_URL}`,
+    ...(doc.libraryUrl ? [`Open ${doc.designation}: ${doc.libraryUrl}`] : []),
+    '',
+    ...resourceLinesText(),
+    '',
+    'Technical support: https://ies.org/contact-us/',
+    '',
+    'Sent by IES Lens because of your 3-year lease at the IES webstore — please do not reply.',
+  ].join('\n');
+
+  return { subject, html, text };
+}
+
+/** Send one lease-expiry reminder. Never throws — same contract as sendPurchaseEmail. */
+export async function sendLeaseExpiryEmail(env: Env, ctx: LeaseExpiryEmailContext): Promise<SendOutcome> {
+  const binding = env.SEND_EMAIL;
+  if (!binding) {
+    return { sent: false, error: 'SEND_EMAIL binding is not configured on this deployment.' };
+  }
+  const { subject, html, text } = buildLeaseExpiryEmail(ctx);
+  try {
+    await binding.send({ to: ctx.to, from: { email: FROM_ADDRESS, name: FROM_NAME }, subject, html, text });
+    return { sent: true };
+  } catch (err) {
+    const error = describeSendError(err);
+    console.error('lease_expiry_email_failed', { to: ctx.to, error });
+    return { sent: false, error };
+  }
+}
+
 /** Reject a malformed recipient before the binding does, with a usable message. */
 export function isEmailAddress(value: unknown): boolean {
   return typeof value === 'string' && /^[^\s@]+@[^\s@.]+(?:\.[^\s@.]+)+$/.test(value.trim());

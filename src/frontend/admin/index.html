@@ -300,7 +300,7 @@
 
       <div id="an-note" class="hidden text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-4"></div>
 
-      <div id="an-cards" class="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">
+      <div id="an-cards" class="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-7 gap-3 mb-6">
         <p class="col-span-full text-sm text-gray-400">Loading…</p>
       </div>
 
@@ -314,6 +314,21 @@
         </div>
         <div id="an-chart" class="flex items-end gap-px h-32"></div>
         <div id="an-chart-labels" class="flex justify-between text-xs text-gray-400 mt-1"></div>
+      </div>
+
+      <!-- AI-grouped trending topics (client 10/27/26 (D)). The model only
+           groups the queries; the counts are search_log's. Refreshed daily by
+           the cron, so it does not follow the window selector above. -->
+      <div class="bg-white rounded-xl shadow p-4 mb-6">
+        <div class="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 mb-3">
+          <h3 class="font-display font-bold">Trending topics <span class="text-xs font-sans font-normal text-gray-400">(AI-grouped, top 20)</span></h3>
+          <div class="flex items-center gap-3">
+            <span id="an-topics-meta" class="text-xs text-gray-400"></span>
+            <button id="an-topics-refresh" onclick="refreshTopics()" class="px-2.5 py-1 text-xs rounded-lg border border-gray-300 bg-white hover:bg-gray-50 transition">Regenerate now</button>
+          </div>
+        </div>
+        <ol id="an-topics" class="grid sm:grid-cols-2 gap-x-6 text-sm"></ol>
+        <p id="an-topics-empty" class="hidden text-center text-gray-400 text-sm py-6">Not generated yet — it runs daily at 06:00 ET, or use “Regenerate now”.</p>
       </div>
 
       <div class="grid lg:grid-cols-2 gap-6 mb-6">
@@ -1503,8 +1518,9 @@
       document.getElementById('an-csv-log').href = `/api/admin/search-log.csv?from=${from}`;
       document.getElementById('an-csv-events').href = `/api/admin/search-events.csv?from=${from}`;
 
+      const g = data.aiGuide || {};
       const noteEl = document.getElementById('an-note');
-      const notes = [s.note, e.note].filter(Boolean);
+      const notes = [s.note, e.note, g.note].filter(Boolean);
       noteEl.classList.toggle('hidden', notes.length === 0);
       noteEl.textContent = notes.join(' · ');
 
@@ -1514,9 +1530,15 @@
         statCard('Low-confidence', pct(s.noStrongMatch, s.total), { sub: `${fmt(s.noStrongMatch)} searches`, tone: s.total && s.noStrongMatch / s.total > 0.3 ? 'warn' : undefined }),
         statCard('Zero results', fmt(s.zeroResults), { tone: s.zeroResults > 0 ? 'warn' : undefined }),
         statCard('Cards opened', fmt(e.total), { sub: 'interaction events' }),
+        // Share of the searches that recorded the toggle; older rows say nothing.
+        statCard('AI Guide on', pct(g.searchesOn, (g.searchesOn || 0) + (g.searchesOff || 0)),
+          { sub: `of ${fmt((g.searchesOn || 0) + (g.searchesOff || 0))} searches${g.searchesUnrecorded ? ` · ${fmt(g.searchesUnrecorded)} not recorded` : ''}` }),
+        statCard('Accounts with Guide off', pct(g.accountsOff, g.accounts),
+          { sub: `${fmt(g.accountsOff)} of ${fmt(g.accounts)} accounts` }),
       ].join('');
 
       renderChart(s.perDay || [], Number(days));
+      renderTopics(data.trendingTopics);
 
       const topQ = (s.topQueries || []).map(q => `
         <tr class="border-b border-gray-100">
@@ -1554,6 +1576,38 @@
         </tr>`);
       document.getElementById('an-top-standards').innerHTML = topStd.join('');
       document.getElementById('an-top-standards-empty').classList.toggle('hidden', topStd.length > 0);
+    }
+
+    function renderTopics(t) {
+      const topics = (t && t.topics) || [];
+      document.getElementById('an-topics-meta').textContent = t
+        ? `last ${t.windowDays} days · ${fmt(t.coveredSearches)} of ${fmt(t.totalSearches)} searches grouped · ${day(t.generatedAt)}`
+        : '';
+      const max = Math.max(1, ...topics.map(x => x.searches));
+      document.getElementById('an-topics').innerHTML = topics.map((x, i) => `
+        <li class="py-1.5 border-b border-gray-100" title="${esc(x.examples.join(' · '))}">
+          <div class="flex items-baseline justify-between gap-3">
+            <span><span class="text-gray-400 tabular-nums mr-1.5">${i + 1}.</span>${esc(x.topic)}</span>
+            <span class="font-medium tabular-nums">${fmt(x.searches)}</span>
+          </div>
+          <div class="h-1 mt-1 rounded bg-gray-100"><div class="h-1 rounded" style="width:${Math.round(x.searches / max * 100)}%;background:#3A5068"></div></div>
+          <p class="text-xs text-gray-400 truncate mt-0.5">${esc(x.examples.slice(0, 3).join(' · '))}</p>
+        </li>`).join('');
+      document.getElementById('an-topics-empty').classList.toggle('hidden', topics.length > 0);
+    }
+
+    async function refreshTopics() {
+      const btn = document.getElementById('an-topics-refresh');
+      btn.disabled = true;
+      btn.textContent = 'Grouping…';
+      try {
+        const { status, data } = await api('/api/admin/analytics/topics', { method: 'POST' });
+        if (status >= 400) document.getElementById('an-topics-meta').textContent = data.error || 'Could not regenerate.';
+        else renderTopics(data.trendingTopics);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Regenerate now';
+      }
     }
 
     // Simple CSS bar chart: one bar per day of the window, zero-filled so a

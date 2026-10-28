@@ -2160,3 +2160,27 @@ describe('the welcome window shows a non-subscriber every SIGN-IN (10/16/26 #8)'
     expect(run(`document.getElementById('welcome-member').classList.contains('hidden')`)).toBe(true);
   });
 });
+
+// ─── 10/27/26 (B): Standards Toolbox calculators under the AI Guide ───────────
+
+describe('IES Standards Toolbox calculator notes', () => {
+  it('names the calculator for each of TM-30, TM-35 and TM-21 the answer cites', () => {
+    const found = JSON.parse(run(`JSON.stringify(toolboxCalculatorsFor('See ANSI/IES TM-30-24 and TM-21-21; also RP-8.').map(c => c.family))`));
+    expect(found).toEqual(['TM-30', 'TM-21']);
+    expect(run(`toolboxCalculatorsFor('TM-35-19 covers projection').length`)).toBe(1);
+  });
+
+  it('does not fire on other numbers that merely start the same way', () => {
+    expect(run(`toolboxCalculatorsFor('TM-300 and TM-30.1 and TM-210').length`)).toBe(0);
+  });
+
+  it('renders the note with the Toolbox link, and hides it when nothing applies', () => {
+    run(`renderAISummary({ text: 'Use ANSI/IES TM-30-24.', disclaimer: '', watermark: '' })`);
+    const notes = elements.get('ai-toolbox-notes');
+    expect(notes.innerHTML).toContain('Access the official IES TM-30 calculator');
+    expect(notes.innerHTML).toContain('tm-30-spectral-calculator');
+    run(`renderAISummary({ text: 'Use ANSI/IES RP-1-24.', disclaimer: '', watermark: '' })`);
+    expect(notes.innerHTML.trim()).toBe('');
+    expect(notes.classList.contains('hidden')).toBe(true);
+  });
+});

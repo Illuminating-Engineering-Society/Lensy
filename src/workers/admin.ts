@@ -48,6 +48,7 @@ import { requireAdminAccess } from './session';
 import { readAccessMode, writeAccessMode, parseAccessMode } from '../lib/access-mode';
 import { getSsoState, isStagingRequest } from '../lib/sso';
 import { sendDeviceResetDecisionEmail } from '../lib/email';
+import { readTrendingTopics, refreshTrendingTopics } from '../lib/trending-topics';
 import type { StandardRow, SearchLogRow } from '../types';
 
 interface IndexStatusRow {
@@ -754,7 +755,51 @@ export async function handleAdminAnalytics(request: Request, env: Env): Promise<
     events.note = `search_events unavailable (migration 0013 applied?): ${err instanceof Error ? err.message : String(err)}`;
   }
 
-  return jsonResponse({ days, searches, events });
+  // The AI Guide (client 10/27/26 (D)). Two different questions:
+  //   searches — of the searches in the window that recorded the toggle
+  //     (migration 0025), how many ran with the Guide on;
+  //   accounts — of the accounts that have saved preferences at all, how many
+  //     saved the Guide OFF. The Guide is on by default and only an explicit
+  //     press is saved, so "no stored choice" means on.
+  const aiGuide: Record<string, unknown> = {
+    searchesOn: 0, searchesOff: 0, searchesUnrecorded: 0,
+    accounts: 0, accountsOff: 0,
+  };
+  try {
+    const [bySearch, byAccount] = await Promise.all([
+      env.DB.prepare(`
+        SELECT COALESCE(SUM(CASE WHEN ai_guide = 1 THEN 1 ELSE 0 END), 0) AS searchesOn,
+               COALESCE(SUM(CASE WHEN ai_guide = 0 THEN 1 ELSE 0 END), 0) AS searchesOff,
+               COALESCE(SUM(CASE WHEN ai_guide IS NULL THEN 1 ELSE 0 END), 0) AS searchesUnrecorded
+        FROM search_log WHERE created_at >= datetime('now', ?)
+      `).bind(since).first<Record<string, number>>(),
+      env.DB.prepare(`
+        SELECT COUNT(*) AS accounts,
+               COALESCE(SUM(CASE WHEN json_extract(preferences_json, '$.ai_guide') = 0 THEN 1 ELSE 0 END), 0) AS accountsOff
+        FROM user_preferences
+      `).first<Record<string, number>>(),
+    ]);
+    Object.assign(aiGuide, bySearch ?? {}, byAccount ?? {});
+  } catch (err) {
+    aiGuide.note = `AI Guide usage unavailable (migration 0025 applied?): ${err instanceof Error ? err.message : String(err)}`;
+  }
+
+  // Refreshed by the daily cron, not per request — it costs a 70B call.
+  const trendingTopics = await readTrendingTopics(env);
+
+  return jsonResponse({ days, searches, events, aiGuide, trendingTopics });
+}
+
+/**
+ * POST /api/admin/analytics/topics — recompute the AI-grouped trending topics
+ * now instead of waiting for the daily cron (first run, or after a busy day).
+ */
+export async function handleAdminRefreshTopics(request: Request, env: Env): Promise<Response> {
+  const denied = await requireAuth(request, env);
+  if (denied) return denied;
+  const topics = await refreshTrendingTopics(env);
+  if (!topics) return jsonResponse({ error: 'Could not group the searches (no searches in the last 30 days, or the model gave no usable answer).' }, 502);
+  return jsonResponse({ trendingTopics: topics });
 }
 
 // ─── Device-limit reset queue (Vitrium error page, 2026-09-04) ────────────────
