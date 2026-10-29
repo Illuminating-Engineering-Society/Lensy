@@ -18,8 +18,12 @@
  * belongs on a WordPress host. Unset secret → 404, like AuthIES's comp-grants
  * API, so the route does not exist until it is configured.
  *
- * A row is listed when it is active and its window covers today (dates are
- * inclusive, compared as 'YYYY-MM-DD' strings like the session gate does).
+ * A row is listed when it is active, its window covers today (dates are
+ * inclusive, compared as 'YYYY-MM-DD' strings like the session gate does) AND
+ * the grant actually reached the Library: purchases.authies_applied_at /
+ * comp_access_grants.vitrium_applied_at. A row whose AuthIES push failed, was
+ * unconfigured or lacked a Vitrium doc id stays 'active' but opens nothing,
+ * so it must not be advertised as a standard the reader can open.
  * Subscriptions are not listed: they open every standard, and the view is a
  * list of the individual documents a reader holds.
  */
@@ -68,12 +72,14 @@ export async function standardsForEmail(db: D1Database, email: string): Promise<
   const leases = await db.prepare(`
     SELECT standard_id, start_date, end_date FROM purchases
     WHERE email = ? AND kind = 'lease' AND status = 'active' AND standard_id IS NOT NULL
+      AND authies_applied_at IS NOT NULL
       AND start_date <= date('now') AND end_date >= date('now')
   `).bind(email).all<{ standard_id: string; start_date: string; end_date: string }>();
 
   const comps = await db.prepare(`
     SELECT standard_ids, start_date, end_date FROM comp_access_grants
     WHERE email = ? AND scope = 'documents' AND status = 'active'
+      AND vitrium_applied_at IS NOT NULL
       AND start_date <= date('now') AND end_date >= date('now')
   `).bind(email).all<{ standard_ids: string; start_date: string; end_date: string }>();
 

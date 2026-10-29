@@ -83,6 +83,11 @@ describe('GET /api/entitlements', () => {
     expect(lease.bindings).toEqual(['buyer@example.org']);
     expect(lease.sql).toMatch(/kind = 'lease' AND status = 'active'/);
     expect(lease.sql).toMatch(/end_date >= date\('now'\)/);
+    // Only grants that reached the Library: a failed AuthIES push stays
+    // 'active' but opens nothing.
+    expect(lease.sql).toMatch(/authies_applied_at IS NOT NULL/);
+    const comp = env.calls.find(c => /FROM comp_access_grants/.test(c.sql));
+    expect(comp.sql).toMatch(/vitrium_applied_at IS NOT NULL/);
   });
 
   it('answers an empty list when nothing is held', async () => {
