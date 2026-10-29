@@ -288,6 +288,12 @@ SURECART_ACCEPT_TEST_MODE = "off"
 # been emailed by the first three pages.
 SURECART_NOTIFY = "on"
 
+# ── A reader's standards for ies.org "My Standards" (2026-10-29) ──────────
+# GET /api/entitlements?email= — read-only, server-to-server (IES HQ).
+# Secret, set via `wrangler secret put`:
+#   ENTITLEMENTS_API_SECRET   same value as IES HQ's IESHQ_LENSY_ENTITLEMENTS_SECRET
+#                             constant in wp-config.php. Unset → the route 404s.
+
 # Secrets set via `wrangler secret put`:
 # VITRIUM_API_KEY
 # SHAREPOINT_TOKEN
