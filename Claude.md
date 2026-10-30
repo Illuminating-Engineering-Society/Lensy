@@ -1899,6 +1899,42 @@ Migration **0024** (`purchases`); AuthIES branch `feat/surecart-purchase-source`
   Vitrium's `DocumentId` equals the export's Doc ID in `vitrium_doc_id` (the
   same assumption comps rest on; AuthIES logs it on every grant).
 
+### The 10/30/26 Teams notes: lease add-on files, tutorials polish (2026-10-30)
+
+Migration **0027** (`standards.lease_addon_doc_ids`). No search-cache bump.
+
+- **A lease can unlock more than one Vitrium document.** Dan: eight standards
+  leased for 3 years "need to have an additional Vitrium file provided with
+  purchase … copy/paste access … the webstore must unlock the existing Vitrium
+  file plus this additional file." `lease_addon_doc_ids` (JSON array of
+  GUIDs) is read by `resolveStandardForProduct` (`leaseAddonDocIds`, cleaned
+  by `parseLeaseAddonDocIds`: lowercased, de-duplicated, never the standard's
+  own id, junk ignored rather than thrown) and `leaseDocuments` (surecart.ts)
+  pushes `[own, ...addons]` to AuthIES with parallel labels. Leases only:
+  subscriptions and comps are untouched; the buyer email is unchanged (Dan:
+  "no additional instruction"). Editable in Admin → Standards → Edit ("Lease
+  add-on Doc IDs"). The migration seeds Dan's table: "TM-27-20(R25)" →
+  TM-27-20+E1, "LM-63-19(R25)" → LM-63-19, and **"TM-41-23" → TM-41-24** (the
+  only TM-41 in the catalogue — flagged to the client). A lease granted BEFORE
+  an add-on is set needs a staff Retry to pick it up (no lease existed yet on
+  the day). **Deploy order: migration first** — the catalogue SELECT names the
+  new column.
+- **Tutorials page:** subtitle per Dan; an amber callout "For further
+  assistance, use the feedback form" (`FEEDBACK_URL`'s form); the bullseye
+  (Lighting Library) and angled Lens mark (IES Lens) beside those section
+  titles in Contents, the section headings and the single-tutorial eyebrow
+  (`SECTION_ICONS`); the bullseye beside "Browse Lighting Library" in the
+  header (on a phone, where the label hides, it is now the link). A spinner
+  "Loading video…" replaces the black box until the iframe's `load` / the
+  video's `loadedmetadata` (one capture-phase listener; `error` clears it too) —
+  it covers the wait for the embed, not Loom's own buffering inside it.
+  Anchors (`/tutorials#quick-start`, the webstore's link) land below the sticky
+  header (`scroll-margin-top`).
+- **Placeholder tutorial `accessing-leased-documents`** ("Accessing Your Leased
+  Documents", end of Getting Started) — Dan records it; staff paste the Loom
+  link in Admin → Maintenance → Tutorials. The webstore's "How to access your
+  leased documents" link is `https://lens.ies.org/tutorials/accessing-leased-documents`.
+
 ### The 10/22–10/27/26 Teams notes: shared-bookmark buttons, Toolbox, analytics, lease reminders (2026-10-28)
 
 Migration **0025** (`search_log.ai_guide`, `purchases.expiry_reminder_*`); first

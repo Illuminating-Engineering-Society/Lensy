@@ -168,12 +168,13 @@ export async function applyPurchase(
   }
 
   const note = row.surecart_order_number ? `SureCart order #${row.surecart_order_number}` : null;
+  const lease = leaseDocuments(row, standard);
   const outcome = await pushPurchaseGrant(env, requestUrl, {
     surecartPurchaseId: row.surecart_purchase_id,
     email: row.email,
     kind: row.kind === 'lease' ? 'documents' : 'subscriber',
-    documents: row.kind === 'lease' && standard?.vitriumDocId ? [standard.vitriumDocId] : [],
-    labels: row.kind === 'lease' && standard ? [standard.id] : [],
+    documents: lease.documents,
+    labels: lease.labels,
     startDate: row.start_date,
     endDate: row.end_date,
     note,
@@ -252,6 +253,23 @@ export async function handleSurecartWebhook(request: Request, env: Env): Promise
 }
 
 // ── helpers ─────────────────────────────────────────────────────────────────
+
+/**
+ * What a lease unlocks in Vitrium: the standard itself, then its copy/paste
+ * add-on files (client 2026-10-30: "the webstore must unlock the existing
+ * Vitrium file plus this additional file"). Labels run parallel to the ids.
+ * A subscription grants no documents.
+ */
+export function leaseDocuments(
+  row: Pick<PurchaseRow, 'kind'>, standard: ResolvedStandard | null,
+): { documents: string[]; labels: string[] } {
+  if (row.kind !== 'lease' || !standard?.vitriumDocId) return { documents: [], labels: [] };
+  const addons = standard.leaseAddonDocIds ?? [];
+  return {
+    documents: [standard.vitriumDocId, ...addons],
+    labels: [standard.id, ...addons.map(() => `${standard.id} (copy/paste add-on)`)],
+  };
+}
 
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } });

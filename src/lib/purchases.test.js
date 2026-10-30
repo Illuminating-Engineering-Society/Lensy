@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   resolveStandardForProduct, skuToStandardId, upsertPurchase, findPurchaseBySurecartId,
-  listPurchasesBySubscription, stampAuthies, stampNotify, setPurchaseStatus,
+  listPurchasesBySubscription, stampAuthies, stampNotify, setPurchaseStatus, parseLeaseAddonDocIds,
 } from './purchases';
 import { normalizePurchase } from './surecart';
 
@@ -73,9 +73,36 @@ describe('resolveStandardForProduct', () => {
     const r = await resolveStandardForProduct(catalogDb(), { slug: 'recommended-practice-lighting-roadway-and-parking-facilities', sku: 'ANSI/IES LM-49-20' });
     expect(r).toEqual({
       id: 'RP-8-25+E2', designation: 'ANSI/IES RP-8-25+E2', title: 'Recommended Practice: Lighting Roadway and Parking Facilities',
-      vitriumDocId: 'doc-guid-rp8', libraryUrl: 'https://lighting.ies.org/2H4QTw',
+      vitriumDocId: 'doc-guid-rp8', leaseAddonDocIds: [], libraryUrl: 'https://lighting.ies.org/2H4QTw',
     });
   });
+
+  // Client 2026-10-30: a lease of some standards also unlocks a copy/paste
+  // add-on file in Vitrium (migration 0027).
+  it('carries the lease add-on Doc IDs, cleaned', async () => {
+    const own = '5d4294c6-a347-41a2-a4dd-9a91ac9b6a58';
+    const addon = 'a15f12ee-25cb-4b47-8de8-70b098b6b360';
+    const db = makeDb((sql) => (/FROM standards/.test(sql) ? [{
+      id: 'RP-43-25', full_designation: 'ANSI/IES RP-43-25', title: 'Outdoor', status: 'Active', buy_url: null,
+      vitrium_doc_id: own, vitrium_web_url: null,
+      // Upper case, a duplicate, the standard's own id and junk are all dropped.
+      lease_addon_doc_ids: JSON.stringify([addon.toUpperCase(), addon, own, 'not-a-guid', 7]),
+    }] : null));
+    const r = await resolveStandardForProduct(db, { slug: null, sku: 'ANSI/IES RP-43-25' });
+    expect(r?.leaseAddonDocIds).toEqual([addon]);
+  });
+});
+
+describe('parseLeaseAddonDocIds', () => {
+  it('reads nothing from empty, malformed or non-array values', () => {
+    expect(parseLeaseAddonDocIds(null)).toEqual([]);
+    expect(parseLeaseAddonDocIds('')).toEqual([]);
+    expect(parseLeaseAddonDocIds('{oops')).toEqual([]);
+    expect(parseLeaseAddonDocIds('"e0b1527a-77c3-424e-85be-fefcaecaeccf"')).toEqual([]);
+  });
+});
+
+describe('resolveStandardForProduct (continued)', () => {
 
   it('falls back to the SKU, with the reaffirmation marker stripped and a bare title turned null', async () => {
     const r = await resolveStandardForProduct(catalogDb(), { slug: 'nothing-like-it', sku: 'ANSI/IES LM-49-20(R2023)' });

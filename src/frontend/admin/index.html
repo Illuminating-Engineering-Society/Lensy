@@ -1037,6 +1037,12 @@
           <p class="mt-1 text-xs text-gray-400">Vitrium admin → the document → its <strong>Doc ID</strong>. Needed for webstore leases and comp access: without it a purchased lease is recorded but the buyer cannot open the document.</p>
         </div>
         <div>
+          <label for="se-addons" class="block text-xs font-medium text-gray-600 mb-1">Lease add-on Doc IDs (copy/paste files)</label>
+          <textarea id="se-addons" rows="2" spellcheck="false" placeholder="One Vitrium Doc ID per line"
+                    class="w-full px-3 py-2 text-sm font-mono border border-gray-300 rounded-lg"></textarea>
+          <p class="mt-1 text-xs text-gray-400">Extra Vitrium documents a <strong>3-year lease</strong> of this standard also unlocks (the copy/paste add-on files). Subscriptions are unaffected. Empty = none.</p>
+        </div>
+        <div>
           <label for="se-url" class="block text-xs font-medium text-gray-600 mb-1">Lighting Library link</label>
           <input id="se-url" type="url" placeholder="https://lighting.ies.org/AbC123"
                  class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg" />
@@ -3483,6 +3489,7 @@
       document.getElementById('se-author').value = s.author || '';
       document.getElementById('se-description').value = s.description || '';
       document.getElementById('se-docid').value = s.vitriumDocId || '';
+      document.getElementById('se-addons').value = (s.leaseAddonDocIds || []).join('\n');
       showStdCover(s.coverUrl);
       document.getElementById('se-url').value = s.libraryUrl || '';
       document.getElementById('se-date').value = s.publishedDate || '';
@@ -3542,6 +3549,7 @@
         author: document.getElementById('se-author').value.trim(),
         description: document.getElementById('se-description').value.trim(),
         vitriumDocId: document.getElementById('se-docid').value.trim(),
+        leaseAddonDocIds: document.getElementById('se-addons').value,
         libraryUrl: document.getElementById('se-url').value.trim(),
         publishedDate: document.getElementById('se-date').value,
         leaseUrl: document.getElementById('se-lease').value.trim(),

@@ -80,6 +80,7 @@
 import { requireAdminAccess } from './session';
 import { getSsoState } from '../lib/sso';
 import { bumpDataVersion } from '../lib/cache';
+import { parseLeaseAddonDocIds } from '../lib/purchases';
 import {
   runDocumentIngest, deleteVectorRange, pruneApplicationRowsCore, pdfKeyFor,
 } from './ingest';
@@ -1173,6 +1174,18 @@ export function validateStandardEdit(body: any): { fields: Record<string, string
     }
     fields.vitrium_doc_id = raw || null;
   }
+  // Copy/paste add-on files a LEASE also unlocks (client 2026-10-30,
+  // migration 0027). Typed as GUIDs separated by commas, spaces or lines.
+  if ('leaseAddonDocIds' in body) {
+    const raw = Array.isArray(body.leaseAddonDocIds)
+      ? body.leaseAddonDocIds.map((v: unknown) => String(v ?? ''))
+      : String(body.leaseAddonDocIds ?? '').split(/[\s,;]+/);
+    const ids = [...new Set(raw.map((s: string) => s.trim().toLowerCase()).filter(Boolean))] as string[];
+    const bad = ids.find(s => !UUID_RE.test(s));
+    if (bad) return { fields, error: `"${bad}" is not a Vitrium Doc ID (a GUID like 98173938-2bfc-4745-8f4a-11d3da2aa8e4).` };
+    if (ids.length > 10) return { fields, error: 'At most 10 add-on documents.' };
+    fields.lease_addon_doc_ids = ids.length ? JSON.stringify(ids) : null;
+  }
   // `keepWhenEmpty`: the title column is NOT NULL and the ingest stores the id
   // there when a cover could not be read — an empty box means "unchanged".
   const text = (key: string, col: string, label: string, max: number, keepWhenEmpty = false): string | null => {
@@ -1195,7 +1208,8 @@ export function validateStandardEdit(body: any): { fields: Record<string, string
 /**
  *   GET    /api/admin/standards/:id   the editable fields
  *   PATCH  /api/admin/standards/:id   { libraryUrl?, publishedDate?, leaseUrl?, collection?,
- *                                       vitriumDocId?, title?, fullDesignation?, author?, description? }
+ *                                       vitriumDocId?, leaseAddonDocIds?, title?, fullDesignation?,
+ *                                       author?, description? }
  *   POST   /api/admin/standards/:id/cover  (image/jpeg | image/png body) — the cover
  *          List Standards and the result cards show; replaces any portal cover
  *   DELETE /api/admin/standards/:id   { confirm: "<id>" } — removes it entirely
@@ -1210,11 +1224,12 @@ export async function handleAdminStandards(request: Request, env: Env, url: URL)
   if (!id) return jsonResponse({ error: 'Standard id required' }, 400);
   const row = await env.DB.prepare(
     'SELECT id, status, chunk_count, vitrium_web_url, published_date, buy_url, collection, superseded_by,'
-    + ' vitrium_doc_id, title, full_designation, author, description, thumbnail_url FROM standards WHERE id = ?',
+    + ' vitrium_doc_id, lease_addon_doc_ids, title, full_designation, author, description, thumbnail_url'
+    + ' FROM standards WHERE id = ?',
   ).bind(id).first<{
     id: string; status: string; chunk_count: number | null; vitrium_web_url: string | null;
     published_date: string | null; buy_url: string | null; collection: string | null; superseded_by: string | null;
-    vitrium_doc_id: string | null; title: string | null; full_designation: string | null;
+    vitrium_doc_id: string | null; lease_addon_doc_ids: string | null; title: string | null; full_designation: string | null;
     author: string | null; description: string | null; thumbnail_url: string | null;
   }>();
   if (!row) return jsonResponse({ error: `No standard "${id}"` }, 404);
@@ -1226,6 +1241,7 @@ export async function handleAdminStandards(request: Request, env: Env, url: URL)
         publishedDate: row.published_date, leaseUrl: row.buy_url,
         collection: row.collection, supersededBy: row.superseded_by,
         vitriumDocId: row.vitrium_doc_id,
+        leaseAddonDocIds: parseLeaseAddonDocIds(row.lease_addon_doc_ids),
         // The ingest stores the id as the title when a cover could not be read.
         title: row.title && row.title !== row.id ? row.title : '',
         fullDesignation: row.full_designation, author: row.author,

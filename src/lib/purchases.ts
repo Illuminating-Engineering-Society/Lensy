@@ -17,6 +17,11 @@ export interface ResolvedStandard {
   designation: string;
   title: string | null;
   vitriumDocId: string | null;
+  /**
+   * Extra Vitrium documents a LEASE also unlocks — the copy/paste add-on
+   * files (client 2026-10-30, migration 0027). Never the standard's own id.
+   */
+  leaseAddonDocIds: string[];
   libraryUrl: string | null;
 }
 
@@ -27,7 +32,29 @@ interface CatalogRow {
   status: string | null;
   buy_url: string | null;
   vitrium_doc_id: string | null;
+  lease_addon_doc_ids: string | null;
   vitrium_web_url: string | null;
+}
+
+const DOC_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+/**
+ * standards.lease_addon_doc_ids (a JSON array) → valid, lowercase, distinct
+ * GUIDs other than `own`. Anything unreadable is ignored rather than thrown:
+ * a malformed add-on must never stop the lease itself from being granted.
+ */
+export function parseLeaseAddonDocIds(raw: string | null | undefined, own: string | null = null): string[] {
+  if (!raw || !raw.trim()) return [];
+  let list: unknown;
+  try { list = JSON.parse(raw); } catch { return []; }
+  if (!Array.isArray(list)) return [];
+  const self = own ? own.trim().toLowerCase() : null;
+  const out: string[] = [];
+  for (const v of list) {
+    const id = typeof v === 'string' ? v.trim().toLowerCase() : '';
+    if (DOC_ID_RE.test(id) && id !== self && !out.includes(id)) out.push(id);
+  }
+  return out;
 }
 
 /**
@@ -113,7 +140,7 @@ export async function resolveStandardForProduct(
   return printings[0] ? shape(printings[0]) : null;
 }
 
-const CATALOG_SQL = 'SELECT id, full_designation, title, status, buy_url, vitrium_doc_id, vitrium_web_url FROM standards';
+const CATALOG_SQL = 'SELECT id, full_designation, title, status, buy_url, vitrium_doc_id, lease_addon_doc_ids, vitrium_web_url FROM standards';
 
 async function loadCatalogRows(db: D1Database): Promise<CatalogRow[]> {
   const res = await db.prepare(CATALOG_SQL).all<CatalogRow>();
@@ -133,12 +160,14 @@ function errataNumber(id: string): number {
 }
 
 function shape(row: CatalogRow): ResolvedStandard {
+  const vitriumDocId = row.vitrium_doc_id && row.vitrium_doc_id.trim() ? row.vitrium_doc_id.trim() : null;
   return {
     id: row.id,
     designation: row.full_designation && row.full_designation.trim() ? row.full_designation.trim() : `ANSI/IES ${row.id}`,
     // The ingest writes title = id when a cover could not be read.
     title: row.title && row.title.trim() && row.title !== row.id ? row.title.trim() : null,
-    vitriumDocId: row.vitrium_doc_id && row.vitrium_doc_id.trim() ? row.vitrium_doc_id.trim() : null,
+    vitriumDocId,
+    leaseAddonDocIds: parseLeaseAddonDocIds(row.lease_addon_doc_ids, vitriumDocId),
     libraryUrl: toLibraryUrlOrNull(row.vitrium_web_url),
   };
 }

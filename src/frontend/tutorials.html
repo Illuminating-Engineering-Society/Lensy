@@ -56,6 +56,18 @@
     /* Every player keeps the 16:9 frame the recordings are exported at. */
     .video-frame { position: relative; padding-bottom: 56.25%; height: 0; }
     .video-frame iframe, .video-frame video { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; background: #000; }
+    /* Until the player has loaded, a spinner instead of a black box (client
+       10/30/26: on mobile the Loom embed "looked like a black box for about
+       15sec"). The iframe is hidden, not removed, so it keeps loading. */
+    .video-frame .video-loading { position: absolute; inset: 0; display: none; flex-direction: column; align-items: center; justify-content: center; gap: .6rem; color: #6b7280; font-size: .8rem; background: #f3f4f6; }
+    .video-frame.is-loading .video-loading { display: flex; }
+    .video-frame.is-loading iframe, .video-frame.is-loading video { opacity: 0; }
+    .video-frame iframe, .video-frame video { transition: opacity .25s; }
+    .video-spinner { width: 2rem; height: 2rem; border-radius: 9999px; border: 3px solid #e5e7eb; border-top-color: #FFAA00; animation: video-spin .8s linear infinite; }
+    @keyframes video-spin { to { transform: rotate(360deg); } }
+    @media (prefers-reduced-motion: reduce) { .video-spinner { animation-duration: 2.4s; } }
+    /* Anchored tutorials (/tutorials#quick-start) land below the sticky header. */
+    #list-view section, #list-view article { scroll-margin-top: 6rem; }
     /* The step-by-step guide drop-down (same dress as FROM THE STANDARD). */
     .guide > summary { list-style: none; }
     .guide > summary::-webkit-details-marker { display: none; }
@@ -92,6 +104,8 @@
           <span class="font-medium">Search with IES Lens</span>
         </a>
         <a href="https://lighting.ies.org/portal/ies" target="_blank" rel="noopener" class="nav-item flex items-center gap-2 px-3 py-1.5 rounded-md transition" title="Open the IES Lighting Library in a new browser tab">
+          <!-- The Lighting Library bullseye beside it, as IES Lens wears its own mark (client 10/30/26). -->
+          <img src="/favicon-192.png" alt="" aria-hidden="true" class="w-5 h-5 shrink-0" width="20" height="20"/>
           <span class="font-medium hidden sm:inline">Browse Lighting Library</span>
         </a>
       </nav>
@@ -106,8 +120,14 @@
     <div class="mb-8">
       <h1 class="text-2xl font-bold text-gray-900">Tutorials</h1>
       <p class="text-sm text-gray-500 mt-1">
-        Short walkthroughs of the IES Lighting Library and IES Lens. Every tutorial comes as a video and,
-        where available, as a step-by-step written guide below it.
+        Learn more about the Lighting Library and IES Lens. Watch the videos or open the step-by-step
+        written guides directly below each.
+      </p>
+      <!-- Client 10/30/26: "Add prominent text like 'For further assistance,
+           use the feedback form.'" — same form as "Share feedback" in the menus. -->
+      <p class="mt-3 inline-flex items-center gap-2 text-sm font-semibold text-lens-ink bg-white border-l-4 border-lens-amber rounded-r-lg px-3 py-2 shadow-sm">
+        For further assistance, use the
+        <a href="https://forms.cloud.microsoft/r/TCRkdRe2Tx" target="_blank" rel="noopener" class="text-ies-blue underline underline-offset-2 hover:text-brand-primary-dark">feedback form</a>.
       </p>
     </div>
 
@@ -212,6 +232,21 @@
       return !!(hosted(item) || loomEmbedUrl(item.loom));
     }
 
+    const LOADING_HTML = '<div class="video-loading" role="status"><span class="video-spinner" aria-hidden="true"></span><span>Loading video…</span></div>';
+
+    // Load and media events do not bubble, but they can be caught on the way
+    // down: one capture listener reveals every player as it becomes ready.
+    // `error` counts too — a player that failed should show its own message,
+    // not spin forever.
+    for (const type of ['load', 'loadedmetadata', 'error']) {
+      document.addEventListener(type, e => {
+        const el = e.target;
+        if (el && (el.tagName === 'IFRAME' || el.tagName === 'VIDEO')) {
+          el.closest('.video-frame')?.classList.remove('is-loading');
+        }
+      }, true);
+    }
+
     function playerHtml(item, { lazy }) {
       const video = hosted(item);
       if (video) {
@@ -219,7 +254,11 @@
         // from a stale browser cache under the same permanent URL.
         const v = encodeURIComponent(video.uploaded);
         const poster = MEDIA[item.slug].poster ? `/api/tutorials/media/${item.slug}.jpg?v=${v}` : '';
-        return `<div class="video-frame rounded-lg overflow-hidden">
+        // A poster on a lazy player IS the placeholder (nothing loads until
+        // play); otherwise the spinner shows until the metadata arrives.
+        const loading = !(poster && lazy);
+        return `<div class="video-frame rounded-lg overflow-hidden ${loading ? 'is-loading' : ''}">
+          ${loading ? LOADING_HTML : ''}
           <video id="player-${escapeHtml(item.slug)}" controls playsinline
             preload="${poster && lazy ? 'none' : 'metadata'}" ${poster ? `poster="${escapeHtml(poster)}"` : ''}
             src="/api/tutorials/media/${escapeHtml(item.slug)}.mp4?v=${v}" title="${escapeHtml(item.title)}"></video>
@@ -227,7 +266,7 @@
       }
       const embed = loomEmbedUrl(item.loom);
       if (embed) {
-        return `<div class="video-frame rounded-lg overflow-hidden bg-gray-100"><iframe src="${escapeHtml(embed)}" title="${escapeHtml(item.title)}" allowfullscreen ${lazy ? 'loading="lazy"' : ''}></iframe></div>`;
+        return `<div class="video-frame rounded-lg overflow-hidden bg-gray-100 is-loading">${LOADING_HTML}<iframe src="${escapeHtml(embed)}" title="${escapeHtml(item.title)}" allowfullscreen ${lazy ? 'loading="lazy"' : ''}></iframe></div>`;
       }
       return `<div class="video-frame rounded-lg overflow-hidden bg-gray-100">
         <div class="absolute inset-0 flex items-center justify-center text-sm text-gray-400">Video coming soon</div>
@@ -295,12 +334,27 @@
         </article>`;
     }
 
+    // Each product's own mark beside its section title (client 10/30/26: "add
+    // the 'bullseye' and 'bug' icons in the table of contents … Also below,
+    // for section titles") — the same images the header and the tools menus use.
+    const SECTION_ICONS = {
+      'IES Lens': '/assets/ies-lens-angled.png',
+      'Lighting Library': '/favicon-192.png',
+    };
+
+    function sectionIcon(section, size) {
+      const src = SECTION_ICONS[section];
+      return src
+        ? `<img src="${src}" alt="" aria-hidden="true" class="${size} object-contain shrink-0" width="20" height="20"/>`
+        : '';
+    }
+
     function renderList() {
       document.getElementById('toc').innerHTML = `
         <p class="text-[10px] uppercase tracking-wide text-gray-400 mb-2">Contents</p>
         <ol class="grid sm:grid-cols-2 gap-x-6 gap-y-1">
           ${TUTORIALS.map(s => `
-            <li><a href="#${escapeHtml(slug(s.section))}" class="font-semibold text-gray-800 hover:text-ies-blue hover:underline">${escapeHtml(s.section)}</a>
+            <li><a href="#${escapeHtml(slug(s.section))}" class="inline-flex items-center gap-1.5 font-semibold text-gray-800 hover:text-ies-blue hover:underline">${sectionIcon(s.section, 'w-4 h-4')}${escapeHtml(s.section)}</a>
               <ol class="ml-4 mt-0.5 space-y-0.5">
                 ${s.items.map(it => `<li><a href="#${escapeHtml(it.slug)}" class="text-gray-600 hover:text-ies-blue hover:underline">${escapeHtml(it.title)}</a>${isReady(it) ? '' : ' <span class="text-[10px] text-gray-400">(soon)</span>'}</li>`).join('')}
               </ol>
@@ -308,7 +362,7 @@
         </ol>`;
       document.getElementById('sections').innerHTML = TUTORIALS.map(s => `
         <section id="${escapeHtml(slug(s.section))}">
-          <h2 class="text-lg font-bold text-gray-900 mb-3">${escapeHtml(s.section)}</h2>
+          <h2 class="flex items-center gap-2 text-lg font-bold text-gray-900 mb-3">${sectionIcon(s.section, 'w-6 h-6')}${escapeHtml(s.section)}</h2>
           <div class="grid md:grid-cols-2 gap-4 items-start">${s.items.map(renderItem).join('')}</div>
         </section>`).join('');
     }
@@ -336,7 +390,7 @@
         : '<span></span>';
       box.innerHTML = `
         ${back}
-        <p class="text-xs uppercase tracking-wide text-gray-400 mt-4">${escapeHtml(item.section)}</p>
+        <p class="flex items-center gap-1.5 text-xs uppercase tracking-wide text-gray-400 mt-4">${sectionIcon(item.section, 'w-4 h-4')}${escapeHtml(item.section)}</p>
         <h1 class="text-2xl font-bold text-gray-900 mt-1">${escapeHtml(item.title)}</h1>
         ${item.summary ? `<p class="text-sm text-gray-600 mt-2">${escapeHtml(item.summary)}</p>` : ''}
         <div class="bg-white rounded-xl border border-gray-100 p-4 sm:p-5 mt-5">

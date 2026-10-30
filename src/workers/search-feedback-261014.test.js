@@ -259,6 +259,17 @@ describe('editing a standard record (client 10/14/26 #2)', () => {
     expect(validateStandardEdit({ vitriumDocId: '2H4QTw' }).error).toMatch(/GUID/);
   });
 
+  // 2026-10-30: the copy/paste add-on files a lease also unlocks.
+  it('edits the lease add-on Doc IDs (one per line, lowercased, de-duplicated) and clears them', () => {
+    expect(validateStandardEdit({
+      leaseAddonDocIds: 'A15F12EE-25CB-4B47-8DE8-70B098B6B360\n a15f12ee-25cb-4b47-8de8-70b098b6b360, e0b1527a-77c3-424e-85be-fefcaecaeccf',
+    }).fields).toEqual({
+      lease_addon_doc_ids: '["a15f12ee-25cb-4b47-8de8-70b098b6b360","e0b1527a-77c3-424e-85be-fefcaecaeccf"]',
+    });
+    expect(validateStandardEdit({ leaseAddonDocIds: '  ' }).fields).toEqual({ lease_addon_doc_ids: null });
+    expect(validateStandardEdit({ leaseAddonDocIds: 'https://lighting.ies.org/bJdYGz' }).error).toMatch(/not a Vitrium Doc ID/);
+  });
+
   it('edits title, designation, committee and description', () => {
     expect(validateStandardEdit({
       title: '  Recommended Practice:  Lighting Office Spaces ', fullDesignation: 'ANSI/IES RP-1-24',

@@ -1,5 +1,22 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import { syncPurchaseById, syncSubscription } from './surecart';
+import { syncPurchaseById, syncSubscription, leaseDocuments } from './surecart';
+
+// Client 2026-10-30: some leases also unlock a copy/paste add-on file.
+describe('leaseDocuments', () => {
+  const standard = { id: 'RP-43-25', designation: 'ANSI/IES RP-43-25', title: null, vitriumDocId: 'own-guid', leaseAddonDocIds: ['addon-guid'], libraryUrl: null };
+
+  it('a lease unlocks the standard, then its add-on files, labels parallel', () => {
+    expect(leaseDocuments({ kind: 'lease' }, standard)).toEqual({
+      documents: ['own-guid', 'addon-guid'],
+      labels: ['RP-43-25', 'RP-43-25 (copy/paste add-on)'],
+    });
+  });
+
+  it('a subscription, or a lease with no Vitrium id, unlocks no documents', () => {
+    expect(leaseDocuments({ kind: 'subscription' }, standard)).toEqual({ documents: [], labels: [] });
+    expect(leaseDocuments({ kind: 'lease' }, { ...standard, vitriumDocId: null })).toEqual({ documents: [], labels: [] });
+  });
+});
 
 // The reconcile core of SureCart purchases (2026-10-26). What matters: the
 // same event twice converges on ONE row and ONE AuthIES grant; a renewal

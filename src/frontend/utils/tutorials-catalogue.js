@@ -71,6 +71,17 @@
           loom: 'https://www.loom.com/share/47bf0f8be4384245862544acd6251e28',
           guide: null,
         },
+        {
+          // Placeholder (client 10/30/26) — Dan records it; staff paste its
+          // Loom link in /admin → Maintenance → Tutorials → Edit. The webstore's
+          // "How to access your leased documents" link on every individual
+          // standard points at /tutorials/accessing-leased-documents.
+          slug: 'accessing-leased-documents',
+          title: 'Accessing Your Leased Documents',
+          summary: null,
+          loom: null,
+          guide: null,
+        },
       ],
     },
     {
