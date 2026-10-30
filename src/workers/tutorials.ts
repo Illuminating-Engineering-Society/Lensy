@@ -305,7 +305,12 @@ export async function handleAdminTutorialUpdate(request: Request, env: Env, slug
     }
   } catch (err) {
     console.error('tutorial override write failed:', err);
-    return json({ error: 'Could not save — has migration 0026 been applied?' }, 500);
+    const detail = err instanceof Error ? err.message : String(err);
+    return json({
+      error: /no such table/i.test(detail)
+        ? 'Could not save — migration 0026 (tutorial_overrides) has not been applied.'
+        : `Could not save: ${detail.slice(0, 200)}`,
+    }, 500);
   }
   return json({ slug, override: empty ? null : next, imagesCopied, imagesDropped });
 }
