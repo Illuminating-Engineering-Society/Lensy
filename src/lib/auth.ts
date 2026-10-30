@@ -37,6 +37,19 @@ export async function checkAuth(request: Request, env: Env): Promise<AuthResult>
 }
 
 /**
+ * Does the request carry `Authorization: Bearer <expected>`? For endpoints
+ * with their OWN narrow secret (not LUCIUS_API_SECRET), which have no
+ * local-dev bypass: an empty secret never matches.
+ */
+export async function bearerMatches(request: Request, expected: string | undefined): Promise<boolean> {
+  const secret = String(expected || '').trim();
+  if (!secret) return false;
+  const header = request.headers.get('authorization') || '';
+  if (!header.startsWith('Bearer ')) return false;
+  return timingSafeEqual(header.slice(7).trim(), secret);
+}
+
+/**
  * Constant-time string comparison. Comparing SHA-256 digests makes the
  * comparison independent of where the strings first differ AND of their
  * lengths, so the check leaks no timing signal about the secret.

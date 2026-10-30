@@ -48,6 +48,7 @@ import type { OutlineEntry } from '../types';
 import { toLibraryUrlOrNull } from '../lib/library-url.js';
 import { sendCollectionShareEmail, isEmailAddress, resolveAppUrl } from '../lib/email';
 import { handleSurecartWebhook } from './surecart';
+import { handleEntitlements } from './entitlements';
 import { handleAdminPurchases, handleAdminPurchasesCsv } from './purchases-admin';
 import { sendLeaseExpiryReminders } from './lease-reminders';
 import { refreshTrendingTopics } from '../lib/trending-topics';
@@ -134,6 +135,13 @@ export default {
       }
       if (path === '/api/library/device-reset' && request.method === 'POST') {
         return withCors(await handleDeviceResetRequest(request, env));
+      }
+
+      // ── A reader's standards, for ies.org's "My Standards" (2026-10-29) ──
+      // Server-to-server: its own read-only bearer, 404 while unset (see
+      // workers/entitlements.ts).
+      if (path === '/api/entitlements' && request.method === 'GET') {
+        return withCors(await handleEntitlements(request, env, url));
       }
 
       // ── SureCart webhook (2026-10-26) ────────────────────────────────────

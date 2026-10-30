@@ -75,6 +75,11 @@ declare global {
     // value as AuthIES's COMP_GRANTS_API_SECRET. Unset: comp grants are only
     // recorded here, and staff apply the Vitrium half by hand (pre-10/16).
     COMP_GRANTS_API_SECRET?: string;
+    // Read-only bearer for GET /api/entitlements (2026-10-29) — the "My
+    // Standards" view on ies.org (IES HQ) lists a reader's standards with it.
+    // The same value goes in IES HQ's IESHQ_LENSY_ENTITLEMENTS_SECRET constant.
+    // Unset: the route answers 404.
+    ENTITLEMENTS_API_SECRET?: string;
     // ── SureCart purchases → Lighting Library access (2026-10-26) ──────────
     // The webhook endpoint's signing secret (SureCart → Developer → Webhooks).
     // Unset: POST /api/webhooks/surecart answers 503 and records nothing.
