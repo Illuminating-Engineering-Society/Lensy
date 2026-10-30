@@ -49,7 +49,7 @@ const TABLE_PAGE_RE = /^Table\s+[A-Z0-9]-?\d*/im;
 // Bibliography", and the un-numbered "Additional Reading" list TM-30-24 prints
 // beside its numbered REFERENCES — bibliography by another name (client,
 // 2026-09-28: 18 current standards indexed with no reference chunks).
-const REFERENCES_HEADING_RE =
+export const REFERENCES_HEADING_RE =
   /^(?:(?:\d+(?:\.\d+)*|Annex\s+[A-Z]|Appendix\s+[A-Z])[\s.:—-]*)?(?:Normative\s+|Informative\s+)?(?:References?(?:\s+List|\s+and\s+Bibliography)?|Reference\s+List|Bibliography(?:\s+and\s+References)?|(?:Additional|Further|Suggested)\s+Reading)\s*$/i;
 
 // Inside a References run, an entry may open with the bibliography's OWN

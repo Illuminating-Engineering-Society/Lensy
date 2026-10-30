@@ -189,6 +189,24 @@ describe('filter pills', () => {
     run('resetFilters()');
   });
 
+  it('switches the AI Guide off once the last AI search is spent, and back at the reset (10/29/26 #6)', () => {
+    run('resetFilters()');
+    const later = new Date(Date.now() + 3600e3).toISOString();
+    // Search #20 of 20: the last AI search is spent → off, with the cue.
+    run(`setSearchCapBanner({ used: 20, cap: 20, remaining: 0, aiDisabled: false, resetAt: '${later}' })`);
+    expect(run('filterState.guide')).toBe(false);
+    expect(elements.get('menu-guide-label').innerHTML).toContain('Daily limit reached');
+    expect(pills.get('guide').disabled).toBe(true);
+    // A new window (fewer used) → the reader's own setting comes back.
+    run('setSearchCapBanner({ used: 1, cap: 20, remaining: 19, aiDisabled: false })');
+    expect(run('filterState.guide')).toBe(true);
+    expect(elements.get('menu-guide-label').textContent).toBe('Disable AI Guide');
+    // A subscriber's response carries no cap: nothing changes.
+    run('setSearchCapBanner(null)');
+    expect(run('filterState.guide')).toBe(true);
+    run('resetFilters()');
+  });
+
   // The hero hint is gone (client wireframes, 2026-08-20: "Compare Versions
   // results: delete this text") — Compare Versions is armed and run from its own
   // floating window, so the state never outlives the search it belongs to.

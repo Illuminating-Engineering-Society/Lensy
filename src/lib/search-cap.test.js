@@ -91,7 +91,7 @@ describe('enforceDailySearchCap', () => {
   it('counts a search — reporting used/cap for the nudge — and expires the record when the window resets', async () => {
     const kv = kvStub({ count: 3, windowStartedAt: NOW - 1000 });
     const out = await enforceDailySearchCap({ SESSIONS: kv }, 'sub-1', 20, 'prod', NOW * 1000);
-    expect(out).toEqual({ allowed: true, used: 4, cap: 20 });
+    expect(out).toEqual({ allowed: true, used: 4, cap: 20, resetAt: NOW - 1000 + SEARCH_CAP_WINDOW_SECONDS });
     expect(kv.puts[0].value).toEqual({ count: 4, windowStartedAt: NOW - 1000 });
     expect(kv.puts[0].opts.expirationTtl).toBe(SEARCH_CAP_WINDOW_SECONDS - 1000);
   });

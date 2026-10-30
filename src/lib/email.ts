@@ -694,7 +694,7 @@ export interface CompAccessEmailContext {
 }
 
 /** The library the granted documents live in — where the reader signs in. */
-const LIBRARY_URL = 'https://lighting.ies.org/';
+const LIBRARY_URL = 'https://lighting.ies.org/portal/ies';
 const LENS_URL = 'https://lens.ies.org/';
 
 /**

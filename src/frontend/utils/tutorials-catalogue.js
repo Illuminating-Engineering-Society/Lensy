@@ -39,6 +39,14 @@
           guide: null,
         },
         {
+          // The welcome window's "See What's New" button (client 10/29/26 #5).
+          slug: 'whats-new',
+          title: 'What’s New in the Lighting Library with IES Lens?',
+          summary: null,
+          loom: 'https://www.loom.com/share/01c21f20b370438683ed84a5650d744a',
+          guide: null,
+        },
+        {
           // Not recorded yet (client, 2026-10-28). Title to be confirmed.
           slug: 'transition',
           title: 'Transition to the new Lighting Library',

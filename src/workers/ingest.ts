@@ -652,8 +652,8 @@ export async function runDocumentIngest(
   // is FULLY indexed (GET /api/admin/index-status): how many pages produced
   // at least one chunk, and the chunk-type mix (text/table/general_notes/
   // reference). pageCount comes from the parsing script (metadata.pageCount).
-  const coverage = buildCoverageStats(chunks);
   const pageCount = Number.isFinite(metadata.pageCount) ? metadata.pageCount : null;
+  const coverage = buildCoverageStats(chunks, pageCount);
 
   // In-body reference markers (DO31.4). An applications-only batch carries no
   // markers and must not wipe the map; a real document re-ingest REPLACES it,
@@ -848,7 +848,10 @@ export async function deleteVectorRange(index: VectorizeIndex, standardId: strin
  * Per-ingest coverage stats persisted to standards.coverage_json — the raw
  * material for the /api/admin/index-status full-indexing report.
  */
-function buildCoverageStats(chunks: IngestChunk[]): { pagesWithChunks: number; byType: Record<string, number> } {
+export function buildCoverageStats(
+  chunks: IngestChunk[],
+  pageCount: number | null = null,
+): { pagesWithChunks: number; byType: Record<string, number>; pagesWithoutChunks?: number[] } {
   const pages = new Set<number>();
   const byType: Record<string, number> = {};
   for (const c of chunks) {
@@ -856,7 +859,16 @@ function buildCoverageStats(chunks: IngestChunk[]): { pagesWithChunks: number; b
     const t = c.type || 'text';
     byType[t] = (byType[t] || 0) + 1;
   }
-  return { pagesWithChunks: pages.size, byType };
+  const stats: { pagesWithChunks: number; byType: Record<string, number>; pagesWithoutChunks?: number[] } =
+    { pagesWithChunks: pages.size, byType };
+  // Which pages produced nothing, so Index health can link them (10/29/26) —
+  // capped so a scanned document cannot bloat the row.
+  if (pageCount && pageCount > 0) {
+    const missing: number[] = [];
+    for (let p = 1; p <= pageCount && missing.length < 400; p++) if (!pages.has(p)) missing.push(p);
+    stats.pagesWithoutChunks = missing;
+  }
+  return stats;
 }
 
 /**

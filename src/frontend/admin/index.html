@@ -777,21 +777,23 @@
           </ul>
         </div>
 
-        <!-- Client 2026-10-28: tutorials play from our own server, at a URL
-             that never changes (workers/tutorials.ts). -->
+        <!-- Tutorials (client 2026-10-28/29): one permanent page each, playing
+             the Loom embed; staff edit the Loom link, title, summary and the
+             How-To guide here (workers/tutorials.ts). -->
         <div class="bg-white rounded-xl shadow p-5 md:col-span-2">
-          <h3 class="font-display font-bold mb-1">Tutorial videos</h3>
+          <h3 class="font-display font-bold mb-1">Tutorials</h3>
           <p class="text-sm text-gray-500 mb-3">
-            Each tutorial has a permanent page at <code class="font-mono text-xs">/tutorials/&lt;slug&gt;</code>.
-            Upload its MP4 here (download it from Loom first) and the page plays it from IES Lens instead of
-            the Loom embed. To update a video, upload the new file to the same tutorial: the URL stays the same.
-            A poster (JPEG) is optional — without one the first frame is shown. Titles, summaries and guides
-            are edited in <code class="font-mono text-xs">src/frontend/utils/tutorials-catalogue.js</code>.
+            Each tutorial has a permanent page at <code class="font-mono text-xs">/tutorials/&lt;slug&gt;</code> that
+            never changes. <strong>Edit</strong> to replace the Loom link (a re-recorded video), the title, the summary,
+            or the step-by-step guide — paste Loom's How-To Guide (Loom → Generate → How-To Guide → copy) straight into
+            the guide box; its images are copied to IES Lens when you save. New tutorials and their order are added
+            in <code class="font-mono text-xs">src/frontend/utils/tutorials-catalogue.js</code>.
+            <span class="text-gray-400">Optional: upload an MP4 to play a video from IES Lens instead of Loom.</span>
           </p>
           <div class="overflow-x-auto">
             <table class="w-full text-sm">
               <thead class="text-left text-xs uppercase tracking-wide text-gray-400 border-b border-gray-100">
-                <tr><th class="py-2 pr-3">Tutorial</th><th class="py-2 pr-3">Playing from</th><th class="py-2 pr-3">Poster</th><th class="py-2">Actions</th></tr>
+                <tr><th class="py-2 pr-3">Tutorial</th><th class="py-2 pr-3">Video</th><th class="py-2 pr-3">Guide</th><th class="py-2">Actions</th></tr>
               </thead>
               <tbody id="tv-rows"><tr><td colspan="4" class="py-3 text-gray-400">Loading…</td></tr></tbody>
             </table>
@@ -815,6 +817,47 @@
   </main>
 
   <!-- ── Invite modal (Users tab) ─────────────────────────────────────────── -->
+  <!-- ── Tutorial editor (Maintenance → Tutorials, client 10/29/26) ─────── -->
+  <div id="tutorial-modal" class="hidden fixed inset-0 z-50 flex items-start justify-center bg-black/40 modal-backdrop overflow-y-auto p-4">
+    <div class="bg-white rounded-xl shadow-xl w-full max-w-3xl my-10 fade-in">
+      <div class="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+        <h2 id="te-heading" class="font-display text-lg font-bold">Edit tutorial</h2>
+        <button onclick="closeTutorialEditor()" class="text-gray-400 hover:text-gray-600 text-xl leading-none">&times;</button>
+      </div>
+      <div class="px-6 py-5 space-y-4 text-sm">
+        <p class="text-xs text-gray-500">Leave a field empty to use the built-in value shown in grey.</p>
+        <label class="block">
+          <span class="font-medium">Loom link</span>
+          <input id="te-loom" type="url" class="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2" autocomplete="off">
+          <span class="text-xs text-gray-400">A share link (loom.com/share/…). Use it when a video is re-recorded as a new Loom.</span>
+        </label>
+        <label class="block">
+          <span class="font-medium">Title</span>
+          <input id="te-title" type="text" maxlength="200" class="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2">
+        </label>
+        <label class="block">
+          <span class="font-medium">Summary</span>
+          <textarea id="te-summary" rows="3" maxlength="2000" class="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2"></textarea>
+        </label>
+        <div>
+          <span class="font-medium">Step-by-step guide</span>
+          <p id="te-guide-note" class="text-xs text-gray-400"></p>
+          <div id="te-guide" contenteditable="true" onpaste="onGuidePaste(event)"
+               class="mt-1 min-h-[220px] max-h-[50vh] overflow-y-auto rounded-lg border border-gray-300 px-3 py-2 prose-sm [&_img]:max-w-full [&_img]:rounded [&_ul]:list-disc [&_ul]:ml-5 [&_ol]:list-decimal [&_ol]:ml-5 [&_h2]:font-bold [&_h3]:font-bold [&_h4]:font-semibold"></div>
+          <span class="text-xs text-gray-400">Paste Loom's How-To Guide (or any formatted text with images). Formatting is tidied and images are copied to IES Lens on save.</span>
+        </div>
+        <p id="te-status" class="text-sm text-gray-500"></p>
+      </div>
+      <div class="px-6 py-4 border-t border-gray-200 flex items-center justify-between gap-3">
+        <button type="button" onclick="saveTutorialEdit(true)" class="text-sm text-red-600 hover:underline">Revert to built-in</button>
+        <div class="flex gap-2">
+          <button type="button" onclick="closeTutorialEditor()" class="px-4 py-2 text-sm rounded-lg border border-gray-300 hover:bg-gray-50">Cancel</button>
+          <button type="button" id="te-save" onclick="saveTutorialEdit()" class="px-4 py-2 text-sm rounded-lg bg-brand-primary hover:bg-brand-primary-dark text-white font-medium">Save</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <div id="invite-modal" class="hidden fixed inset-0 z-50 flex items-start justify-center bg-black/40 modal-backdrop overflow-y-auto p-4">
     <div class="bg-white rounded-xl shadow-xl w-full max-w-lg my-10 fade-in">
       <div class="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
@@ -2362,8 +2405,15 @@
               : `<span class="text-red-600 text-xs font-medium" title="${esc((s.vectorSpotCheck.missing || []).join(', '))}">✗ ${s.vectorSpotCheck.found}/${s.vectorSpotCheck.probed}</span>`;
           }
         }
+        // Every warning in full, and the pages that produced no text as Library
+        // links — one click shows whether a page is a figure/scan (fine) or
+        // ordinary text (a parse problem). Dan, 10/29/26.
+        const pageLinks = (s.pagesWithoutChunks || []).length && s.libraryUrl && (s.pageCoveragePct ?? 100) < 60
+          ? `<div class="mt-1 flex flex-wrap gap-1">${s.pagesWithoutChunks.slice(0, 60).map(p =>
+              `<a href="${esc(s.libraryUrl.split('#')[0])}#page=${p}" target="_blank" rel="noopener" class="px-1.5 rounded border border-amber-200 text-[11px] text-amber-800 hover:bg-amber-50">p. ${p}</a>`).join('')}${s.pagesWithoutChunks.length > 60 ? `<span class="text-[11px] text-gray-400">+${s.pagesWithoutChunks.length - 60} more</span>` : ''}</div>`
+          : '';
         const warn = (s.warnings || []).length
-          ? `<span class="text-xs text-amber-700" title="${esc(s.warnings.join('\n'))}">${esc(s.warnings[0])}${s.warnings.length > 1 ? ` (+${s.warnings.length - 1})` : ''}</span>`
+          ? `<ul class="text-xs text-amber-700 space-y-1 max-w-md">${s.warnings.map(w => `<li>${esc(w)}</li>`).join('')}</ul>${pageLinks}`
           : '<span class="text-gray-300">—</span>';
         return `<tr class="border-b border-gray-100 hover:bg-gray-50">
           <td class="px-4 py-2.5 font-mono text-xs whitespace-nowrap">${esc(s.id)}</td>
@@ -2443,34 +2493,145 @@
     const TUTORIAL_PART_SIZE = 32 * 1024 * 1024; // R2 parts: ≥5 MB except the last
     let tutorialUpload = null; // { slug, kind } while the file picker is open
 
+    let tutorialOverrides = {};   // slug → staff edits (GET /api/tutorials/media)
+
+    function tutorialItems() {
+      return (window.LENS_TUTORIALS || []).flatMap(s => s.items || []);
+    }
+
     async function loadTutorialMedia() {
       const rows = document.getElementById('tv-rows');
-      const items = (window.LENS_TUTORIALS || []).flatMap(s => s.items || []);
+      const items = tutorialItems();
       let media = {};
       try {
         const res = await fetch('/api/tutorials/media', { cache: 'no-store' });
-        media = (await res.json()).media || {};
-      } catch { /* shown as nothing uploaded */ }
+        const data = await res.json();
+        media = data.media || {};
+        tutorialOverrides = data.overrides || {};
+      } catch { /* shown as nothing uploaded, nothing edited */ }
       rows.innerHTML = items.map(it => {
         const m = media[it.slug] || {};
-        const source = m.video
-          ? `<span class="text-green-700 font-medium">IES Lens</span> <span class="text-gray-400">· ${(m.video.size / 1024 / 1024).toFixed(1)} MB · ${esc(new Date(m.video.uploaded).toLocaleDateString())}</span>`
-          : it.loom ? '<span class="text-amber-700">Loom (fallback)</span>' : '<span class="text-gray-400">Not recorded</span>';
+        const o = tutorialOverrides[it.slug] || {};
+        const title = o.title || it.title;
+        const loom = o.loom || it.loom;
+        const video = m.video
+          ? `<span class="text-green-700 font-medium">IES Lens MP4</span> <span class="text-gray-400">· ${(m.video.size / 1024 / 1024).toFixed(1)} MB</span>`
+          : loom ? `<span class="text-gray-700">Loom${o.loom ? ' <span class="text-xs text-amber-700">(link edited)</span>' : ''}</span>`
+            : '<span class="text-gray-400">Not recorded</span>';
+        const guide = o.guideHtml
+          ? '<span class="text-gray-700">Pasted <span class="text-xs text-amber-700">(edited)</span></span>'
+          : it.guide ? '<span class="text-gray-700">Built in</span>' : '<span class="text-gray-400">None</span>';
+        const edited = o.updatedAt ? `<div class="text-[11px] text-gray-400">Edited ${esc(day(o.updatedAt))}${o.updatedBy ? ` by ${esc(o.updatedBy)}` : ''}</div>` : '';
         const btn = (label, onclick, cls = 'text-brand-secondary') =>
           `<button type="button" onclick="${onclick}" class="${cls} hover:underline mr-3">${label}</button>`;
         return `<tr class="border-b border-gray-50 align-top">
-          <td class="py-2 pr-3"><a href="/tutorials/${esc(it.slug)}" target="_blank" rel="noopener" class="text-brand-secondary hover:underline">${esc(it.title)}</a>
-            <div class="font-mono text-xs text-gray-400">/tutorials/${esc(it.slug)}</div></td>
-          <td class="py-2 pr-3">${source}</td>
-          <td class="py-2 pr-3">${m.poster ? '✓' : '<span class="text-gray-400">—</span>'}</td>
+          <td class="py-2 pr-3"><a href="/tutorials/${esc(it.slug)}" target="_blank" rel="noopener" class="text-brand-secondary hover:underline">${esc(title)}</a>
+            <div class="font-mono text-xs text-gray-400">/tutorials/${esc(it.slug)}</div>${edited}</td>
+          <td class="py-2 pr-3">${video}</td>
+          <td class="py-2 pr-3">${guide}</td>
           <td class="py-2 whitespace-nowrap">
-            ${btn(m.video ? 'Replace video' : 'Upload video', `pickTutorialFile('${esc(it.slug)}','video')`)}
-            ${btn(m.poster ? 'Replace poster' : 'Upload poster', `pickTutorialFile('${esc(it.slug)}','poster')`)}
-            ${m.video ? btn('Remove video', `removeTutorialFile('${esc(it.slug)}','video')`, 'text-red-600') : ''}
-            ${m.poster ? btn('Remove poster', `removeTutorialFile('${esc(it.slug)}','poster')`, 'text-red-600') : ''}
+            ${btn('Edit', `openTutorialEditor('${esc(it.slug)}')`, 'font-semibold text-brand-secondary')}
+            <span class="text-xs">
+              ${btn(m.video ? 'Replace MP4' : 'Upload MP4', `pickTutorialFile('${esc(it.slug)}','video')`, 'text-gray-500')}
+              ${m.video ? btn(m.poster ? 'Replace poster' : 'Upload poster', `pickTutorialFile('${esc(it.slug)}','poster')`, 'text-gray-500') : ''}
+              ${m.video ? btn('Remove MP4', `removeTutorialFile('${esc(it.slug)}','video')`, 'text-red-600') : ''}
+            </span>
           </td>
         </tr>`;
       }).join('') || '<tr><td colspan="4" class="py-3 text-gray-400">No tutorials in the catalogue.</td></tr>';
+    }
+
+    // ── The tutorial editor (client 10/29/26) ─────────────────────────────
+    // "Loom Link: in case we record a complete replacement video; How-To
+    //  Guides: copy/paste rich text with images into a field". The guide box
+    // is contenteditable so a paste keeps its headings, lists, bold and
+    // images; the Worker sanitizes it and copies the images on save.
+    let editingTutorial = null;
+
+    function openTutorialEditor(slug) {
+      const it = tutorialItems().find(t => t.slug === slug);
+      if (!it) return;
+      const o = tutorialOverrides[slug] || {};
+      editingTutorial = slug;
+      document.getElementById('te-heading').textContent = `Edit tutorial — /tutorials/${slug}`;
+      document.getElementById('te-loom').value = o.loom || '';
+      document.getElementById('te-loom').placeholder = it.loom || 'https://www.loom.com/share/…';
+      document.getElementById('te-title').value = o.title || '';
+      document.getElementById('te-title').placeholder = it.title || '';
+      document.getElementById('te-summary').value = o.summary || '';
+      document.getElementById('te-summary').placeholder = it.summary || 'No summary';
+      document.getElementById('te-guide').innerHTML = o.guideHtml || '';
+      document.getElementById('te-guide-note').textContent = o.guideHtml
+        ? 'Showing the pasted guide. Clear the box to go back to the built-in one.'
+        : (it.guide ? 'Empty = the built-in guide is shown. Paste a guide here to replace it.' : 'No guide yet. Paste one here.');
+      document.getElementById('te-status').textContent = '';
+      document.getElementById('tutorial-modal').classList.remove('hidden');
+    }
+
+    function closeTutorialEditor() {
+      editingTutorial = null;
+      document.getElementById('tutorial-modal').classList.add('hidden');
+    }
+
+    async function saveTutorialEdit(revert = false) {
+      if (!editingTutorial) return;
+      const slug = editingTutorial;
+      if (revert && !confirm(`Go back to the catalogue's Loom link, title, summary and guide for /tutorials/${slug}?`)) return;
+      const status = document.getElementById('te-status');
+      const body = revert
+        ? { loom: null, title: null, summary: null, guideHtml: null }
+        : {
+            loom: document.getElementById('te-loom').value.trim(),
+            title: document.getElementById('te-title').value.trim(),
+            summary: document.getElementById('te-summary').value.trim(),
+            guideHtml: document.getElementById('te-guide').innerHTML,
+          };
+      status.textContent = 'Saving… (copying the guide’s images can take a few seconds)';
+      const btn = document.getElementById('te-save');
+      btn.disabled = true;
+      try {
+        const { status: code, data } = await api(`/api/admin/tutorials/${encodeURIComponent(slug)}`,
+          { method: 'PUT', body: JSON.stringify(body) });
+        if (code >= 400) { status.innerHTML = `<span class="text-red-600">${esc(data.error || `Failed (${code})`)}</span>`; return; }
+        const dropped = data.imagesDropped
+          ? ` ${data.imagesDropped} image(s) could not be copied and were left out — paste them again or save them as files and paste those.` : '';
+        document.getElementById('tv-status').innerHTML = `<span class="text-green-700">✓ Saved /tutorials/${esc(slug)}${data.imagesCopied ? ` — ${data.imagesCopied} image(s) copied` : ''}.</span>${dropped ? `<span class="text-amber-700">${esc(dropped)}</span>` : ''}`;
+        closeTutorialEditor();
+        loadTutorialMedia();
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    // A screenshot pasted on its own, or Word's images (which arrive as
+    // file:// links the browser cannot load), become data: URIs here; the
+    // Worker copies those into R2 on save like any other image.
+    function fileToDataUrl(file) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+    }
+
+    async function onGuidePaste(e) {
+      const cd = e.clipboardData;
+      if (!cd) return;
+      const images = [...cd.files].filter(f => /^image\//.test(f.type));
+      const html = cd.getData('text/html');
+      if (!images.length) return;                      // ordinary paste: let the browser do it
+      if (html && !/<img\b[^>]*src=["']file:/i.test(html)) return;   // images already linked
+      e.preventDefault();
+      const urls = await Promise.all(images.map(fileToDataUrl));
+      let out;
+      if (html) {
+        let i = 0;
+        out = html.replace(/(<img\b[^>]*src=["'])file:[^"']*(["'])/gi, (m, a, b) => (i < urls.length ? `${a}${urls[i++]}${b}` : m));
+      } else {
+        out = urls.map(u => `<p><img src="${u}" alt=""></p>`).join('');
+      }
+      document.execCommand('insertHTML', false, out);
     }
 
     function pickTutorialFile(slug, kind) {

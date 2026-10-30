@@ -30,7 +30,10 @@ import { handleAdminAccessMode, handleAdminScanOrphans, handleAdminEnumerateIds,
 import { handleLibraryDocumentLookup, handleDeviceResetRequest } from './library-support';
 import { handleAdminCompAccess, handleAdminCompAccessCsv } from './comp-access';
 import { handleIngestJobs, serveCover, handleAdminStandards } from './staff-ingest';
-import { serveTutorialMedia, handleTutorialManifest, handleAdminTutorialDelete, tutorialPageSlug } from './tutorials';
+import {
+  serveTutorialMedia, handleTutorialManifest, handleAdminTutorialDelete, tutorialPageSlug,
+  handleAdminTutorialUpdate, serveGuideAsset,
+} from './tutorials';
 import { handleEvent } from './events';
 import { handlePreferences } from './preferences';
 import { handleAdminUsers } from './users';
@@ -159,8 +162,15 @@ export default {
       if (path.startsWith('/api/tutorials/media/') && (request.method === 'GET' || request.method === 'HEAD')) {
         return await serveTutorialMedia(request, env, path.slice('/api/tutorials/media/'.length));
       }
+      if (path.startsWith('/api/tutorials/guide-assets/') && request.method === 'GET') {
+        return await serveGuideAsset(env, path.slice('/api/tutorials/guide-assets/'.length));
+      }
       if (path.startsWith('/api/admin/tutorials/') && request.method === 'DELETE') {
         return withCors(await handleAdminTutorialDelete(request, env, path.slice('/api/admin/tutorials/'.length)));
+      }
+      // Loom link / title / summary / How-To guide edits (client 10/29/26).
+      if (path.startsWith('/api/admin/tutorials/') && request.method === 'PUT') {
+        return withCors(await handleAdminTutorialUpdate(request, env, path.slice('/api/admin/tutorials/'.length)));
       }
 
       // ── Ingest (internal/admin only) ─────────────────────────────────────

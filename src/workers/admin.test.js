@@ -289,3 +289,51 @@ describe('GET /api/admin/index-status probes the illuminance rows\' own vectors'
     expect(rp6.warnings.some(w => /Illuminance rows/.test(w))).toBe(false);
   });
 });
+
+// Dan, 10/29/26: "What's the best way for me to evaluate any 'reference chunk'
+// and 'only % produced chunks' index warnings?" — the warnings now evaluate
+// themselves as far as the data allows.
+import { findReferencesHeading, referencesWarning, compactPageList, coverageWarning } from './admin';
+import { buildCoverageStats } from './ingest';
+
+describe('index-health warnings staff can act on', () => {
+  const outline = entries => JSON.stringify(entries);
+
+  it('no References heading in the outline → no warning at all', () => {
+    const h = findReferencesHeading(outline([{ number: '1.0', title: 'Scope', page: 3 }]));
+    expect(h).toBeNull();
+    expect(referencesWarning(h)).toBeNull();
+  });
+
+  it('a References heading with nothing indexed → names it and its page', () => {
+    const h = findReferencesHeading(outline([
+      { number: '1.0', title: 'Scope', page: 3 },
+      { number: '10.0', title: 'References', page: 54 },
+    ]));
+    expect(h).toEqual({ label: '10.0 References', page: 54 });
+    expect(referencesWarning(h)).toContain('"10.0 References" (p. 54)');
+  });
+
+  it('recognizes Annex bibliographies too', () => {
+    expect(findReferencesHeading(outline([{ number: 'Annex C', title: 'Bibliography', page: 80 }])))
+      .toEqual({ label: 'Annex C Bibliography', page: 80 });
+  });
+
+  it('no outline → the manual check, spelled out', () => {
+    expect(findReferencesHeading(null)).toBeUndefined();
+    expect(referencesWarning(undefined)).toMatch(/table of contents/);
+  });
+
+  it('lists the pages that produced no text, compactly', () => {
+    expect(compactPageList([12, 1, 2, 3, 4, 31, 30, 32])).toBe('1–4, 12, 30–32');
+    expect(coverageWarning(40, [1, 2, 5])).toContain('No text on pages 1–2, 5');
+    expect(coverageWarning(40, null)).toMatch(/re-ingest to record which pages/);
+  });
+
+  it('ingest records the pages without chunks', () => {
+    const stats = buildCoverageStats([{ pageNumber: 2, type: 'text' }, { pageNumber: 4, type: 'reference' }], 5);
+    expect(stats.pagesWithChunks).toBe(2);
+    expect(stats.pagesWithoutChunks).toEqual([1, 3, 5]);
+    expect(stats.byType).toEqual({ text: 1, reference: 1 });
+  });
+});

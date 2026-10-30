@@ -1988,6 +1988,55 @@ lens.ies.org, not WordPress: no WP access was needed and the page was already ou
   Transition video (slug `transition`, title a placeholder), and How-To Guides
   for the overview and the two membership videos. Tests:
   `src/workers/tutorials.test.js`.
+- **10/29: Loom stays the player; staff edit tutorials in /admin.** Dan: "keep
+  them all as Loom embeds" (speed, captions, caption language) — MP4 upload is
+  now an optional, secondary action. Maintenance → **Tutorials → Edit** sets a
+  tutorial's Loom link, title, summary and How-To guide (paste Loom's guide or
+  any rich text). Stored in D1 `tutorial_overrides` (migration **0026**, NULL =
+  catalogue value); served with the media manifest (`overrides`); PUT
+  `/api/admin/tutorials/<slug>`. The guide is sanitized
+  (`src/lib/tutorial-guides.js`, the definitions allowlist generalized as
+  `sanitizeAllowlistedHtml`) and every image — Loom CDN link, data: screenshot,
+  Word paste — is copied to R2 `tutorials/guides/<slug>/<sha256>.<ext>` and
+  served content-addressed from `/api/tutorials/guide-assets/…`, so a guide
+  never depends on Loom's expiring image links. Uncopyable images are dropped
+  and counted. Slugs, sections and order still live in the catalogue file.
+
+### The 10/29/26 Teams notes: Vitrium loops, portal home, cap UX, index warnings (2026-10-29)
+
+`SEARCH_CACHE_SCHEMA` unchanged. Migration **0026** (tutorials, above).
+
+- **The Library is `https://lighting.ies.org/portal/ies`, never the bare root**
+  (#6, #9): the root answers "WebViewer Server — You must provide a valid ID".
+  Every Lens link (menus, logos, error page, emails, handbook fallback) names
+  the portal, and `auth-gate.js` rewrites any root link still in circulation to
+  the portal through the AuthIES hop.
+- **Endless "Opening your document…" loops (#4, #7) are AuthIES-side** — branch
+  `fix/vitrium-denied-loop-watermark` there: the hop pre-checks the reader at
+  portal level and a recent viewer refusal (D1 auth_log), and sends a refused
+  reader to `lens.ies.org/library-error.html?message=… (w29)` instead of
+  minting again. Same branch: `WatermarkTokens` `_iesId_` / `_fullName_` /
+  `_accessExpires_` on every authenticate (#1/#2 — Vitrium's own Users-list
+  Custom Field/Expiry cannot be set in External Services mode; IES registers
+  the tokens in Integration Settings). #3 (member sees "no access to any
+  content") is unconfirmed: AuthIES lists the member folder's id; whether
+  Vitrium 3.5 honours `FolderIds` needs the auth_log query in AuthIES CLAUDE.md.
+- **"See What's New"** → `/tutorials/whats-new` (Loom 01c21f…), every version
+  of the welcome window (#5).
+- **Daily cap (#6):** the notice is the FIRST thing in the results (above the
+  green Subscribe box). From the moment the LAST AI search is spent (search
+  #20, `remaining === 0` — the server now sends `resetAt` then too) until the
+  window resets, the menu's AI Guide switch is off, disabled and reads "Daily
+  limit reached" (`applyGuideCap`); never saved to the account, restored to
+  the saved preference at the reset; remembered across reloads in localStorage.
+- **Index-health warnings explain themselves** (Dan: "best way to evaluate
+  'reference chunk' and 'only % produced chunks'"): no reference chunks is a
+  warning only when the stored outline HAS a References/Bibliography heading
+  (named with its page — that is a reader bug for S-FX, not a re-ingest);
+  low coverage lists the textless pages (`coverage_json.pagesWithoutChunks`,
+  recorded from the next ingest on) as Library page links in the dashboard.
+- **Owed by IES:** `261028_Tutorials.pdf` (4 new tutorials + links) and
+  `IES Lensy Logo Angled.png` (#8, menu "Search with IES Lens" icon).
 
 ### The 10/22/26 Teams notes: notes open by default, deprecate without a successor (2026-10-22)
 

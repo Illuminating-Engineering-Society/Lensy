@@ -64,6 +64,19 @@
     .guide .label-closed { display: inline; } .guide .label-open { display: none; }
     .guide[open] .label-closed { display: none; } .guide[open] .label-open { display: inline; }
     .guide ul ul { list-style: circle; }
+    /* A guide pasted in /admin (Loom How-To Guide, Word…): its own markup, our type. */
+    .guide-html { color: #374151; line-height: 1.6; }
+    .guide-html h2 { font-size: 1.05rem; font-weight: 700; color: #111827; margin: 1.25rem 0 .5rem; }
+    .guide-html h3, .guide-html h4 { font-size: .95rem; font-weight: 700; color: #111827; margin: 1rem 0 .4rem; }
+    .guide-html p { margin: .5rem 0; }
+    .guide-html ul { list-style: disc; margin: .4rem 0 .4rem 1.25rem; }
+    .guide-html ol { list-style: decimal; margin: .4rem 0 .4rem 1.25rem; }
+    .guide-html li { margin: .15rem 0; }
+    .guide-html a { color: #D95D2B; text-decoration: underline; }
+    .guide-html img { max-width: 100%; height: auto; border-radius: .5rem; border: 1px solid #e5e7eb; margin: .75rem 0; }
+    .guide-html table { border-collapse: collapse; margin: .75rem 0; }
+    .guide-html th, .guide-html td { border: 1px solid #e5e7eb; padding: .25rem .5rem; }
+    .guide-html > :first-child { margin-top: 0; }
   </style>
 </head>
 <body class="bg-lens-page min-h-screen text-ink">
@@ -80,7 +93,7 @@
           </svg>
           <span class="font-medium">Search with IES Lens</span>
         </a>
-        <a href="https://lighting.ies.org" target="_blank" rel="noopener" class="nav-item flex items-center gap-2 px-3 py-1.5 rounded-md transition" title="Open the IES Lighting Library in a new browser tab">
+        <a href="https://lighting.ies.org/portal/ies" target="_blank" rel="noopener" class="nav-item flex items-center gap-2 px-3 py-1.5 rounded-md transition" title="Open the IES Lighting Library in a new browser tab">
           <span class="font-medium hidden sm:inline">Browse Lighting Library</span>
         </a>
       </nav>
@@ -179,6 +192,20 @@
       return m ? Number(m[1]) * 60 + Number(m[2]) : null;
     }
 
+    /** Staff edits from /admin (client 10/29/26) over the catalogue's values. */
+    function applyOverrides(overrides) {
+      for (const section of TUTORIALS) {
+        for (const item of section.items) {
+          const o = overrides[item.slug];
+          if (!o) continue;
+          if (o.loom) item.loom = o.loom;
+          if (o.title) item.title = o.title;
+          if (o.summary) item.summary = o.summary;
+          if (o.guideHtml) item.guideHtml = o.guideHtml;
+        }
+      }
+    }
+
     function hosted(item) {
       return (MEDIA[item.slug] && MEDIA[item.slug].video) || null;
     }
@@ -218,6 +245,10 @@
 
     /** The guide drop-down below the video. Timestamps seek the hosted player. */
     function guideHtml(item, { open }) {
+      // A guide staff pasted in /admin (client 10/29/26) wins over the
+      // catalogue's. It arrives sanitized by the Worker, images already copied
+      // to our own storage, so it is rendered as given.
+      if (item.guideHtml) return guideDetails(`<div class="guide-html">${item.guideHtml}</div>`, open);
       if (!item.guide || !Array.isArray(item.guide.steps) || item.guide.steps.length === 0) return '';
       const seekable = !!hosted(item);
       const steps = item.guide.steps.map((s, i) => {
@@ -232,6 +263,12 @@
           <ul class="list-disc ml-5 mt-1 space-y-0.5 text-gray-700">${(s.points || []).map(pointHtml).join('')}</ul>
         </li>`;
       }).join('');
+      return guideDetails(`
+          <h3 class="text-base font-bold text-gray-900 mb-3">${inline(item.guide.title)}</h3>
+          <ol class="space-y-4">${steps}</ol>`, open);
+    }
+
+    function guideDetails(body, open) {
       return `<details class="guide mt-4" ${open ? 'open' : ''}>
         <summary class="flex items-center justify-between gap-3 cursor-pointer select-none border border-gray-200 rounded-lg px-3 py-2 hover:bg-gray-50">
           <span class="flex items-center gap-2 text-sm font-bold text-gray-900">
@@ -240,10 +277,7 @@
           </span>
           <span class="text-xs text-gray-500"><span class="label-closed">Show</span><span class="label-open">Hide</span></span>
         </summary>
-        <div class="pt-4 px-1 text-sm">
-          <h3 class="text-base font-bold text-gray-900 mb-3">${inline(item.guide.title)}</h3>
-          <ol class="space-y-4">${steps}</ol>
-        </div>
+        <div class="pt-4 px-1 text-sm">${body}</div>
       </details>`;
     }
 
@@ -330,7 +364,11 @@
     async function boot() {
       try {
         const res = await fetch('/api/tutorials/media');
-        if (res.ok) MEDIA = (await res.json()).media || {};
+        if (res.ok) {
+          const data = await res.json();
+          MEDIA = data.media || {};
+          applyOverrides(data.overrides || {});
+        }
       } catch { /* nothing hosted → every tutorial falls back to Loom */ }
       const m = /^\/tutorials\/([a-z0-9-]+)\/?$/.exec(location.pathname);
       if (m) renderSingle(m[1]);

@@ -338,7 +338,7 @@
           </button>
           <div id="library-tools-menu"
                class="hidden absolute right-0 top-[calc(100%+8px)] w-72 bg-white text-ink rounded-xl shadow-xl border border-gray-200 py-1 z-50 text-left">
-            <a href="https://lighting.ies.org" target="_blank" rel="noopener" id="nav-library" class="menu-item"
+            <a href="https://lighting.ies.org/portal/ies" target="_blank" rel="noopener" id="nav-library" class="menu-item"
                title="Open your IES Lighting Library in a new browser tab">
               <img src="/favicon-192.png" alt="" aria-hidden="true" class="w-4 h-4 shrink-0" width="16" height="16"/>
               Browse Lighting Library
@@ -561,7 +561,7 @@
           Welcome to IES Lens! Visit the
           <a href="/tutorials" target="_blank" rel="noopener" class="font-bold underline underline-offset-2 text-ink hover:no-underline">Tutorials</a>
           to learn about its features or browse standards in the
-          <a href="https://lighting.ies.org/" target="_blank" rel="noopener" class="font-bold underline underline-offset-2 text-ink hover:no-underline">Lighting Library</a>.
+          <a href="https://lighting.ies.org/portal/ies" target="_blank" rel="noopener" class="font-bold underline underline-offset-2 text-ink hover:no-underline">Lighting Library</a>.
         </p>
 
         <div id="advanced-search-panel" class="hidden mt-3">
@@ -919,6 +919,19 @@
     <!-- Results Area -->
     <section id="results-section" class="hidden fade-in">
 
+      <!-- Daily AI-search trial (client DO999). Two states, both in the
+           client's own words: a warning with five left, and the notice that the
+           trial is spent — the latter on every search "until 24hr reset".
+           setSearchCapBanner paints whichever applies. FIRST in the results,
+           right under the search box and above the Subscribe box (client
+           10/29/26 #6). -->
+      <div id="search-cap-banner" class="hidden mb-4 rounded-lg border px-4 py-2.5 flex gap-3 items-center no-print" role="status">
+        <svg id="search-cap-icon" class="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="9"/><path stroke-linecap="round" d="M12 7v5l3 2"/>
+        </svg>
+        <p id="search-cap-text" class="text-xs leading-relaxed"></p>
+      </div>
+
       <!-- Non-subscriber upgrade banner, post-search position (client 10/09/26
            #1B1: "move that to top of page (immediately above AI Guide)"). Same
            copy as #lite-banner above the footer, which hides while this shows. -->
@@ -1023,17 +1036,6 @@
       <!-- AHJ compliance notice for a search with no AI Guide (client DO084).
            The Guide card carries its own copy; this is the one a reader sees
            when they have the Guide switched off. -->
-      <!-- Daily AI-search trial (client DO999). Two states, both in the
-           client's own words: a warning with five left, and the notice that the
-           trial is spent — the latter on every search "until 24hr reset".
-           setSearchCapBanner paints whichever applies. -->
-      <div id="search-cap-banner" class="hidden mb-4 rounded-lg border px-4 py-2.5 flex gap-3 items-center no-print" role="status">
-        <svg id="search-cap-icon" class="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-          <circle cx="12" cy="12" r="9"/><path stroke-linecap="round" d="M12 7v5l3 2"/>
-        </svg>
-        <p id="search-cap-text" class="text-xs leading-relaxed"></p>
-      </div>
-
       <div id="authority-banner" class="hidden mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 flex gap-3 no-print" role="status">
         <svg class="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
           <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/>
@@ -1109,7 +1111,7 @@
       <!-- Non-subscribing IES Members only (client 10/16/26 #9). -->
       <p id="welcome-member" class="hidden text-base text-ink leading-relaxed mb-3">
         Thank you for being an IES Member! You can search the Lighting Science Collection here in IES Lens
-        or browse them in the <a href="https://lighting.ies.org/" target="_blank" rel="noopener" class="underline font-semibold hover:no-underline">Lighting Library</a>.
+        or browse them in the <a href="https://lighting.ies.org/portal/ies" target="_blank" rel="noopener" class="underline font-semibold hover:no-underline">Lighting Library</a>.
         <a href="https://ies.org/products/lighting-library/" target="_blank" rel="noopener" class="underline font-bold hover:no-underline">Subscribe</a>
         to unlock full access to IES Lens and all IES standards.
       </p>
@@ -1554,7 +1556,8 @@
     // step-by-step documents are produced). If IES prefers a WordPress page on
     // ies.org, swap the URL — nothing else references it.
     const WELCOME_LINKS = [
-      { label: "See What's New", url: null },
+      // 10/29/26 #5, every version of the window (member, guest, subscriber).
+      { label: "See What's New", url: '/tutorials/whats-new' },
       // 10/05: the client's draft overview ("Overview: draft at …"). Since
       // 2026-10-28 its permanent self-hosted page (tutorials-catalogue.js).
       { label: 'Video Overview', url: '/tutorials/overview' },
@@ -1659,7 +1662,44 @@
     // "The Lighting Library" department), never "contact Standards@ies.org".
     const SUPPORT_FORM_URL = 'https://ies.org/contact-us/';
 
+    // ── The AI Guide switch at the daily cap (client 10/29/26 #6) ────────────
+    // "On AI-enabled search #20 and above: automatically toggle off the 'AI
+    //  Guide' in user menu and add a visual clue there." Off from the moment
+    // the LAST AI search is spent until the window resets, then back to the
+    // reader's own saved preference — the switch-off is never saved to the
+    // account. The end time is remembered in this browser so a reload during
+    // the lockout does not flash the switch back on.
+    const GUIDE_CAP_KEY = 'lensy.guideCapUntil';
+    var guideCapUntil = (() => {
+      try { return Number(localStorage.getItem(GUIDE_CAP_KEY)) || 0; } catch { return 0; }
+    })();
+
+    function guideCapActive() { return guideCapUntil > Date.now(); }
+
+    function applyGuideCap(cap) {
+      if (!cap) return;   // no metering on this response — nothing to decide
+      const spent = cap.aiDisabled || (cap.cap > 0 && cap.remaining === 0);
+      if (spent) {
+        const until = Date.parse(cap.resetAt || '');
+        guideCapUntil = Number.isFinite(until) ? until : Date.now() + 24 * 3600 * 1000;
+        try { localStorage.setItem(GUIDE_CAP_KEY, String(guideCapUntil)); } catch { /* private mode */ }
+        filterState.guide = false;
+        renderFilterPills();
+      } else if (guideCapUntil) {
+        releaseGuideCap();
+      }
+    }
+
+    function releaseGuideCap() {
+      guideCapUntil = 0;
+      try { localStorage.removeItem(GUIDE_CAP_KEY); } catch { /* private mode */ }
+      const saved = readGuideMirror();
+      filterState.guide = saved === null ? DEFAULT_FILTER_STATE.guide : saved;
+      renderFilterPills();
+    }
+
     function setSearchCapBanner(cap) {
+      applyGuideCap(cap);
       const banner = document.getElementById('search-cap-banner');
       if (!banner) return;
       const spent = !!(cap && cap.aiDisabled);
@@ -1766,8 +1806,18 @@
       // The account menu names the ACTION, not the state (wireframe: "Disable
       // AI Guide (or) Enable AI Guide").
       const guideLabel = document.getElementById('menu-guide-label');
-      if (guideLabel) guideLabel.textContent = filterState.guide ? 'Disable AI Guide' : 'Enable AI Guide';
-      paintGuideSwitch(document.getElementById('menu-guide-switch'), !!filterState.guide);
+      const capped = guideCapActive();
+      if (guideLabel) {
+        if (capped) guideLabel.innerHTML = 'AI Guide <span class="ml-1 text-[11px] font-semibold text-orange-600">Daily limit reached</span>';
+        else guideLabel.textContent = filterState.guide ? 'Disable AI Guide' : 'Enable AI Guide';
+      }
+      paintGuideSwitch(document.getElementById('menu-guide-switch'), !!filterState.guide && !capped);
+      if (capped) {
+        for (const pill of pillsFor('guide')) {
+          pill.disabled = true;
+          pill.title = 'You have used today’s AI-assisted searches. The AI Guide comes back on automatically after the daily reset.';
+        }
+      }
       paintUnitsToggle();
 
       // Non-Subscriber: the tools a subscription unlocks stay visible, locked
@@ -1868,6 +1918,8 @@
     function applyGuidePreference(value) {
       if (typeof value !== 'boolean') return;
       if (lockedForTier('guide')) return;   // a tier that cannot use it never stores one
+      // Past today's AI searches the switch stays off until the reset (10/29/26 #6).
+      if (guideCapActive()) { filterState.guide = false; renderFilterPills(); return; }
       filterState.guide = value;
       renderFilterPills();
     }
@@ -3147,6 +3199,8 @@
       // The display selection this search STARTED with, so the sidebar's Apply
       // only logs filter_applied when the reader actually changed something.
       lastDisplayFiltersKey = displayFiltersKey();
+      // The daily window reset while the page stayed open: the Guide comes back.
+      if (guideCapUntil && !guideCapActive()) releaseGuideCap();
       const includeAI = !!filterState.guide;
 
       // ── Compare Versions is a one-shot tool (client DO79) ──────────────────
@@ -6435,6 +6489,7 @@
     // paint (client DO80) — the server's copy arrives with the auth event and
     // wins if they disagree.
     applyGuidePreference(readGuideMirror());
+    if (guideCapActive()) filterState.guide = false;   // 10/29/26 #6, across a reload
     renderFilterPills();
     renderDocFilterLists();
     // If the session was confirmed before this script ran, the auth event has

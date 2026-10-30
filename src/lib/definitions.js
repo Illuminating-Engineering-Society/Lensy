@@ -121,6 +121,21 @@ const DROP_WITH_CONTENT = new Set(['script', 'style', 'iframe', 'object', 'embed
  * @returns {string}
  */
 export function sanitizeDefinitionHtml(html) {
+  return sanitizeAllowlistedHtml(html, ALLOWED_TAGS, ALLOWED_ATTRS);
+}
+
+/**
+ * The allowlist transform itself, for any caller with its own lists (the
+ * tutorial guides staff paste in, src/lib/tutorial-guides.js). Same rules:
+ * unlisted tags are unwrapped, unlisted attributes dropped, URLs must be
+ * http(s), root-relative or data:image.
+ *
+ * @param {string} html
+ * @param {Set<string>} allowedTags
+ * @param {Record<string, Set<string>>} allowedAttrs
+ * @returns {string}
+ */
+export function sanitizeAllowlistedHtml(html, allowedTags, allowedAttrs) {
   if (!html) return '';
   let out = String(html);
 
@@ -138,10 +153,10 @@ export function sanitizeDefinitionHtml(html) {
   //    attributes, unwrap the rest.
   out = out.replace(/<\/?([a-zA-Z][a-zA-Z0-9]*)\b([^>]*)>/g, (match, rawTag, rawAttrs) => {
     const tag = rawTag.toLowerCase();
-    if (!ALLOWED_TAGS.has(tag)) return '';
+    if (!allowedTags.has(tag)) return '';
     if (match.startsWith('</')) return `</${tag}>`;
 
-    const allowed = ALLOWED_ATTRS[tag];
+    const allowed = allowedAttrs[tag];
     let attrs = '';
     if (allowed) {
       const attrRe = /([a-zA-Z-]+)\s*=\s*(?:"([^"]*)"|'([^']*)')/g;

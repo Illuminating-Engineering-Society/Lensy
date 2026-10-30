@@ -112,7 +112,7 @@
   function toolsMenu(current) {
     return [
       link({ href: '/', icon: 'search', label: 'Search with IES Lens', current: current === 'search', title: 'Search the IES standards with IES Lens' }),
-      link({ href: 'https://lighting.ies.org', icon: 'library', label: 'Browse Lighting Library', newTab: true, title: 'Open the IES Lighting Library in a new browser tab' }),
+      link({ href: 'https://lighting.ies.org/portal/ies', icon: 'library', label: 'Browse Lighting Library', newTab: true, title: 'Open the IES Lighting Library in a new browser tab' }),
       // 10/13/26 #3: the search page's Compare Versions window, reached from
       // every tools menu. /?compare=1 opens it on load; for a reader
       // whose tier locks comparisons it is greyed with the padlock, not hidden

@@ -294,12 +294,17 @@
   // is covered without each renderer knowing about it, and the hrefs shown on
   // hover and copied with "Copy link" stay the plain Library URL.
   var LIBRARY_HOST = 'lighting.ies.org';
+  var PORTAL_HOME = 'https://lighting.ies.org/portal/ies';
   function hoppedLibraryUrl(hop, href) {
     var u;
     try { u = new URL(href, location.href); } catch (e) { return null; }
     if (u.hostname.toLowerCase() !== LIBRARY_HOST) return null;
-    // The portal home and the viewer's own SSO return pages need no help.
-    if (u.pathname === '/' || /^\/signin\b/i.test(u.pathname)) return null;
+    // The viewer's own SSO return pages need no help.
+    if (/^\/signin\b/i.test(u.pathname)) return null;
+    // The bare root is NOT the portal: it answers "WebViewer Server — You must
+    // provide a valid ID" (client 10/29/26 #6, #9). Every Lens link now names
+    // /portal/ies; this catches any root link still in circulation.
+    if (u.pathname === '/') u = new URL(PORTAL_HOME);
     return hop + '?returnUrl=' + encodeURIComponent(u.toString());
   }
   function installLibraryHop(hop) {

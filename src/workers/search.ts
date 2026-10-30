@@ -395,6 +395,9 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
         used: quota.used, cap: quota.cap,
         remaining: Math.max(0, quota.cap - quota.used),
         aiDisabled: false,
+        // The UI switches the Guide off once the last AI search is spent and
+        // back on at the reset (client 10/29/26 #6), so it needs the time.
+        ...(quota.resetAt ? { resetAt: new Date(quota.resetAt * 1000).toISOString() } : {}),
       };
     }
   }
@@ -2066,7 +2069,7 @@ export function isBareHandbookQuery(query: string): boolean {
  */
 function handbookUrl(env: Env): string {
   const configured = String((env as { HANDBOOK_URL?: string }).HANDBOOK_URL || '').trim();
-  return /^https:\/\/[^\s)]+$/.test(configured) ? configured : 'https://lighting.ies.org/';
+  return /^https:\/\/[^\s)]+$/.test(configured) ? configured : 'https://lighting.ies.org/portal/ies';
 }
 
 function joinNames(names: string[]): string {

@@ -49,6 +49,8 @@ import { readAccessMode, writeAccessMode, parseAccessMode } from '../lib/access-
 import { getSsoState, isStagingRequest } from '../lib/sso';
 import { sendDeviceResetDecisionEmail } from '../lib/email';
 import { readTrendingTopics, refreshTrendingTopics } from '../lib/trending-topics';
+import { REFERENCES_HEADING_RE } from '../lib/chunker.js';
+import { toLibraryUrlOrNull } from '../lib/library-url.js';
 import type { StandardRow, SearchLogRow } from '../types';
 
 interface IndexStatusRow {
@@ -73,6 +75,14 @@ interface IndexStatusRow {
   missingVitriumDocId: boolean;
   /** The webstore's 3-year-lease page is on record (client 10/15/26 #3). */
   hasLeaseLink: boolean;
+  /**
+   * Pages that produced no indexed text, from the last ingest (recorded since
+   * 2026-10-29; null before — re-ingest to get the list), and the Library link
+   * the dashboard opens each one with, so staff can SEE whether a page is a
+   * figure or a scan (expected) or ordinary text (a parse problem).
+   */
+  pagesWithoutChunks: number[] | null;
+  libraryUrl: string | null;
   warnings: string[];
 }
 
@@ -405,6 +415,71 @@ function csvCell(v: unknown): string {
  * Warnings flag: missing stats (pre-0006 ingest), page coverage below 60%,
  * zero application rows for a NEW_TABLE-era standard, failed spot-checks.
  */
+// ── Two index warnings staff can act on (Dan, 10/29/26: "What's the best way
+//    for me to evaluate any 'reference chunk' and 'only % produced chunks'
+//    index warnings?") ──────────────────────────────────────────────────────
+
+/**
+ * The References heading in a standard's indexed outline: the entry, null when
+ * the outline has none, undefined when there is no outline to read.
+ */
+export function findReferencesHeading(
+  outlineJson: string | null | undefined,
+): { label: string; page: number | null } | null | undefined {
+  let outline: unknown;
+  try { outline = outlineJson ? JSON.parse(outlineJson) : null; } catch { return undefined; }
+  if (!Array.isArray(outline) || outline.length === 0) return undefined;
+  for (const e of outline) {
+    if (!e || typeof e.title !== 'string') continue;
+    const number = typeof e.number === 'string' ? e.number.trim() : '';
+    const title = e.title.trim();
+    if (REFERENCES_HEADING_RE.test(title) || REFERENCES_HEADING_RE.test(`${number} ${title}`.trim())) {
+      return { label: `${number} ${title}`.trim(), page: typeof e.page === 'number' ? e.page : null };
+    }
+  }
+  return null;
+}
+
+/**
+ * Zero reference chunks is normal for a standard with no References section,
+ * so the outline decides: no References heading → no warning; a heading with
+ * nothing indexed under it → a real problem, named with its page (re-ingesting
+ * reruns the same reader, so it goes to S-FX, not to a re-ingest). No outline
+ * (ingested before 2026-08) → the manual check.
+ */
+export function referencesWarning(heading: { label: string; page: number | null } | null | undefined): string | null {
+  if (heading === null) return null;
+  if (heading === undefined) {
+    return 'No reference entries indexed. Check the table of contents: no References/Bibliography section means nothing is missing; if it has one, report this standard to S-FX.';
+  }
+  return `"${heading.label}"${heading.page != null ? ` (p. ${heading.page})` : ''} is in the outline, but none of its entries were indexed — report this standard to S-FX (re-ingesting will not fix it).`;
+}
+
+/** "1–4, 12, 30–33" */
+export function compactPageList(pages: readonly number[]): string {
+  const sorted = [...new Set(pages)].filter(n => Number.isInteger(n)).sort((a, b) => a - b);
+  const runs: string[] = [];
+  for (let i = 0; i < sorted.length; i++) {
+    let j = i;
+    while (j + 1 < sorted.length && sorted[j + 1] === sorted[j] + 1) j++;
+    runs.push(i === j ? String(sorted[i]) : `${sorted[i]}–${sorted[j]}`);
+    i = j;
+  }
+  return runs.join(', ');
+}
+
+/**
+ * Low page coverage is usually fine — covers, figures, full-page tables and
+ * scanned pages carry no extractable text — so the warning names the pages
+ * to look at. Before the list was recorded, it says how to get it.
+ */
+export function coverageWarning(pct: number, pagesWithoutChunks: readonly number[] | null): string {
+  if (pagesWithoutChunks && pagesWithoutChunks.length > 0) {
+    return `Only ${pct}% of pages produced text. No text on pages ${compactPageList(pagesWithoutChunks)} — open them: figures, full-page tables or scans are expected; ordinary text pages mean a parse problem (report to S-FX).`;
+  }
+  return `Only ${pct}% of pages produced text — re-ingest to record which pages, or open the PDF: figures, full-page tables or scans are expected; ordinary text pages mean a parse problem.`;
+}
+
 export async function handleAdminIndexStatus(request: Request, env: Env): Promise<Response> {
   const denied = await requireAuth(request, env);
   if (denied) return denied;
@@ -415,7 +490,7 @@ export async function handleAdminIndexStatus(request: Request, env: Env): Promis
   const [standardsRes, appCountsRes, appEndsRes] = await Promise.all([
     env.DB.prepare(`
       SELECT id, title, full_designation, status, chunk_count, page_count,
-             coverage_json, indexed_at, vitrium_web_url, published_date, buy_url, vitrium_doc_id
+             coverage_json, outline_json, indexed_at, vitrium_web_url, published_date, buy_url, vitrium_doc_id
       FROM standards ORDER BY id
     `).all<StandardRow>(),
     env.DB.prepare(`
@@ -456,6 +531,8 @@ export async function handleAdminIndexStatus(request: Request, env: Env): Promis
       // LS-1 is the free ies.org glossary: nothing to grant.
       missingVitriumDocId: std.status !== 'Deprecated' && std.id !== 'LS-1' && !String(std.vitrium_doc_id ?? '').trim(),
       hasLeaseLink: !!String(std.buy_url ?? '').trim(),
+      pagesWithoutChunks: Array.isArray(coverage?.pagesWithoutChunks) ? coverage.pagesWithoutChunks : null,
+      libraryUrl: toLibraryUrlOrNull(std.vitrium_web_url),
       warnings: [],
     };
 
@@ -477,10 +554,11 @@ export async function handleAdminIndexStatus(request: Request, env: Env): Promis
       row.warnings.push('No coverage stats — ingested before migration 0006; re-ingest to record them.');
     }
     if (row.pageCoveragePct != null && row.pageCoveragePct < 60) {
-      row.warnings.push(`Only ${row.pageCoveragePct}% of pages produced chunks — verify the PDF parsed fully.`);
+      row.warnings.push(coverageWarning(row.pageCoveragePct, row.pagesWithoutChunks));
     }
     if ((coverage?.byType?.reference ?? 0) === 0 && std.status !== 'Deprecated' && std.chunk_count != null) {
-      row.warnings.push('No reference chunks — expected if the standard has no References section; otherwise re-ingest.');
+      const warning = referencesWarning(findReferencesHeading(std.outline_json));
+      if (warning) row.warnings.push(warning);
     }
 
     if (verify && (std.chunk_count ?? 0) > 0) {
