@@ -6,6 +6,10 @@
  * permanent URL, its video served from our own server rather than Loom, and
  * the Loom-generated "How-To Guide" in a drop-down below the video.
  *
+ * Sections, order, titles and Loom links follow the client's master list
+ * (pdfs/Others/261028_Tutorials.pdf — Category / Title / Rank / Public loom
+ * link). Update from the next revision of that list, never by guesswork.
+ *
  * ONE ENTRY PER TUTORIAL:
  *   slug     — the permanent URL is /tutorials/<slug>. NEVER rename a slug once
  *              published: it is the URL in emails and the R2 key of the video
@@ -29,13 +33,20 @@
 
   window.LENS_TUTORIALS = [
     {
-      section: 'Getting started',
+      section: 'Getting Started',
       items: [
         {
           slug: 'overview',
           title: 'Lighting Library + IES Lens: Overview',
           summary: 'A short tour of the IES Lighting Library and IES Lens: reading, asking and learning with IES resources.',
           loom: 'https://www.loom.com/share/7fc113be55b04f3588d0f549809c3028',
+          guide: null,
+        },
+        {
+          slug: 'quick-start',
+          title: 'Quick Start Guide: Lighting Library with IES Lens',
+          summary: null,
+          loom: 'https://www.loom.com/share/6a58d18f299a46f39404ac5389fd5583',
           guide: null,
         },
         {
@@ -47,75 +58,95 @@
           guide: null,
         },
         {
-          // Not recorded yet (client, 2026-10-28). Title to be confirmed.
           slug: 'transition',
-          title: 'Transition to the new Lighting Library',
+          title: 'Preparing for IES Lighting Library Transition',
           summary: null,
-          loom: null,
+          loom: 'https://www.loom.com/share/eef66b8c7fef4f51a22f2939f2322a8b',
+          guide: null,
+        },
+        {
+          slug: 'subscriber-vs-free-access',
+          title: 'IES Lens: Subscriber Access vs Free Access',
+          summary: null,
+          loom: 'https://www.loom.com/share/47bf0f8be4384245862544acd6251e28',
           guide: null,
         },
       ],
     },
     {
-      section: 'Memberships and user access',
+      section: 'IES Lens',
       items: [
         {
-          slug: 'managing-user-access',
-          title: 'Managing IES Lighting Library User Access',
+          slug: 'ai-guide',
+          title: 'IES Lens: AI Guide',
           summary: null,
-          loom: 'https://www.loom.com/share/d0dc512e5a23449c9287845c3fd959a9',
+          loom: 'https://www.loom.com/share/e7000f5b51544fb78002369a204ab394',
           guide: null,
         },
         {
-          slug: 'university-user-seats',
-          title: 'Managing IES Library User Seats for Universities',
+          slug: 'illuminance-values',
+          title: 'IES Lens: Recommended Illuminance Values',
           summary: null,
-          loom: 'https://www.loom.com/share/48cd129f877f48b898a6c2fdb0f9fa6f',
+          loom: 'https://www.loom.com/share/c567ba1c731a41b68d0f2dbffa2689d5',
+          guide: null,
+        },
+        {
+          slug: 'filtering-sorting',
+          title: 'IES Lens: Filtering and Sorting Results',
+          summary: null,
+          loom: 'https://www.loom.com/share/5979d2dc069d4174aee351bfd557d334',
+          guide: null,
+        },
+        {
+          slug: 'comparing-versions',
+          title: 'IES Lens: Comparing Versions of a Standard',
+          summary: null,
+          loom: 'https://www.loom.com/share/0a9b61c25c4c48e197d5f7d08c4a6c57',
+          guide: null,
+        },
+        {
+          slug: 'list-standards',
+          title: 'IES Lens: List Standards',
+          summary: null,
+          loom: 'https://www.loom.com/share/10b580886a8a422f8e85f4a791e5551e',
+          guide: null,
+        },
+        {
+          slug: 'definitions',
+          title: 'IES Lens: Nomenclature and Definitions',
+          summary: null,
+          loom: 'https://www.loom.com/share/31cadf9e0d644b948444c1a768225a5a',
+          guide: null,
+        },
+        {
+          slug: 'reference-searches',
+          title: 'IES Lens: Reference Searches',
+          summary: null,
+          loom: 'https://www.loom.com/share/6db921aa76e441a886add0bd812cb88c',
           guide: null,
         },
       ],
     },
     {
-      section: 'Lighting Library documents',
+      section: 'Lighting Library',
       items: [
         {
-          slug: 'viewer-troubleshooting',
-          title: 'Troubleshoot Lighting Library Viewer Issues',
-          summary: 'This video provides troubleshooting guidance for the IES Lighting Library viewer. It recommends a supported browser: on desktop, Chrome, Firefox, Edge or Safari; on mobile or tablet, Safari Mobile, Chrome Mobile or Firefox Mobile. If the viewer does not load or behaves unexpectedly, first confirm it is open in one of the supported browsers. It also advises against clearing the browser cache and against incognito or private browsing, since those can prevent the viewer from saving or loading content correctly.',
-          loom: 'https://loom.com/share/3812c762f999451182d18dc95df94d22',
-          guide: {
-            title: 'How to Troubleshoot Lighting Library Viewer Browser Issues',
-            steps: [
-              { title: 'Start with a supported browser', t: '0:00', points: [
-                'For the best experience, open the IES Lighting Library viewer in a supported browser.',
-                `**Desktop supported browsers:** ${BROWSERS_DESKTOP}.`,
-                'If the viewer is not loading or behaving correctly, this is the first thing to check.',
-              ] },
-              { title: 'Use a supported mobile or tablet browser', t: '0:14', points: [
-                'On mobile and tablet devices, use one of the supported mobile browsers.',
-                `**Supported mobile browsers:** ${BROWSERS_MOBILE}.`,
-                'If the viewer looks broken or fails to load, confirm you are using one of these browsers.',
-              ] },
-              { title: 'Avoid clearing the browser cache for the Lighting Library', t: '0:31', points: [
-                'Do **not** clear the cache in the browser you use for the Lighting Library.',
-                'Clearing the cache may remove saved viewer data.',
-                'It can also remove saved documents needed for offline access.',
-              ] },
-              { title: 'Do not use incognito or private browsing mode', t: '0:44', points: [
-                'Avoid opening the Lighting Library in incognito, private, or similar browser windows.',
-                'These modes can prevent the viewer from saving or loading content properly.',
-                'Use a normal browser window instead.',
-              ] },
-              { title: 'Continue troubleshooting if needed', t: '0:56', points: [
-                'After confirming the browser and browsing mode, proceed with any additional troubleshooting steps.',
-                'If the issue remains, the problem is likely not caused by browser compatibility or private browsing mode.',
-              ] },
-            ],
-          },
+          slug: 'navigation',
+          title: 'Lighting Library Navigation',
+          summary: null,
+          loom: 'https://www.loom.com/share/eb84f15aff6d4e96810fea695f7d42f4',
+          guide: null,
+        },
+        {
+          slug: 'offline-access',
+          title: 'Lighting Library Documents: Offline and Multi-device Access',
+          summary: null,
+          loom: 'https://www.loom.com/share/8a72464465c74aada338c0406147e9f8',
+          guide: null,
         },
         {
           slug: 'highlighting',
-          title: 'Annotations: Highlighting',
+          title: 'Lighting Library Documents: Annotations - Highlighting',
           summary: 'This video explains the IES Lighting Library viewer’s annotation tools, focusing on text and freehand highlighting. With an active subscription you will see the Annotate ribbon, with color choices, pen styles and font controls. It covers two highlight methods: a click-and-drag text highlight, and a freehand highlight for non-text areas, each with adjustable color and opacity. Highlight color and opacity can also be changed through the style pop-up or the style tab on the left.',
           loom: 'https://loom.com/share/f55200f551cb4f02a0ca3df41d9174b9',
           guide: {
@@ -150,55 +181,8 @@
           },
         },
         {
-          slug: 'underlining',
-          title: 'Annotations: Underlining',
-          summary: 'This video explains underline-style annotations in the web viewer. It describes three options on the Annotate ribbon: standard underline (shortcut U), squiggly underline (shortcut G), and a freehand drawing tool for content that is not selectable text. Click and drag to apply the markup and, as with highlights, select an existing annotation to change its color and opacity from the style options.',
-          loom: 'https://loom.com/share/b826ca03683b482f9935aa394ee6d391',
-          guide: {
-            title: 'How to Use Underline, Squiggly, and Freehand Markup Styles in the Web Viewer',
-            steps: [
-              { title: 'Understand what underline-style markup is for', t: '0:01', points: [
-                'Underline-style markup works similarly to highlights, but uses different visual styles.',
-                { text: 'You can use it to:', items: ['Call attention to text', 'Mark content that needs review', 'Visually distinguish different kinds of markup'] },
-                { text: 'Available styles include:', items: ['Underline', 'Strikeout', 'Squiggly'] },
-              ] },
-              { title: 'Open the Annotate ribbon in the web viewer', t: '0:18', points: [
-                'If you have an active subscription, the Annotate ribbon should appear in the web viewer interface.',
-                'This ribbon contains the markup tools used for underline-style annotations.',
-              ] },
-              { title: 'Choose an underline style and apply it to text', t: '0:18', points: [
-                'Select one of the underline tools from the Annotate ribbon.',
-                'The first option is standard underline.',
-                'Shortcut: **U**',
-                { text: 'To apply it:', items: ['Click and drag across the text you want to mark'] },
-              ] },
-              { title: 'Use squiggly markup for a different visual style', t: '0:36', points: [
-                'The second option is squiggly markup.',
-                'Shortcut: **G**',
-                { text: 'To apply it:', items: ['Click and drag over the text, just like with underline'] },
-              ] },
-              { title: 'Use freehand markup for non-text content', t: '0:36', points: [
-                'The third option is the freehand drawing tool.',
-                'This is useful when the content you want to mark is not selectable text in the document body.',
-                'Use it to draw an underline manually where needed.',
-              ] },
-              { title: 'Customize color and opacity for your markup', t: '0:57', points: [
-                'You can change the style settings for any markup you create.',
-                'Select a highlight or underline annotation.',
-                { text: 'Then open the style tab:', items: ['From the pop-up window, or', 'From the style palette in the Annotate ribbon'] },
-                { text: 'From there, choose:', items: ['Color', 'Opacity'] },
-              ] },
-              { title: 'Apply different colors and opacity levels as needed', t: '1:17', points: [
-                'Each markup style can use any color.',
-                'Each markup style can also use any opacity.',
-                'This lets you visually organize annotations in the way that works best for your review process.',
-              ] },
-            ],
-          },
-        },
-        {
           slug: 'notes-and-callouts',
-          title: 'Annotations: Notes and Callouts',
+          title: 'Lighting Library Documents: Annotations - Add Notes & Callouts',
           summary: 'This video explains how to add and manage in-document feedback in the IES Lighting Library viewer using notes and comments. Notes act like digital sticky notes that appear in the comments panel on their page, can be color coded, and can be searched. It shows adding callouts from the Annotate ribbon, with font, styling, stroke and fill, opacity and reply options similar to Adobe Acrobat, and covers commenting on existing highlights or underlines and using the comments search bar to jump to results, such as the keyword “corridor”.',
           loom: 'https://loom.com/share/aaa83dc3630c45e39f1d242e2b1dbcf1',
           guide: {
@@ -252,8 +236,55 @@
           },
         },
         {
+          slug: 'underlining',
+          title: 'Lighting Library Documents: Annotations - Underlining',
+          summary: 'This video explains underline-style annotations in the web viewer. It describes three options on the Annotate ribbon: standard underline (shortcut U), squiggly underline (shortcut G), and a freehand drawing tool for content that is not selectable text. Click and drag to apply the markup and, as with highlights, select an existing annotation to change its color and opacity from the style options.',
+          loom: 'https://loom.com/share/b826ca03683b482f9935aa394ee6d391',
+          guide: {
+            title: 'How to Use Underline, Squiggly, and Freehand Markup Styles in the Web Viewer',
+            steps: [
+              { title: 'Understand what underline-style markup is for', t: '0:01', points: [
+                'Underline-style markup works similarly to highlights, but uses different visual styles.',
+                { text: 'You can use it to:', items: ['Call attention to text', 'Mark content that needs review', 'Visually distinguish different kinds of markup'] },
+                { text: 'Available styles include:', items: ['Underline', 'Strikeout', 'Squiggly'] },
+              ] },
+              { title: 'Open the Annotate ribbon in the web viewer', t: '0:18', points: [
+                'If you have an active subscription, the Annotate ribbon should appear in the web viewer interface.',
+                'This ribbon contains the markup tools used for underline-style annotations.',
+              ] },
+              { title: 'Choose an underline style and apply it to text', t: '0:18', points: [
+                'Select one of the underline tools from the Annotate ribbon.',
+                'The first option is standard underline.',
+                'Shortcut: **U**',
+                { text: 'To apply it:', items: ['Click and drag across the text you want to mark'] },
+              ] },
+              { title: 'Use squiggly markup for a different visual style', t: '0:36', points: [
+                'The second option is squiggly markup.',
+                'Shortcut: **G**',
+                { text: 'To apply it:', items: ['Click and drag over the text, just like with underline'] },
+              ] },
+              { title: 'Use freehand markup for non-text content', t: '0:36', points: [
+                'The third option is the freehand drawing tool.',
+                'This is useful when the content you want to mark is not selectable text in the document body.',
+                'Use it to draw an underline manually where needed.',
+              ] },
+              { title: 'Customize color and opacity for your markup', t: '0:57', points: [
+                'You can change the style settings for any markup you create.',
+                'Select a highlight or underline annotation.',
+                { text: 'Then open the style tab:', items: ['From the pop-up window, or', 'From the style palette in the Annotate ribbon'] },
+                { text: 'From there, choose:', items: ['Color', 'Opacity'] },
+              ] },
+              { title: 'Apply different colors and opacity levels as needed', t: '1:17', points: [
+                'Each markup style can use any color.',
+                'Each markup style can also use any opacity.',
+                'This lets you visually organize annotations in the way that works best for your review process.',
+              ] },
+            ],
+          },
+        },
+        {
           slug: 'text-comments',
-          title: 'Annotations: Text Comments',
+          title: 'Lighting Library Documents: Annotations - Text Comments',
           summary: 'This video demonstrates how to use the text tool to place typed content directly onto a document: select the Free Text icon or press T, drag a rectangle to create a text box, click away, then format the text with the pop-up style button or the style tab. Font, font size, alignment, dynamic font scaling, font color, border, fill and opacity can all be adjusted. Typed comments are saved in the Comments tab on the right, so they are easy to find again later.',
           loom: 'https://loom.com/share/fa13bad4166f44a3b58a8b56411a3492',
           guide: {
@@ -287,7 +318,7 @@
         },
         {
           slug: 'shapes',
-          title: 'Annotations: Adding Shapes',
+          title: 'Lighting Library Documents: Annotations - Adding Shapes',
           summary: 'This video explains how to add and format shapes in the IES Lighting Library viewer to highlight areas during review. With an active subscription, the Shapes ribbon offers rectangles, ellipses, arcs, polygons, clouds, lines, polylines and arrows. Click to start a shape and click again to finish, then set its attributes from the pop-up window or the Style tab on the left: color, stroke thickness, stroke style, fill color and opacity. A comment can be added to the shape, and mistakes are removed with the Delete key.',
           loom: 'https://loom.com/share/e4ae0b5dbca74f2a89021f6166a20653',
           guide: {
@@ -325,8 +356,41 @@
           },
         },
         {
+          slug: 'removing-annotations',
+          title: 'Lighting Library Documents: Annotations - Removing or Restoring',
+          summary: 'This video explains how to correct or remove annotations in the web viewer. With an active subscription you will see the Annotate ribbon, where you can undo the most recent annotation, redo to restore one you removed, or use the eraser tool to remove selected markup. It also covers erasing all annotations from a single page or from the entire document, with a confirmation prompt for each.',
+          loom: 'https://loom.com/share/4eaf89ec6b8844e998925d3a30f4d045',
+          guide: {
+            title: 'How to Correct or Remove Annotations in the Web Viewer',
+            steps: [
+              { title: 'Open the annotation tools in the web viewer', t: '0:02', points: [
+                'In the web viewer, look for the **Annotate** ribbon if you have an active subscription.',
+                'This ribbon contains the tools used to edit or remove annotations.',
+              ] },
+              { title: 'Undo or redo recent annotation changes', t: '0:13', points: [
+                'Use **Undo** to reverse the most recent annotation action.',
+                'Use **Redo** to restore an annotation you just removed.',
+                'These options are helpful for quickly correcting recent changes.',
+              ] },
+              { title: 'Remove selected markup with the eraser tool', t: '0:13', points: [
+                'Select the **eraser tool** to remove specific markup.',
+                'Use this when you want to delete only certain annotations instead of all of them.',
+              ] },
+              { title: 'Erase annotations from a single page or the full document', t: '0:28', points: [
+                'Use the additional tools at the top to remove annotations in bulk.',
+                'Choose **Erase all annotations from this page** to clear only the current page.',
+                'Choose **Erase all annotations from the entire document** to clear the whole document.',
+              ] },
+              { title: 'Confirm the deletion', t: '0:41', points: [
+                'After selecting a bulk erase option, click **Yes** to confirm.',
+                'This confirmation applies whether you are deleting annotations from one page or from the entire document.',
+              ] },
+            ],
+          },
+        },
+        {
           slug: 'measure',
-          title: 'The Measure Tool',
+          title: 'Lighting Library Documents: ‘Measure’ Tool',
           summary: 'This video explains how to use the Measure feature in the web viewer to add measurement marks and adjust their settings. It covers distance measurement with selectable scales (including adding a new scale from presets), straight-line and arc measurements, perimeter measurement with multiple clicks, and area measurement for polygons, circles, ovals and squares. It shows how to remove measurements with the Delete button or the Delete key, how to erase annotations, and how to adjust attributes such as color and opacity from the style options.',
           loom: 'https://loom.com/share/ada29d6dafc4402996535da9d7ac7163',
           guide: {
@@ -374,35 +438,61 @@
             ],
           },
         },
+      ],
+    },
+    {
+      section: 'Managing Sustaining Member Access',
+      items: [
         {
-          slug: 'removing-annotations',
-          title: 'Annotations: Removing or Restoring',
-          summary: 'This video explains how to correct or remove annotations in the web viewer. With an active subscription you will see the Annotate ribbon, where you can undo the most recent annotation, redo to restore one you removed, or use the eraser tool to remove selected markup. It also covers erasing all annotations from a single page or from the entire document, with a confirmation prompt for each.',
-          loom: 'https://loom.com/share/4eaf89ec6b8844e998925d3a30f4d045',
+          slug: 'managing-user-access',
+          title: 'Managing IES Lighting Library User Access',
+          summary: null,
+          loom: 'https://www.loom.com/share/5a1e1774e1134ebc92dee330623e813c',
+          guide: null,
+        },
+        {
+          slug: 'university-user-seats',
+          title: 'Managing IES Library User Seats for Universities',
+          summary: null,
+          loom: 'https://www.loom.com/share/3a7ab9f1752649c9af030ee2766b6e72',
+          guide: null,
+        },
+      ],
+    },
+    {
+      section: 'Troubleshooting',
+      items: [
+        {
+          slug: 'viewer-troubleshooting',
+          title: 'Troubleshoot Lighting Library Viewer Issues',
+          summary: 'This video provides troubleshooting guidance for the IES Lighting Library viewer. It recommends a supported browser: on desktop, Chrome, Firefox, Edge or Safari; on mobile or tablet, Safari Mobile, Chrome Mobile or Firefox Mobile. If the viewer does not load or behaves unexpectedly, first confirm it is open in one of the supported browsers. It also advises against clearing the browser cache and against incognito or private browsing, since those can prevent the viewer from saving or loading content correctly.',
+          loom: 'https://loom.com/share/3812c762f999451182d18dc95df94d22',
           guide: {
-            title: 'How to Correct or Remove Annotations in the Web Viewer',
+            title: 'How to Troubleshoot Lighting Library Viewer Browser Issues',
             steps: [
-              { title: 'Open the annotation tools in the web viewer', t: '0:02', points: [
-                'In the web viewer, look for the **Annotate** ribbon if you have an active subscription.',
-                'This ribbon contains the tools used to edit or remove annotations.',
+              { title: 'Start with a supported browser', t: '0:00', points: [
+                'For the best experience, open the IES Lighting Library viewer in a supported browser.',
+                `**Desktop supported browsers:** ${BROWSERS_DESKTOP}.`,
+                'If the viewer is not loading or behaving correctly, this is the first thing to check.',
               ] },
-              { title: 'Undo or redo recent annotation changes', t: '0:13', points: [
-                'Use **Undo** to reverse the most recent annotation action.',
-                'Use **Redo** to restore an annotation you just removed.',
-                'These options are helpful for quickly correcting recent changes.',
+              { title: 'Use a supported mobile or tablet browser', t: '0:14', points: [
+                'On mobile and tablet devices, use one of the supported mobile browsers.',
+                `**Supported mobile browsers:** ${BROWSERS_MOBILE}.`,
+                'If the viewer looks broken or fails to load, confirm you are using one of these browsers.',
               ] },
-              { title: 'Remove selected markup with the eraser tool', t: '0:13', points: [
-                'Select the **eraser tool** to remove specific markup.',
-                'Use this when you want to delete only certain annotations instead of all of them.',
+              { title: 'Avoid clearing the browser cache for the Lighting Library', t: '0:31', points: [
+                'Do **not** clear the cache in the browser you use for the Lighting Library.',
+                'Clearing the cache may remove saved viewer data.',
+                'It can also remove saved documents needed for offline access.',
               ] },
-              { title: 'Erase annotations from a single page or the full document', t: '0:28', points: [
-                'Use the additional tools at the top to remove annotations in bulk.',
-                'Choose **Erase all annotations from this page** to clear only the current page.',
-                'Choose **Erase all annotations from the entire document** to clear the whole document.',
+              { title: 'Do not use incognito or private browsing mode', t: '0:44', points: [
+                'Avoid opening the Lighting Library in incognito, private, or similar browser windows.',
+                'These modes can prevent the viewer from saving or loading content properly.',
+                'Use a normal browser window instead.',
               ] },
-              { title: 'Confirm the deletion', t: '0:41', points: [
-                'After selecting a bulk erase option, click **Yes** to confirm.',
-                'This confirmation applies whether you are deleting annotations from one page or from the entire document.',
+              { title: 'Continue troubleshooting if needed', t: '0:56', points: [
+                'After confirming the browser and browsing mode, proceed with any additional troubleshooting steps.',
+                'If the issue remains, the problem is likely not caused by browser compatibility or private browsing mode.',
               ] },
             ],
           },

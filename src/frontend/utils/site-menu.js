@@ -91,6 +91,11 @@
     if (name === 'library') {
       return '<img src="/favicon-192.png" alt="" aria-hidden="true" class="w-4 h-4 shrink-0" width="16" height="16"/>';
     }
+    // "Search with IES Lens" wears the angled IES Lens mark (client 10/29/26 #8,
+    // pdfs/Others/IES Lensy Logo Angled.png).
+    if (name === 'search') {
+      return '<img src="/assets/ies-lens-angled.png" alt="" aria-hidden="true" class="w-4 h-4 object-contain shrink-0" width="16" height="16"/>';
+    }
     var circle = name === 'guide' ? '<circle cx="12" cy="12" r="9"/>' : '';
     return '<svg class="w-4 h-4 ' + (extra || 'text-gray-500') + ' shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">'
       + circle + '<path stroke-linecap="round" stroke-linejoin="round" d="' + ICONS[name] + '"/></svg>';

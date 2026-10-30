@@ -2035,8 +2035,11 @@ lens.ies.org, not WordPress: no WP access was needed and the page was already ou
   (named with its page — that is a reader bug for S-FX, not a re-ingest);
   low coverage lists the textless pages (`coverage_json.pagesWithoutChunks`,
   recorded from the next ingest on) as Library page links in the dashboard.
-- **Owed by IES:** `261028_Tutorials.pdf` (4 new tutorials + links) and
-  `IES Lensy Logo Angled.png` (#8, menu "Search with IES Lens" icon).
+- **Received 10/30:** `261028_Tutorials.pdf` — the catalogue now mirrors it
+  (24 tutorials in its five categories and ranks; new IES Lens section; the
+  Transition video recorded; both user-access videos re-recorded; existing
+  slugs kept). `IES Lensy Logo Angled.png` → `assets/ies-lens-angled.png`
+  (128px), the "Search with IES Lens" icon in site-menu.js and on /tutorials.
 
 ### The 10/22/26 Teams notes: notes open by default, deprecate without a successor (2026-10-22)
 
