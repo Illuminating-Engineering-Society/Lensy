@@ -467,6 +467,13 @@ async function handleApplications(request: Request, env: Env, url: URL): Promise
 
 // ─── Standards Handlers ───────────────────────────────────────────────────────
 
+/** A stored URL made absolute against this Worker's origin; null when empty or unparseable. */
+export function absoluteUrlOrNull(raw: unknown, origin: string): string | null {
+  const s = typeof raw === 'string' ? raw.trim() : '';
+  if (!s) return null;
+  try { return new URL(s, origin).toString(); } catch { return null; }
+}
+
 /** standards.elearning_json → [{ title, url }], tolerating a malformed value. */
 function parseElearning(raw: unknown): Array<{ title: string; url: string }> {
   if (typeof raw !== 'string' || !raw.trim()) return [];
@@ -555,6 +562,11 @@ async function handleStandards(request: Request, env: Env, url: URL): Promise<Re
       // The "Read" link opens the branded Library host, not Vitrium's own —
       // see src/lib/library-url.js.
       vitrium_web_url: toLibraryUrlOrNull(s.vitrium_web_url),
+      // Covers rendered at ingest are stored as "/api/covers/<id>" (and LS-1's
+      // as "/assets/…"); absolute here so the list renders off-site too — the
+      // IES-HQ shortcode on ies.org resolved them against ies.org (Shane,
+      // 2026-11-02: broken images).
+      thumbnail_url: absoluteUrlOrNull(s.thumbnail_url, url.origin),
       committee: resolveCommittee(s.author),
       elearning: parseElearning(s.elearning_json),
     }));

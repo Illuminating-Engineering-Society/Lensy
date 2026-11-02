@@ -3,7 +3,7 @@
  * "Embed content from lens.ies.org/contents — public version, no login").
  */
 import { describe, it, expect } from 'vitest';
-import { isEmbeddableContents, allowFramingByIes, EMBED_FRAME_ANCESTORS } from './api';
+import { isEmbeddableContents, allowFramingByIes, EMBED_FRAME_ANCESTORS, absoluteUrlOrNull } from './api';
 
 const GLOBAL_CSP = "default-src 'self'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'self'";
 
@@ -41,5 +41,22 @@ describe('allowFramingByIes', () => {
 
   it('names only IES origins', () => {
     for (const origin of EMBED_FRAME_ANCESTORS) expect(new URL(origin).hostname.endsWith('ies.org')).toBe(true);
+  });
+});
+
+// Shane, 2026-11-02: covers stored as "/api/covers/<id>" broke on ies.org,
+// which resolved them against its own host.
+describe('absoluteUrlOrNull (List Standards covers off-site)', () => {
+  const origin = 'https://lens.ies.org';
+  it('makes a stored path absolute on this origin', () => {
+    expect(absoluteUrlOrNull('/api/covers/ASHRAE-IES-90.1-2025', origin))
+      .toBe('https://lens.ies.org/api/covers/ASHRAE-IES-90.1-2025');
+    expect(absoluteUrlOrNull('/assets/ls-1-cover.png', origin)).toBe('https://lens.ies.org/assets/ls-1-cover.png');
+  });
+  it('leaves an absolute URL alone, and empty stays null', () => {
+    const portal = 'https://lighting.ies.org/api/portal/ies/Thumbnail?externalKey=abc';
+    expect(absoluteUrlOrNull(portal, origin)).toBe(portal);
+    expect(absoluteUrlOrNull('', origin)).toBeNull();
+    expect(absoluteUrlOrNull(null, origin)).toBeNull();
   });
 });
