@@ -769,10 +769,11 @@
 
         <div class="bg-white rounded-xl shadow p-5">
           <h3 class="font-display font-bold mb-1">Data exports</h3>
-          <p class="text-sm text-gray-500 mb-3">Staff-only CSV exports. The two logs are anonymous by design; the reset queue is personal and stays behind this gate.</p>
+          <p class="text-sm text-gray-500 mb-3">Staff-only CSV exports. The two logs are anonymous by design; search usage and the reset queue are personal and stay behind this gate.</p>
           <ul class="text-sm space-y-2">
             <li><a href="/api/admin/search-log.csv" class="text-brand-secondary hover:underline">search-log.csv</a> <span class="text-gray-400">— every query, result count, low-confidence flag</span></li>
             <li><a href="/api/admin/search-events.csv" class="text-brand-secondary hover:underline">search-events.csv</a> <span class="text-gray-400">— which cards readers opened, from what position</span></li>
+            <li><a href="/api/admin/search-usage.csv" class="text-brand-secondary hover:underline">search-usage.csv</a> <span class="text-gray-400">— searches per account per day, no search content</span></li>
             <li><a href="/api/admin/device-resets.csv" class="text-brand-secondary hover:underline">device-resets.csv</a> <span class="text-gray-400">— the Vitrium reset-request queue</span></li>
           </ul>
         </div>

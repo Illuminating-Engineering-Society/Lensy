@@ -76,6 +76,7 @@ import {
 } from '../lib/tiers';
 import { resolveSearchGrant } from './session';
 import { dailySearchCap, enforceDailySearchCap } from '../lib/search-cap';
+import { recordSearchUsage } from '../lib/search-usage';
 import { generateResponse } from '../lib/ai-summary';
 import { rerankResults, extractGuideCitations, curateResults, conceptOrderForGuide } from '../lib/curation';
 import { generateRefinePrompt } from '../lib/refine';
@@ -363,6 +364,13 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
 
   if (!query || typeof query !== 'string' || !query.trim()) {
     return jsonResponse({ error: 'query is required' }, 400);
+  }
+
+  // Per-account daily count, no search content (Dan, 2026-11-02 —
+  // lib/search-usage.ts). Same counting point as the cap below.
+  if (grant.user) {
+    const usageWrite = recordSearchUsage(env, grant.user, tier);
+    if (ctx?.waitUntil) ctx.waitUntil(usageWrite); else await usageWrite;
   }
 
   // ── Daily search cap for non-subscribers (client Teams update, 2026-09-08) ──

@@ -26,7 +26,7 @@
 
 import { handleSearch, liteAllowedStandards } from './search';
 import { handleIngest } from './ingest';
-import { handleAdminAccessMode, handleAdminScanOrphans, handleAdminEnumerateIds, handleAdminDeleteOrphans, handleAdminFlushCache, handleAdminSearchLog, handleAdminSearchEvents, handleAdminR2Multipart, handleAdminIndexStatus, handleAdminAnalytics, handleAdminRefreshTopics,handleAdminDeviceResets, handleAdminDeviceResetsList, handleAdminDeviceResetUpdate } from './admin';
+import { handleAdminAccessMode, handleAdminScanOrphans, handleAdminEnumerateIds, handleAdminDeleteOrphans, handleAdminFlushCache, handleAdminSearchLog, handleAdminSearchEvents, handleAdminSearchUsage, handleAdminR2Multipart, handleAdminIndexStatus, handleAdminAnalytics, handleAdminRefreshTopics,handleAdminDeviceResets, handleAdminDeviceResetsList, handleAdminDeviceResetUpdate } from './admin';
 import { handleLibraryDocumentLookup, handleDeviceResetRequest } from './library-support';
 import { handleAdminCompAccess, handleAdminCompAccessCsv } from './comp-access';
 import { handleIngestJobs, serveCover, handleAdminStandards } from './staff-ingest';
@@ -217,6 +217,9 @@ export default {
       }
       if (path === '/api/admin/search-events.csv' && request.method === 'GET') {
         return withCors(await handleAdminSearchEvents(request, env));
+      }
+      if (path === '/api/admin/search-usage.csv' && request.method === 'GET') {
+        return withCors(await handleAdminSearchUsage(request, env));
       }
       if (path === '/api/admin/index-status' && request.method === 'GET') {
         return withCors(await handleAdminIndexStatus(request, env));

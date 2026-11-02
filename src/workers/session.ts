@@ -287,7 +287,7 @@ export async function resolveRequestTier(request: Request, env: Env): Promise<Le
  */
 export interface SearchGrant {
   tier: LensyTier;
-  user: { sub: string } | null;
+  user: { sub: string; email: string } | null;
   /** Staging traffic is metered apart from production, like session seats. */
   scope: 'prod' | 'stg';
 }
@@ -301,7 +301,7 @@ export async function resolveSearchGrant(request: Request, env: Env): Promise<Se
   }
   const gate = await evaluateSession(request, env);
   if (!gate.ok) return { tier: 'none', user: null, scope };
-  return { tier: tierFor(gate.user, gate.decision, env, request), user: { sub: gate.user.sub }, scope };
+  return { tier: tierFor(gate.user, gate.decision, env, request), user: { sub: gate.user.sub, email: gate.user.email }, scope };
 }
 
 // ─── Shared gate plumbing ─────────────────────────────────────────────────────

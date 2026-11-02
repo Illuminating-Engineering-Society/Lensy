@@ -389,6 +389,54 @@ export async function handleAdminSearchEvents(request: Request, env: Env): Promi
 }
 
 /**
+ * Staff-only CSV of searches per account per day (Dan, 2026-11-02; 0028).
+ *
+ *   GET /api/admin/search-usage.csv?from=2026-11-01&to=2026-11-30&limit=50000
+ *
+ * Personal (email per row) and content-free: day, email, tier, searches. Never
+ * joined to search_log — see migration 0028.
+ */
+export async function handleAdminSearchUsage(request: Request, env: Env): Promise<Response> {
+  const denied = await requireAuth(request, env);
+  if (denied) return denied;
+
+  const url = new URL(request.url);
+  const from = url.searchParams.get('from');
+  const to = url.searchParams.get('to');
+  const limit = Math.min(100000, Math.max(1, parseInt(url.searchParams.get('limit') || '50000', 10) || 50000));
+
+  let sql = 'SELECT day, email, tier, searches FROM search_usage_daily WHERE 1=1';
+  const bindings: (string | number)[] = [];
+  if (from) { sql += ' AND day >= ?'; bindings.push(from.slice(0, 10)); }
+  if (to) { sql += ' AND day <= ?'; bindings.push(to.slice(0, 10)); }
+  sql += ' ORDER BY day DESC, searches DESC, email LIMIT ?';
+  bindings.push(limit);
+
+  let rows: Record<string, unknown>[] = [];
+  try {
+    const result = await env.DB.prepare(sql).bind(...bindings).all<Record<string, unknown>>();
+    rows = result.results || [];
+  } catch (err) {
+    // Migration 0028 not applied yet: an empty export, not a 500.
+    console.error('search usage export failed (non-fatal):', err instanceof Error ? err.message : String(err));
+  }
+
+  const columns = ['day', 'email', 'tier', 'searches'];
+  const csv = [
+    columns.join(','),
+    ...rows.map(r => columns.map(c => csvCell(r[c])).join(',')),
+  ].join('\r\n');
+
+  return new Response(csv, {
+    status: 200,
+    headers: {
+      'Content-Type': 'text/csv; charset=utf-8',
+      'Content-Disposition': 'attachment; filename="lens-search-usage.csv"',
+    },
+  });
+}
+
+/**
  * CSV-escape one cell. Also neutralizes spreadsheet formula injection —
  * queries are user-supplied free text, and staff open this file in Excel.
  */
