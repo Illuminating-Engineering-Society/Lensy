@@ -246,7 +246,12 @@ describe('editing a standard record (client 10/14/26 #2)', () => {
     expect(validateStandardEdit({ leaseUrl: 'https://store.ies.org/product/rp-41-20/' }).fields)
       .toEqual({ buy_url: 'https://store.ies.org/product/rp-41-20/' });
     expect(validateStandardEdit({ leaseUrl: '' }).fields).toEqual({ buy_url: null });
-    expect(validateStandardEdit({ leaseUrl: 'https://lighting.ies.org/AbC123' }).error).toMatch(/store\.ies\.org/);
+    // The store on ies.org since 2026-11-02; a store page that is not a product
+    // cannot be the purchase mapping.
+    expect(validateStandardEdit({ leaseUrl: 'https://ies.org/products/rp-41-20/' }).fields)
+      .toEqual({ buy_url: 'https://ies.org/products/rp-41-20/' });
+    expect(validateStandardEdit({ leaseUrl: 'https://ies.org/standards/' }).error).toMatch(/ies\.org\/products/);
+    expect(validateStandardEdit({ leaseUrl: 'https://lighting.ies.org/AbC123' }).error).toMatch(/ies\.org\/products/);
     expect(validateStandardEdit({ leaseUrl: 'http://store.ies.org/x' }).error).toBeTruthy();
     expect(validateStandardEdit({ leaseUrl: 'not a url' }).error).toMatch(/not a URL/);
   });

@@ -171,6 +171,12 @@ describe('dates and slugs', () => {
       .toBe('recommended-practice-lighting-roadway-and-parking-facilities');
     expect(slugFromStoreUrl('https://store.ies.org/product/rp-1-24')).toBe('rp-1-24');
     expect(slugFromStoreUrl('https://store.ies.org/?s=RP-8')).toBeNull();
+    // The store on ies.org since 2026-11-02.
+    expect(slugFromStoreUrl('https://ies.org/products/recommended-practice-ultraviolet-germicidal-irradiation-uvgi/'))
+      .toBe('recommended-practice-ultraviolet-germicidal-irradiation-uvgi');
+    expect(slugFromStoreUrl('https://www.ies.org/products/rp-1-24')).toBe('rp-1-24');
+    expect(slugFromStoreUrl('https://ies.org/product/rp-1-24/')).toBeNull();
+    expect(slugFromStoreUrl('https://evil.example/products/rp-1-24/')).toBeNull();
     expect(slugFromStoreUrl(null)).toBeNull();
   });
 });

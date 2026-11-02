@@ -81,6 +81,7 @@ import { requireAdminAccess } from './session';
 import { getSsoState } from '../lib/sso';
 import { bumpDataVersion } from '../lib/cache';
 import { parseLeaseAddonDocIds } from '../lib/purchases';
+import { slugFromStoreUrl } from '../lib/surecart';
 import {
   runDocumentIngest, deleteVectorRange, pruneApplicationRowsCore, pdfKeyFor,
 } from './ingest';
@@ -1102,8 +1103,6 @@ export async function deleteStandardCompletely(
 // value (its col() keeps a column it has nothing for), so a lease link set
 // here survives a sync that carries none.
 const LIBRARY_HOSTS = new Set(['lighting.ies.org', 'ies.org', 'www.ies.org', 'view.protectedpdf.com']);
-// A purchase link: a typo pointing anywhere else would send readers off-site to pay.
-const STORE_HOSTS = new Set(['store.ies.org']);
 // LS-1 is the glossary's anchor: its definition vectors carry no PDF and
 // would read as orphans (the 2026-08-29 incident). Never deletable from here.
 const UNDELETABLE = new Set(['LS-1', 'LS-1-25']);
@@ -1150,8 +1149,10 @@ export function validateStandardEdit(body: any): { fields: Record<string, string
     else {
       let url: URL;
       try { url = new URL(raw); } catch { return { fields, error: 'The lease link is not a URL.' }; }
-      if (url.protocol !== 'https:' || !STORE_HOSTS.has(url.hostname.toLowerCase())) {
-        return { fields, error: 'The lease link must be an https://store.ies.org/… address.' };
+      // The link IS the purchase → standard mapping (slug-first, lib/purchases.ts),
+      // so it must be a product page the mapping can read, not just a store URL.
+      if (url.protocol !== 'https:' || !slugFromStoreUrl(url.toString())) {
+        return { fields, error: 'The lease link must be a store product page: https://ies.org/products/<product>/.' };
       }
       fields.buy_url = url.toString();
     }

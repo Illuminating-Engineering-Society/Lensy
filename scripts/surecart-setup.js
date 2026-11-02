@@ -40,11 +40,17 @@ export const WEBHOOK_EVENTS = [
 
 // ── pure helpers (tested in scripts/surecart-setup.test.js) ─────────────────
 
-/** `https://store.ies.org/product/<slug>/` → `<slug>`. */
+/** `https://ies.org/products/<slug>/` (or the old `https://store.ies.org/product/<slug>/`) → `<slug>`. Mirrors lib/surecart.ts. */
+const STORE_PRODUCT_PATHS = {
+  'ies.org': /^\/products\/([^/]+)\/?$/,
+  'www.ies.org': /^\/products\/([^/]+)\/?$/,
+  'store.ies.org': /^\/product\/([^/]+)\/?$/,
+};
 export function slugFromStoreUrl(url) {
   if (!url) return null;
   try {
-    const m = /^\/product\/([^/]+)\/?$/.exec(new URL(url).pathname);
+    const u = new URL(url);
+    const m = STORE_PRODUCT_PATHS[u.hostname.toLowerCase()]?.exec(u.pathname);
     return m ? decodeURIComponent(m[1]).toLowerCase() : null;
   } catch {
     return null;

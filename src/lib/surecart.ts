@@ -328,11 +328,21 @@ export function addDays(day: string, n: number): string {
   return new Date(Date.UTC(y, m - 1, d + n)).toISOString().slice(0, 10);
 }
 
-/** `https://store.ies.org/product/<slug>/` → `<slug>`; anything else → null. */
+// The SureCart store moved to ies.org on 2026-11-02 (Manuel): product pages are
+// `https://ies.org/products/<slug>/`, with the same slugs the old
+// `https://store.ies.org/product/<slug>/` permalinks carried. Both forms read.
+const STORE_PRODUCT_PATHS: Record<string, RegExp> = {
+  'ies.org': /^\/products\/([^/]+)\/?$/,
+  'www.ies.org': /^\/products\/([^/]+)\/?$/,
+  'store.ies.org': /^\/product\/([^/]+)\/?$/,
+};
+
+/** A store product page URL → its `<slug>`; anything else → null. */
 export function slugFromStoreUrl(url: string | null | undefined): string | null {
   if (!url) return null;
   try {
-    const m = /^\/product\/([^/]+)\/?$/.exec(new URL(url).pathname);
+    const u = new URL(url);
+    const m = STORE_PRODUCT_PATHS[u.hostname.toLowerCase()]?.exec(u.pathname);
     return m ? decodeURIComponent(m[1]).toLowerCase() : null;
   } catch {
     return null;
