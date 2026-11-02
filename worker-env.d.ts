@@ -75,6 +75,10 @@ declare global {
     // value as AuthIES's COMP_GRANTS_API_SECRET. Unset: comp grants are only
     // recorded here, and staff apply the Vitrium half by hand (pre-10/16).
     COMP_GRANTS_API_SECRET?: string;
+    // Bearer for AuthIES's POST /api/people/lookup (2026-11-02) — the SAME value
+    // as AuthIES's PEOPLE_LOOKUP_API_SECRET. The search-usage export reads IES
+    // account numbers with it; unset, that column is simply blank.
+    PEOPLE_LOOKUP_API_SECRET?: string;
     // Read-only bearer for GET /api/entitlements (2026-10-29) — the "My
     // Standards" view on ies.org (IES HQ) lists a reader's standards with it.
     // The same value goes in IES HQ's IESHQ_LENSY_ENTITLEMENTS_SECRET constant.

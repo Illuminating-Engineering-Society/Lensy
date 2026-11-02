@@ -51,6 +51,7 @@ import { sendDeviceResetDecisionEmail } from '../lib/email';
 import { readTrendingTopics, refreshTrendingTopics } from '../lib/trending-topics';
 import { REFERENCES_HEADING_RE } from '../lib/chunker.js';
 import { toLibraryUrlOrNull } from '../lib/library-url.js';
+import { lookupMemberNumbers } from '../lib/people-lookup';
 import type { StandardRow, SearchLogRow } from '../types';
 
 interface IndexStatusRow {
@@ -393,8 +394,10 @@ export async function handleAdminSearchEvents(request: Request, env: Env): Promi
  *
  *   GET /api/admin/search-usage.csv?from=2026-11-01&to=2026-11-30&limit=50000
  *
- * Personal (email per row) and content-free: day, email, tier, searches. Never
- * joined to search_log — see migration 0028.
+ * Personal (email per row) and content-free: day, email, IES ID, tier,
+ * searches. Never joined to search_log — see migration 0028. The IES ID (member
+ * number) is read from AuthIES at download time (lib/people-lookup.ts); blank
+ * when AuthIES does not know it or cannot be reached.
  */
 export async function handleAdminSearchUsage(request: Request, env: Env): Promise<Response> {
   const denied = await requireAuth(request, env);
@@ -405,7 +408,7 @@ export async function handleAdminSearchUsage(request: Request, env: Env): Promis
   const to = url.searchParams.get('to');
   const limit = Math.min(100000, Math.max(1, parseInt(url.searchParams.get('limit') || '50000', 10) || 50000));
 
-  let sql = 'SELECT day, email, tier, searches FROM search_usage_daily WHERE 1=1';
+  let sql = 'SELECT day, email, person_uuid, tier, searches FROM search_usage_daily WHERE 1=1';
   const bindings: (string | number)[] = [];
   if (from) { sql += ' AND day >= ?'; bindings.push(from.slice(0, 10)); }
   if (to) { sql += ' AND day <= ?'; bindings.push(to.slice(0, 10)); }
@@ -421,7 +424,13 @@ export async function handleAdminSearchUsage(request: Request, env: Env): Promis
     console.error('search usage export failed (non-fatal):', err instanceof Error ? err.message : String(err));
   }
 
-  const columns = ['day', 'email', 'tier', 'searches'];
+  // Dan, 2026-11-02: "IES ID (account number) would help long-term analytics."
+  const memberNumbers = await lookupMemberNumbers(env, request.url, rows.map(r => r.person_uuid as string | null));
+  for (const r of rows) {
+    r.ies_id = memberNumbers.get(String(r.person_uuid ?? '').toLowerCase()) ?? '';
+  }
+
+  const columns = ['day', 'email', 'ies_id', 'tier', 'searches'];
   const csv = [
     columns.join(','),
     ...rows.map(r => columns.map(c => csvCell(r[c])).join(',')),
