@@ -431,9 +431,15 @@ export async function handleAdminSearchUsage(request: Request, env: Env): Promis
     status: 200,
     headers: {
       'Content-Type': 'text/csv; charset=utf-8',
-      'Content-Disposition': 'attachment; filename="lens-search-usage.csv"',
+      // Shane, 2026-11-02: search_usage_YYYYMMDDHHMM.csv (UTC).
+      'Content-Disposition': `attachment; filename="search_usage_${exportStamp()}.csv"`,
     },
   });
+}
+
+/** YYYYMMDDHHMM in UTC, for export filenames. */
+export function exportStamp(now: Date = new Date()): string {
+  return now.toISOString().slice(0, 16).replace(/[-T:]/g, '');
 }
 
 /**

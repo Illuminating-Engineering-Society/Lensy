@@ -10,7 +10,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { handleAdminAnalytics, handleAdminDeviceResetsList, handleAdminDeviceResetUpdate, handleAdminIndexStatus } from './admin';
+import { handleAdminAnalytics, handleAdminDeviceResetsList, handleAdminDeviceResetUpdate, handleAdminIndexStatus, exportStamp } from './admin';
 
 // ─── Stubs ─────────────────────────────────────────────────────────────────────
 
@@ -335,5 +335,12 @@ describe('index-health warnings staff can act on', () => {
     expect(stats.pagesWithChunks).toBe(2);
     expect(stats.pagesWithoutChunks).toEqual([1, 3, 5]);
     expect(stats.byType).toEqual({ text: 1, reference: 1 });
+  });
+});
+
+// Shane, 2026-11-02: search_usage_YYYYMMDDHHMM.csv.
+describe('exportStamp', () => {
+  it('is YYYYMMDDHHMM in UTC', () => {
+    expect(exportStamp(new Date('2026-11-02T15:09:42Z'))).toBe('202611021509');
   });
 });
