@@ -1910,7 +1910,12 @@ hits included, cookie sessions only, fail-soft. Export:
 `GET /api/admin/search-usage.csv?from=&to=` (Admin → Maintenance → Data
 exports). Personal by necessity, the opposite of search_log: it stores no
 query and no time finer than a day, so the two cannot be joined — keep it that
-way. **Not built yet:** the account's company (Dan's "if assigned via a
+way. The file is `search_usage_YYYYMMDDHHMM.csv` (UTC, Shane) and carries an
+`ies_id` column (Dan: "IES ID (account number)") read at download time from
+AuthIES `POST /api/people/lookup` (`src/lib/people-lookup.ts`, bearer
+`PEOPLE_LOOKUP_API_SECRET` — the same value on both Workers, its own secret
+because COMP_GRANTS_API_SECRET is documented as reading no member data);
+blank when the secret is unset or AuthIES fails. **Not built yet:** the account's company (Dan's "if assigned via a
 Sustaining Member"). Lens never sees it — the cookie carries no organization
 and AuthIES does not store the sustaining seat's org — so it needs AuthIES to
 capture the organization from the Wicket membership sync and expose it;
