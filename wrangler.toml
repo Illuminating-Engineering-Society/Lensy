@@ -205,16 +205,12 @@ LENSY_SUBSCRIBER_ROLES = "lighting-library-full-access,lighting-library-sustaini
 # /library-error.html (the page Vitrium's WebViewer redirects refused readers
 # to — configured in Vitrium admin → Settings → Web Viewer Settings → "Custom
 # URL for Error Page" as https://lensy.ies.org/library-error.html).
-# UNSET until IES names the inbox: requests are still stored in
-# device_reset_requests (migration 0016) and exportable at
-# GET /api/admin/device-resets.csv — only the per-request notification email is
-# skipped. Uncomment and fill in once the client confirms the address:
-# DEVICE_RESET_NOTIFY_EMAIL = "…@ies.org"
-#   ^ RE-COMMENTED 2026-09-10: it had been uncommented with the "…" placeholder
-#     still in it, which passes the email-shape check and makes every staff
-#     notification ATTEMPT a send to a nonexistent address (each failure is
-#     recorded on the row as notify_error). Put the real inbox here when the
-#     client names it — until then requests queue silently, as designed.
+# Requests are stored in device_reset_requests (migration 0016) and exportable
+# at GET /api/admin/device-resets.csv whether or not this is set; it only adds
+# the per-request staff notification. Set to the Standards inbox 2026-11-01
+# (Alex) — change it when IES names a dedicated one. Never leave a placeholder
+# here: anything email-shaped passes the check and every send would fail.
+DEVICE_RESET_NOTIFY_EMAIL = "standards@ies.org"
 # ── 1-concurrent-session cap (client, 2026-09-04) ──────────────────────────────
 # "Out of the gate, Lensy should cap at (only) a 1-concurrent-session cap."
 # One Lensy seat per account: the most recent sign-in holds it, an older
