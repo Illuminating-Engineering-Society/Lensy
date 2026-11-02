@@ -1899,6 +1899,23 @@ Migration **0024** (`purchases`); AuthIES branch `feat/surecart-purchase-source`
   Vitrium's `DocumentId` equals the export's Doc ID in `vitrium_doc_id` (the
   same assumption comps rest on; AuthIES logs it on every grant).
 
+### Search usage per account, no search content (Dan, 2026-11-02)
+
+"A data export on Lens Admin that counts search usage per user without any
+search content. 'Total searches per day' per user is likely the safest."
+Migration **0028** `search_usage_daily` (day UTC, email, person_uuid, tier,
+searches); `recordSearchUsage` (`src/lib/search-usage.ts`) is called in
+`handleSearch` right after validation — the daily cap's counting point, cache
+hits included, cookie sessions only, fail-soft. Export:
+`GET /api/admin/search-usage.csv?from=&to=` (Admin → Maintenance → Data
+exports). Personal by necessity, the opposite of search_log: it stores no
+query and no time finer than a day, so the two cannot be joined — keep it that
+way. **Not built yet:** the account's company (Dan's "if assigned via a
+Sustaining Member"). Lens never sees it — the cookie carries no organization
+and AuthIES does not store the sustaining seat's org — so it needs AuthIES to
+capture the organization from the Wicket membership sync and expose it;
+`person_uuid` is kept for that join.
+
 ### The 10/30/26 Teams notes: lease add-on files, tutorials polish (2026-10-30)
 
 Migration **0027** (`standards.lease_addon_doc_ids`). No search-cache bump.
