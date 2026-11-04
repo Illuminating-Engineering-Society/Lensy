@@ -1973,8 +1973,11 @@ cron trigger (`0 10 * * *`, `scheduled` in api.ts). No search-cache bump.
 - **Committees (10/23 #1):** D1 `author` set by hand — LS-1 "Nomenclature
   Committee", ASHRAE-IES-90.1-2025 "ASHRAE/IES". `isJointBodyCredit`
   (committees.js) prints an acronym/acronym credit as typed, no "IES" prefix.
-- **Share feedback → `https://forms.cloud.microsoft/r/TCRkdRe2Tx`** (index.html
-  menu + site-menu.js `FEEDBACK_URL`). "Technical support" stays ies.org/contact-us.
+- **Share feedback → `https://lens.ies.org/feedback`** (Dan, 11/04/26: one
+  stable address to link to). The Worker 302s it to the MS form
+  (`DEFAULT_FEEDBACK_FORM_URL` in api.ts, overridable with the
+  `FEEDBACK_FORM_URL` var); every page links `/feedback`, so moving the form
+  is a one-line change. "Technical support" stays ies.org/contact-us.
 - **IES Standards Toolbox** in every tools menu (`TOOLBOX_URL`, index.html +
   site-menu.js), and under the AI Guide a note per TM-30 / TM-35 / TM-21 the
   answer names (`TOOLBOX_CALCULATORS` in index.html; all three link the

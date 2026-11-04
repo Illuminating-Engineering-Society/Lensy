@@ -53,6 +53,11 @@ import { handleAdminPurchases, handleAdminPurchasesCsv } from './purchases-admin
 import { sendLeaseExpiryReminders } from './lease-reminders';
 import { refreshTrendingTopics } from '../lib/trending-topics';
 
+// Where lens.ies.org/feedback sends the reader. The `FEEDBACK_FORM_URL` var
+// overrides it, so moving the form to another platform is a config change.
+// Every Lens page links /feedback, never this URL directly.
+const DEFAULT_FEEDBACK_FORM_URL = 'https://forms.cloud.microsoft/r/TCRkdRe2Tx';
+
 // CORS: `*` with no Allow-Credentials, so a cross-origin page can never make a
 // cookie-authenticated call — every session-gated route is effectively
 // same-origin only, and cross-origin callers must present the bearer secret.
@@ -322,6 +327,16 @@ export default {
 
       if (path.startsWith('/api/projects')) {
         return withCors(await handleProjects(request, env, url));
+      }
+
+      // lens.ies.org/feedback — one stable address for the feedback form (Dan,
+      // 11/04/26: "The MS Office form is great for now but I'm sure it will
+      // transition to another platform … and I keep linking to it"). 302, not
+      // 301: browsers cache a 301 forever, and the target WILL change.
+      if (path === '/feedback' || path === '/feedback/') {
+        const target = String((env as { FEEDBACK_FORM_URL?: string }).FEEDBACK_FORM_URL || '').trim()
+          || DEFAULT_FEEDBACK_FORM_URL;
+        return new Response(null, { status: 302, headers: { Location: target, 'Cache-Control': 'no-store' } });
       }
 
       // Everything that is not an API route is a page or an asset (the Worker

@@ -26,7 +26,7 @@
 
   var SUBSCRIBE_URL = 'https://ies.org/products/lighting-library/';
   // The IES feedback form (client, 2026-10-27); keep in step with index.html.
-  var FEEDBACK_URL = 'https://forms.cloud.microsoft/r/TCRkdRe2Tx';
+  var FEEDBACK_URL = '/feedback'; // the Worker redirects it to the current form
   // "IES Standards Toolbox" in every Lighting Library Tools menu (client,
   // 2026-10-27); keep in step with index.html.
   var TOOLBOX_URL = 'https://www.ies.org/standards/standards-toolbox/';
