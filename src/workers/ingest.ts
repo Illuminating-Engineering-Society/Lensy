@@ -53,6 +53,7 @@
 
 import { bumpDataVersion } from '../lib/cache';
 import { looksLikeCommittee } from '../lib/committees.js';
+import { cleanPageLabels } from '../lib/page-labels.js';
 import { requireAdminAccess } from './session';
 import {
   DEFINITIONS_STANDARD_ID, buildDefinitionEmbedText, definitionVectorId,
@@ -457,6 +458,7 @@ export async function runDocumentIngest(
     sections = null,         // { "3.3.4": "Circulation Areas" } — client DO40
     outline = null,          // [{number,title,page}] in document order — DO082
     assets = null,           // [{kind,label,caption,page}] captions — DO086
+    pageLabels = undefined,  // pdfjs getPageLabels() — printed folios (Dan, 11/06/26)
     r2Key = null,
   } = body;
 
@@ -682,14 +684,22 @@ export async function runDocumentIngest(
   const outlineJson = arrayJson(outline);
   const assetsJson = arrayJson(assets);
 
+  // The printed page numbers (Dan, 11/06/26: "p. 42 … should print as p. 33").
+  // Replaced only when the caller SENT them (null included — a new PDF without
+  // labels must clear the previous edition's); a caller that predates them
+  // leaves what the backfill stored.
+  const pageLabelsSent = pageLabels !== undefined;
+  const pageLabelsClean = cleanPageLabels(pageLabels, pageCount);
+  const pageLabelsJson = pageLabelsClean ? JSON.stringify(pageLabelsClean) : null;
+
   await report('metadata');
   if (chunks.length > 0 || tables.length > 0 || metadata.title) await env.DB.prepare(`
     INSERT INTO standards
       (id, title, description, author, year, full_designation, r2_key,
        tables_json, status, superseded_by, chunk_count, page_count,
        coverage_json, reference_markers_json, sections_json, outline_json, assets_json,
-       indexed_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+       page_labels_json, indexed_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
     ON CONFLICT(id) DO UPDATE SET
       -- A real title only. The ingest sends the id as its last-resort fallback,
       -- and letting that overwrite the stored title is how "RP-1-24" ended up as
@@ -733,6 +743,9 @@ export async function runDocumentIngest(
       assets_json = CASE
         WHEN excluded.chunk_count IS NOT NULL THEN excluded.assets_json
         ELSE standards.assets_json END,
+      page_labels_json = CASE
+        WHEN ? = 1 THEN excluded.page_labels_json
+        ELSE standards.page_labels_json END,
       indexed_at   = CURRENT_TIMESTAMP,
       updated_at   = CURRENT_TIMESTAMP
   `).bind(
@@ -760,6 +773,8 @@ export async function runDocumentIngest(
     sectionsJson,
     outlineJson,
     assetsJson,
+    pageLabelsJson,
+    pageLabelsSent ? 1 : 0,
   ).run();
 
   // ── 5. Upsert extracted application records into D1 ──────────────────────

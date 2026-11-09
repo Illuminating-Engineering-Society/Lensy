@@ -10,7 +10,7 @@ import { describe, it, expect } from 'vitest';
 import {
   isPlausibleSectionNumber, normalizeSectionNumber, readSectionNumber,
   sanitizeSectionTitle, parseHeading, chapterOf, chapterLabel, hasPrintedSeparators,
-  compareSectionNumbers, outlineFromSectionMap, looksLikeChapterHeading,
+  compareSectionNumbers, outlineFromSectionMap, looksLikeChapterHeading, cleanOutline,
 } from './section-titles.js';
 
 describe('looksLikeChapterHeading', () => {
@@ -284,5 +284,46 @@ describe('compareSectionNumbers / outlineFromSectionMap (DO082)', () => {
   it('is empty for a standard with no indexed headings', () => {
     expect(outlineFromSectionMap(null)).toEqual([]);
     expect(outlineFromSectionMap({})).toEqual([]);
+  });
+});
+
+describe('cleanOutline (Dan, 11/06/26)', () => {
+  // The tail of RP-41-20+E1's production outline_json, verbatim.
+  const rp41 = [
+    { number: '5.6', title: 'System Startup', page: 42 },
+    { number: '6.0', title: 'Conclusion', page: 43 },
+    { number: '7', title: 'As designed by theater lighting designer', page: 48 },
+    { number: '2', title: 'Nave, prayer hall', page: 56 },
+    { number: '8', title: 'Simple, no stage lighting cues', page: 56 },
+    { number: '1', title: 'American Society of Heating, Refrigerating, and Air-Conditioning Engineers (ASHRAE) and Illuminating Engineering Society', page: 57 },
+    { number: '5', title: 'Proposed change', page: 59 },
+  ];
+  const head = [
+    { number: '1.0', title: 'Introduction', page: 11 },
+    { number: '5.0', title: 'Dimmers and Lighting Control', page: 38 },
+  ];
+
+  it('drops bare integers from a document that numbers its chapters "N.0"', () => {
+    expect(cleanOutline([...head, ...rp41]).map(e => e.number))
+      .toEqual(['1.0', '5.0', '5.6', '6.0']);
+  });
+
+  it('always drops the ANSI form field "Proposed change"', () => {
+    expect(cleanOutline([{ number: '9', title: 'LIGHTING', page: 9 }, { number: '5', title: 'Proposed change', page: 30 }]))
+      .toEqual([{ number: '9', title: 'LIGHTING', page: 9 }]);
+  });
+
+  it('keeps bare chapters in a document that numbers them bare (ASHRAE/IES 90.1)', () => {
+    const outline = [{ number: '9', title: 'LIGHTING', page: 9 }, { number: '9.1', title: 'General', page: 9 }];
+    expect(cleanOutline(outline)).toEqual(outline);
+  });
+
+  it('keeps annexes and dotted sections', () => {
+    const outline = [...head, { number: 'Annex A', title: 'Field Measurements', page: 60 }, { number: 'A.1', title: 'Scope', page: 60 }];
+    expect(cleanOutline(outline)).toEqual(outline);
+  });
+
+  it('tolerates junk', () => {
+    expect(cleanOutline(null)).toEqual([]);
   });
 });

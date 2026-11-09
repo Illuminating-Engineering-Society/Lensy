@@ -997,7 +997,8 @@
       const resource = appEntry.resource_title
         || [snap.Standard_Full || snap.Standard, snap.App].filter(Boolean).join(' ')
         || appEntry.application_code;
-      const page = appEntry.page_number;
+      // The printed page (Dan, 11/06/26); the Worker resolves it on read.
+      const page = appEntry.page_label || appEntry.page_number;
       const appName = type === 'tables'
         ? (appEntry.application_name || [snap.Sub_Category, snap.App, snap.App_s1, snap.App_s2].filter(Boolean).join(' > '))
         : null;
@@ -1245,7 +1246,7 @@
       } catch { /* the email is still worth sending without a claim link */ }
 
       const items = (currentApplications || []).map(a => {
-        const page = a.page_number != null ? `, p. ${a.page_number}` : '';
+        const page = a.page_number != null ? `, p. ${a.page_label || a.page_number}` : '';
         const ref = a.result_type === 'references' && a.reference_text ? `\n    ${a.reference_text}` : '';
         const app = a.result_type === 'tables' && a.application_name ? `\n    ${a.application_name}` : '';
         const note = a.custom_notes ? `\n    Note: ${a.custom_notes}` : '';

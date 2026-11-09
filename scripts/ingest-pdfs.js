@@ -393,7 +393,7 @@ async function ingestFile(filePath, standardId, status = 'current') {
 
   // Step 2: Parse PDF in Node.js using pdfjs-dist
   console.log('  Parsing PDF...');
-  const { metadata, pages } = await parsePDFNode(pdfBytes);
+  const { metadata, pages, pageLabels } = await parsePDFNode(pdfBytes);
 
   // Step 2a: the standard's own cover is the authority for its title and its
   // full designation (client DO48 — the file metadata is empty for this whole
@@ -583,6 +583,8 @@ async function ingestFile(filePath, standardId, status = 'current') {
     sections,
     outline,
     assets,
+    // Printed folios (Dan, 11/06/26); the Worker validates and stores them.
+    pageLabels: pageLabels ?? null,
     r2Key,
   });
 

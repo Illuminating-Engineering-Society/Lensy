@@ -305,6 +305,12 @@ export interface DocumentAsset {
   label: string;
   caption: string;
   page: number;
+  /**
+   * The page as the document PRINTS it (Dan, 11/06/26: "the printed page number
+   * is 33 and that is all the Lens user should ever see"). Display only — links
+   * keep the PDF index. Absent for a standard without trustworthy /PageLabels.
+   */
+  pageLabel?: string | null;
   /** Page-targeted Lighting Library URL, added at query time. */
   url?: string | null;
 }
@@ -312,6 +318,12 @@ export interface DocumentAsset {
 export interface Excerpt {
   text: string;
   pageNumber: number | null;
+  /**
+   * The page as the document PRINTS it (Dan, 11/06/26: "the printed page number
+   * is 33 and that is all the Lens user should ever see"). Display only — links
+   * keep the PDF index. Absent for a standard without trustworthy /PageLabels.
+   */
+  pageLabel?: string | null;
   section: string | null;
   /** The printed title of `section`, resolved from standards.sections_json (DO40). */
   sectionTitle?: string | null;
@@ -377,6 +389,12 @@ export interface ReferenceMarker {
   standardFull: string | null;
   count: number;
   pageNumber: number | null;
+  /**
+   * The page as the document PRINTS it (Dan, 11/06/26: "the printed page number
+   * is 33 and that is all the Lens user should ever see"). Display only — links
+   * keep the PDF index. Absent for a standard without trustworthy /PageLabels.
+   */
+  pageLabel?: string | null;
   /** The number this standard printed the entry under, when recoverable. */
   referenceNumber?: number | null;
   /**
@@ -440,6 +458,12 @@ export interface SearchResult {
    */
   citationName?: string;
   citationPage?: number | null;
+  /**
+   * The page as the document PRINTS it (Dan, 11/06/26: "the printed page number
+   * is 33 and that is all the Lens user should ever see"). Display only — links
+   * keep the PDF index. Absent for a standard without trustworthy /PageLabels.
+   */
+  citationPageLabel?: string | null;
   vitriumLink: string | null;
   /**
    * Front-of-document Lighting Library URL (no page fragment) — the UI links

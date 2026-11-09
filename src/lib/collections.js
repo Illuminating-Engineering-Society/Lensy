@@ -203,7 +203,8 @@ export function csvRowFor(item, collection) {
     type: RESULT_TYPE_LABELS[item.result_type] || item.result_type || '',
     search_note: stripHtml(item.custom_notes),
     resource: item.resource_title || '',
-    page: item.page_number != null ? String(item.page_number) : '',
+    // The printed page when the Worker resolved one (Dan, 11/06/26).
+    page: item.page_number != null ? String(item.page_label || item.page_number) : '',
     library_url: item.library_url || '',
     application: item.result_type === 'tables' ? (item.application_name || '') : '',
     reference: item.result_type === 'references' ? (item.reference_text || '') : '',

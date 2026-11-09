@@ -651,7 +651,7 @@ function describeResult(r: SearchResult, idx: number, mode: AIMode = 'guide'): s
   // Reference entries are bibliography lines, not applications — describe them
   // as the cited work plus where it is listed (DO26.5).
   if (r.resultType === 'reference') {
-    return `[Result ${idx + 1}] REFERENCE ENTRY listed in ${app.standardFull || app.standard}${r.excerpt?.pageNumber ? `, p. ${r.excerpt.pageNumber}` : ''}
+    return `[Result ${idx + 1}] REFERENCE ENTRY listed in ${app.standardFull || app.standard}${r.excerpt?.pageNumber ? `, p. ${r.excerpt.pageLabel ?? r.excerpt.pageNumber}` : ''}
   Entry: "${(excerptText || '').substring(0, 300)}"`;
   }
 
@@ -692,6 +692,7 @@ function describeResult(r: SearchResult, idx: number, mode: AIMode = 'guide'): s
         ? [{
             text: excerptText,
             pageNumber: r.excerpt?.pageNumber ?? null,
+            pageLabel: r.excerpt?.pageLabel ?? null,
             section: r.excerpt?.section ?? null,
             formulaOmitted: r.excerpt?.formulaOmitted,
           }]
@@ -700,9 +701,12 @@ function describeResult(r: SearchResult, idx: number, mode: AIMode = 'guide'): s
   // name a chapter the way the standard prints it — the grounding rule only
   // allows locators that appear verbatim here, and a bare "§3.3.4" gave it
   // nothing nameable to cite.
-  const locatorOf = (e: { section?: string | null; sectionTitle?: string | null; pageNumber?: number | null }) =>
+  // The page is the one PRINTED on it (Dan, 11/06/26: "p. 42" must read
+  // "p. 33"), so the Guide cites what the reader will see; the UI maps it back
+  // to the PDF index for the link.
+  const locatorOf = (e: { section?: string | null; sectionTitle?: string | null; pageNumber?: number | null; pageLabel?: string | null }) =>
     `${e.section ? ` §${e.section}${e.sectionTitle ? ` ${e.sectionTitle}` : ''}` : ''}` +
-    `${e.pageNumber != null ? ` (p. ${e.pageNumber})` : ''}`;
+    `${e.pageNumber != null ? ` (p. ${e.pageLabel ?? e.pageNumber})` : ''}`;
   const excerptLines = excerpts.length > 0
     ? excerpts.map(e => `  Excerpt${locatorOf(e)}: "${promptExcerpt(e, EXCERPT_CHARS[mode])}"`).join('\n')
     : '  (No excerpt available)';
@@ -713,7 +717,7 @@ function describeResult(r: SearchResult, idx: number, mode: AIMode = 'guide'): s
   // client's failing examples needed ("do not cite Table C-1 … on page 62").
   const assetLines = (r.assets && r.assets.length > 0)
     ? '\n' + r.assets.map(a =>
-        `  ${a.kind === 'figure' ? 'FIGURE' : 'TABLE'} in this standard: ${a.label} — "${a.caption}" (p. ${a.page}). `
+        `  ${a.kind === 'figure' ? 'FIGURE' : 'TABLE'} in this standard: ${a.label} — "${a.caption}" (p. ${a.pageLabel ?? a.page}). `
         + 'Cite it by label and page; you cannot see its contents.').join('\n')
     : '';
 

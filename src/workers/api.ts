@@ -43,7 +43,8 @@ import {
   normalizeSavedItem, savedItemCodes, newShareToken, CSV_COLUMNS, csvCell, csvRowFor,
 } from '../lib/collections.js';
 import { resolveCommittee } from '../lib/committees.js';
-import { outlineFromSectionMap } from '../lib/section-titles.js';
+import { cleanOutline, outlineFromSectionMap } from '../lib/section-titles.js';
+import { pageLabelFor, parsePageLabels } from '../lib/page-labels.js';
 import type { OutlineEntry } from '../types';
 import { toLibraryUrlOrNull } from '../lib/library-url.js';
 import { sendCollectionShareEmail, isEmailAddress, resolveAppUrl } from '../lib/email';
@@ -510,9 +511,10 @@ function parseOutline(raw: string | null | undefined): OutlineEntry[] {
   try {
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
-    return parsed
+    // Not every entry the heading walk stored is a heading (Dan, 11/06/26).
+    return (cleanOutline(parsed) as unknown[])
       .filter((e): e is OutlineEntry => !!e && typeof e === 'object'
-        && typeof e.number === 'string' && typeof e.title === 'string')
+        && typeof (e as OutlineEntry).number === 'string' && typeof (e as OutlineEntry).title === 'string')
       .map(e => ({
         number: e.number,
         title: e.title,
@@ -611,6 +613,7 @@ async function handleStandards(request: Request, env: Env, url: URL): Promise<Re
       ? indexed
       : outlineFromSectionMap(parseJsonObject(standard.sections_json));
     const libraryUrl = toLibraryUrlOrNull(standard.vitrium_web_url);
+    const pageLabels = parsePageLabels(standard.page_labels_json);
     return json({
       standard: {
         id: standard.id,
@@ -622,6 +625,8 @@ async function handleStandards(request: Request, env: Env, url: URL): Promise<Re
       source: indexed.length > 0 ? 'index' : (outline.length > 0 ? 'sections' : 'none'),
       outline: outline.map(e => ({
         ...e,
+        // The page as printed (Dan, 11/06/26); `page` stays the PDF index.
+        label: pageLabelFor(pageLabels, e.page),
         // A page-targeted link, so a TOC entry opens where it points.
         url: (libraryUrl && e.page != null) ? `${libraryUrl}#page=${e.page}` : null,
       })),
@@ -826,7 +831,7 @@ async function getProject(env: Env, projectId: string): Promise<Response> {
     return { ...row, ...fromSnapshot, removedFromCorpus: removed, reindexed: moved };
   });
 
-  return json({ project, applications: await withStandardFacts(env, applications) });
+  return json({ project, applications: await withStandardFacts(env, await withSavedPageLabels(env, applications)) });
 }
 
 /** project_applications.snapshot_data → the 68-column row saved at add time. */
@@ -927,8 +932,40 @@ async function collectionItems(env: Env, projectId: string) {
   // link; correcting on read fixes them everywhere a saved item is shown — the
   // collection view, the CSV export, the share email and a claimed copy — with
   // no data migration.
-  return (rows.results || []).map((r): Record<string, any> =>
-    ({ ...r, library_url: toLibraryUrlOrNull(r.library_url) }));
+  return withSavedPageLabels(env, (rows.results || []).map((r): Record<string, any> =>
+    ({ ...r, library_url: toLibraryUrlOrNull(r.library_url) })));
+}
+
+/**
+ * The printed page of every saved item (Dan, 11/06/26: "p. 42" must read
+ * "p. 33"). A bookmark stores the PDF page index — its Library link needs it —
+ * so the printed label is resolved on READ, which also corrects every bookmark
+ * saved before labels existed: `page_label` is added, and a title that ends in
+ * the index (a passage or table-of-contents bookmark, "…, p. 42") is rewritten
+ * to end in the label. Fail-soft: without labels the items go back unchanged.
+ */
+async function withSavedPageLabels(env: Env, items: Record<string, any>[]): Promise<Record<string, any>[]> {
+  const idOf = (it: Record<string, any>): string | null =>
+    it.standard_id || (/^(.+)_\d+$/.exec(String(it.application_code || ''))?.[1] ?? null);
+  const ids = [...new Set(items.filter(it => it.page_number != null).map(idOf).filter((v): v is string => !!v))];
+  if (ids.length === 0) return items;
+  try {
+    const rows = await env.DB.prepare(
+      `SELECT id, page_labels_json FROM standards WHERE id IN (${ids.map(() => '?').join(',')})`
+    ).bind(...ids).all<{ id: string; page_labels_json: string | null }>();
+    const byId = new Map((rows.results || []).map(r => [r.id, parsePageLabels(r.page_labels_json)]));
+    return items.map(it => {
+      const label = pageLabelFor(byId.get(idOf(it) || '') || null, it.page_number);
+      if (!label) return it;
+      const title = typeof it.resource_title === 'string'
+        ? it.resource_title.replace(new RegExp(`(,\\s*p\\.\\s*)${Number(it.page_number)}$`), (_m: string, p: string) => `${p}${label}`)
+        : it.resource_title;
+      return { ...it, page_label: label, resource_title: title };
+    });
+  } catch (err) {
+    console.error('saved-item page labels failed (non-fatal):', err instanceof Error ? err.message : String(err));
+    return items;
+  }
 }
 
 /**

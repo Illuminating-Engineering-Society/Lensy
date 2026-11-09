@@ -132,7 +132,11 @@ const DATA_VERSION_KEY = 'cache:data-version';
 // v25: the Guide-cited cards read in the order the answer names their
 //     standards (Dan, 10/20/26: Guide led with RP-8, cards with 90.1 and G-1).
 // v26: application questions lead with the application's own standard (same note).
-const SEARCH_CACHE_SCHEMA = 'v26';
+// v27: pages print as the document prints them (Dan, 11/06/26: "p. 42" must
+//     read "p. 33") — the payload gained pageLabel fields and labeled/pageOffset
+//     on the link maps, and the Guide is now shown printed pages, so a cached
+//     answer citing PDF indices must not be served.
+const SEARCH_CACHE_SCHEMA = 'v27';
 
 function errMsg(err: unknown): string {
   return err instanceof Error ? err.message : String(err);

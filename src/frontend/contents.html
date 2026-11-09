@@ -53,6 +53,13 @@
     .toc-outline > summary::-webkit-details-marker { display: none; }
     .toc-outline > summary::marker { content: ''; }
     .toc-outline[open] > summary svg { transform: rotate(180deg); }
+    /* "+ Bookmark" beside each table-of-contents entry (Dan, 11/06/26): it only
+       appears on mouse-over, "for visual clarity" — and always on a touch
+       screen, which has no mouse-over to reveal it. */
+    .toc-row .toc-bookmark { opacity: 0; transition: opacity .12s; }
+    .toc-row:hover .toc-bookmark,
+    .toc-row:focus-within .toc-bookmark { opacity: 1; }
+    @media (hover: none) { .toc-row .toc-bookmark { opacity: 1; } }
 
     /* Embed mode (?embed=1): only the list — the IES store page around the
        frame already carries its own header, footer and account controls. */
@@ -1386,17 +1393,23 @@
         return Math.max(0, String(number).split('.').length - 1);
       };
 
+      const std = (data && data.standard) || {};
       const rows = outline.map(e => {
         const indent = Math.min(depthOf(e.number), 4) * 12;
         const label = `${escapeHtml(e.number)} ${escapeHtml(e.title)}`;
         const text = e.url
           ? `<a href="${escapeHtml(e.url)}" target="_blank" rel="noopener" class="hover:text-ies-blue hover:underline">${label}</a>`
           : label;
-        const page = e.page != null ? `<span class="text-gray-400 tabular-nums shrink-0 pl-2">${e.page}</span>` : '';
+        // The page as PRINTED (Dan, 11/06/26); the link above keeps the PDF index.
+        const printed = e.label || e.page;
+        const page = e.page != null ? `<span class="text-gray-400 tabular-nums shrink-0 pl-2">${escapeHtml(String(printed))}</span>` : '';
         return `
-          <li class="flex items-baseline justify-between gap-2 py-0.5" style="padding-left:${indent}px">
+          <li class="toc-row flex items-baseline justify-between gap-2 py-0.5" style="padding-left:${indent}px">
             <span class="min-w-0 ${depthOf(e.number) === 0 ? 'font-semibold text-gray-700' : 'text-gray-600'}">${text}</span>
-            ${page}
+            <span class="flex items-baseline gap-1.5 shrink-0">
+              ${tocBookmarkButton(std, e)}
+              ${page}
+            </span>
           </li>`;
       }).join('');
 
@@ -1412,6 +1425,184 @@
           <ul>${rows}</ul>
         </div>`;
     }
+
+    // ── "+ Bookmark" on table-of-contents entries (Dan, 11/06/26) ─────────────
+    // "Can we explore introducing a '+bookmark' feature beside linked chapter
+    //  titles in each 'tables of contents' menu so users can easily build saved
+    //  collections from the List Standards page? Perhaps it's a +Bookmark icon
+    //  that only appears upon mouse-over each chapter, for visual clarity."
+    //
+    // The saved item is the same Document bookmark a passage on the search page
+    // makes (passageBookmarkButton in index.html): citation with the section and
+    // printed page, the PDF page index and its page-targeted Library link — no
+    // passage text (DO37). Bookmarks are a subscriber feature, so a
+    // Non-Subscriber sees the control locked, never hidden (client 10/21/26),
+    // and the API refuses the write regardless (subscription_required).
+    function tocBookmarkButton(std, e) {
+      if (!std.id || (e.page == null && !e.url)) return '';
+      const locked = !readerIsSubscriber;
+      const printed = e.label || e.page;
+      const name = [
+        [std.designation, std.title].filter(Boolean).join(' '),
+        `Section ${e.number} ${e.title}`,
+        printed != null ? `p. ${printed}` : '',
+      ].filter(Boolean).join(', ');
+      const payload = {
+        result_type: 'body',
+        standard_id: std.id,
+        resource_title: name,
+        page_number: e.page ?? null,
+        library_url: e.url || std.library_url || null,
+        application_code: null,
+        application_name: null,
+        reference_text: null,
+        definition_slug: null,
+      };
+      return `
+        <button type="button"
+                class="toc-bookmark text-[10px] leading-none px-1.5 py-0.5 rounded font-semibold whitespace-nowrap ${locked
+                  ? 'bg-gray-200 text-gray-500 cursor-not-allowed'
+                  : 'bg-brand-secondary text-white hover:bg-brand-secondary-dark'}"
+                data-payload="${escapeHtml(JSON.stringify(payload))}"
+                data-name="${escapeHtml(name)}"
+                aria-label="Bookmark ${escapeHtml(`${e.number} ${e.title}`)}"
+                title="${locked ? 'Bookmarks are included with a Lighting Library subscription' : 'Bookmark this section'}">${locked ? '🔒 ' : '+ '}Bookmark</button>`;
+    }
+
+    let tocPendingPayload = null;
+
+    function ensureTocBookmarkDialog() {
+      let dialog = document.getElementById('toc-bookmark-dialog');
+      if (dialog) return dialog;
+      dialog = document.createElement('div');
+      dialog.id = 'toc-bookmark-dialog';
+      dialog.className = 'hidden fixed inset-0 z-[60] flex items-end sm:items-center justify-center p-4';
+      dialog.innerHTML = `
+        <div class="absolute inset-0 bg-black/40" data-close></div>
+        <div class="relative bg-white rounded-2xl shadow-2xl w-full max-w-md p-6" role="dialog" aria-modal="true" aria-labelledby="toc-bm-heading">
+          <div class="flex items-center justify-between mb-4">
+            <h3 id="toc-bm-heading" class="text-lg font-bold text-gray-900">Bookmark</h3>
+            <button type="button" data-close class="text-gray-400 hover:text-gray-600 p-1 rounded-md hover:bg-gray-100" aria-label="Close">✕</button>
+          </div>
+          <p id="toc-bm-name" class="bg-gray-50 rounded-lg px-4 py-3 mb-4 text-sm font-medium text-gray-800"></p>
+          <label for="toc-bm-note" class="block text-sm font-medium text-gray-700 mb-1">Your note</label>
+          <textarea id="toc-bm-note" rows="2" placeholder="Why is this section useful? (optional)"
+            class="w-full px-3 py-2.5 border border-gray-200 rounded-lg text-sm mb-4 focus:ring-2 focus:ring-ies-blue focus:border-transparent"></textarea>
+          <p class="block text-sm font-medium text-gray-700 mb-2">Select or create a collection</p>
+          <div id="toc-bm-list" class="space-y-2 max-h-44 overflow-y-auto mb-3"></div>
+          <form id="toc-bm-new" class="flex gap-2">
+            <input id="toc-bm-new-name" type="text" placeholder="New collection topic"
+              class="flex-1 min-w-0 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-ies-blue focus:border-transparent">
+            <button type="submit" class="px-3 py-2 rounded-lg text-sm font-semibold bg-lens-amber text-lens-ink hover:brightness-95">Create &amp; save</button>
+          </form>
+          <p id="toc-bm-msg" class="hidden mt-3 text-sm"></p>
+        </div>`;
+      document.body.appendChild(dialog);
+      dialog.addEventListener('click', (ev) => {
+        if (ev.target.closest('[data-close]')) closeTocBookmarkDialog();
+        const pick = ev.target.closest('[data-collection]');
+        if (pick) saveTocBookmark(pick.dataset.collection);
+      });
+      dialog.querySelector('#toc-bm-new').addEventListener('submit', async (ev) => {
+        ev.preventDefault();
+        const name = dialog.querySelector('#toc-bm-new-name').value.trim();
+        if (!name) { dialog.querySelector('#toc-bm-new-name').focus(); return; }
+        try {
+          const res = await fetch('/api/projects', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name, user_id: 1 }),
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(data.message || data.error || 'Could not create the collection');
+          await saveTocBookmark(data.project.id, name);
+        } catch (err) {
+          tocBookmarkMessage(err.message, true);
+        }
+      });
+      document.addEventListener('keydown', (ev) => {
+        if (ev.key === 'Escape' && !dialog.classList.contains('hidden')) closeTocBookmarkDialog();
+      });
+      return dialog;
+    }
+
+    function tocBookmarkMessage(text, isError) {
+      const msg = document.getElementById('toc-bm-msg');
+      msg.textContent = text;
+      msg.className = `mt-3 text-sm ${isError ? 'text-red-600' : 'text-green-700'}`;
+    }
+
+    async function openTocBookmarkDialog(payload, name) {
+      const dialog = ensureTocBookmarkDialog();
+      tocPendingPayload = payload;
+      dialog.querySelector('#toc-bm-name').textContent = name;
+      dialog.querySelector('#toc-bm-note').value = '';
+      dialog.querySelector('#toc-bm-new-name').value = '';
+      dialog.querySelector('#toc-bm-msg').className = 'hidden mt-3 text-sm';
+      dialog.classList.remove('hidden');
+      const list = dialog.querySelector('#toc-bm-list');
+      list.innerHTML = '<div class="skeleton h-10 rounded-lg"></div>';
+      try {
+        const res = await fetch('/api/projects?user_id=1');
+        if (!res.ok) throw new Error('Could not load your collections');
+        const projects = (await res.json()).projects || [];
+        list.innerHTML = projects.length
+          ? projects.map(p => `
+              <button type="button" data-collection="${escapeHtml(String(p.id))}"
+                class="w-full text-left px-4 py-2.5 rounded-lg border border-gray-100 hover:border-ies-blue hover:bg-blue-50 transition">
+                <span class="text-sm font-medium text-gray-800">${escapeHtml(p.name)}</span>
+              </button>`).join('')
+          : '<p class="text-sm text-gray-400 text-center py-2">No collections yet — create one below.</p>';
+      } catch (err) {
+        list.innerHTML = `<p class="text-sm text-red-600">${escapeHtml(err.message)}</p>`;
+      }
+    }
+
+    function closeTocBookmarkDialog() {
+      const dialog = document.getElementById('toc-bookmark-dialog');
+      if (dialog) dialog.classList.add('hidden');
+      tocPendingPayload = null;
+    }
+
+    async function saveTocBookmark(projectId, collectionName) {
+      if (!tocPendingPayload || !projectId) return;
+      const note = document.getElementById('toc-bm-note').value.trim();
+      const item = note ? { ...tocPendingPayload, note } : tocPendingPayload;
+      try {
+        const res = await fetch(`/api/projects/${encodeURIComponent(projectId)}/applications`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify([item]),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.message || data.error || 'Could not save the bookmark');
+        const added = (data.inserted_ids || []).length > 0;
+        tocBookmarkMessage(added
+          ? `Bookmarked${collectionName ? ` to “${collectionName}”` : ''}.`
+          : 'Already in this collection.', false);
+        setTimeout(closeTocBookmarkDialog, 900);
+      } catch (err) {
+        tocBookmarkMessage(err.message, true);
+      }
+    }
+
+    document.addEventListener('click', (ev) => {
+      const btn = ev.target.closest && ev.target.closest('.toc-bookmark');
+      if (!btn) return;
+      ev.preventDefault();
+      ev.stopPropagation();
+      if (!readerIsSubscriber) {
+        // Locked, not hidden: say what unlocks it.
+        const note = btn.closest('.toc-body')?.querySelector('.toc-locked-note');
+        if (note) { note.classList.remove('hidden'); return; }
+        const p = document.createElement('p');
+        p.className = 'toc-locked-note text-[11px] text-gray-600 mb-1.5';
+        p.innerHTML = `🔒 Bookmarks are included with a Lighting Library subscription. <a href="${SUBSCRIBE_URL}" target="_blank" rel="noopener" class="underline font-semibold">Subscribe</a>`;
+        btn.closest('.toc-body')?.prepend(p);
+        return;
+      }
+      let payload = null;
+      try { payload = JSON.parse(btn.dataset.payload || 'null'); } catch { payload = null; }
+      if (payload) openTocBookmarkDialog(payload, btn.dataset.name || '');
+    });
 
     // Delegated, because the rows are re-rendered on every filter keystroke.
     document.addEventListener('toggle', (e) => {

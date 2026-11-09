@@ -1899,6 +1899,55 @@ Migration **0024** (`purchases`); AuthIES branch `feat/surecart-purchase-source`
   Vitrium's `DocumentId` equals the export's Doc ID in `vitrium_doc_id` (the
   same assumption comps rest on; AuthIES logs it on every grant).
 
+### The 11/06/26 Teams notes: printed page numbers, a cleaner ToC, ToC bookmarks (2026-11-09)
+
+Migration **0029** (`standards.page_labels_json`); `SEARCH_CACHE_SCHEMA` → **v27**.
+
+- **Pages print as the document prints them.** Dan: "P.42 here should print as
+  'p. 33' … that is all the Lens user should ever see." (Not a regression — Lens
+  had always shown the PDF index; see the old limit note below.) The IES PDFs
+  carry their folios as /PageLabels, and pdfjs `getPageLabels()` matched the
+  printed folio on every current standard checked (RP-1-24: index 42 → "33",
+  71 → "62"; RP-8-25+E2 chapter-paged: 150 → "6-1", annex covers "Aa").
+  `src/lib/page-labels.js` validates them (refuses Word's "Sec1:3", repeated or
+  non-counting labels; stores nothing when labels equal the index). **Links keep
+  the PDF index; only display changes.** `attachPageLabels` (search.ts, after
+  the asset chips, before the Guide) adds `pageLabel` to excerpts, assets and
+  reference chips, `citationPageLabel` + a relabelled `citation`; the Guide's
+  prompt shows the label, so it WRITES "p. 33"; `sectionLinks.pages` is keyed by
+  the label and each labelled entry carries `labeled` + `pageOffset` (index −
+  folio, when constant) so the UI resolves any printed page the Guide names —
+  and leaves it unlinked rather than guess when it cannot. Curation matches the
+  Guide's printed pages. Saved bookmarks store the index; `withSavedPageLabels`
+  (api.ts) adds `page_label` and rewrites a "…, p. 42" title on READ, so the
+  collection page, share email and CSV print the folio for old saves too. The
+  ToC endpoint returns `label` per entry.
+- **Where labels come from:** both ingest paths send them (`parsePDFNode` →
+  `pageLabels`; the dashboard's browser sends `doc.getPageLabels()` with page
+  batch 1), and `runDocumentIngest` replaces the column only when the caller sent
+  the field. The existing corpus is filled by `scripts/backfill-page-labels.js`
+  (dry run by default; `--apply`): local PDF when its page count matches D1,
+  else the row's R2 object. Dry run 2026-11-09: 195 labelled, 7 PDFs without
+  labels (incl. current TM-35-19, LM-63-19 — they keep the index), the rest
+  refused or identical to the index.
+- **ToC cleanup (`cleanOutline`, section-titles.js), applied on READ** in the
+  outline API and the Guide's outline links, so no re-ingest: (1) "Proposed
+  change" — field 5 of the ANSI change-proposal form, in 59 current outlines —
+  is always dropped; (2) once a document numbers ≥2 chapters "N.0" (109 of 110
+  current standards), a bare integer entry is never a heading (RP-41's "7 As
+  designed by theater lighting designer", "2 Nave, prayer hall", bibliography
+  lines, table cells). ASHRAE/IES 90.1 numbers chapters bare and is untouched.
+  Not addressed: column-bleed titles ("4.3 Power Overview need to be managed")
+  — Dan expects MS-Word publishing to be the real fix.
+- **"+ Bookmark" on ToC entries** (contents.html, `tocBookmarkButton`): appears
+  on mouse-over (always on touch screens), saves the same Document payload a
+  passage bookmark does (citation + section + printed page, PDF index, page
+  link) through `/api/projects`; locked with 🔒 for Non-Subscribers (the API
+  refuses anyway).
+- **To take effect:** `npm run db:migrate:remote` → deploy →
+  `node scripts/backfill-page-labels.js --apply` → flush the search cache.
+  Before the migration the code fails open (no labels = today's behaviour).
+
 ### Search usage per account, no search content (Dan, 2026-11-02)
 
 "A data export on Lens Admin that counts search usage per user without any
@@ -3177,7 +3226,8 @@ it, fifty cards for a question about zebras.
 
 **Two limits worth naming, because they will be noticed.**
 
-1. **Page numbers are PDF indices, not printed folios.** RP-1-24's Table C-1 is on
+1. **Page numbers are PDF indices, not printed folios.** *(Resolved 2026-11-09 —
+   see "The 11/06/26 Teams notes": the folio comes from the PDF's /PageLabels.)* RP-1-24's Table C-1 is on
    PDF page 71 and prints the folio "62" — the number the client cited. Every page
    in Lensy (excerpts, citations, asset chips, outline entries) is the PDF index,
    because that is what the Library viewer's `#page=N` needs to land on the right

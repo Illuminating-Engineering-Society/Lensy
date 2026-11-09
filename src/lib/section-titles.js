@@ -460,6 +460,46 @@ export function outlineFromSectionMap(map) {
 }
 
 /**
+ * The ANSI change-proposal form printed at the back of every ANSI/IES standard
+ * numbers its fields, and field 5 reads "Proposed change" — so it was indexed
+ * as chapter 5 of nearly every document (Dan, 11/06/26: "'Proposed change' is
+ * always listed as chapter '5' … It doesn't need to populate in the Tables of
+ * Contents at all").
+ */
+const FORM_FIELD_TITLE_RE = /^proposed change\b/i;
+
+/**
+ * Remove the entries an indexed outline holds that are not headings (Dan,
+ * 11/06/26, RP-41-20+E1's table of contents ending in "7 As designed by theater
+ * lighting designer", "2 Nave, prayer hall", "1 American Society of Heating…").
+ *
+ * The evidence is the document's own numbering style. Measured on production
+ * 2026-11-09: 109 of the 110 current standards print their chapters as "1.0",
+ * "2.0" …, and in every one of them the BARE integers the walk also picked up
+ * are table cells, numbered list items, bibliography lines and form fields —
+ * never a chapter. So once a document has shown it numbers chapters with ".0"
+ * (two or more of them), a bare integer is not one of its headings. A document
+ * that numbers chapters bare (ASHRAE/IES 90.1) keeps them all.
+ *
+ * Applied when the outline is READ, so the stored outline_json of every
+ * standard benefits without a re-ingest.
+ *
+ * @param {Array<any>} outline
+ */
+export function cleanOutline(outline) {
+  if (!Array.isArray(outline)) return [];
+  const dottedChapters = outline.filter(e => /^\d{1,2}\.0$/.test(String(e?.number || ''))).length;
+  const dropBare = dottedChapters >= 2;
+  return outline.filter(e => {
+    const number = String(e?.number || '').trim();
+    const title = String(e?.title || '').trim();
+    if (FORM_FIELD_TITLE_RE.test(title)) return false;
+    if (dropBare && /^\d{1,3}$/.test(number)) return false;
+    return true;
+  });
+}
+
+/**
  * The chapter a section belongs to: "8.7.2.4" → "8", "A.1.1.3" → "Annex A",
  * "Annex C" → "Annex C" (client DO073: 4.3.3.1 and 4.2.4 are both chapter 4).
  */

@@ -284,9 +284,13 @@ export function extractGuideCitations(text: string | null | undefined, results: 
 
       const sectionCited = [...sections].some(sec =>
         new RegExp(`(?:§\\s*|Section\\s+)${escapeRe(sec)}(?![\\d.])`, 'i').test(text));
-      const page = r.citationPage ?? r.excerpt?.pageNumber ?? null;
+      // The Guide writes the PRINTED page (Dan, 11/06/26), so that is what it
+      // is matched against; the PDF index only where no label exists.
+      const page = r.citationPage != null
+        ? (r.citationPageLabel ?? r.citationPage)
+        : (r.excerpt?.pageLabel ?? r.excerpt?.pageNumber ?? null);
       const pageCited = page != null
-        && new RegExp(`(?:p\\.\\s*|page\\s+)${page}(?!\\d)`, 'i').test(text);
+        && new RegExp(`(?:p\\.\\s*|page\\s+)${escapeRe(String(page))}(?![\\w-])`, 'i').test(text);
 
       if (sectionCited || pageCited) {
         cited.add(i);

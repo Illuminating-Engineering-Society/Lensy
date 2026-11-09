@@ -12,7 +12,10 @@
  * and the page loop are Node-bound, and only they live here.
  *
  * Exports:
- *   parsePDFNode(pdfBytes)  → { metadata, pages }
+ *   parsePDFNode(pdfBytes)  → { metadata, pages, pageLabels }
+ *
+ * `pageLabels` is the PDF's own /PageLabels (the PRINTED folio of each page,
+ * Dan 11/06/26) or null — validated later by src/lib/page-labels.js.
  *
  * Each page in `pages` has:
  *   { number, text, lines, width, height }
@@ -59,6 +62,8 @@ export async function parsePDFNode(pdfBytes) {
 
   const metadata = await extractMetadata(pdf);
   const pageCount = pdf.numPages;
+  let pageLabels = null;
+  try { pageLabels = await pdf.getPageLabels(); } catch { pageLabels = null; }
 
   // Identify repeating header/footer text (appears on 3+ pages at same Y
   // position). Sampled from the first pages only, so this pass stays cheap.
@@ -76,7 +81,7 @@ export async function parsePDFNode(pdfBytes) {
     pages.push(buildPageFromRaw(await rawPage(pdf, pageNum), headerFooterCandidates));
   }
 
-  return { metadata, pages };
+  return { metadata, pages, pageLabels };
 }
 
 /** One page in the raw shape src/lib/pdf-pages.js consumes. */

@@ -276,6 +276,8 @@ export interface ShareEmailItem {
   result_type?: string | null;
   resource_title?: string | null;
   page_number?: number | null;
+  /** The printed page (Dan, 11/06/26), resolved on read; preferred for display. */
+  page_label?: string | null;
   library_url?: string | null;
   application_name?: string | null;
   reference_text?: string | null;
@@ -343,7 +345,7 @@ export function buildCollectionShareEmail(ctx: CollectionShareEmailContext): Inv
   const itemHtml = items.map(it => {
     const label = ITEM_LABELS[String(it.result_type || 'tables')] || String(it.result_type || '');
     const title = String(it.resource_title || '').trim();
-    const page = it.page_number != null ? `p. ${it.page_number}` : '';
+    const page = it.page_number != null ? `p. ${it.page_label || it.page_number}` : '';
     const detail = it.result_type === 'tables' ? plainNote(it.application_name)
       : it.result_type === 'references' ? plainNote(it.reference_text)
         : '';
@@ -363,7 +365,7 @@ export function buildCollectionShareEmail(ctx: CollectionShareEmailContext): Inv
 
   const itemText = items.map(it => {
     const label = ITEM_LABELS[String(it.result_type || 'tables')] || String(it.result_type || '');
-    const page = it.page_number != null ? `, p. ${it.page_number}` : '';
+    const page = it.page_number != null ? `, p. ${it.page_label || it.page_number}` : '';
     const detail = it.result_type === 'tables' ? plainNote(it.application_name)
       : it.result_type === 'references' ? plainNote(it.reference_text)
         : '';

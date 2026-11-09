@@ -474,6 +474,11 @@ async function receivePages(request: Request, env: Env, job: IngestJobRow): Prom
     }
     progress.headerFooters = [...detectHeadersFootersFromRaw(pages as RawPage[])];
     progress.docMeta = cleanDocMeta(body.docMeta);
+    // The PDF's /PageLabels — its printed folios (Dan, 11/06/26). Stored raw;
+    // runDocumentIngest validates them (src/lib/page-labels.js).
+    progress.pageLabels = Array.isArray(body.pageLabels) && body.pageLabels.length === totalPages
+      ? body.pageLabels.map((l: unknown) => String(l ?? '').slice(0, 16))
+      : null;
     progress.totalPages = totalPages;
     progress.batches = {};
   } else if (progress.totalPages !== totalPages) {
@@ -662,6 +667,7 @@ async function processJob(request: Request, env: Env, job: IngestJobRow): Promis
       sections,
       outline,
       assets,
+      pageLabels: Array.isArray(progress.pageLabels) ? progress.pageLabels : null,
       r2Key: finalKey,
     }, env, setStep);
 

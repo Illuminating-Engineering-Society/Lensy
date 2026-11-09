@@ -1,0 +1,18 @@
+-- Migration 0029 (Dan, Teams 2026-11-06)
+--
+-- standards.page_labels_json — the PRINTED page number of every PDF page.
+--
+-- "P.42 here should print as 'p. 33' … it is the 42nd page in the pdf, but the
+-- printed page number is 33 and that is all the Lens user should ever see."
+--
+-- Every page IES Lens stored until now is the PDF page INDEX, because that is
+-- what the Lighting Library viewer's #page=N needs. The printed folio is a
+-- different number (RP-1-24: index 42 prints "33", index 71 prints "62"). The
+-- IES PDFs carry it themselves as /PageLabels, which match the printed folio
+-- on every current standard checked (src/lib/page-labels.js).
+--
+-- A JSON array of strings, one per PDF page (element 0 = PDF page 1), or NULL
+-- when the PDF has no trustworthy labels or they equal the index anyway. Links
+-- keep using the index; only what is DISPLAYED (and what the AI Guide is told)
+-- becomes the label.
+ALTER TABLE standards ADD COLUMN page_labels_json TEXT;

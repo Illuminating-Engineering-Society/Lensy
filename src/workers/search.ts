@@ -86,8 +86,10 @@ import { looksLikeFormalReference, referenceCitationKey } from '../lib/reference
 import { referenceEntryNumber } from '../lib/reference-markers.js';
 import {
   sanitizeSectionTitle, isPlausibleSectionNumber, chapterOf, looksLikeChapterHeading,
+  cleanOutline,
 } from '../lib/section-titles.js';
 import { redactFormulas } from '../lib/formula.js';
+import { parsePageLabels, pageLabelFor, pageLabelOffset } from '../lib/page-labels.js';
 import {
   parseCaptionLine, matchAssets, assetQueryTerms,
 } from '../lib/document-assets.js';
@@ -760,6 +762,12 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
     console.error('document asset lookup failed (non-fatal):', errMsg(err));
   }
 
+  // ── Printed page numbers (Dan, 11/06/26) ─────────────────────────────────────
+  // After every page-bearing field exists (excerpts, citations, asset and
+  // reference chips) and BEFORE the AI Guide, so the model is shown — and so
+  // writes — "p. 33", the number printed on the page. Fail-open.
+  const pageLabelIndex = await attachPageLabels(env, allResults.results);
+
   // ── Is the question even about lighting? (client DO085) ──────────────────────
   // "If user asks a question that is completely 'out of scope' … the AI Guide
   //  should not force a references to standards, and we should not see 50
@@ -1194,10 +1202,13 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
       )
     : null;
 
-  const { standardLinks, sectionLinks } = await linkGuideMentions(
+  const { standardLinks, sectionLinks: guideSectionLinks } = await linkGuideMentions(
     env, aiSummary, buildStandardLinkMap(linkSourceResults),
     comparisonSectionLinks ?? buildSectionLinkMap(linkSourceResults), isVersionComparison,
   );
+  // Which entries' pages are printed labels, so the UI never turns a printed
+  // "p. 33" into #page=33 (Dan, 11/06/26).
+  const sectionLinks = await withPageLabelInfo(env, guideSectionLinks, pageLabelIndex);
 
   const payload = {
     query: rawQuery,
@@ -1338,7 +1349,9 @@ export function buildSectionLinkMap(
       ...(r.excerpt ? [r.excerpt] : []),
       // The card's own citation carries a page and a page-targeted link even
       // when its excerpt list is empty.
-      ...(r.citationPage != null ? [{ pageNumber: r.citationPage, vitriumLink: r.vitriumLink }] : []),
+      ...(r.citationPage != null
+        ? [{ pageNumber: r.citationPage, pageLabel: r.citationPageLabel, vitriumLink: r.vitriumLink }]
+        : []),
     ];
 
     for (const e of excerpts) {
@@ -1348,7 +1361,8 @@ export function buildSectionLinkMap(
         entry.sections[String(e.section)] = url;
       }
       if (e.pageNumber != null && Object.keys(entry.pages).length < MAX_PER_STANDARD) {
-        const page = String(e.pageNumber);
+        // Keyed the way the Guide writes it: the printed page (Dan, 11/06/26).
+        const page = String(e.pageLabel ?? e.pageNumber);
         if (!entry.pages[page]) entry.pages[page] = url;
       }
     }
@@ -1384,6 +1398,8 @@ export async function withOutlineSectionLinks(
       let outline: Array<{ number?: unknown; page?: unknown }> = [];
       try { outline = JSON.parse(row.outline_json); } catch { continue; }
       if (!Array.isArray(outline)) continue;
+      // "Chapter 5" must never link to the ANSI form's "5 Proposed change".
+      outline = cleanOutline(outline);
       const entry = map[row.id] || (map[row.id] = { sections: {}, pages: {} });
       for (const o of outline) {
         const number = typeof o?.number === 'string' ? o.number.trim() : '';
@@ -1401,7 +1417,15 @@ export async function withOutlineSectionLinks(
   return map;
 }
 
-type SectionLinkMap = Record<string, { sections: Record<string, string>; pages: Record<string, string> }>;
+type SectionLinkMap = Record<string, {
+  sections: Record<string, string>;
+  /** Keyed by the PRINTED page when the standard has labels, else the index. */
+  pages: Record<string, string>;
+  /** The prose's pages are printed labels (withPageLabelInfo). */
+  labeled?: boolean;
+  /** index − printed folio, when constant across the document. */
+  pageOffset?: number | null;
+}>;
 
 /** How many named standards get their whole outline added to the link map. */
 const GUIDE_OUTLINE_STANDARDS = 6;
@@ -5225,6 +5249,120 @@ export async function attachSectionTitles(env: Env, results: SearchResult[]): Pr
       excerpt.sectionPath = resolved.path;
     }
   }
+}
+
+// ─── Printed page numbers (Dan, Teams 2026-11-06) ────────────────────────────
+//
+// "P.42 here should print as 'p. 33' for the user in AI Guide and Result Cards
+//  (it is the 42nd page in the pdf, but the printed page number is 33 and that
+//  is all the Lens user should ever see)."
+//
+// Every stored page is the PDF index, which the Library's #page=N needs, so the
+// index stays on every object and keeps building every link. This pass adds the
+// PRINTED label beside it (standards.page_labels_json, src/lib/page-labels.js),
+// and the label is what the cards print and what the AI Guide is shown — so the
+// Guide writes "p. 33" too. A standard without trustworthy labels gets none and
+// prints the index, as before.
+
+const PAGE_LABEL_MAX_STANDARDS = 40;
+
+/** standard id → its printed labels (element i = PDF page i+1). */
+export type PageLabelIndex = Map<string, string[]>;
+
+/** One D1 read for the given standards. Fail-open: an error (or a database
+ *  without migration 0029) answers an empty index, i.e. today's behaviour. */
+export async function loadPageLabels(env: Env, ids: Iterable<string>, known?: PageLabelIndex): Promise<PageLabelIndex> {
+  const index: PageLabelIndex = new Map(known || []);
+  const wanted = [...new Set(ids)].filter(id => id && !index.has(id)).slice(0, PAGE_LABEL_MAX_STANDARDS);
+  if (wanted.length === 0) return index;
+  try {
+    const rows = await env.DB.prepare(
+      `SELECT id, page_labels_json FROM standards WHERE id IN (${wanted.map(() => '?').join(',')})`
+    ).bind(...wanted).all<{ id: string; page_labels_json: string | null }>();
+    for (const row of rows.results || []) {
+      const labels = parsePageLabels(row.page_labels_json);
+      if (labels) index.set(row.id, labels);
+    }
+  } catch (err) {
+    console.error('page label lookup failed (non-fatal):', errMsg(err));
+  }
+  return index;
+}
+
+/** "…, p. 42" → "…, p. 33" — the citation string carries its page too. */
+function relabelCitation(citation: string, page: number, label: string): string {
+  if (!citation) return citation;
+  return citation.replace(new RegExp(`(,\\s*p\\.\\s*)${page}(?!\\d)`), (_m, prefix: string) => `${prefix}${label}`);
+}
+
+/**
+ * Put the printed label beside every page in a result set: excerpts, the card
+ * citation, table/figure chips, and reference chips (whose page belongs to the
+ * CITING standard named on the chip, not to the card's own). Mutates in place
+ * and returns the index it loaded, for the link maps built later.
+ */
+export async function attachPageLabels(env: Env, results: SearchResult[]): Promise<PageLabelIndex> {
+  const ids = new Set<string>();
+  for (const r of results) {
+    if (r.application?.standard) ids.add(r.application.standard);
+    for (const m of r.referenceMarkers || []) if (m.standard) ids.add(m.standard);
+  }
+  const index = await loadPageLabels(env, ids);
+  if (index.size === 0) return index;
+
+  for (const r of results) {
+    const labels = index.get(r.application?.standard || '');
+    if (labels) {
+      for (const e of excerptsOf(r)) {
+        const label = pageLabelFor(labels, e.pageNumber);
+        if (label) e.pageLabel = label;
+      }
+      if (r.citationPage != null) {
+        const label = pageLabelFor(labels, r.citationPage);
+        if (label) {
+          r.citationPageLabel = label;
+          r.citation = relabelCitation(r.citation, r.citationPage, label);
+        }
+      }
+      for (const a of r.assets || []) {
+        const label = pageLabelFor(labels, a.page);
+        if (label) a.pageLabel = label;
+      }
+    }
+    for (const m of r.referenceMarkers || []) {
+      const label = pageLabelFor(index.get(m.standard), m.pageNumber);
+      if (label) m.pageLabel = label;
+    }
+  }
+  return index;
+}
+
+/**
+ * Tell the UI how to resolve a printed page the Guide names that no excerpt
+ * reached: `labeled` marks a standard whose prose pages are printed labels (so
+ * the old "front link + #page=N" fallback would land on the wrong page), and
+ * `pageOffset` is the constant index − folio when there is one (RP-1-24: 9), so
+ * "p. 50" still links to #page=59. Alias keys share their entry object, so each
+ * entry is resolved once, under the first key it was stored with — always the
+ * standard's id (buildSectionLinkMap / withOutlineSectionLinks insert ids first).
+ */
+export async function withPageLabelInfo(
+  env: Env,
+  map: SectionLinkMap,
+  known: PageLabelIndex,
+): Promise<SectionLinkMap> {
+  const firstKey = new Map<object, string>();
+  for (const [key, entry] of Object.entries(map)) if (!firstKey.has(entry)) firstKey.set(entry, key);
+  if (firstKey.size === 0) return map;
+  const index = await loadPageLabels(env, firstKey.values(), known);
+  for (const [entry, id] of firstKey) {
+    const labels = index.get(id);
+    if (!labels) continue;
+    const e = entry as SectionLinkMap[string];
+    e.labeled = true;
+    e.pageOffset = pageLabelOffset(labels);
+  }
+  return map;
 }
 
 // ─── Tables and figures as locators (client DO086) ───────────────────────────

@@ -3315,7 +3315,11 @@
             page.cleanup();
           }
           const payload = { totalPages: total, pageStart: start, pages: raw };
-          if (start === 1) payload.docMeta = docMeta;
+          if (start === 1) {
+            payload.docMeta = docMeta;
+            // Printed page numbers (Dan, 11/06/26): the Worker validates them.
+            payload.pageLabels = await doc.getPageLabels().catch(() => null);
+          }
           const { status, data } = await api(`/api/admin/ingest-jobs/${job.id}/pages`,
             { method: 'POST', body: JSON.stringify(payload) });
           if (status >= 400) throw new Error(data.error || `Pages batch failed (${status})`);
