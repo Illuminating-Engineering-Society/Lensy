@@ -1927,9 +1927,12 @@ Migration **0029** (`standards.page_labels_json`); `SEARCH_CACHE_SCHEMA` → **v
   batch 1), and `runDocumentIngest` replaces the column only when the caller sent
   the field. The existing corpus is filled by `scripts/backfill-page-labels.js`
   (dry run by default; `--apply`): local PDF when its page count matches D1,
-  else the row's R2 object. Dry run 2026-11-09: 195 labelled, 7 PDFs without
-  labels (incl. current TM-35-19, LM-63-19 — they keep the index), the rest
-  refused or identical to the index.
+  else the row's R2 object. **Applied 2026-11-09:** 211 of 248 standards
+  labelled (incl. RP-8-25+E2, whose glossary pages read "GLa"/"GL-1"); 7 PDFs
+  carry no labels (current: TM-35-19, LM-63-19 — they keep the index); the rest
+  are refused (Word's "Sec1:3", deprecated RP-8-21/RP-8-18 …) or identical to
+  the index. Wrangler 3's `r2 object get` and `kv key put` reject `--remote`
+  (remote is their default).
 - **ToC cleanup (`cleanOutline`, section-titles.js), applied on READ** in the
   outline API and the Guide's outline links, so no re-ingest: (1) "Proposed
   change" — field 5 of the ANSI change-proposal form, in 59 current outlines —
