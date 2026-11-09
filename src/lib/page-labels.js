@@ -24,12 +24,12 @@
  * The label shapes a printed folio takes in this corpus: arabic ("33"), roman
  * front matter ("iv", "IV"), lettered front matter ("a", "aa", "A"), RP-8's
  * chapter-paged "6-1", its chapter cover pages "6a" and annex cover pages "Aa",
- * annex-paged "A-3". An EMPTY label (an unlabelled back cover) is tolerated and
+ * annex-paged "A-3", and its glossary "GLa" / "GL-1". An EMPTY label (an unlabelled back cover) is tolerated and
  * reads as "no label" for that page.
  * Anything else — Word's "Sec1:3", a stray "aA" — means the labels were never
  * set by hand and do not describe the print.
  */
-const FOLIO_RE = /^(?:\d{1,4}|[ivxlcdm]{1,7}|[IVXLCDM]{1,7}|[A-Za-z]{1,2}|\d{1,2}[a-z]|\d{1,2}-\d{1,3}|[A-Z]-?\d{1,3})?$/;
+const FOLIO_RE = /^(?:\d{1,4}|[ivxlcdm]{1,7}|[IVXLCDM]{1,7}|[A-Za-z]{1,2}|[A-Z]{2}[a-z]|\d{1,2}[a-z]|\d{1,2}-\d{1,3}|[A-Z]{1,2}-?\d{1,3})?$/;
 
 /**
  * Validate the labels pdfjs read for one document.

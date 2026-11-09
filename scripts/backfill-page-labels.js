@@ -93,7 +93,8 @@ for (const row of rows) {
   if (!result && !NO_R2 && row.r2_key) {
     const file = join(tmp, `${row.id.replace(/[^\w.+-]/g, '_')}.pdf`);
     try {
-      execSync(`npx wrangler r2 object get "${BUCKET}/${row.r2_key}" ${TARGET} --file="${file}"`,
+      // Wrangler 3's `r2 object get` is remote by default and rejects --remote.
+      execSync(`npx wrangler r2 object get "${BUCKET}/${row.r2_key}" ${LOCAL ? '--local ' : ''}--file="${file}"`,
         { stdio: ['ignore', 'ignore', 'ignore'] });
       result = await readLabels(new Uint8Array(readFileSync(file)));
       source = `r2:${row.r2_key}`;

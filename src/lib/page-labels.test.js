@@ -95,7 +95,7 @@ describe('pageLabelOffset', () => {
 
 describe('cleanPageLabels — RP-8 annex covers and unlabelled back covers', () => {
   it('keeps "Aa"/"Ba" annex cover labels (RP-8-25+E2)', () => {
-    expect(cleanPageLabels(['a', 'b', '1a', '1-1', 'Aa', 'Ab', 'A-1', 'Ba', 'B-1'])).not.toBeNull();
+    expect(cleanPageLabels(['a', 'b', '1a', '1-1', 'Aa', 'Ab', 'A-1', 'Ba', 'B-1', 'GLa', 'GL-1', 'GL-2'])).not.toBeNull();
   });
 
   it('tolerates an empty back-cover label, which reads as no label', () => {
