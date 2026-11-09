@@ -131,6 +131,21 @@
       </p>
     </div>
 
+    <!-- Search (Dan, Teams 11/09/26 #1): filters the tutorials as you type,
+         ranked by WHERE each word matched — title first, then description,
+         then the step-by-step guide. Keeps the query in ?q= so a search can
+         be linked. -->
+    <div class="mb-6" role="search">
+      <label for="tutorial-search" class="sr-only">Search tutorials</label>
+      <div class="relative">
+        <svg class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-4.35-4.35M10.5 18a7.5 7.5 0 100-15 7.5 7.5 0 000 15z"/></svg>
+        <input id="tutorial-search" type="search" autocomplete="off" spellcheck="false"
+          placeholder="Search tutorials — e.g. bookmarks, offline, compare versions"
+          class="w-full bg-white border border-gray-200 rounded-xl pl-10 pr-4 py-3 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-lens-amber focus:border-transparent"/>
+      </div>
+      <p id="search-status" class="text-xs text-gray-500 mt-2 hidden" aria-live="polite"></p>
+    </div>
+
     <nav id="toc" class="mb-8 bg-white rounded-xl border border-gray-100 p-4 text-sm" aria-label="Contents"></nav>
 
     <div id="sections" class="space-y-10"></div>
@@ -342,14 +357,20 @@
       </details>`;
     }
 
-    function renderItem(item) {
+    function renderItem(item, match) {
       const ready = isReady(item);
+      const terms = match ? match.terms : [];
+      const where = match ? match.where : null;
+      const foundIn = where && !where.has('title') && !where.has('summary') && where.has('guide')
+        ? '<p class="text-xs text-gray-500 mt-1.5">Matches in the step-by-step guide</p>'
+        : '';
       return `
         <article id="${escapeHtml(item.slug)}" class="bg-white rounded-xl border border-gray-100 p-4 sm:p-5">
           <div class="flex items-start justify-between gap-3 flex-wrap mb-4">
             <div class="min-w-0">
-              <h3 class="text-base font-bold text-gray-900"><a href="/tutorials/${escapeHtml(item.slug)}" class="hover:text-ies-blue hover:underline">${escapeHtml(item.title)}</a></h3>
-              ${item.summary ? `<p class="text-sm text-gray-600 mt-1 line-clamp-3" title="${escapeHtml(item.summary)}">${escapeHtml(item.summary)}</p>` : ''}
+              <h3 class="text-base font-bold text-gray-900"><a href="/tutorials/${escapeHtml(item.slug)}" class="hover:text-ies-blue hover:underline">${highlight(item.title, terms)}</a></h3>
+              ${item.summary ? `<p class="text-sm text-gray-600 mt-1 line-clamp-3" title="${escapeHtml(item.summary)}">${highlight(item.summary, terms)}</p>` : ''}
+              ${foundIn}
             </div>
             ${ready ? '' : '<span class="text-[11px] font-semibold uppercase tracking-wide text-gray-400 border border-gray-200 rounded-full px-2 py-0.5 shrink-0">Coming soon</span>'}
           </div>
@@ -371,6 +392,175 @@
       return src
         ? `<img src="${src}" alt="" aria-hidden="true" class="${size} object-contain shrink-0" width="20" height="20"/>`
         : '';
+    }
+
+    // ── Search (Dan, Teams 11/09/26 #1) ─────────────────────────────────────
+    // Every word typed must appear somewhere in the tutorial (title,
+    // description or step-by-step guide). Each word scores by the BEST place
+    // it matched — title 100, description 10, guide 1 — so a title match
+    // always outranks any number of description matches, and those outrank
+    // the guide. Ties keep the catalogue's own order.
+    const FIELD_WEIGHT = { title: 100, summary: 10, guide: 1 };
+    const STOP_WORDS = new Set(['a', 'an', 'and', 'are', 'can', 'do', 'does', 'for', 'how', 'i', 'in', 'is',
+      'it', 'me', 'my', 'of', 'on', 'or', 'the', 'to', 'what', 'with']);
+
+    /** Lowercase, accents off, every non-alphanumeric run → one space. */
+    function normalize(text) {
+      return ' ' + String(text || '').normalize('NFKD').replace(/[̀-ͯ]/g, '')
+        .toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim() + ' ';
+    }
+
+    /**
+     * A query word cut back to its stem, then matched as a word PREFIX — so
+     * "compare" (→ "compar") finds "Comparing", "annotate" finds
+     * "Annotations", "versions" finds "Version". Never cut below 4 letters,
+     * where a stem starts matching unrelated words.
+     */
+    const SUFFIXES = ['ations', 'ation', 'ings', 'ing', 'ions', 'ion', 'ers', 'er', 'ed', 'es', 's', 'e'];
+    function stem(word) {
+      if (/\d/.test(word)) return word;
+      for (const suffix of SUFFIXES) {
+        if (word.endsWith(suffix) && word.length - suffix.length >= 4 && !(suffix === 's' && word.endsWith('ss'))) {
+          return word.slice(0, -suffix.length);
+        }
+      }
+      return word;
+    }
+
+    function queryTerms(query) {
+      const words = normalize(query).trim().split(' ').filter(w => w.length > 1 || /\d/.test(w));
+      const kept = words.filter(w => !STOP_WORDS.has(w));
+      // A query of nothing but stop words ("how to") still searches for them.
+      return [...new Set((kept.length ? kept : words).map(stem))];
+    }
+
+    /** The guide as plain text: the catalogue's steps, or a guide pasted in /admin. */
+    function guideText(item) {
+      if (item.guideHtml) {
+        const tpl = document.createElement('template');
+        tpl.innerHTML = item.guideHtml;
+        return tpl.content.textContent || '';
+      }
+      if (!item.guide || !Array.isArray(item.guide.steps)) return '';
+      const points = p => (p && typeof p === 'object') ? [p.text, ...(p.items || []).map(points)].join(' ') : String(p || '');
+      return [item.guide.title, ...item.guide.steps.map(s => [s.title, ...(s.points || []).map(points)].join(' '))]
+        .join(' ').replace(/\*\*/g, '');
+    }
+
+    let SEARCH_INDEX = null;
+    function searchIndex() {
+      if (!SEARCH_INDEX) {
+        SEARCH_INDEX = TUTORIALS.flatMap(s => s.items).map((item, order) => ({
+          item, order,
+          fields: { title: normalize(item.title), summary: normalize(item.summary), guide: normalize(guideText(item)) },
+        }));
+      }
+      return SEARCH_INDEX;
+    }
+
+    function searchTutorials(query) {
+      const terms = queryTerms(query);
+      if (terms.length === 0) return { terms, results: [] };
+      // A word matches at a word START ("light" finds "lighting", "ght" does not).
+      const hits = (field, term) => field.includes(' ' + term);
+      const phrase = normalize(query).trim();
+      const results = [];
+      for (const entry of searchIndex()) {
+        let score = 0;
+        const where = new Set();
+        let all = true;
+        for (const term of terms) {
+          let best = 0;
+          for (const field of ['title', 'summary', 'guide']) {
+            if (hits(entry.fields[field], term)) {
+              where.add(field);
+              best = Math.max(best, FIELD_WEIGHT[field]);
+            }
+          }
+          if (!best) { all = false; break; }
+          score += best;
+        }
+        if (!all) continue;
+        // The words typed together, in order, in the title: the closest match there is.
+        if (terms.length > 1 && entry.fields.title.includes(' ' + phrase)) score += 1000;
+        results.push({ item: entry.item, order: entry.order, score, where, terms });
+      }
+      results.sort((a, b) => b.score - a.score || a.order - b.order);
+      return { terms, results };
+    }
+
+    function escapeRegExp(s) {
+      return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    }
+
+    /** Escape the text, marking each word start a search term matched. */
+    function highlight(text, terms) {
+      if (!terms || terms.length === 0) return escapeHtml(text);
+      // A capture group, not a lookbehind: older Safari throws on (?<!…) and
+      // would take the whole page script down with it.
+      // The whole word a stem matched is marked ("Comparing", not "Compar").
+      const re = new RegExp(`(^|[^A-Za-z0-9])((?:${terms.map(escapeRegExp).join('|')})[A-Za-z0-9]*)`, 'gi');
+      let out = '';
+      let last = 0;
+      for (const m of String(text).matchAll(re)) {
+        const start = m.index + m[1].length;
+        out += escapeHtml(text.slice(last, start)) + `<mark class="bg-amber-100 text-inherit rounded px-0.5">${escapeHtml(m[2])}</mark>`;
+        last = start + m[2].length;
+      }
+      return out + escapeHtml(text.slice(last));
+    }
+
+    function renderSearch(query) {
+      const status = document.getElementById('search-status');
+      const toc = document.getElementById('toc');
+      const { terms, results } = searchTutorials(query);
+      if (terms.length === 0) {
+        status.classList.add('hidden');
+        toc.classList.remove('hidden');
+        renderList();
+        return;
+      }
+      toc.classList.add('hidden');
+      status.classList.remove('hidden');
+      const n = results.length;
+      status.innerHTML = n
+        ? `${n} tutorial${n === 1 ? '' : 's'} match “${escapeHtml(query.trim())}” · <button type="button" data-clear-search class="text-ies-blue hover:underline">Show all tutorials</button>`
+        : `No tutorials match “${escapeHtml(query.trim())}”. Try fewer or different words, or <button type="button" data-clear-search class="text-ies-blue hover:underline">show all tutorials</button>.`;
+      // Rendered INTO #sections (not beside it) so no tutorial is in the page
+      // twice — a duplicate player id would break the guide's timestamp seek.
+      document.getElementById('sections').innerHTML = n
+        ? `<div class="grid md:grid-cols-2 gap-4 items-start">${results.map(r => renderItem(r.item, r)).join('')}</div>`
+        : '';
+    }
+
+    function initSearch() {
+      const input = document.getElementById('tutorial-search');
+      const initial = new URLSearchParams(location.search).get('q') || '';
+      let timer = null;
+      let lastQuery = null;
+      const run = () => {
+        const q = input.value;
+        if (q.trim() === lastQuery) return;
+        lastQuery = q.trim();
+        renderSearch(q);
+        // The search is linkable: /tutorials?q=bookmarks
+        const url = new URL(location.href);
+        if (lastQuery) url.searchParams.set('q', lastQuery); else url.searchParams.delete('q');
+        history.replaceState(null, '', url);
+      };
+      input.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(run, 180); });
+      input.addEventListener('keydown', e => {
+        if (e.key === 'Escape' && input.value) { input.value = ''; run(); }
+        if (e.key === 'Enter') { clearTimeout(timer); run(); }
+      });
+      document.addEventListener('click', e => {
+        if (!e.target.closest('[data-clear-search]')) return;
+        input.value = '';
+        run();
+        input.focus();
+      });
+      if (initial.trim()) { input.value = initial; run(); return true; }
+      return false;
     }
 
     function renderList() {
@@ -447,10 +637,11 @@
         }
       } catch { /* nothing hosted → every tutorial falls back to Loom */ }
       const m = /^\/tutorials\/([a-z0-9-]+)\/?$/.exec(location.pathname);
-      if (m) renderSingle(m[1]);
-      else renderList();
+      if (m) { renderSingle(m[1]); return; }
+      // A /tutorials?q=… link opens on its search; otherwise the full list.
+      if (!initSearch()) renderList();
       // Old /tutorials#<anchor> links land after the list renders.
-      if (!m && location.hash) document.getElementById(location.hash.slice(1))?.scrollIntoView();
+      if (location.hash) document.getElementById(location.hash.slice(1))?.scrollIntoView();
     }
 
     boot();

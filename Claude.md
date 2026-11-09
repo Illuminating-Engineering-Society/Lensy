@@ -1951,6 +1951,20 @@ Migration **0029** (`standards.page_labels_json`); `SEARCH_CACHE_SCHEMA` → **v
   `node scripts/backfill-page-labels.js --apply` → flush the search cache.
   Before the migration the code fails open (no labels = today's behaviour).
 
+### Tutorials search box (Dan, Teams 11/09/26 #1)
+
+`/tutorials` has a search box above Contents (client-side, `searchTutorials`
+in tutorials.html; no API, no migration). Every query word must appear in the
+title, description or step-by-step guide (a pasted `guideHtml` included); each
+word scores by its best field — title 100, description 10, guide 1 — plus a
+bonus when the whole phrase is in the title; ties keep catalogue order. Words
+are suffix-stemmed and prefix-matched ("compare" finds "Comparing"), matches
+are highlighted, and the query lives in `?q=` so a search is linkable. Results
+render INTO `#sections` so no tutorial is in the page twice (a duplicate
+`player-<slug>` id would break the guide's timestamp seek). #2 ("List
+Illuminance Tables" page + admin control of table titles/listings) is waiting
+on Dan's SharePoint layout doc.
+
 ### Search usage per account, no search content (Dan, 2026-11-02)
 
 "A data export on Lens Admin that counts search usage per user without any
