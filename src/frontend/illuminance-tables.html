@@ -1,0 +1,786 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>List Illuminance Tables — IES Lighting Library | IES Lens</title>
+  <link rel="icon" href="/favicon.ico" sizes="any">
+  <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png">
+  <link rel="icon" type="image/png" sizes="192x192" href="/favicon-192.png">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+  <!--
+    "List Illuminance Tables" (Dan, Teams 2026-11-09 #2; layout and admin
+    fields in pdfs/Others/261109 List…mTables.pdf):
+
+      "Populate based on Lens Admin 'Standard'. Add to all 'Lighting Library
+       Tool' menus. Page is public, no subscription needed. Bookmarked tables:
+       categorize as 'Illuminance Table' type."
+      "LOGIC: Does it appear? Current = true AND Admin 'Has Illuminance
+       table?' = yes."
+
+    Every table on this page was entered by staff in Admin → Standards → Edit
+    ("these are extremely sensitive data sets"); GET /api/illuminance-tables
+    serves exactly that list. Index health warns when search returns rows from
+    a table the list does not carry.
+
+    PUBLIC like List Standards: auth-gate in data-public mode, so a signed-out
+    visitor reads it as a Non-Subscriber Guest — Library links and Bookmark are
+    shown locked, never hidden (client 10/21/26).
+  -->
+  <script src="/utils/auth-gate.js" data-public></script>
+  <script src="/vendor/tailwind/tailwindcss-3.4.17.js"></script>
+  <script>
+    // Brand tokens — kept in sync with contents.html (no shared build step).
+    tailwind.config = {
+      theme: { extend: { colors: {
+        'brand-primary': '#D95D2B', 'brand-primary-dark': '#B84A20',
+        'brand-secondary': '#3A5068', 'brand-secondary-dark': '#2C3D4F',
+        'brand-accent': '#EFA723', 'surface': '#F7F7F7', 'ink': '#2C2C2C',
+        'ies-blue': '#D95D2B', 'ies-blue-dark': '#B84A20',
+        'lens-bar': '#f6f6f6', 'lens-page': '#FBF3DF', 'lens-amber': '#FFAA00',
+        'lens-ink': '#30363D', 'lens-muted': '#84898f',
+      }, fontFamily: {
+        display: ['Nohemi', 'Inter', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'sans-serif'],
+        sans: ['Inter', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'sans-serif'],
+      } } }
+    }
+  </script>
+  <style>
+    @font-face { font-family: 'Nohemi'; font-style: normal; font-weight: 400 700; font-display: swap; src: url('/fonts/Nohemi-Variable.woff2') format('woff2'); }
+    @font-face { font-family: 'Inter'; font-style: normal; font-weight: 100 900; font-display: swap; src: url('/fonts/Inter-Variable.woff2') format('woff2'); }
+    body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; color: #2C2C2C; }
+    h1, h2, h3 { font-family: 'Nohemi', 'Inter', -apple-system, sans-serif; }
+    .skeleton { background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%); background-size: 200% 100%; animation: sk 1.4s infinite; }
+    @keyframes sk { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+
+    .nav-item { color: #84898f; }
+    .nav-item:hover:not([disabled]) { color: #30363D; background: rgba(48,54,61,0.07); }
+    .menu-item {
+      display: flex; align-items: center; gap: 0.625rem; width: 100%;
+      padding: 0.5rem 1rem; font-size: 0.875rem; color: #30363D;
+      text-align: left; transition: background .15s;
+    }
+    .menu-item:hover:not([disabled]) { background: #F3F4F6; }
+    #lensy-user-chip { display: none !important; }
+
+    /* "FROM THE STANDARD" — the result cards' disclosure (DO070): a bordered
+       strip, a static caret tile (down closed, up open) and Show/Hide. */
+    .from-std > summary { list-style: none; }
+    .from-std > summary::-webkit-details-marker { display: none; }
+    .from-std .caret-closed, .from-std .label-closed { display: inline; }
+    .from-std .caret-open, .from-std .label-open { display: none; }
+    .from-std[open] .caret-closed, .from-std[open] .label-closed { display: none; }
+    .from-std[open] .caret-open, .from-std[open] .label-open { display: inline; }
+
+    .sort-option {
+      display: flex; align-items: center; gap: 0.625rem; width: 100%;
+      padding: 0.375rem 0.5rem; border-radius: 6px; font-size: 0.8125rem;
+      color: #4B5563; text-align: left; transition: background .15s;
+    }
+    .sort-option:hover { background: #F3F4F6; }
+    .sort-option[aria-pressed="true"] { font-weight: 700; color: #30363D; }
+    .side-heading {
+      display: flex; align-items: center; gap: 0.5rem; cursor: pointer;
+      font-size: 0.75rem; font-weight: 700; letter-spacing: 0.05em;
+      text-transform: uppercase; color: #2C2C2C; list-style: none;
+      user-select: none; -webkit-user-select: none;
+    }
+    .side-heading::-webkit-details-marker { display: none; }
+    .side-check {
+      display: flex; align-items: flex-start; gap: 0.5rem; cursor: pointer;
+      font-size: 0.8125rem; color: #374151; padding: 0.25rem 0.125rem; border-radius: 6px;
+    }
+    .side-check:hover { background: #F9FAFB; }
+    .side-check .doc-only-btn { visibility: hidden; }
+    .side-check:hover .doc-only-btn, .side-check:focus-within .doc-only-btn { visibility: visible; }
+    .side-list { max-height: 13rem; overflow-y: auto; border: 1px solid #E5E7EB; border-radius: 8px; padding: 0.25rem; }
+    .side-count { font-size: 0.6875rem; color: #9CA3AF; font-variant-numeric: tabular-nums; }
+    .chevron { transition: transform .15s; }
+    details[open] > summary .chevron { transform: rotate(180deg); }
+    body.sidebar-docked main { max-width: calc(64rem + 340px); padding-left: calc(340px + 1rem); }
+    body.sidebar-docked footer { padding-left: 340px; }
+    #sortfilter-trigger { top: calc(var(--header-h, 100px) + 12px); }
+    #sortfilter-sidebar { top: var(--header-h, 0px); }
+  </style>
+</head>
+<body class="bg-lens-page min-h-screen text-ink">
+
+  <header class="bg-lens-bar border-b border-gray-200 shadow-sm sticky top-0 z-40">
+    <div class="max-w-5xl mx-auto px-4 py-1.5 flex items-center justify-between gap-3">
+      <a href="https://lighting.ies.org/portal/ies" target="_blank" rel="noopener" class="shrink-0" title="The IES Lighting Library">
+        <img src="/assets/ies-lighting-library-2026.png" alt="The IES Lighting Library" class="h-[72px] sm:h-[84px] w-auto" width="768" height="376"/>
+      </a>
+      <nav class="flex items-center gap-1 text-sm">
+        <div class="relative" id="library-tools-wrap">
+          <button id="library-tools-btn" onclick="toggleLibraryTools()"
+                  aria-haspopup="true" aria-expanded="false"
+                  class="nav-item flex items-center gap-2 px-2.5 sm:px-3 py-1.5 rounded-md transition"
+                  title="Search with IES Lens, browse the library, list every standard">
+            <img src="/favicon-192.png" alt="" aria-hidden="true" class="w-5 h-5 shrink-0" width="20" height="20"/>
+            <span class="font-medium hidden sm:inline">Lighting Library Tools</span>
+            <svg class="w-3 h-3 opacity-80" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/>
+            </svg>
+          </button>
+          <div id="library-tools-menu" data-site-menu="tools" data-current="illuminance-tables"
+               class="hidden absolute right-0 top-[calc(100%+8px)] w-72 bg-white rounded-xl shadow-xl border border-gray-200 py-1 z-50 text-left"></div>
+        </div>
+        <div class="relative ml-1" id="account-wrap">
+          <button id="account-menu-btn" onclick="toggleAccountMenu()"
+                  aria-haspopup="true" aria-expanded="false"
+                  class="flex items-center gap-1.5 border rounded-full px-3 py-1.5 transition hover:bg-black/5"
+                  style="border-color: #84898f; color: #84898f;" title="Your account">
+            <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" d="M4 7h16M4 12h16M4 17h16"/>
+            </svg>
+            <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/>
+            </svg>
+          </button>
+          <div id="account-menu" data-site-menu="profile" data-current="illuminance-tables"
+               class="hidden absolute right-0 top-[calc(100%+8px)] w-72 bg-white rounded-xl shadow-xl border border-gray-200 py-1 z-50 text-left"></div>
+        </div>
+      </nav>
+    </div>
+  </header>
+
+  <!-- Sort / Filter — List Standards' sidebar: docked open ≥1280px, a
+       floating trigger narrower. Everything applies live. -->
+  <div id="sortfilter-trigger"
+       class="hidden fixed left-3 z-30 flex-col rounded-lg border border-gray-200 bg-white shadow-md overflow-hidden">
+    <button onclick="openSidebar('sort')" class="flex flex-col items-center gap-0.5 px-2.5 py-2 hover:bg-gray-50 transition" title="Sort the list">
+      <svg class="w-4 h-4 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M8 5v14m0 0l-3-3m3 3l3-3M16 19V5m0 0l-3 3m3-3l3 3"/>
+      </svg>
+      <span class="text-[10px] font-semibold text-gray-600">Sort</span>
+    </button>
+    <div class="h-px bg-gray-200"></div>
+    <button onclick="openSidebar('filter')" class="flex flex-col items-center gap-0.5 px-2.5 py-2 hover:bg-gray-50 transition" title="Filter the list">
+      <svg class="w-4 h-4 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M3 5h18l-7 8v5l-4 2v-7L3 5z"/>
+      </svg>
+      <span class="text-[10px] font-semibold text-gray-600">Filter <span id="filter-trigger-count"></span></span>
+    </button>
+  </div>
+
+  <div id="sidebar-backdrop" class="hidden fixed inset-0 bg-black/40 z-[45]" onclick="closeSidebar()"></div>
+  <aside id="sortfilter-sidebar"
+         class="hidden fixed left-0 bottom-0 w-[340px] max-w-[90vw] bg-white z-50 shadow-2xl flex flex-col border-r border-gray-200"
+         aria-label="Sort and filter">
+    <div class="flex justify-end p-3 pb-0">
+      <button onclick="closeSidebar()" class="p-1.5 text-gray-400 hover:text-gray-700 rounded-md hover:bg-gray-100 transition" title="Close">
+        <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
+        </svg>
+      </button>
+    </div>
+    <div class="flex-1 overflow-y-auto px-5 pb-4 space-y-4">
+      <details id="sort-section" open>
+        <summary class="side-heading py-2">
+          <svg class="w-4 h-4 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M8 5v14m0 0l-3-3m3 3l3-3M16 19V5m0 0l-3 3m3-3l3 3"/>
+          </svg>
+          Sort
+          <svg class="chevron w-3.5 h-3.5 ml-auto text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M5 15l7-7 7 7"/>
+          </svg>
+        </summary>
+        <div class="mt-1 space-y-0.5">
+          <button data-sort="designation" aria-pressed="true" onclick="setSort('designation')" class="sort-option">Designation (Default)</button>
+          <button data-sort="title" aria-pressed="false" onclick="setSort('title')" class="sort-option">Title</button>
+          <button data-sort="committee" aria-pressed="false" onclick="setSort('committee')" class="sort-option">Technical Committee</button>
+          <button data-sort="published" aria-pressed="false" onclick="setSort('published')" class="sort-option">Publication Date</button>
+          <div class="mt-3 pt-3 border-t border-gray-100 space-y-0.5">
+            <button data-sort-dir="asc" aria-pressed="true" onclick="setSortDir('asc')" class="sort-option"><span id="sort-dir-asc-label">Ascending</span></button>
+            <button data-sort-dir="desc" aria-pressed="false" onclick="setSortDir('desc')" class="sort-option"><span id="sort-dir-desc-label">Descending</span></button>
+          </div>
+        </div>
+      </details>
+      <div class="h-px bg-gray-200"></div>
+      <details id="filter-section" open>
+        <summary class="side-heading py-2">
+          <svg class="w-4 h-4 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M3 5h18l-7 8v5l-4 2v-7L3 5z"/>
+          </svg>
+          Filter <span id="filter-count" class="font-normal normal-case text-gray-400"></span>
+          <button onclick="event.preventDefault(); resetSideFilters()" class="ml-auto text-[11px] font-semibold normal-case tracking-normal text-ies-blue hover:underline">Reset all</button>
+          <svg class="chevron w-3.5 h-3.5 ml-1 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M5 15l7-7 7 7"/>
+          </svg>
+        </summary>
+        <div id="side-filter-groups" class="mt-2 space-y-4"></div>
+      </details>
+    </div>
+  </aside>
+
+  <main class="max-w-5xl mx-auto px-4 py-8">
+    <div class="mb-6 pl-14 xl:pl-0">
+      <h1 class="text-2xl font-bold text-gray-900">List Illuminance Tables</h1>
+      <p class="text-base text-gray-700 mt-2">This page directs you to the illuminance tables from the most current edition of each IES standard.</p>
+      <p class="text-base text-gray-700 mt-2">
+        <a href="https://ies.org/products/lighting-library/" target="_blank" rel="noopener" class="underline underline-offset-2 font-semibold text-lens-ink hover:no-underline">Subscribers</a>
+        receive access to every document listed below.
+      </p>
+    </div>
+
+    <div class="mb-3 rounded-lg p-1.5" style="background:#FBF3DF">
+      <input type="text" id="it-filter" placeholder="Filter by designation or title…" autocomplete="off"
+        class="w-full px-4 py-2.5 bg-white border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-lens-amber focus:border-transparent"/>
+    </div>
+    <p class="text-sm text-gray-400 mb-5" id="it-count"></p>
+
+    <div id="it-loading" class="space-y-2">
+      <div class="skeleton h-24 rounded-lg"></div>
+      <div class="skeleton h-24 rounded-lg"></div>
+    </div>
+    <div id="it-list" class="hidden space-y-5"></div>
+    <p id="it-error" class="hidden text-sm text-red-600"></p>
+    <p id="it-empty" class="hidden text-sm text-gray-400"></p>
+  </main>
+
+  <footer class="bg-lens-bar text-center text-xs text-gray-400 py-8 mt-8 border-t border-gray-200">
+    <a href="https://lighting.ies.org/portal/ies" target="_blank" rel="noopener" class="inline-block">
+      <img src="/assets/ies-lighting-library-2026.png" alt="The IES Lighting Library" class="h-10 w-auto mx-auto mb-3" width="768" height="376"/>
+    </a>
+    <p class="font-medium text-gray-500">IES Lens — IES Standards Search Assistant</p>
+    <p class="mt-2 text-gray-300">Always refer to the full IES Standard for authoritative guidance.</p>
+  </footer>
+
+  <script>
+    const SUBSCRIBE_URL = 'https://ies.org/products/lighting-library/';
+    const STORE_URL = 'https://store.ies.org/';
+    const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+    let allStandards = [];
+    let loaded = false;
+    // Fails closed (the page is public): nothing opens and nothing bookmarks
+    // until the session says so. Same rule as List Standards (readerMayOpen).
+    let readerIsSubscriber = false;
+    let readerIsMember = false;
+    function readerMayOpen(s) {
+      return readerIsSubscriber || (readerIsMember && !!s.lighting_science);
+    }
+
+    function escapeHtml(str) {
+      if (str == null) return '';
+      return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    function compareIds(a, b) {
+      const parse = (id) => {
+        const m = /^([A-Z]+)-(\d+)(?:\.(\d+))?-?(\d{2})?/.exec(String(id).toUpperCase());
+        return m ? [m[1], Number(m[2]), Number(m[3] || 0), Number(m[4] || 0)] : [String(id), 0, 0, 0];
+      };
+      const [pa, na, sa, ea] = parse(a);
+      const [pb, nb, sb, eb] = parse(b);
+      return pa.localeCompare(pb) || na - nb || sa - sb || ea - eb;
+    }
+
+    const designationOf = (s) => s.full_designation || `ANSI/IES ${s.id}`;
+    const titleOf = (s) => (s.title && s.title !== s.id) ? String(s.title) : '';
+    function committeeOf(s) {
+      if (s.committee?.name) return s.committee.name;
+      const author = String(s.author || '').trim();
+      if (!author) return null;
+      return /^ies\b/i.test(author) ? author : `IES ${author}`;
+    }
+    const committeeLabel = (s) => (committeeOf(s) || '').replace(/^IES\s+/i, '');
+
+    function publishedIso(s) {
+      const v = String(s.published_date || '').trim().slice(0, 10);
+      return /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : null;
+    }
+    function publishedLabel(s) {
+      const iso = publishedIso(s);
+      if (!iso) return null;
+      const [y, m, d] = iso.split('-').map(Number);
+      return `${MONTHS[m - 1]} ${d}, ${y}`;
+    }
+    function storeSearchUrl(s) {
+      const q = String(s.id || '').replace(/\+E\d+$/i, '').replace(/\(R\d+\)$/i, '');
+      return `${STORE_URL}?s=${encodeURIComponent(q)}&post_type=sc_product`;
+    }
+
+    async function load() {
+      try {
+        const res = await fetch('/api/illuminance-tables');
+        if (!res.ok) throw new Error(`Could not load the illuminance tables (HTTP ${res.status}).`);
+        const data = await res.json();
+        allStandards = (data.standards || []).filter(s => s && s.id && Array.isArray(s.tables) && s.tables.length);
+        loaded = true;
+        render();
+      } catch (err) {
+        document.getElementById('it-loading').classList.add('hidden');
+        const el = document.getElementById('it-error');
+        el.textContent = err.message;
+        el.classList.remove('hidden');
+      }
+    }
+
+    // ── Sort ────────────────────────────────────────────────────────────────
+    const sortState = { key: 'designation', dir: 'asc' };
+    const NATURAL_DIR = { published: 'desc' };
+
+    function setSort(key) {
+      if (sortState.key !== key) sortState.dir = NATURAL_DIR[key] || 'asc';
+      sortState.key = key;
+      syncSortControls();
+      render();
+    }
+    function setSortDir(dir) {
+      sortState.dir = dir === 'desc' ? 'desc' : 'asc';
+      syncSortControls();
+      render();
+    }
+    function syncSortControls() {
+      for (const b of document.querySelectorAll('[data-sort]')) b.setAttribute('aria-pressed', String(b.dataset.sort === sortState.key));
+      for (const b of document.querySelectorAll('[data-sort-dir]')) b.setAttribute('aria-pressed', String(b.dataset.sortDir === sortState.dir));
+      const dated = sortState.key === 'published';
+      document.getElementById('sort-dir-asc-label').textContent = dated ? 'Oldest first' : 'Ascending';
+      document.getElementById('sort-dir-desc-label').textContent = dated ? 'Newest first' : 'Descending';
+    }
+    function sortValue(s) {
+      if (sortState.key === 'title') return titleOf(s).toLowerCase() || null;
+      if (sortState.key === 'committee') return committeeLabel(s).toLowerCase() || null;
+      if (sortState.key === 'published') return publishedIso(s);
+      return s.id;
+    }
+    /** Stable; a standard the key does not apply to stays last either way. */
+    function sorted(list) {
+      const mul = sortState.dir === 'desc' ? -1 : 1;
+      return list.map(s => ({ s, v: sortValue(s) })).sort((a, b) => {
+        if (a.v == null && b.v == null) return compareIds(a.s.id, b.s.id);
+        if (a.v == null) return 1;
+        if (b.v == null) return -1;
+        const c = sortState.key === 'designation' ? compareIds(a.v, b.v) : String(a.v).localeCompare(String(b.v));
+        return c !== 0 ? mul * c : compareIds(a.s.id, b.s.id);
+      }).map(d => d.s);
+    }
+
+    // ── Filters ─────────────────────────────────────────────────────────────
+    const SIDE_GROUPS = [
+      { key: 'pubtype', label: 'Publication Type', of: s => (/^([A-Z]+)-/.exec(s.id) || [, 'Other'])[1],
+        name: v => ({ RP: 'Recommended Practice', LP: 'Lighting Practice', LS: 'Lighting Science', LM: 'Lighting Measurements', TM: 'Technical Memorandum', G: 'Guide', DG: 'Design Guide' }[v] || v) },
+      { key: 'committee', label: 'Technical Committee', of: s => committeeLabel(s) || 'Not yet supplied', name: v => v },
+    ];
+    const sideExcluded = { pubtype: new Set(), committee: new Set() };
+    const passesSide = (s) => SIDE_GROUPS.every(g => !sideExcluded[g.key].has(g.of(s)));
+
+    function query() {
+      return document.getElementById('it-filter').value.trim().toLowerCase();
+    }
+    /** The standard's own fields match the text box. */
+    function standardMatches(s, q) {
+      return !q || [s.id, s.full_designation, s.title, committeeLabel(s)].some(v => String(v || '').toLowerCase().includes(q));
+    }
+    /**
+     * The tables a card shows for the text box: all of them when the standard
+     * itself matched; otherwise only the tables whose title matched.
+     */
+    function tablesFor(s, q) {
+      if (standardMatches(s, q)) return s.tables;
+      return s.tables.filter(t => String(t.title).toLowerCase().includes(q));
+    }
+
+    function renderSideFilters() {
+      const q = query();
+      const pool = allStandards.filter(s => tablesFor(s, q).length > 0);
+      document.getElementById('side-filter-groups').innerHTML = SIDE_GROUPS.map(g => {
+        const others = pool.filter(s => SIDE_GROUPS.every(o => o === g || !sideExcluded[o.key].has(o.of(s))));
+        const counts = new Map();
+        for (const s of allStandards) counts.set(g.of(s), 0);
+        for (const s of others) counts.set(g.of(s), (counts.get(g.of(s)) || 0) + 1);
+        const values = [...counts.keys()].sort((a, b) => a.localeCompare(b));
+        if (!values.length) return '';
+        return `
+          <div>
+            <p class="text-xs font-bold text-gray-700 mb-1 flex items-center gap-2">${g.label}
+              ${sideExcluded[g.key].size ? `<button type="button" class="ml-auto text-[11px] font-semibold text-ies-blue hover:underline" data-side-all="${g.key}">Select all</button>` : ''}
+            </p>
+            <div class="${values.length > 8 ? 'side-list ' : ''}space-y-0.5">${values.map(v => `
+              <label class="side-check">
+                <input type="checkbox" data-side-group="${g.key}" data-side-value="${escapeHtml(v)}"
+                       ${sideExcluded[g.key].has(v) ? '' : 'checked'} class="mt-0.5 rounded accent-ies-blue shrink-0"/>
+                <span class="min-w-0">${escapeHtml(g.name(v))}</span>
+                <button type="button" class="doc-only-btn text-[11px] font-semibold text-ies-blue hover:underline px-1 shrink-0"
+                        data-side-only="${g.key}" data-side-value="${escapeHtml(v)}">Only</button>
+                <span class="side-count ml-auto">(${counts.get(v) || 0})</span>
+              </label>`).join('')}
+            </div>
+          </div>`;
+      }).join('');
+      const n = SIDE_GROUPS.filter(g => sideExcluded[g.key].size > 0).length;
+      document.getElementById('filter-count').textContent = n ? `(${n})` : '';
+      document.getElementById('filter-trigger-count').textContent = n ? `(${n})` : '';
+    }
+    function resetSideFilters() {
+      for (const g of SIDE_GROUPS) sideExcluded[g.key].clear();
+      render();
+    }
+    document.addEventListener('change', (e) => {
+      const box = e.target instanceof Element && e.target.closest('input[data-side-group]');
+      if (!box) return;
+      const set = sideExcluded[box.dataset.sideGroup];
+      if (box.checked) set.delete(box.dataset.sideValue); else set.add(box.dataset.sideValue);
+      render();
+    });
+    document.addEventListener('click', (e) => {
+      const only = e.target instanceof Element && e.target.closest('[data-side-only]');
+      if (only) {
+        e.preventDefault();
+        const g = SIDE_GROUPS.find(x => x.key === only.dataset.sideOnly);
+        sideExcluded[g.key].clear();
+        for (const s of allStandards) if (g.of(s) !== only.dataset.sideValue) sideExcluded[g.key].add(g.of(s));
+        render();
+        return;
+      }
+      const all = e.target instanceof Element && e.target.closest('[data-side-all]');
+      if (all) { e.preventDefault(); sideExcluded[all.dataset.sideAll].clear(); render(); }
+    });
+
+    // ── Render ──────────────────────────────────────────────────────────────
+    function render() {
+      if (!loaded) return;
+      const q = query();
+      const shown = sorted(allStandards.filter(s => passesSide(s) && tablesFor(s, q).length > 0));
+      const tableCount = shown.reduce((n, s) => n + tablesFor(s, q).length, 0);
+      renderSideFilters();
+      document.getElementById('it-loading').classList.add('hidden');
+      document.getElementById('it-count').textContent = allStandards.length
+        ? `${tableCount} table${tableCount === 1 ? '' : 's'} in ${shown.length} standard${shown.length === 1 ? '' : 's'}`
+        : '';
+      const empty = document.getElementById('it-empty');
+      empty.textContent = allStandards.length ? 'No illuminance tables match that filter.' : 'No illuminance tables have been listed yet.';
+      empty.classList.toggle('hidden', shown.length > 0);
+      const list = document.getElementById('it-list');
+      list.innerHTML = shown.map(s => card(s, tablesFor(s, q))).join('');
+      list.classList.toggle('hidden', shown.length === 0);
+    }
+
+    const BTN = 'text-xs px-2.5 py-1 rounded-lg transition font-semibold whitespace-nowrap text-center';
+    const LEASE = 'text-xs px-2.5 py-1 border border-gray-200 rounded-lg text-gray-600 hover:bg-gray-50 transition font-medium whitespace-nowrap text-center';
+
+    function card(s, tables) {
+      const thumb = s.thumbnail_url
+        ? `<img src="${escapeHtml(s.thumbnail_url)}" alt="Cover of ${escapeHtml(s.id)}" class="cover-thumb w-14 h-auto rounded border border-gray-200 shrink-0" loading="lazy"/>
+           <div class="cover-fallback w-14 h-[72px] rounded border border-dashed border-gray-200 shrink-0 items-center justify-center" style="display:none"><span class="text-[9px] text-gray-300">No cover</span></div>`
+        : `<div class="w-14 h-[72px] rounded border border-dashed border-gray-200 shrink-0 flex items-center justify-center"><span class="text-[9px] text-gray-300">No cover</span></div>`;
+      const mayOpen = readerMayOpen(s);
+      const open = !mayOpen
+        ? `<a href="${SUBSCRIBE_URL}" target="_blank" rel="noopener" class="${BTN} hover:brightness-95" style="background-color:#FFAA00;color:#30363D"
+             title="Subscribe to the Lighting Library to open ${escapeHtml(s.id)}">Subscribe</a>`
+        : s.vitrium_web_url
+          ? `<a href="${escapeHtml(s.vitrium_web_url)}" target="_blank" rel="noopener" class="${BTN} hover:brightness-95" style="background-color:#FFAA00;color:#30363D"
+               title="Open ${escapeHtml(s.id)} in the IES Lighting Library">Open in Library</a>`
+          : '';
+      const lease = s.buy_url
+        ? `<a href="${escapeHtml(s.buy_url)}" target="_blank" rel="noopener" class="${LEASE}" title="Lease ${escapeHtml(s.id)} for 3 years">Lease Standard</a>`
+        : `<a href="${escapeHtml(storeSearchUrl(s))}" target="_blank" rel="noopener" class="${LEASE}" title="Find the 3-year lease of ${escapeHtml(s.id)} in the IES webstore">Lease Standard ↗</a>`;
+      const pub = publishedLabel(s);
+      const published = pub
+        ? `<p class="text-[10px] leading-tight text-center pt-0.5 text-gray-500"><span class="block uppercase tracking-wide text-gray-400">Published</span>${escapeHtml(pub)}</p>`
+        : '';
+      return `
+        <article class="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
+          <div class="px-4 py-3 flex flex-wrap sm:flex-nowrap items-start gap-4">
+            ${thumb}
+            <div class="min-w-0" style="flex:1 1 12rem">
+              <p class="text-sm font-semibold text-gray-900">${escapeHtml(designationOf(s))}</p>
+              ${titleOf(s) ? `<p class="text-xs text-gray-600">${escapeHtml(titleOf(s))}</p>` : ''}
+              ${committeeLabel(s) ? `<p class="text-[11px] text-gray-400 mt-0.5">${escapeHtml(committeeLabel(s))}</p>` : ''}
+            </div>
+            <div class="flex sm:flex-col items-stretch gap-1.5 shrink-0">${open}${lease}${published}</div>
+          </div>
+          <details class="from-std px-4 pb-4" open>
+            <summary class="flex items-center justify-between gap-3 cursor-pointer select-none bg-gray-50 border border-gray-200 rounded-lg px-3 py-1.5">
+              <span class="flex items-center gap-2 text-[11px] font-bold text-gray-900 tracking-wide">
+                <span class="inline-flex items-center justify-center w-4 h-4 rounded bg-gray-800 text-white text-[8px]"><span class="caret-closed">▼</span><span class="caret-open">▲</span></span>
+                FROM THE STANDARD
+              </span>
+              <span class="text-[11px] text-gray-500 uppercase"><span class="label-closed">Show</span><span class="label-open">Hide</span></span>
+            </summary>
+            <ul class="mt-3 space-y-3">${tables.map(t => tableRow(s, t, mayOpen)).join('')}</ul>
+          </details>
+        </article>`;
+    }
+
+    function tableRow(s, t, mayOpen) {
+      const page = t.label || t.page;
+      const openLink = t.url && mayOpen
+        ? `<a href="${escapeHtml(t.url)}" target="_blank" rel="noopener" class="text-ies-blue hover:underline font-medium whitespace-nowrap"
+             title="Open ${escapeHtml(s.id)} at this table">Open in Library ↗</a>`
+        : t.url
+          // Locked, not hidden (client 10/21/26): what unlocks it is one click away.
+          ? `<a href="${SUBSCRIBE_URL}" target="_blank" rel="noopener" class="text-gray-400 hover:text-gray-600 font-medium whitespace-nowrap"
+               title="Opening standards is included with a Lighting Library subscription">🔒 Open in Library</a>`
+          : '';
+      const payload = {
+        // "Bookmarked tables: categorize as 'Illuminance Table' type" — the
+        // collection's `tables` kind. No application code: the item is the
+        // TABLE, identified by its standard, page and title.
+        result_type: 'tables',
+        standard_id: s.id,
+        resource_title: [[designationOf(s), titleOf(s)].filter(Boolean).join(' '), t.title, `p. ${page}`].join(', '),
+        page_number: t.page,
+        library_url: t.url || s.vitrium_web_url || null,
+        application_name: t.title,
+        application_code: null,
+        reference_text: null,
+        definition_slug: null,
+      };
+      const locked = !readerIsSubscriber;
+      return `
+        <li class="flex flex-wrap sm:flex-nowrap items-start gap-x-4 gap-y-1.5 border-l-2 border-gray-800 pl-4 ml-2">
+          <p class="text-sm font-bold text-gray-900 min-w-0" style="flex:1 1 16rem">${escapeHtml(t.title)}</p>
+          <div class="flex items-center gap-3 text-sm shrink-0">
+            <span class="text-gray-400 tabular-nums whitespace-nowrap">p. ${escapeHtml(String(page))}</span>
+            ${openLink}
+            <button type="button" class="it-bookmark inline-flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded font-semibold whitespace-nowrap ${locked
+                ? 'bg-gray-200 text-gray-500 cursor-not-allowed' : 'bg-brand-secondary text-white hover:bg-brand-secondary-dark'}"
+                    data-payload="${escapeHtml(JSON.stringify(payload))}" data-name="${escapeHtml(payload.resource_title)}"
+                    title="${locked ? 'Bookmarks are included with a Lighting Library subscription' : 'Bookmark this table'}">
+              ${locked ? '🔒' : '<svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z"/></svg>'}
+              Bookmark
+            </button>
+          </div>
+        </li>`;
+    }
+
+    // A cover that fails to load shows the "No cover" placeholder instead.
+    document.addEventListener('error', (e) => {
+      const img = e.target;
+      if (!(img instanceof Element) || !img.classList.contains('cover-thumb')) return;
+      img.style.display = 'none';
+      const fallback = img.nextElementSibling;
+      if (fallback && fallback.classList.contains('cover-fallback')) fallback.style.display = 'flex';
+    }, true);
+
+    // ── Bookmark (List Standards' table-of-contents dialog) ─────────────────
+    let pendingPayload = null;
+
+    function ensureBookmarkDialog() {
+      let dialog = document.getElementById('it-bookmark-dialog');
+      if (dialog) return dialog;
+      dialog = document.createElement('div');
+      dialog.id = 'it-bookmark-dialog';
+      dialog.className = 'hidden fixed inset-0 z-[60] flex items-end sm:items-center justify-center p-4';
+      dialog.innerHTML = `
+        <div class="absolute inset-0 bg-black/40" data-close></div>
+        <div class="relative bg-white rounded-2xl shadow-2xl w-full max-w-md p-6" role="dialog" aria-modal="true" aria-labelledby="it-bm-heading">
+          <div class="flex items-center justify-between mb-4">
+            <h3 id="it-bm-heading" class="text-lg font-bold text-gray-900">Bookmark</h3>
+            <button type="button" data-close class="text-gray-400 hover:text-gray-600 p-1 rounded-md hover:bg-gray-100" aria-label="Close">✕</button>
+          </div>
+          <p id="it-bm-name" class="bg-gray-50 rounded-lg px-4 py-3 mb-4 text-sm font-medium text-gray-800"></p>
+          <label for="it-bm-note" class="block text-sm font-medium text-gray-700 mb-1">Your note</label>
+          <textarea id="it-bm-note" rows="2" placeholder="Why is this table useful? (optional)"
+            class="w-full px-3 py-2.5 border border-gray-200 rounded-lg text-sm mb-4 focus:ring-2 focus:ring-ies-blue focus:border-transparent"></textarea>
+          <p class="block text-sm font-medium text-gray-700 mb-2">Select or create a collection</p>
+          <div id="it-bm-list" class="space-y-2 max-h-44 overflow-y-auto mb-3"></div>
+          <form id="it-bm-new" class="flex gap-2">
+            <input id="it-bm-new-name" type="text" placeholder="New collection topic"
+              class="flex-1 min-w-0 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-ies-blue focus:border-transparent">
+            <button type="submit" class="px-3 py-2 rounded-lg text-sm font-semibold bg-lens-amber text-lens-ink hover:brightness-95">Create &amp; save</button>
+          </form>
+          <p id="it-bm-msg" class="hidden mt-3 text-sm"></p>
+        </div>`;
+      document.body.appendChild(dialog);
+      dialog.addEventListener('click', (ev) => {
+        if (ev.target.closest('[data-close]')) closeBookmarkDialog();
+        const pick = ev.target.closest('[data-collection]');
+        if (pick) saveBookmark(pick.dataset.collection, pick.dataset.collectionName);
+      });
+      dialog.querySelector('#it-bm-new').addEventListener('submit', async (ev) => {
+        ev.preventDefault();
+        const name = dialog.querySelector('#it-bm-new-name').value.trim();
+        if (!name) { dialog.querySelector('#it-bm-new-name').focus(); return; }
+        try {
+          const res = await fetch('/api/projects', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name, user_id: 1 }),
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(data.message || data.error || 'Could not create the collection');
+          await saveBookmark(data.project.id, name);
+        } catch (err) {
+          bookmarkMessage(err.message, true);
+        }
+      });
+      document.addEventListener('keydown', (ev) => {
+        if (ev.key === 'Escape' && !dialog.classList.contains('hidden')) closeBookmarkDialog();
+      });
+      return dialog;
+    }
+
+    function bookmarkMessage(text, isError) {
+      const msg = document.getElementById('it-bm-msg');
+      msg.textContent = text;
+      msg.className = `mt-3 text-sm ${isError ? 'text-red-600' : 'text-green-700'}`;
+    }
+
+    async function openBookmarkDialog(payload, name) {
+      const dialog = ensureBookmarkDialog();
+      pendingPayload = payload;
+      dialog.querySelector('#it-bm-name').textContent = name;
+      dialog.querySelector('#it-bm-note').value = '';
+      dialog.querySelector('#it-bm-new-name').value = '';
+      dialog.querySelector('#it-bm-msg').className = 'hidden mt-3 text-sm';
+      dialog.classList.remove('hidden');
+      const list = dialog.querySelector('#it-bm-list');
+      list.innerHTML = '<div class="skeleton h-10 rounded-lg"></div>';
+      try {
+        const res = await fetch('/api/projects?user_id=1');
+        if (!res.ok) throw new Error('Could not load your collections');
+        const projects = (await res.json()).projects || [];
+        list.innerHTML = projects.length
+          ? projects.map(p => `
+              <button type="button" data-collection="${escapeHtml(String(p.id))}" data-collection-name="${escapeHtml(p.name)}"
+                class="w-full text-left px-4 py-2.5 rounded-lg border border-gray-100 hover:border-ies-blue hover:bg-blue-50 transition">
+                <span class="text-sm font-medium text-gray-800">${escapeHtml(p.name)}</span>
+              </button>`).join('')
+          : '<p class="text-sm text-gray-400 text-center py-2">No collections yet — create one below.</p>';
+      } catch (err) {
+        list.innerHTML = `<p class="text-sm text-red-600">${escapeHtml(err.message)}</p>`;
+      }
+    }
+
+    function closeBookmarkDialog() {
+      const dialog = document.getElementById('it-bookmark-dialog');
+      if (dialog) dialog.classList.add('hidden');
+      pendingPayload = null;
+    }
+
+    async function saveBookmark(projectId, collectionName) {
+      if (!pendingPayload || !projectId) return;
+      const note = document.getElementById('it-bm-note').value.trim();
+      const item = note ? { ...pendingPayload, note } : pendingPayload;
+      try {
+        const res = await fetch(`/api/projects/${encodeURIComponent(projectId)}/applications`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify([item]),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.message || data.error || 'Could not save the bookmark');
+        const added = (data.inserted_ids || []).length > 0;
+        bookmarkMessage(added ? `Bookmarked${collectionName ? ` to “${collectionName}”` : ''}.` : 'Already in this collection.', false);
+        setTimeout(closeBookmarkDialog, 900);
+      } catch (err) {
+        bookmarkMessage(err.message, true);
+      }
+    }
+
+    document.addEventListener('click', (ev) => {
+      const btn = ev.target.closest && ev.target.closest('.it-bookmark');
+      if (!btn) return;
+      ev.preventDefault();
+      if (!readerIsSubscriber) {
+        // Locked, not hidden: say what unlocks it, once, above the card's tables.
+        const box = btn.closest('details');
+        if (box && !box.querySelector('.it-locked-note')) {
+          const p = document.createElement('p');
+          p.className = 'it-locked-note text-xs text-gray-600 mt-3';
+          p.innerHTML = window.lensyAnonymous
+            ? `🔒 Bookmarks are included with a Lighting Library subscription. <a href="${SUBSCRIBE_URL}" target="_blank" rel="noopener" class="underline font-semibold">Subscribe</a> · <a href="${escapeHtml(window.lensyLoginUrl || '/login')}" class="underline font-semibold">Already a subscriber? Log in</a>`
+            : `🔒 Bookmarks are included with a Lighting Library subscription. <a href="${SUBSCRIBE_URL}" target="_blank" rel="noopener" class="underline font-semibold">Subscribe</a>`;
+          box.querySelector('summary').after(p);
+        }
+        return;
+      }
+      let payload = null;
+      try { payload = JSON.parse(btn.dataset.payload || 'null'); } catch { payload = null; }
+      if (payload) openBookmarkDialog(payload, btn.dataset.name || '');
+    });
+
+    // ── Sidebar chrome (List Standards' behaviour) ──────────────────────────
+    const DOCK_MIN_WIDTH = 1280;
+    let sidebarDocked = false;
+    const wideScreen = () => (window.innerWidth || 0) >= DOCK_MIN_WIDTH;
+
+    function updateSortFilterTrigger() {
+      const aside = document.getElementById('sortfilter-sidebar');
+      const showing = !(aside && !aside.classList.contains('hidden') && sidebarDocked);
+      const trigger = document.getElementById('sortfilter-trigger');
+      trigger.classList.toggle('hidden', !showing);
+      trigger.classList.toggle('flex', showing);
+    }
+    function openSidebar(section, opts = {}) {
+      const dock = opts.dock != null ? !!opts.dock : wideScreen();
+      sidebarDocked = dock;
+      document.getElementById('sortfilter-sidebar').classList.remove('hidden');
+      document.getElementById('sidebar-backdrop').classList.toggle('hidden', dock);
+      document.body.style.overflow = dock ? '' : 'hidden';
+      document.body.classList.toggle('sidebar-docked', dock);
+      updateSortFilterTrigger();
+      if (section === 'sort' || section === 'filter') {
+        document.getElementById('sort-section').open = dock || section === 'sort';
+        document.getElementById('filter-section').open = dock || section === 'filter';
+      }
+    }
+    function closeSidebar() {
+      const aside = document.getElementById('sortfilter-sidebar');
+      if (aside.classList.contains('hidden')) return;
+      aside.classList.add('hidden');
+      document.getElementById('sidebar-backdrop').classList.add('hidden');
+      document.body.style.overflow = '';
+      document.body.classList.remove('sidebar-docked');
+      sidebarDocked = false;
+      updateSortFilterTrigger();
+    }
+    window.addEventListener('resize', () => { if (sidebarDocked && !wideScreen()) closeSidebar(); });
+    (function trackHeaderHeight() {
+      const header = document.querySelector('header');
+      const set = () => document.documentElement.style.setProperty('--header-h', `${header.offsetHeight}px`);
+      set();
+      if (window.ResizeObserver) new ResizeObserver(set).observe(header);
+    })();
+
+    // ── Header menus ────────────────────────────────────────────────────────
+    function setMenu(id, btnId, open) {
+      const m = document.getElementById(id);
+      if (!m) return;
+      m.classList.toggle('hidden', !open);
+      document.getElementById(btnId)?.setAttribute('aria-expanded', open ? 'true' : 'false');
+    }
+    const menuOpen = (id) => !document.getElementById(id)?.classList.contains('hidden');
+    function closeAllMenus() {
+      setMenu('library-tools-menu', 'library-tools-btn', false);
+      setMenu('account-menu', 'account-menu-btn', false);
+    }
+    function toggleLibraryTools() {
+      const next = !menuOpen('library-tools-menu');
+      closeAllMenus();
+      setMenu('library-tools-menu', 'library-tools-btn', next);
+    }
+    function toggleAccountMenu() {
+      const next = !menuOpen('account-menu');
+      closeAllMenus();
+      setMenu('account-menu', 'account-menu-btn', next);
+    }
+    document.addEventListener('click', (e) => {
+      if (!(e.target instanceof Element && e.target.closest('#library-tools-wrap, #account-wrap'))) closeAllMenus();
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key !== 'Escape') return;
+      closeAllMenus();
+      if (!sidebarDocked) closeSidebar();
+    });
+
+    // The tier arrives with the session (or null for a signed-out visitor,
+    // who is a Guest) — re-render so the Library links and Bookmark unlock.
+    document.addEventListener('lensy:auth', (e) => {
+      const tier = (e.detail && e.detail.tier) || 'none';
+      readerIsSubscriber = !(tier === 'lite' || tier === 'guest' || tier === 'none');
+      readerIsMember = tier === 'lite';
+      render();
+    });
+
+    document.getElementById('it-filter').addEventListener('input', render);
+    syncSortControls();
+    if (wideScreen()) openSidebar(null, { dock: true });
+    else updateSortFilterTrigger();
+    load();
+  </script>
+  <script src="/utils/site-menu.js"></script>
+</body>
+</html>

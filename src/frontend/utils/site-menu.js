@@ -38,6 +38,7 @@
     search: 'M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z',
     library: 'M4 19.5V5a1 1 0 011-1h2a1 1 0 011 1v14.5M10 19.5V5a1 1 0 011-1h2a1 1 0 011 1v14.5M16.5 19.5l-2-14 2.5-.5 2.5 14z',
     list: 'M4 6h16M4 12h16M4 18h10',
+    table: 'M3 5a1 1 0 011-1h16a1 1 0 011 1v14a1 1 0 01-1 1H4a1 1 0 01-1-1V5zm0 5h18M3 15h18M9 10v10',
     compare: 'M8 7V3m0 4H4m4 0h4M6 21V11m10 10v-4m0 4h4m-4 0h-4m2-14v10',
     video: 'M15 10l4.55-2.28A1 1 0 0121 8.62v6.76a1 1 0 01-1.45.9L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z',
     faq: 'M8.2 9a4 4 0 017.6 1.5c0 2-3 2.75-3 4.5M12 18h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z',
@@ -124,6 +125,8 @@
       // (client 10/20/26 #3; see lockMenuItem and the auth handler below).
       link({ href: '/?compare=1', icon: 'compare', label: 'Compare Versions', id: 'menu-compare', title: 'Compare Versions — AI summary of changes between a standard and its previous edition' }),
       link({ href: '/contents', icon: 'list', label: 'List Standards', current: current === 'contents', title: 'Every current IES standard in the Lighting Library' }),
+      // Dan, Teams 11/09/26 #2: public, in every Lighting Library Tools menu.
+      link({ href: '/illuminance-tables', icon: 'table', label: 'List Illuminance Tables', current: current === 'illuminance-tables', title: 'The illuminance tables in the current edition of each IES standard' }),
       link({ href: TOOLBOX_URL, icon: 'toolbox', label: 'IES Standards Toolbox', newTab: true, title: 'IES calculators and tools for applying the standards (TM-30, TM-21 and more)' }),
       link({ href: '/tutorials', icon: 'video', label: 'Tutorials', newTab: true, cls: 'border-t border-gray-100', title: 'Video tutorials for the IES Lighting Library and IES Lens' }),
       link({ href: '/tutorials#faq', icon: 'faq', label: 'FAQ', newTab: true, title: 'Frequently asked questions' }),

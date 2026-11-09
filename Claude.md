@@ -1961,9 +1961,45 @@ bonus when the whole phrase is in the title; ties keep catalogue order. Words
 are suffix-stemmed and prefix-matched ("compare" finds "Comparing"), matches
 are highlighted, and the query lives in `?q=` so a search is linkable. Results
 render INTO `#sections` so no tutorial is in the page twice (a duplicate
-`player-<slug>` id would break the guide's timestamp seek). #2 ("List
-Illuminance Tables" page + admin control of table titles/listings) is waiting
-on Dan's SharePoint layout doc.
+`player-<slug>` id would break the guide's timestamp seek).
+
+### List Illuminance Tables (Dan, Teams 11/09/26 #2)
+
+Layout + admin fields: `pdfs/Others/261109 List…mTables.pdf` (Dan's mockup).
+Migration **0030** (`standards.has_illuminance_tables`,
+`illuminance_tables_json`). No search-cache bump — search does not read them.
+
+- **The page lists only what staff entered** ("extremely sensitive data sets
+  … never misses one or misrepresents one"). A standard appears when it is
+  **Active AND "Has illuminance table?" is ticked** (Dan's LOGIC box) in Admin →
+  Standards → Edit, which holds one row per table: title + **printed** first
+  page, add/delete. Nothing extracted reaches the page unreviewed.
+- **Printed page in, PDF index stored** (`src/lib/illuminance-tables.js`,
+  `resolvePrintedPage`): the typed label must name exactly ONE page of the
+  document's `page_labels_json`, else 400 naming the row; without labels the
+  number is the index, bounded by `page_count`. Stored as `{title, page, label}`.
+  On read the label is re-taken from the CURRENT labels, so a re-ingest that
+  re-paginated cannot print a stale "p. 60" beside a link that moved; Edit
+  and Index health flag such an entry `stale`.
+- **"Suggest from index…"** in Edit offers the distinct `applications.Table_Ref`
+  of the standard's search rows (titled from `assets_json` captions) plus any
+  caption reading like an illuminance/criteria table. Added only by a click.
+- **Index health cross-check:** an Active standard whose search rows come from
+  a table the list does not carry (or that is not ticked at all) is a warning.
+  On 2026-11-09 that is all 15 table standards until staff fill the list —
+  expected, and the point. RP-8-25+E2's Table 17-x (in Dan's mockup) has no
+  illuminance rows, so only a caption suggestion or a hand entry lists it.
+- **Public** `GET /api/illuminance-tables` (before the session gate) +
+  `/illuminance-tables` (auth-gate `data-public`, List Standards' header,
+  sidebar, Open in Library / Subscribe / Lease rules). Table "Open in Library"
+  and Bookmark are padlocked for non-openers / non-subscribers, never hidden.
+  A bookmark is `result_type: 'tables'` ("Illuminance Table"), no application
+  code (synthetic `excerpt:` code), `application_name` = the table title.
+- In every Lighting Library Tools menu: `site-menu.js` + index.html's own copy.
+- **Deploy order: migration first** — Admin → Standards → Edit SELECTs the
+  new columns (the public endpoint and Index health fail soft without them).
+- Also fixed: `uploadStdCover` (Edit → cover "Replace…") was never exported
+  from the admin module script, so its `onchange` threw.
 
 ### Search usage per account, no search content (Dan, 2026-11-02)
 

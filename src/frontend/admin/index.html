@@ -1072,6 +1072,28 @@
           </select>
           <p class="mt-1 text-xs text-gray-400">Lighting Science is also what Non-Subscribers can search.</p>
         </div>
+        <!-- "List Illuminance Tables" (Dan, Teams 11/09/26 #2): the public page
+             lists exactly what is entered here, for current editions only. -->
+        <div class="border-t border-gray-200 pt-4">
+          <label class="flex items-center gap-2 text-sm font-medium text-gray-800 cursor-pointer">
+            <input id="se-has-tables" type="checkbox" onchange="toggleSeTables()" class="rounded" />
+            Has illuminance table?
+          </label>
+          <p class="mt-1 text-xs text-gray-400">Lists this standard on <a href="/illuminance-tables" target="_blank" rel="noopener" class="underline">List Illuminance Tables</a> while it is the current edition.</p>
+          <p id="se-tables-warn" class="hidden mt-2 text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2"></p>
+          <div id="se-tables-box" class="hidden mt-3 space-y-2">
+            <div class="flex gap-2 text-[11px] font-medium text-gray-500 px-0.5">
+              <span class="flex-1">Table title</span><span class="w-20">First page</span><span class="w-12"></span>
+            </div>
+            <div id="se-tables-rows" class="space-y-2"></div>
+            <div class="flex flex-wrap gap-2">
+              <button type="button" onclick="addSeTableRow()" class="px-3 py-1.5 text-xs rounded-lg border border-gray-300 hover:bg-gray-50">+ Add table</button>
+              <button type="button" id="se-tables-suggest-btn" onclick="toggleSeSuggestions()" class="px-3 py-1.5 text-xs rounded-lg border border-gray-300 hover:bg-gray-50">Suggest from index…</button>
+            </div>
+            <div id="se-tables-suggestions" class="hidden rounded-lg border border-gray-200 bg-gray-50 p-2 space-y-1"></div>
+            <p class="text-xs text-gray-400">First page = the page number <strong>printed</strong> on the table's first page (e.g. 60), as the reader sees it. IES Lens links it to the right PDF page and refuses a page the document does not print.</p>
+          </div>
+        </div>
         <div class="flex items-center justify-between gap-2 pt-2">
           <div class="flex flex-wrap gap-2">
             <button type="button" id="se-deprecate" onclick="deprecateStd()"
@@ -3515,8 +3537,104 @@
       // LS-1 is undeletable for the same reason it cannot be deprecated: it
       // anchors the definitions.
       document.getElementById('se-deprecate').classList.toggle('hidden', !s.deletable || s.status === 'Deprecated');
+      fillSeTables(s);
       document.getElementById('std-edit-modal').classList.remove('hidden');
     }
+
+    // ── "List Illuminance Tables" fields (Dan, Teams 11/09/26 #2) ─────────
+    // "Has illuminance table?" + one row per table (title, first PRINTED
+    // page), add/delete. Suggestions come from the index but are only ever
+    // added by a click — nothing reaches the public page unreviewed.
+    let seTablesState = { suggestions: [], libraryUrl: null };
+
+    function fillSeTables(s) {
+      seTablesState = { suggestions: s.illuminanceSuggestions || [], libraryUrl: s.libraryUrl || null };
+      document.getElementById('se-has-tables').checked = !!s.hasIlluminanceTables;
+      const rows = document.getElementById('se-tables-rows');
+      rows.innerHTML = '';
+      for (const t of s.illuminanceTables || []) addSeTableRow(t);
+      document.getElementById('se-tables-suggestions').classList.add('hidden');
+      document.getElementById('se-tables-suggest-btn').classList.toggle('hidden', seTablesState.suggestions.length === 0);
+      const notes = [];
+      if (s.status === 'Deprecated') notes.push('This edition is deprecated, so it is not listed whatever is entered here.');
+      const unlisted = s.unlistedSearchTables || [];
+      if (unlisted.length) {
+        notes.push(`Search returns illuminance rows from ${unlisted.join(', ')}, which ${unlisted.length === 1 ? 'is' : 'are'} not listed here.`);
+      }
+      const stale = (s.illuminanceTables || []).filter(t => t.stale);
+      if (stale.length) notes.push(`The printed page of ${stale.length} listed table(s) changed after a re-ingest — marked below; re-check them.`);
+      if (!s.pageLabelled) notes.push('This PDF carries no printed page numbers, so "First page" is the PDF page number.');
+      const warn = document.getElementById('se-tables-warn');
+      warn.textContent = notes.join(' ');
+      warn.classList.toggle('hidden', notes.length === 0);
+      toggleSeTables();
+    }
+
+    function toggleSeTables() {
+      const on = document.getElementById('se-has-tables').checked;
+      document.getElementById('se-tables-box').classList.toggle('hidden', !on);
+      if (on && document.querySelectorAll('#se-tables-rows .se-table-row').length === 0) addSeTableRow();
+    }
+
+    /** One editable row; `t` is a saved entry ({title, page, label, stale}) or a suggestion. */
+    function addSeTableRow(t = {}) {
+      const row = document.createElement('div');
+      row.className = 'se-table-row flex gap-2 items-start';
+      const check = (t.page && seTablesState.libraryUrl)
+        ? `<a href="${esc(seTablesState.libraryUrl)}#page=${t.page}" target="_blank" rel="noopener" class="text-[11px] text-brand-primary hover:underline" title="Open this page in the Lighting Library to check it">check ↗</a>`
+        : '';
+      row.innerHTML = `
+        <div class="flex-1 min-w-0">
+          <input type="text" maxlength="300" placeholder="Table A-1. Recommended Illuminance Criteria for …"
+                 class="se-table-title w-full px-2.5 py-1.5 text-sm border ${t.stale ? 'border-amber-400' : 'border-gray-300'} rounded-lg" />
+          ${t.stale ? '<p class="text-[11px] text-amber-700 mt-0.5">Printed page changed after a re-ingest — re-check.</p>' : ''}
+        </div>
+        <div class="w-20">
+          <input type="text" maxlength="12" placeholder="60" inputmode="text"
+                 class="se-table-page w-full px-2.5 py-1.5 text-sm border border-gray-300 rounded-lg" />
+          ${check}
+        </div>
+        <button type="button" class="w-12 px-2 py-1.5 text-xs rounded-lg border border-red-200 text-red-600 hover:bg-red-50"
+                onclick="this.closest('.se-table-row').remove()" title="Remove this table">Delete</button>`;
+      row.querySelector('.se-table-title').value = t.title || '';
+      row.querySelector('.se-table-page').value = t.label || '';
+      document.getElementById('se-tables-rows').appendChild(row);
+      return row;
+    }
+
+    function seTableRows() {
+      return [...document.querySelectorAll('#se-tables-rows .se-table-row')]
+        .map(r => ({ title: r.querySelector('.se-table-title').value.trim(), page: r.querySelector('.se-table-page').value.trim() }))
+        .filter(t => t.title || t.page);
+    }
+
+    function toggleSeSuggestions() {
+      const box = document.getElementById('se-tables-suggestions');
+      if (!box.classList.contains('hidden')) { box.classList.add('hidden'); return; }
+      const have = new Set(seTableRows().map(t => t.title.toLowerCase()));
+      box.innerHTML = `<p class="text-[11px] text-gray-500 px-1 pb-1">From this standard's index — check each title and page against the PDF before saving.</p>`
+        + seTablesState.suggestions.map((s, i) => `
+          <div class="flex items-start gap-2 text-xs bg-white rounded border border-gray-100 px-2 py-1.5">
+            <span class="flex-1 min-w-0">${esc(s.title)} <span class="text-gray-400">· p. ${esc(s.label)}${s.source === 'search' ? ' · search rows' : ' · caption'}</span></span>
+            <button type="button" data-se-suggest="${i}" ${have.has(s.title.toLowerCase()) ? 'disabled' : ''}
+                    class="shrink-0 px-2 py-0.5 rounded border border-gray-300 hover:bg-gray-50 disabled:opacity-40">${have.has(s.title.toLowerCase()) ? 'Added' : 'Add'}</button>
+          </div>`).join('');
+      box.classList.remove('hidden');
+    }
+
+    document.addEventListener('click', (e) => {
+      const btn = e.target.closest && e.target.closest('[data-se-suggest]');
+      if (!btn || btn.disabled) return;
+      const s = seTablesState.suggestions[Number(btn.dataset.seSuggest)];
+      if (!s) return;
+      // Fill an empty row before adding a new one (the box opens with one).
+      const blank = [...document.querySelectorAll('#se-tables-rows .se-table-row')]
+        .find(r => !r.querySelector('.se-table-title').value.trim() && !r.querySelector('.se-table-page').value.trim());
+      if (blank) blank.remove();
+      addSeTableRow({ title: s.title, label: s.label, page: s.page });
+      btn.disabled = true;
+      btn.textContent = 'Added';
+    });
 
     function showStdCover(url) {
       const img = document.getElementById('se-cover');
@@ -3559,7 +3677,10 @@
         publishedDate: document.getElementById('se-date').value,
         leaseUrl: document.getElementById('se-lease').value.trim(),
         collection: document.getElementById('se-collection').value,
+        hasIlluminanceTables: document.getElementById('se-has-tables').checked,
       };
+      // Unticked: the list is kept as it was (re-ticking does not lose it).
+      if (body.hasIlluminanceTables) body.illuminanceTables = seTableRows();
       const { status, data } = await api(`/api/admin/standards/${encodeURIComponent(editingStdId)}`,
         { method: 'PATCH', body: JSON.stringify(body) });
       if (status >= 400) { toast(data.error || 'Could not save', 'err'); return false; }
@@ -3622,6 +3743,7 @@ Type ${id} to confirm:`);
       onIngestStatusChange, onIngestReplacesChange,
       hideTracker, resumeJob, cancelJobUi, showJobDetails,
       openStdEdit, closeStdEdit, saveStdEdit, deleteStd, deprecateStd,
+      toggleSeTables, addSeTableRow, toggleSeSuggestions, uploadStdCover,
     });
   </script>
 </body>

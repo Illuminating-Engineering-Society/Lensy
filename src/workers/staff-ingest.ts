@@ -100,6 +100,11 @@ import {
   extractApplicationsFromPages, detectNewTableStructure,
 } from '../lib/applications-extractor.js';
 import { extractDocx } from '../lib/docx-extract.js';
+import {
+  validateIlluminanceTables, parseIlluminanceTables, presentIlluminanceTable,
+  suggestIlluminanceTables, unlistedTableRefs,
+} from '../lib/illuminance-tables.js';
+import { parsePageLabels } from '../lib/page-labels.js';
 import { alignChunksToPdfPages, alignSequenceToPages } from '../lib/page-align.js';
 
 function errMsg(err: unknown): string { return err instanceof Error ? err.message : String(err); }
@@ -1216,7 +1221,9 @@ export function validateStandardEdit(body: any): { fields: Record<string, string
  *   GET    /api/admin/standards/:id   the editable fields
  *   PATCH  /api/admin/standards/:id   { libraryUrl?, publishedDate?, leaseUrl?, collection?,
  *                                       vitriumDocId?, leaseAddonDocIds?, title?, fullDesignation?,
- *                                       author?, description? }
+ *                                       author?, description?,
+ *                                       hasIlluminanceTables?, illuminanceTables?: [{ title, page }] }
+ *          — `page` is the PRINTED page; see src/lib/illuminance-tables.js
  *   POST   /api/admin/standards/:id/cover  (image/jpeg | image/png body) — the cover
  *          List Standards and the result cards show; replaces any portal cover
  *   DELETE /api/admin/standards/:id   { confirm: "<id>" } — removes it entirely
@@ -1229,19 +1236,36 @@ export async function handleAdminStandards(request: Request, env: Env, url: URL)
 
   const id = safeDecode(url.pathname.replace(/^\/api\/admin\/standards\/?/, '').split('/')[0] || '');
   if (!id) return jsonResponse({ error: 'Standard id required' }, 400);
+  // Needs migration 0030 (has_illuminance_tables, illuminance_tables_json):
+  // deploy the migration BEFORE the code.
   const row = await env.DB.prepare(
     'SELECT id, status, chunk_count, vitrium_web_url, published_date, buy_url, collection, superseded_by,'
-    + ' vitrium_doc_id, lease_addon_doc_ids, title, full_designation, author, description, thumbnail_url'
+    + ' vitrium_doc_id, lease_addon_doc_ids, title, full_designation, author, description, thumbnail_url,'
+    + ' page_count, page_labels_json, assets_json, has_illuminance_tables, illuminance_tables_json'
     + ' FROM standards WHERE id = ?',
   ).bind(id).first<{
     id: string; status: string; chunk_count: number | null; vitrium_web_url: string | null;
     published_date: string | null; buy_url: string | null; collection: string | null; superseded_by: string | null;
     vitrium_doc_id: string | null; lease_addon_doc_ids: string | null; title: string | null; full_designation: string | null;
     author: string | null; description: string | null; thumbnail_url: string | null;
+    page_count: number | null; page_labels_json: string | null; assets_json: string | null;
+    has_illuminance_tables: number | null; illuminance_tables_json: string | null;
   }>();
   if (!row) return jsonResponse({ error: `No standard "${id}"` }, 404);
 
   if (request.method === 'GET') {
+    // "List Illuminance Tables" (Dan, 11/09/26 #2): the curated list as staff
+    // edit it (printed pages), what search knows about this standard's tables
+    // (suggestions + the ones the list is missing), all read-only here.
+    const labels = parsePageLabels(row.page_labels_json);
+    const listed = parseIlluminanceTables(row.illuminance_tables_json);
+    const appTables = await env.DB.prepare(
+      'SELECT Table_Ref AS ref, MIN(Page_Number) AS firstPage, COUNT(*) AS n FROM applications'
+      + " WHERE Standard = ? AND Active = 1 AND Table_Ref IS NOT NULL AND Table_Ref <> '' GROUP BY Table_Ref",
+    ).bind(row.id).all<{ ref: string; firstPage: number | null; n: number }>()
+      .then(r => r.results || []).catch(() => []);
+    let assets: any[] = [];
+    try { assets = row.assets_json ? JSON.parse(row.assets_json) : []; } catch { assets = []; }
     return jsonResponse({
       standard: {
         id: row.id, status: row.status, libraryUrl: row.vitrium_web_url,
@@ -1254,13 +1278,43 @@ export async function handleAdminStandards(request: Request, env: Env, url: URL)
         fullDesignation: row.full_designation, author: row.author,
         description: row.description, coverUrl: row.thumbnail_url,
         deletable: !UNDELETABLE.has(row.id),
+        hasIlluminanceTables: !!row.has_illuminance_tables,
+        illuminanceTables: listed.map(t => presentIlluminanceTable(t, labels)),
+        illuminanceSuggestions: suggestIlluminanceTables({
+          appTables: appTables.map(t => ({ ref: t.ref, firstPage: t.firstPage })),
+          assets: Array.isArray(assets) ? assets : [],
+          labels,
+        }),
+        searchTables: appTables.map(t => ({ ref: t.ref, rows: t.n })),
+        unlistedSearchTables: unlistedTableRefs(listed, appTables.map(t => t.ref)),
+        pageLabelled: !!labels,
       },
     });
   }
 
   if (request.method === 'PATCH') {
-    const { fields, error } = validateStandardEdit(await safeJson(request));
-    if (error) return jsonResponse({ error }, 400);
+    const body = await safeJson(request);
+    // The illuminance-table list is validated against THIS document's printed
+    // pages, so it is handled here rather than in the pure validateStandardEdit.
+    const illuminance: Record<string, string | number | null> = {};
+    if ('hasIlluminanceTables' in body) illuminance.has_illuminance_tables = body.hasIlluminanceTables ? 1 : 0;
+    if ('illuminanceTables' in body) {
+      const checked = validateIlluminanceTables(body.illuminanceTables, {
+        labels: parsePageLabels(row.page_labels_json), pageCount: row.page_count,
+      });
+      if (checked.error) return jsonResponse({ error: checked.error }, 400);
+      illuminance.illuminance_tables_json = checked.tables!.length ? JSON.stringify(checked.tables) : null;
+    }
+    const listedAfter = 'illuminance_tables_json' in illuminance
+      ? (illuminance.illuminance_tables_json ? 1 : 0)
+      : parseIlluminanceTables(row.illuminance_tables_json).length;
+    if (illuminance.has_illuminance_tables === 1 && !listedAfter) {
+      return jsonResponse({ error: 'Add at least one illuminance table, or untick "Has illuminance table?".' }, 400);
+    }
+    const { fields: edited, error } = validateStandardEdit(body);
+    const onlyIlluminance = error === 'Nothing to change.' && Object.keys(illuminance).length > 0;
+    if (error && !onlyIlluminance) return jsonResponse({ error }, 400);
+    const fields: Record<string, string | number | null> = { ...edited, ...illuminance };
     const cols = Object.keys(fields);
     const statements = [env.DB.prepare(
       `UPDATE standards SET ${cols.map(c => `${c} = ?`).join(', ')}, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,

@@ -45,6 +45,7 @@ import {
 import { resolveCommittee } from '../lib/committees.js';
 import { cleanOutline, outlineFromSectionMap } from '../lib/section-titles.js';
 import { pageLabelFor, parsePageLabels } from '../lib/page-labels.js';
+import { parseIlluminanceTables, presentIlluminanceTable } from '../lib/illuminance-tables.js';
 import type { OutlineEntry } from '../types';
 import { toLibraryUrlOrNull } from '../lib/library-url.js';
 import { sendCollectionShareEmail, isEmailAddress, resolveAppUrl } from '../lib/email';
@@ -300,6 +301,13 @@ export default {
       // behind the session gate.
       const isPublicCatalogue = request.method === 'GET' && path === '/api/standards';
 
+      // "List Illuminance Tables" (Dan, Teams 11/09/26 #2): "Page is public, no
+      // subscription needed". It lists table TITLES and pages staff curated —
+      // never a value from a table.
+      if (request.method === 'GET' && path === '/api/illuminance-tables') {
+        return withCors(await handleIlluminanceTables(env, url));
+      }
+
       // ── Applications / Standards / Projects (same session gate as search) ─
       if (
         !isPublicSharedRead && !isPublicCatalogue && (
@@ -534,6 +542,64 @@ function parseJsonObject(raw: string | null | undefined): Record<string, string>
   } catch {
     return {};
   }
+}
+
+/**
+ * GET /api/illuminance-tables — public (Dan, Teams 11/09/26 #2).
+ *
+ * "This page directs you to the illuminance tables from the most current
+ *  edition of each IES standard." A standard is listed when it is current
+ * (status 'Active') AND staff ticked "Has illuminance table?" in Admin →
+ * Standards → Edit; its tables are exactly the titles and pages staff entered
+ * (src/lib/illuminance-tables.js) — nothing extracted is shown unreviewed.
+ * Each table carries the printed page (`label`) and a #page=N link on the PDF
+ * index, the same split as everywhere else since 11/06/26.
+ */
+async function handleIlluminanceTables(env: Env, url: URL): Promise<Response> {
+  let rows: Record<string, any>[];
+  try {
+    const result = await env.DB.prepare(
+      'SELECT id, title, full_designation, status, vitrium_web_url, description, author, collection,' +
+      ' thumbnail_url, buy_url, published_date, page_labels_json, illuminance_tables_json' +
+      " FROM standards WHERE status = 'Active' AND has_illuminance_tables = 1 ORDER BY id"
+    ).all<Record<string, any>>();
+    rows = result.results || [];
+  } catch (err) {
+    // Before migration 0030 the columns do not exist: an empty page, not a 500.
+    console.error('illuminance-tables: read failed:', err instanceof Error ? err.message : String(err));
+    return json({ standards: [], unavailable: true });
+  }
+  const lighting = await liteAllowedStandards(env).catch(() => new Set<string>());
+  const standards = rows.map(s => {
+    const libraryUrl = toLibraryUrlOrNull(s.vitrium_web_url);
+    const labels = parsePageLabels(s.page_labels_json);
+    const tables = parseIlluminanceTables(s.illuminance_tables_json).map(t => {
+      const shown = presentIlluminanceTable(t, labels);
+      return {
+        title: shown.title,
+        page: shown.page,
+        label: shown.label,
+        url: libraryUrl ? `${libraryUrl}#page=${shown.page}` : null,
+      };
+    });
+    return {
+      id: s.id,
+      title: s.title,
+      full_designation: s.full_designation,
+      status: s.status,
+      description: s.description,
+      author: s.author,
+      collection: s.collection,
+      published_date: s.published_date,
+      buy_url: s.buy_url,
+      lighting_science: lighting.has(s.id),
+      vitrium_web_url: libraryUrl,
+      thumbnail_url: absoluteUrlOrNull(s.thumbnail_url, url.origin),
+      committee: resolveCommittee(s.author),
+      tables,
+    };
+  }).filter(s => s.tables.length > 0);
+  return json({ standards });
 }
 
 async function handleStandards(request: Request, env: Env, url: URL): Promise<Response> {

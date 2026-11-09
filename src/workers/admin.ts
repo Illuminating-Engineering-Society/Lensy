@@ -52,6 +52,8 @@ import { readTrendingTopics, refreshTrendingTopics } from '../lib/trending-topic
 import { REFERENCES_HEADING_RE } from '../lib/chunker.js';
 import { toLibraryUrlOrNull } from '../lib/library-url.js';
 import { lookupMemberNumbers } from '../lib/people-lookup';
+import { parseIlluminanceTables, presentIlluminanceTable, unlistedTableRefs } from '../lib/illuminance-tables.js';
+import { parsePageLabels } from '../lib/page-labels.js';
 import type { StandardRow, SearchLogRow } from '../types';
 
 interface IndexStatusRow {
@@ -565,6 +567,24 @@ export async function handleAdminIndexStatus(request: Request, env: Env): Promis
       FROM applications WHERE Active = 1 GROUP BY Standard
     `).all<{ standard: string; first: string; last: string }>(),
   ]);
+  // "List Illuminance Tables" (Dan, 11/09/26 #2: "make sure the indexing never
+  // misses one or misrepresents one"): the curated list beside the tables search
+  // actually returns rows from. Separate reads that fail soft — before
+  // migration 0030 the columns do not exist and the report must still load.
+  const [listedRes, tableRefsRes] = await Promise.all([
+    env.DB.prepare('SELECT id, has_illuminance_tables, illuminance_tables_json, page_labels_json FROM standards')
+      .all<{ id: string; has_illuminance_tables: number; illuminance_tables_json: string | null; page_labels_json: string | null }>()
+      .catch(() => null),
+    env.DB.prepare(
+      "SELECT Standard AS standard, Table_Ref AS ref FROM applications WHERE Active = 1 AND Table_Ref IS NOT NULL AND Table_Ref <> '' GROUP BY Standard, Table_Ref",
+    ).all<{ standard: string; ref: string }>().catch(() => null),
+  ]);
+  const illuminanceListing = new Map((listedRes?.results || []).map(r => [r.id, r]));
+  const searchTableRefs = new Map<string, string[]>();
+  for (const r of tableRefsRes?.results || []) {
+    if (!searchTableRefs.has(r.standard)) searchTableRefs.set(r.standard, []);
+    searchTableRefs.get(r.standard)!.push(r.ref);
+  }
   const appEnds = new Map((appEndsRes.results || []).map(r => [r.standard, [r.first, r.last]] as [string, string[]]));
 
   const appCounts = new Map((appCountsRes.results || []).map(r => [r.standard, r.n] as [string, number]));
@@ -622,6 +642,28 @@ export async function handleAdminIndexStatus(request: Request, env: Env): Promis
     if ((coverage?.byType?.reference ?? 0) === 0 && std.status !== 'Deprecated' && std.chunk_count != null) {
       const warning = referencesWarning(findReferencesHeading(std.outline_json));
       if (warning) row.warnings.push(warning);
+    }
+
+    if (std.status !== 'Deprecated' && listedRes) {
+      const listing = illuminanceListing.get(std.id);
+      const listed = listing ? parseIlluminanceTables(listing.illuminance_tables_json) : [];
+      const refs = searchTableRefs.get(std.id) || [];
+      if (!listing?.has_illuminance_tables) {
+        if (refs.length > 0) {
+          row.warnings.push(`Not on List Illuminance Tables, but search returns illuminance rows from ${refs.join(', ')}. Tick "Has illuminance table?" in Edit and add them.`);
+        }
+      } else {
+        const missing = unlistedTableRefs(listed, refs);
+        const them = missing.length === 1 ? 'it' : 'them';
+        if (missing.length > 0) {
+          row.warnings.push(`List Illuminance Tables is missing ${missing.join(', ')} — search returns illuminance rows from ${them}. Add ${them} in Edit.`);
+        }
+        const labels = parsePageLabels(listing.page_labels_json);
+        const moved = listed.filter(t => presentIlluminanceTable(t, labels).stale);
+        if (moved.length > 0) {
+          row.warnings.push(`List Illuminance Tables: the printed page of ${moved.map(t => `"${t.title}"`).join(', ')} changed after a re-ingest — re-check in Edit.`);
+        }
+      }
     }
 
     if (verify && (std.chunk_count ?? 0) > 0) {
