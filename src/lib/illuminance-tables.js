@@ -108,7 +108,13 @@ export function parseIlluminanceTables(raw) {
     if (!Array.isArray(parsed)) return [];
     return parsed
       .filter(t => t && typeof t.title === 'string' && t.title.trim() && Number.isInteger(t.page) && t.page > 0)
-      .map(t => ({ title: t.title, page: t.page, label: typeof t.label === 'string' && t.label ? t.label : null }));
+      .map(t => ({
+        title: t.title, page: t.page, label: typeof t.label === 'string' && t.label ? t.label : null,
+        // A review note left by the pre-fill (scripts/prefill-illuminance-tables.js):
+        // shown in Edit only, and gone once staff save the list (the validator
+        // never writes one).
+        ...(typeof t.note === 'string' && t.note ? { note: t.note } : {}),
+      }));
   } catch {
     return [];
   }
@@ -128,6 +134,7 @@ export function presentIlluminanceTable(entry, labels) {
     page: entry.page,
     label: shown,
     stale: !!(entry.label && current && current !== entry.label),
+    ...(entry.note ? { note: entry.note } : {}),
   };
 }
 
@@ -149,50 +156,116 @@ export function unlistedTableRefs(listed, searchRefs) {
 
 const ILLUMINANCE_CAPTION_RE = /illuminance|lighting criteria|design criteria|recommended (?:light|illuminance) levels?/i;
 
+/** How far before a table's first row its caption may sit (a caption page, a heading). */
+const CAPTION_LEAD_PAGES = 3;
+
 /**
- * Suggestions for the Edit modal, best first. Never saved by themselves.
+ * Is an ingest caption a real table title? The caption reader (document-assets.js)
+ * also catches cross-references that START like a caption — "Table A-3 (see
+ * Section A.3). These values are based on…" (RP-43-25 p. 70), "Table A-1
+ * (Annex A)" (RP-37-25) — and two-column bleed ("… for Various FOV and sons, it
+ * may be desirable to use…", RP-8-25+E2). Such a caption supplies neither a
+ * title nor a page: its page is where the TEXT mentions the table.
+ */
+export function usableCaption(caption) {
+  const c = String(caption || '').trim();
+  if (c.length < 4 || c.length > 140) return false;
+  if (/^[(\[]/.test(c)) return false;
+  if (/\bsee\s*section\b|\(see\b/i.test(c)) return false;
+  if (/\.\s+[A-Za-z]/.test(c)) return false;                       // a sentence break inside
+  if (/\b(?:it|this|these|which|they)\s+(?:may|is|are|can|should|will)\b/i.test(c)) return false;
+  return true;
+}
+
+/**
+ * Words the PDF ran together where italics began or ended: "forInteriorRetail"
+ * → "for Interior Retail", "forIndoorSports" → "for Indoor Sports".
+ */
+export function tidyCaption(caption) {
+  return String(caption || '').replace(/([a-z])([A-Z])/g, '$1 $2').replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * Suggestions for the Edit modal (and the pre-fill script), in page order.
+ * Never saved by themselves.
  *
- *   1. Every table search returns illuminance rows from (applications.Table_Ref),
- *      titled from its ingest caption when there is one, at its first page —
- *      the caption's page when it sits on or just before the first row's page,
- *      else the first row's page.
- *   2. Any other table whose caption reads like an illuminance/criteria table
- *      (RP-8's "Design Criteria for Parking Lots" has no illuminance rows).
+ *   1. Every table search returns illuminance rows from (applications.Table_Ref
+ *      with its first/last row page). The captions found ON those pages decide:
+ *      - the row's own table number is captioned there (or nowhere) → that
+ *        table, titled from its caption when the caption is usable, at the
+ *        caption's page when it sits just before the first row, else the first
+ *        row's page;
+ *      - only OTHER table numbers are captioned there → the stored number is
+ *        wrong (RP-8-25+E2 stores Tables 17-1/17-2 as "Table A-1"), so those
+ *        tables are suggested instead, each flagged `mislabelled`.
+ *   2. Tables whose caption reads like an illuminance/criteria table and that
+ *      search has no rows from (`source: 'caption'`).
+ *
+ * `flags`: 'untitled' (no usable caption — staff must type the title),
+ * 'mislabelled' (search rows carry another table number).
  *
  * @param {{
- *   appTables: { ref: string, firstPage: number | null }[],
+ *   appTables: { ref: string, firstPage: number | null, lastPage?: number | null }[],
  *   assets: { kind: string, label: string, caption: string, page: number }[],
  *   labels: string[] | null,
  * }} input
- * @returns {{ title: string, page: number, label: string, source: 'search' | 'caption' }[]}
+ * @returns {{ title: string, page: number, label: string, source: 'search' | 'caption',
+ *             flags: string[], searchRef?: string }[]}
  */
+/** The review note a suggestion's flags call for, or null. */
+export function reviewNoteFor(suggestion) {
+  const flags = suggestion.flags || [];
+  const notes = [];
+  if (flags.includes('mislabelled')) notes.push(`search rows for this table are labelled "${suggestion.searchRef}" — check the table number`);
+  if (flags.includes('untitled')) notes.push('no usable caption was found — type the title as printed');
+  if (suggestion.source === 'caption') notes.push('found by its caption only — search has no rows from it');
+  return notes.length ? `Pre-filled: ${notes.join('; ')}.` : 'Pre-filled from the index — check title and page against the PDF.';
+}
+
 export function suggestIlluminanceTables({ appTables, assets, labels }) {
-  const captions = new Map();
+  const tableAssets = [];
   for (const a of assets || []) {
     if (a && a.kind === 'table' && typeof a.label === 'string' && Number.isInteger(a.page)) {
       const ref = tableRefOf(a.label);
-      if (ref && !captions.has(ref)) captions.set(ref, a);
+      if (ref) tableAssets.push({ ref, page: a.page, caption: a.caption, usable: usableCaption(a.caption) });
     }
   }
-  const titleFor = (ref, asset) => (asset && asset.caption ? `${ref}. ${asset.caption}` : ref);
+  const labelOf = (page) => pageLabelFor(labels, page) || String(page);
+  const titleFor = (ref, asset) => (asset && asset.usable ? `${ref}. ${tidyCaption(asset.caption)}` : ref);
   const out = [];
   const used = new Set();
+  const push = ({ ref, ...entry }) => { used.add(ref); out.push(entry); };
+
   for (const t of appTables || []) {
     const ref = tableRefOf(t.ref);
-    if (!ref || used.has(ref)) continue;
-    used.add(ref);
-    const asset = captions.get(ref);
     const first = Number.isInteger(t.firstPage) ? t.firstPage : null;
-    const page = asset && (first == null || (asset.page <= first && first - asset.page <= 3))
-      ? asset.page
-      : first;
-    if (!page) continue;
-    out.push({ title: titleFor(ref, asset), page, label: pageLabelFor(labels, page) || String(page), source: 'search' });
+    if (!ref || used.has(ref) || first == null) continue;
+    const last = Number.isInteger(t.lastPage) && t.lastPage >= first ? t.lastPage : first;
+    // Usable captions physically on the rows' pages (or just before them).
+    const inSpan = tableAssets.filter(a => a.page >= first - CAPTION_LEAD_PAGES && a.page <= last);
+    const own = inSpan.filter(a => a.ref === ref);
+    const others = inSpan.filter(a => a.ref !== ref && !used.has(a.ref));
+    if (own.length === 0 && others.length > 0) {
+      for (const a of others.sort((x, y) => x.page - y.page)) {
+        if (used.has(a.ref)) continue;
+        // A caption printed just before the span is the first table; any later
+        // one starts on its own caption page.
+        push({
+          ref: a.ref, title: titleFor(a.ref, a), page: a.page, label: labelOf(a.page), source: 'search',
+          flags: ['mislabelled', ...(a.usable ? [] : ['untitled'])], searchRef: ref,
+        });
+      }
+      continue;
+    }
+    const asset = own.find(a => a.usable && a.page <= first) || null;
+    const page = asset ? asset.page : first;
+    push({ ref, title: titleFor(ref, asset), page, label: labelOf(page), source: 'search', flags: asset ? [] : ['untitled'] });
   }
-  for (const [ref, asset] of captions) {
-    if (used.has(ref) || !ILLUMINANCE_CAPTION_RE.test(asset.caption || '')) continue;
-    used.add(ref);
-    out.push({ title: titleFor(ref, asset), page: asset.page, label: pageLabelFor(labels, asset.page) || String(asset.page), source: 'caption' });
+  for (const a of tableAssets) {
+    if (used.has(a.ref) || !a.usable || !ILLUMINANCE_CAPTION_RE.test(a.caption || '')) continue;
+    // A caption repeated in a list of tables would claim an early page; keep the last.
+    const later = tableAssets.filter(b => b.ref === a.ref && b.usable).sort((x, y) => y.page - x.page)[0];
+    push({ ref: a.ref, title: titleFor(a.ref, later), page: later.page, label: labelOf(later.page), source: 'caption', flags: [] });
   }
   return out.sort((a, b) => a.page - b.page);
 }

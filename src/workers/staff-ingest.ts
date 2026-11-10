@@ -1260,9 +1260,9 @@ export async function handleAdminStandards(request: Request, env: Env, url: URL)
     const labels = parsePageLabels(row.page_labels_json);
     const listed = parseIlluminanceTables(row.illuminance_tables_json);
     const appTables = await env.DB.prepare(
-      'SELECT Table_Ref AS ref, MIN(Page_Number) AS firstPage, COUNT(*) AS n FROM applications'
+      'SELECT Table_Ref AS ref, MIN(Page_Number) AS firstPage, MAX(Page_Number) AS lastPage, COUNT(*) AS n FROM applications'
       + " WHERE Standard = ? AND Active = 1 AND Table_Ref IS NOT NULL AND Table_Ref <> '' GROUP BY Table_Ref",
-    ).bind(row.id).all<{ ref: string; firstPage: number | null; n: number }>()
+    ).bind(row.id).all<{ ref: string; firstPage: number | null; lastPage: number | null; n: number }>()
       .then(r => r.results || []).catch(() => []);
     let assets: any[] = [];
     try { assets = row.assets_json ? JSON.parse(row.assets_json) : []; } catch { assets = []; }
@@ -1281,7 +1281,7 @@ export async function handleAdminStandards(request: Request, env: Env, url: URL)
         hasIlluminanceTables: !!row.has_illuminance_tables,
         illuminanceTables: listed.map(t => presentIlluminanceTable(t, labels)),
         illuminanceSuggestions: suggestIlluminanceTables({
-          appTables: appTables.map(t => ({ ref: t.ref, firstPage: t.firstPage })),
+          appTables: appTables.map(t => ({ ref: t.ref, firstPage: t.firstPage, lastPage: t.lastPage })),
           assets: Array.isArray(assets) ? assets : [],
           labels,
         }),

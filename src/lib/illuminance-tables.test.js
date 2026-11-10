@@ -5,7 +5,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   tableRefOf, resolvePrintedPage, validateIlluminanceTables, parseIlluminanceTables,
-  presentIlluminanceTable, unlistedTableRefs, suggestIlluminanceTables,
+  presentIlluminanceTable, unlistedTableRefs, suggestIlluminanceTables, usableCaption, tidyCaption,
 } from './illuminance-tables.js';
 
 const front = (n) => 'abcdefghijklmnopqrstuvwxyz'.slice(0, n).split('');
@@ -90,12 +90,26 @@ describe('unlistedTableRefs', () => {
   });
 });
 
+describe('usableCaption / tidyCaption', () => {
+  it('refuses cross-references and column bleed (measured on production captions)', () => {
+    expect(usableCaption('(seeSection A.3). These values are based on low end of a range')).toBe(false); // RP-43-25
+    expect(usableCaption('(Annex A)')).toBe(false);                                                       // RP-37-25
+    expect(usableCaption('Specified Meter Height for Various FOV and sons, it may be desirable')).toBe(false); // RP-8
+    expect(usableCaption('Recommended Illuminance Criteria for Spaces Specific to Library Applications')).toBe(true);
+    expect(usableCaption('Design Criteria for Parking Garages')).toBe(true);
+  });
+  it('splits words an italic run glued together', () => {
+    expect(tidyCaption('Recommended Illuminance Criteria forInteriorRetail Spaces'))
+      .toBe('Recommended Illuminance Criteria for Interior Retail Spaces');
+  });
+});
+
 describe('suggestIlluminanceTables', () => {
   it('titles search tables from their captions and adds criteria captions', () => {
     const out = suggestIlluminanceTables({
-      appTables: [{ ref: 'Table A-1', firstPage: 69 }, { ref: 'Table A-2', firstPage: 77 }],
+      appTables: [{ ref: 'Table A-1', firstPage: 69, lastPage: 76 }, { ref: 'Table A-2', firstPage: 77 }],
       assets: [
-        { kind: 'table', label: 'Table A-1', caption: 'Recommended Illuminance Criteria for Indoor Sports', page: 68 },
+        { kind: 'table', label: 'Table A-1', caption: 'Recommended Illuminance Criteria forIndoorSports', page: 68 },
         { kind: 'table', label: 'Table 17-1', caption: 'Design Criteria for Parking Lots', page: 30 },
         { kind: 'table', label: 'Table 3-1', caption: 'Sound Absorption Coefficients', page: 20 },
         { kind: 'figure', label: 'Figure 1-1', caption: 'Illuminance diagram', page: 10 },
@@ -103,9 +117,9 @@ describe('suggestIlluminanceTables', () => {
       labels: LABELS,
     });
     expect(out).toEqual([
-      { title: 'Table 17-1. Design Criteria for Parking Lots', page: 30, label: '21', source: 'caption' },
-      { title: 'Table A-1. Recommended Illuminance Criteria for Indoor Sports', page: 68, label: '59', source: 'search' },
-      { title: 'Table A-2', page: 77, label: '68', source: 'search' },
+      { title: 'Table 17-1. Design Criteria for Parking Lots', page: 30, label: '21', source: 'caption', flags: [] },
+      { title: 'Table A-1. Recommended Illuminance Criteria for Indoor Sports', page: 68, label: '59', source: 'search', flags: [] },
+      { title: 'Table A-2', page: 77, label: '68', source: 'search', flags: ['untitled'] },
     ]);
   });
   it('ignores a caption far from the rows (a list-of-tables echo)', () => {
@@ -115,5 +129,29 @@ describe('suggestIlluminanceTables', () => {
       labels: null,
     });
     expect(s.page).toBe(69);
+    expect(s.flags).toEqual(['untitled']);
+  });
+  it('ignores an unusable caption\'s page too (RP-43-25: a cross-reference on p. 70, rows from p. 73)', () => {
+    const [s] = suggestIlluminanceTables({
+      appTables: [{ ref: 'Table A-3', firstPage: 73, lastPage: 85 }],
+      assets: [{ kind: 'table', label: 'Table A-3', caption: '(seeSection A.3). These values are based on', page: 70 }],
+      labels: null,
+    });
+    expect(s).toMatchObject({ title: 'Table A-3', page: 73, flags: ['untitled'] });
+  });
+  it('replaces a wrong stored table number with the tables captioned on those pages (RP-8-25+E2)', () => {
+    const out = suggestIlluminanceTables({
+      appTables: [{ ref: 'Table A-1', firstPage: 385, lastPage: 394 }],
+      assets: [
+        { kind: 'table', label: 'Table 17-1', caption: '(Section 17.4.3.3)', page: 384 },
+        { kind: 'table', label: 'Table 17-2', caption: 'Design Criteria for Parking Garages', page: 394 },
+        { kind: 'table', label: 'Table A-1', caption: 'Specified Meter Height for Various FOV and sons, it may be', page: 431 },
+      ],
+      labels: null,
+    });
+    expect(out).toEqual([
+      { title: 'Table 17-1', page: 384, label: '384', source: 'search', flags: ['mislabelled', 'untitled'], searchRef: 'Table A-1' },
+      { title: 'Table 17-2. Design Criteria for Parking Garages', page: 394, label: '394', source: 'search', flags: ['mislabelled'], searchRef: 'Table A-1' },
+    ]);
   });
 });

@@ -649,7 +649,9 @@ export async function handleAdminIndexStatus(request: Request, env: Env): Promis
       const listed = listing ? parseIlluminanceTables(listing.illuminance_tables_json) : [];
       const refs = searchTableRefs.get(std.id) || [];
       if (!listing?.has_illuminance_tables) {
-        if (refs.length > 0) {
+        if (listed.length > 0) {
+          row.warnings.push(`List Illuminance Tables: ${listed.length} table(s) pre-filled from the index, awaiting review — check them in Edit and tick "Has illuminance table?" to publish.`);
+        } else if (refs.length > 0) {
           row.warnings.push(`Not on List Illuminance Tables, but search returns illuminance rows from ${refs.join(', ')}. Tick "Has illuminance table?" in Edit and add them.`);
         }
       } else {

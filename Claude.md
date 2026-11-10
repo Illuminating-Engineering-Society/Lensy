@@ -2000,6 +2000,30 @@ Migration **0030** (`standards.has_illuminance_tables`,
   new columns (the public endpoint and Index health fail soft without them).
 - Also fixed: `uploadStdCover` (Edit → cover "Replace…") was never exported
   from the admin module script, so its `onchange` threw.
+- **Pre-fill (Dan, 11/10/26: "pre-filling would be very helpful"):**
+  `scripts/prefill-illuminance-tables.js` (dry run by default, `--apply`,
+  `--captions`, `--local`) writes the "Suggest from index" list into every
+  current standard that has none, and **never ticks the box** — nothing is
+  public until staff review it in Edit and tick it. Each pre-filled row carries
+  a `note` (shown in Edit only; the validator drops it, so a staff save clears
+  it); Index health reads "pre-filled, awaiting review" for those standards.
+  Dry run 2026-11-10: 15 standards, 33 tables; caption-only matches (9, mostly
+  not illuminance tables — RP-40-19's cargo table is the real one) are left to
+  staff.
+- **Suggestions distrust the data** (`suggestIlluminanceTables`): a caption
+  that is a cross-reference or column bleed (`usableCaption`: RP-43's
+  "(see Section A.3). These values…", RP-37's "(Annex A)") gives neither title
+  nor page → flag `untitled`; italic-glued words are split (`tidyCaption`:
+  "forInteriorRetail"); and when the captions on the rows' own pages name
+  OTHER tables, the stored `Table_Ref` is wrong → those tables are proposed,
+  flag `mislabelled`. **RP-8-25+E2's 37 search rows are stored as "Table A-1"
+  but sit on pp. 385–394 = Tables 17-1/17-2** (parking lots/garages) — an
+  extractor mislabel worth fixing at ingest; RP-8's ~15 other criteria tables
+  (highways, intersections, crosswalks, rest areas, work zones) have no search
+  rows at all.
+- **Deploy order slipped once:** the code reached production before migration
+  0030 (2026-11-10), which breaks Admin → Standards → Edit until
+  `npm run db:migrate:remote` runs. Order: migrate → deploy → `--apply`.
 
 ### Search usage per account, no search content (Dan, 2026-11-02)
 

@@ -3557,6 +3557,12 @@
       document.getElementById('se-tables-suggest-btn').classList.toggle('hidden', seTablesState.suggestions.length === 0);
       const notes = [];
       if (s.status === 'Deprecated') notes.push('This edition is deprecated, so it is not listed whatever is entered here.');
+      const pending = (s.illuminanceTables || []).filter(t => t.note).length;
+      if (!s.hasIlluminanceTables && (s.illuminanceTables || []).length) {
+        notes.push(`${s.illuminanceTables.length} table(s) were pre-filled from the index and are NOT public yet. Tick the box to see them, check each title and page against the PDF, then Save.`);
+      } else if (pending) {
+        notes.push(`${pending} pre-filled table(s) still carry a review note — saving the list clears them.`);
+      }
       const unlisted = s.unlistedSearchTables || [];
       if (unlisted.length) {
         notes.push(`Search returns illuminance rows from ${unlisted.join(', ')}, which ${unlisted.length === 1 ? 'is' : 'are'} not listed here.`);
@@ -3588,6 +3594,7 @@
           <input type="text" maxlength="300" placeholder="Table A-1. Recommended Illuminance Criteria for …"
                  class="se-table-title w-full px-2.5 py-1.5 text-sm border ${t.stale ? 'border-amber-400' : 'border-gray-300'} rounded-lg" />
           ${t.stale ? '<p class="text-[11px] text-amber-700 mt-0.5">Printed page changed after a re-ingest — re-check.</p>' : ''}
+          ${t.note ? `<p class="se-table-note text-[11px] text-amber-700 mt-0.5">${esc(t.note)}</p>` : ''}
         </div>
         <div class="w-20">
           <input type="text" maxlength="12" placeholder="60" inputmode="text"
@@ -3615,7 +3622,7 @@
       box.innerHTML = `<p class="text-[11px] text-gray-500 px-1 pb-1">From this standard's index — check each title and page against the PDF before saving.</p>`
         + seTablesState.suggestions.map((s, i) => `
           <div class="flex items-start gap-2 text-xs bg-white rounded border border-gray-100 px-2 py-1.5">
-            <span class="flex-1 min-w-0">${esc(s.title)} <span class="text-gray-400">· p. ${esc(s.label)}${s.source === 'search' ? ' · search rows' : ' · caption'}</span></span>
+            <span class="flex-1 min-w-0">${esc(s.title)} <span class="text-gray-400">· p. ${esc(s.label)}${s.source === 'search' ? ' · search rows' : ' · caption'}</span>${(s.flags || []).includes('mislabelled') ? ` <span class="text-amber-700">· search rows say "${esc(s.searchRef)}"</span>` : ''}${(s.flags || []).includes('untitled') ? ' <span class="text-amber-700">· type the title</span>' : ''}</span>
             <button type="button" data-se-suggest="${i}" ${have.has(s.title.toLowerCase()) ? 'disabled' : ''}
                     class="shrink-0 px-2 py-0.5 rounded border border-gray-300 hover:bg-gray-50 disabled:opacity-40">${have.has(s.title.toLowerCase()) ? 'Added' : 'Add'}</button>
           </div>`).join('');
