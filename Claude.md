@@ -1899,6 +1899,54 @@ Migration **0024** (`purchases`); AuthIES branch `feat/surecart-purchase-source`
   Vitrium's `DocumentId` equals the export's Doc ID in `vitrium_doc_id` (the
   same assumption comps rest on; AuthIES logs it on every grant).
 
+### Application names in the search auto-suggest (Dan, Teams 11/11/26)
+
+"Auto-filter would continue to display document titles (under the 'Standards'
+header) but also display application names (under a new 'Illuminance
+Recommendations' header) … always displaying Document Designation &
+Application Name in full but truncating top hierarchy as necessary to fit each
+result on a single line: e.g. 'RP-9-23 Lobbies > Reception Lobbies > Desktop'."
+No migration; no search-cache bump (a new filter field only adds cache keys).
+
+- **Names come from one fetch, matching runs in the page.**
+  `GET /api/applications/names` (`buildApplicationNames`,
+  `src/lib/application-names.ts`) serves every Active row of a current
+  standard as `{standards, applications:[{c, s, p}]}` — code, standard, the
+  App…App_s6 path; no value, page or note. 2,492 rows = 267 KB (32 KB gzip),
+  `Cache-Control: private, max-age=600`. The matcher is
+  `src/frontend/utils/application-suggest.js` (classic script, global
+  `LensApplicationSuggest`, tested from `application-names.test.js`); a
+  keystroke costs ~1 ms and no request.
+- **Subscribers only, enforced by the endpoint** (`requireCorpusAccess 'full'`,
+  like the rest of `/api/applications`): the names are the Illuminance Tables
+  content a Non-Subscriber has locked. The page does not even ask below `full`.
+  **Flagged to the client** — showing the names padlocked is a product call.
+- **A suggestion is a hierarchy PATH, not a row**: every typed word must begin
+  a word somewhere in the path, and the path is cut at the deepest level a
+  word reaches. So "Information Desks" is one suggestion, not its Min and Max
+  rows, and Lighting Zone / Class of Play variants do not flood the list.
+  Rank: last level equals the typed text → starts with it → holds every word →
+  rest; then shallower path, shorter name, document order. Up to 8.
+  `Sub_Category` ("INTERIOR - HOSPITALITY") is neither shown nor matched.
+- **One line per row**: designation and the last level never shrink;
+  `fitApplicationSuggestions` drops levels from the TOP ("… > Lobbies > …")
+  until the row fits, measured after the box is laid out. The full path is the
+  row's tooltip.
+- **A click pins the rows** — the search does not trust the embedding to rank
+  the picked application first. The suggestion's row codes (≤12,
+  `MAX_PINNED_APPLICATIONS`) travel as `filters.application_codes`;
+  `runSingleSearch` step 3e adds them to the pool at score 1 (Active rows only,
+  read from D1; the deprecated-edition filter still applies), and
+  `pinApplicationsFirst` holds them at the top after the AI curation. A pinned
+  search is never split as a multi-query (names carry commas), never a version
+  comparison, and drops the zone filter inferred from the query (a label like
+  "Lz3 (and Lz4 curfew)" would test the mostly-empty `Lighting_Zone` column and
+  remove the picked rows). The page keeps the pin while the box still holds the
+  suggestion's text (`pinnedApplication`), and switches Illuminance Tables +
+  Interior/Exterior back on so the card is displayed.
+- **Known limit:** re-running the same text from Recent has no pin, so it is an
+  ordinary search (and a name with commas is split as a multi-query).
+
 ### The 11/06/26 Teams notes: printed page numbers, a cleaner ToC, ToC bookmarks (2026-11-09)
 
 Migration **0029** (`standards.page_labels_json`); `SEARCH_CACHE_SCHEMA` → **v27**.

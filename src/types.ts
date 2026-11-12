@@ -603,6 +603,12 @@ export interface SearchFilters {
   tm24_eligible?: boolean;
   lighting_zone?: string;
   content_types?: ContentType[];
+  /**
+   * Illuminance rows the reader picked BY NAME from the search box's
+   * "Illuminance Recommendations" suggestions; the search leads with them
+   * (src/lib/application-names.ts). Ignored unless Illuminance Tables is in play.
+   */
+  application_codes?: string[];
 }
 
 export interface SearchRequestBody {

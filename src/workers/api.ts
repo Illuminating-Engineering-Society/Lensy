@@ -7,6 +7,7 @@
  *   POST /api/events
  *   GET  /api/preferences
  *   PUT  /api/preferences
+ *   GET  /api/applications/names   (hierarchy names for the search auto-suggest)
  *   GET  /api/applications/:code
  *   GET  /api/standards
  *
@@ -47,6 +48,7 @@ import { cleanOutline, outlineFromSectionMap } from '../lib/section-titles.js';
 import { pageLabelFor, parsePageLabels } from '../lib/page-labels.js';
 import { parseIlluminanceTables, presentIlluminanceTable } from '../lib/illuminance-tables.js';
 import type { OutlineEntry } from '../types';
+import { buildApplicationNames, type ApplicationNameRow } from '../lib/application-names';
 import { toLibraryUrlOrNull } from '../lib/library-url.js';
 import { sendCollectionShareEmail, isEmailAddress, resolveAppUrl } from '../lib/email';
 import { handleSurecartWebhook } from './surecart';
@@ -458,6 +460,29 @@ function decodePathSegment(segment: string | undefined): string | undefined {
 async function handleApplications(request: Request, env: Env, url: URL): Promise<Response> {
   const parts = url.pathname.split('/').filter(Boolean); // ['api', 'applications', ':code']
   const code = decodePathSegment(parts[2]);
+
+  // GET /api/applications/names — every current row's hierarchy, for the search
+  // box's "Illuminance Recommendations" suggestions (Dan, Teams 11/11/26).
+  // Names only, never a value; and behind the same `full` gate as the rest of
+  // this handler, because the application list IS the Illuminance Tables
+  // content a Non-Subscriber has locked. A demoted edition's rows are excluded
+  // by the standard's status as well as by Active (the RP-4-20+E1 lesson).
+  if (code === 'names' && parts.length === 3) {
+    const result = await env.DB.prepare(`
+      SELECT a.code, a.Standard, a.App, a.App_s1, a.App_s2, a.App_s3, a.App_s4, a.App_s5, a.App_s6
+      FROM applications a
+      LEFT JOIN standards s ON s.id = a.Standard
+      WHERE a.Active = 1 AND (s.status IS NULL OR s.status <> 'Deprecated')
+      ORDER BY a.Standard, a.code
+    `).all<ApplicationNameRow>();
+    return new Response(JSON.stringify(buildApplicationNames(result.results || [])), {
+      headers: {
+        'Content-Type': 'application/json',
+        // Per-reader (it is tier-gated), and stable between ingests.
+        'Cache-Control': 'private, max-age=600',
+      },
+    });
+  }
 
   if (!code) {
     // GET /api/applications — list all (with optional filters)

@@ -101,6 +101,7 @@ import { isProductQuestion, productAnswerText } from '../lib/product';
 import { resolveQueryLanguage, localizeSummary } from '../lib/language';
 import { hasEnvConsiderationColumns, parseLightingZoneLabel } from '../lib/illuminance-fields.js';
 import { indexLimitPairs, limitInfo, limitPairKey, mergeLimitPairs } from '../lib/limit-ranges';
+import { pinnedApplicationCodes, pinApplicationsFirst, PINNED_APPLICATION_SCORE } from '../lib/application-names';
 import {
   getDataVersion,
   buildSearchCacheKey,
@@ -575,7 +576,12 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
   }
 
   // ── Multi-query detection ────────────────────────────────────────────────────
-  const subQueries = splitMultiQuery(searchQuery);
+  // A search launched from an "Illuminance Recommendations" suggestion is ONE
+  // question whatever its punctuation: the application's own name routinely
+  // carries commas ("Circulation, information, lending desk"), and splitting
+  // it would run three unrelated searches (Dan, Teams 11/11/26).
+  const pinnedCodes = pinnedApplicationCodes(filters);
+  const subQueries = pinnedCodes.length > 0 ? [searchQuery] : splitMultiQuery(searchQuery);
   const isMultiQuery = subQueries.length > 1;
 
   // ── Content types (filter overhaul) ──────────────────────────────────────────
@@ -596,7 +602,12 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
   // to rank first (RP-2-20) instead of an answer. A comparison needs a
   // standard to compare — the query has to name one, or the reader has to have
   // armed Compare Versions, which supplies the family through the filters.
-  const isVersionComparison = !isLite && hasComparisonIntent(searchQuery, contentTypes);
+  // Never for a search launched from an application suggestion: its text is a
+  // designation plus a table's labels, so it always "names a standard", and a
+  // label that happened to read like comparison phrasing would turn a row
+  // lookup into a version comparison.
+  const isVersionComparison = !isLite && pinnedCodes.length === 0
+    && hasComparisonIntent(searchQuery, contentTypes);
   // "What is luminance?" / "difference between luminance and illuminance":
   // curation and the Guide weight the terminology / measurement / vision-science
   // committees ahead of application committees (client, 2026-10-14).
@@ -606,6 +617,11 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
   // A bare "LZ1 walkways" in the query string should narrow results to that
   // lighting zone even when the caller didn't pass an explicit filter.
   const inferred = inferFiltersFromQuery(searchQuery, isVersionComparison);
+  // A pinned application's own label may BE a lighting zone ("… > Lz3 (and Lz4
+  // curfew)"). Inferring a zone filter from it would test the Lighting_Zone
+  // column, which is empty wherever the table prints the zone as a hierarchy
+  // level — and filter out the very rows the reader picked.
+  if (pinnedCodes.length > 0) delete inferred.lighting_zone;
   const mergedFilters = { ...inferred, ...filters };
 
   // ── Whole-document lookup, started early (client DO047 + DO075) ─────────────
@@ -1074,6 +1090,15 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
       reranked: Array.isArray(rerankOrder) && rerankOrder.length > 0,
       promoted: curated.promoted,
     };
+  }
+
+  // ── The application the reader picked by name leads (Dan, Teams 11/11/26) ───
+  // Retrieval already scored the pinned rows as exact matches; this holds them
+  // at the top through the AI curation above, which orders by what the Guide
+  // cited. Not on a comparison — its order is its own spec, and it has no
+  // table cards to pin.
+  if (pinnedCodes.length > 0 && !isVersionComparison) {
+    allResults.results = pinApplicationsFirst(allResults.results, pinnedCodes);
   }
 
   // ── Whole-document cards (client DO47) ───────────────────────────────────────
@@ -2622,6 +2647,38 @@ async function runSingleSearch(rawQuery: string, filters: SearchFilters, limit: 
       }
     } catch (err) {
       console.error('RP-43 exterior probe failed (non-fatal):', errMsg(err));
+    }
+  }
+
+  // 3e. Rows the reader picked by name (Dan, Teams 11/11/26: application names
+  //     in the search box's auto-suggest). The suggestion IS the application,
+  //     so its rows join the pool as exact matches instead of depending on the
+  //     embedding to rank them first — "RP-9-23 … > Desktop" must open on that
+  //     Desktop row, not on a neighbouring one that scored 0.01 higher. Only
+  //     Active rows, read from D1 so each carries its standard for the
+  //     deprecated-edition check below. Fail-open: the search stands without it.
+  const pinned = includeTables ? pinnedApplicationCodes(filters) : [];
+  if (pinned.length > 0) {
+    try {
+      const rows = await env.DB.prepare(
+        `SELECT code, Standard FROM applications WHERE Active = 1 AND code IN (${pinned.map(() => '?').join(',')})`
+      ).bind(...pinned).all<{ code: string; Standard: string | null }>();
+      const byCode = new Map(appMatches.map(m => [m.metadata?.application_code, m]));
+      for (const row of rows.results || []) {
+        const existing = byCode.get(row.code);
+        if (existing) {
+          existing.score = PINNED_APPLICATION_SCORE;
+        } else {
+          appMatches.push({
+            id: row.code,
+            score: PINNED_APPLICATION_SCORE,
+            metadata: { chunk_type: 'application', application_code: row.code, standard_code: row.Standard ?? undefined },
+          });
+        }
+      }
+      appMatches.sort((a, b) => b.score - a.score);
+    } catch (err) {
+      console.error('pinned application lookup failed (non-fatal):', errMsg(err));
     }
   }
 

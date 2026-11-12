@@ -1327,6 +1327,7 @@
   </div>
 
   <script src="/utils/api.js"></script>
+  <script src="/utils/application-suggest.js"></script>
   <script>
     // ── Feature flags ────────────────────────────────────────────────────────
     // compareVersions gates the "Compare Versions" filter checkbox and the
@@ -1750,6 +1751,9 @@
       // The sidebar's Documents lists and the name auto-suggest read the
       // standards index; fetched once the session is confirmed.
       loadStandardsIndex();
+      // Application names for the "Illuminance Recommendations" suggestions —
+      // subscribers only (the endpoint refuses anyone else; see the loader).
+      loadApplicationNames();
       // The AI Guide state saved to this account (client DO80). After
       // applyTier, which is what decides the tier the toggle is painted for.
       loadPreferences();
@@ -2262,6 +2266,35 @@
         seedDocFilterUniverse();
       } catch { /* the sidebar lists then fill from search results instead */ }
     }
+
+    // ── Application names (Dan, Teams 11/11/26) ──────────────────────────────
+    // "adding 'application' names (from illuminance tables) into the auto-filter
+    //  for searches … under a new 'Illuminance Recommendations' header."
+    //
+    // One fetch of every current row's hierarchy (names only, ~2,500 rows);
+    // matching then runs in the page (utils/application-suggest.js), so typing
+    // costs no request. Subscribers only: the names ARE the Illuminance Tables
+    // content, the endpoint answers 403 below tier `full`, and a suggestion a
+    // Non-Subscriber clicked would lead to a card they cannot be shown. A
+    // failed fetch simply leaves the section out.
+    let applicationNameRows = [];
+    let applicationNamesRequested = false;
+
+    async function loadApplicationNames() {
+      if (applicationNamesRequested || accessTier !== 'full' || !window.LensApplicationSuggest) return;
+      applicationNamesRequested = true;
+      try {
+        const res = await fetch('/api/applications/names');
+        if (!res.ok) return;
+        applicationNameRows = LensApplicationSuggest.prepareIndex(await res.json());
+      } catch { /* no application suggestions this session */ }
+    }
+
+    // The application the last suggestion click picked: its rows travel with
+    // the search as `application_codes` for as long as the query in the box is
+    // still that suggestion's text, so a re-run (a filter change) keeps the pin
+    // and a newly typed question drops it.
+    let pinnedApplication = null;   // { query, codes } | null
 
     // ── Which families actually HAVE a prior edition to compare (DO107) ──────
     // "'Compare Documents' searches: display all Current standards that have a
@@ -2998,6 +3031,7 @@
     const CLOCK_ICON = `<svg class="w-3.5 h-3.5 text-gray-300 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path stroke-linecap="round" d="M12 7v5l3 2"/></svg>`;
     const GLASS_ICON = `<svg class="w-3.5 h-3.5 text-gray-300 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>`;
     const DOC_ICON = `<svg class="w-3.5 h-3.5 text-gray-300 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6M9 8h2m8-2v14a2 2 0 01-2 2H7a2 2 0 01-2-2V4a2 2 0 012-2h7l5 5z"/></svg>`;
+    const TABLE_ICON = `<svg class="w-3.5 h-3.5 text-gray-300 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M3 6a2 2 0 012-2h14a2 2 0 012 2v12a2 2 0 01-2 2H5a2 2 0 01-2-2V6zm0 4h18M3 15h18M9 10v10"/></svg>`;
 
     /**
      * Standards whose NAME the typed text matches (wireframe: "Enable
@@ -3021,9 +3055,11 @@
       const typed = typedRaw.toLowerCase();
 
       const stds = standardsMatching(typedRaw);
+      const apps = applicationsMatching(typedRaw);
       const recent = recentSearches().filter(q => !typed || q.toLowerCase().includes(typed));
       const demos = DEMO_SEARCHES.filter(d => !typed || d.query.toLowerCase().includes(typed));
-      if (stds.length === 0 && recent.length === 0 && demos.length === 0) { closeSuggestions(); return; }
+      suggestedApplications = apps;
+      if (stds.length === 0 && apps.length === 0 && recent.length === 0 && demos.length === 0) { closeSuggestions(); return; }
 
       const section = (label, rows) => rows.length === 0 ? '' : `
         <p class="px-4 pt-3 pb-1 text-[11px] font-semibold uppercase tracking-wider text-gray-400">${label}</p>
@@ -3038,10 +3074,65 @@
 
       box.innerHTML =
         section('Standards', stds.map(s => row(DOC_ICON, stdLabel(s), `data-query="${escapeHtml(s.id)}"`))) +
+        section('Illuminance Recommendations', apps.map((a, i) => applicationSuggestionRow(a, i, typedRaw))) +
         section('Recent', recent.map(q => row(CLOCK_ICON, q, `data-query="${escapeHtml(q)}"`))) +
         section('Try searching for', demos.map((d, i) => row(GLASS_ICON, d.query, `data-query="${escapeHtml(d.query)}" data-demo="${i}"`))) +
         '<div class="h-2"></div>';
       box.classList.remove('hidden');
+      fitApplicationSuggestions(typedRaw);   // needs the box laid out, so after un-hiding
+    }
+
+    // ── "Illuminance Recommendations" rows (Dan, Teams 11/11/26) ─────────────
+    // "always displaying Document Designation & Application Name in full but
+    //  truncating top hierarchy as necessary to fit each result on a single
+    //  line: e.g. 'RP-9-23 Lobbies > Reception Lobbies > Desktop'".
+    let suggestedApplications = [];   // what the drop-down currently lists
+
+    function applicationsMatching(typed) {
+      if (!applicationNameRows.length || !window.LensApplicationSuggest) return [];
+      return LensApplicationSuggest.suggestApplications(applicationNameRows, typed, 8);
+    }
+
+    /** The path with the typed part of each word in bold, as the old selector did. */
+    function applicationPathHtml(levels, truncated, typed) {
+      const sep = '<span class="text-gray-300"> &gt; </span>';
+      const html = levels.map(level =>
+        LensApplicationSuggest.highlightParts(level, typed)
+          .map(p => p.hit ? `<strong class="font-semibold text-gray-900">${escapeHtml(p.text)}</strong>` : escapeHtml(p.text))
+          .join('')
+      ).join(sep);
+      return (truncated ? `<span class="text-gray-400">…</span>${sep}` : '') + html;
+    }
+
+    function applicationSuggestionRow(a, index, typed) {
+      const full = `${a.standard} ${a.levels.join(LensApplicationSuggest.SEPARATOR)}`;
+      return `
+        <button class="suggestion w-full text-left px-4 py-2 flex items-center gap-2.5 text-sm text-gray-700 hover:bg-gray-50 transition"
+                data-app="${index}" data-query="${escapeHtml(a.query)}" title="${escapeHtml(full)}">
+          ${TABLE_ICON}<span class="shrink-0 font-medium text-gray-900">${escapeHtml(a.standard)}</span>
+          <span class="app-path flex-1 min-w-0 whitespace-nowrap overflow-hidden">${applicationPathHtml(a.levels, false, typed)}</span>
+        </button>`;
+    }
+
+    /**
+     * One line per row: drop hierarchy levels from the TOP until the path fits
+     * beside the designation. The last level — the application's own name — is
+     * never dropped; a name too long for the box by itself is ellipsized by CSS
+     * and readable in full in the row's tooltip.
+     */
+    function fitApplicationSuggestions(typed) {
+      const paths = document.querySelectorAll('#search-suggestions .suggestion[data-app] .app-path');
+      for (const el of paths) {
+        const a = suggestedApplications[Number(el.parentElement.dataset.app)];
+        if (!a) continue;
+        let dropped = 0;
+        while (el.scrollWidth > el.clientWidth && dropped < a.levels.length - 1) {
+          dropped++;
+          const shown = LensApplicationSuggest.visibleLevels(a.levels, dropped);
+          el.innerHTML = applicationPathHtml(shown.levels, shown.truncated, typed);
+        }
+        if (el.scrollWidth > el.clientWidth) el.classList.add('truncate');
+      }
     }
 
     function openSuggestions() { renderSuggestions(); }
@@ -3055,6 +3146,17 @@
       if (btn.dataset.demo != null) {
         const demo = DEMO_SEARCHES[Number(btn.dataset.demo)];
         if (demo) applyFilterState(demo.state);
+      }
+      if (btn.dataset.app != null) {
+        const picked = suggestedApplications[Number(btn.dataset.app)];
+        if (picked) {
+          pinnedApplication = { query: picked.query, codes: picked.codes };
+          // The reader asked for an illuminance row, so its card has to be
+          // displayed whatever the Contents checkboxes were left at.
+          if (!filterState.tables || !filterState.interior || !filterState.exterior) {
+            applyFilterState({ ...filterState, tables: true, interior: true, exterior: true });
+          }
+        }
       }
       closeSuggestions();
       performSearch();
@@ -3113,6 +3215,11 @@
     function collectFilters() {
       const filters = { content_types: ['tables', 'body', 'references', 'definitions'] };
       if (FEATURES.compareVersions && filterState.compare) filters.content_types.push('compare');
+      // The rows of the application picked from "Illuminance Recommendations",
+      // while the query is still that suggestion's text (see pinnedApplication).
+      if (pinnedApplication && pinnedApplication.query === lastQuery && pinnedApplication.codes.length) {
+        filters.application_codes = pinnedApplication.codes;
+      }
       return filters;
     }
 
