@@ -35,8 +35,20 @@ describe('buildApplicationNames', () => {
     ]);
     expect(payload).toEqual({
       standards: ['RP-9-23'],
+      groups: [],
       applications: [{ c: 'RP923_0094', s: 0, p: ['Transition Spaces', 'Lobbies', 'Desktop'] }],
     });
+  });
+
+  it('carries each table banner once, indexed by the rows under it', () => {
+    const payload = buildApplicationNames([
+      { code: 'RP923_0048', Standard: 'RP-9-23', Sub_Category: 'INTERIOR - HOSPITALITY', App: 'Guest Room' },
+      { code: 'RP923_0110', Standard: 'RP-9-23', Sub_Category: 'EXTERIOR - HOSPITALITY', App: 'Pools, Outdoor' },
+      { code: 'RP923_0049', Standard: 'RP-9-23', Sub_Category: ' INTERIOR -  HOSPITALITY ', App: 'Gaming' },
+      { code: 'RP923_0050', Standard: 'RP-9-23', App: 'No banner' },
+    ]);
+    expect(payload.groups).toEqual(['INTERIOR - HOSPITALITY', 'EXTERIOR - HOSPITALITY']);
+    expect(payload.applications.map(a => a.g)).toEqual([0, 1, 0, undefined]);
   });
 
   it('lists each standard once and skips rows with no code, standard or path', () => {
@@ -70,7 +82,11 @@ describe('suggestApplications', () => {
 
   it('lists an application once when its rows differ only below the match', () => {
     const got = suggestApplications(index(), 'information desks');
-    expect(labels(got)).toEqual(['RP-2-20+E1 Shopping Mall, Interior > Information Desks']);
+    // The exact name leads; "desks" also reaches RP-4's "… lending desk".
+    expect(labels(got)).toEqual([
+      'RP-2-20+E1 Shopping Mall, Interior > Information Desks',
+      'RP-4-26 Library Proper > Circulation, information, lending desk',
+    ]);
     expect(got[0].codes).toEqual(['RP220E1_0020', 'RP220E1_0021']);
     expect(got[0].rowCount).toBe(2);
   });
@@ -116,6 +132,66 @@ describe('suggestApplications', () => {
   });
 });
 
+// The table banner — the top level of the hierarchy (Dan, Teams 11/12/26 #4).
+describe('suggestApplications: the top level and everyday words', () => {
+  const HOSPITALITY = [
+    { code: 'RP923_0001', Standard: 'RP-9-23', Sub_Category: 'INTERIOR - HOSPITALITY', App: 'Ballroom', App_s1: 'Dancing' },
+    { code: 'RP923_0030', Standard: 'RP-9-23', Sub_Category: 'INTERIOR - HOSPITALITY', App: 'Gaming', App_s1: 'Slots' },
+    { code: 'RP923_0031', Standard: 'RP-9-23', Sub_Category: 'INTERIOR - HOSPITALITY', App: 'Gaming', App_s1: 'Tables' },
+    { code: 'RP923_0048', Standard: 'RP-9-23', Sub_Category: 'INTERIOR - HOSPITALITY', App: 'Guest Room', App_s1: 'Reading', App_s2: 'Desk' },
+    { code: 'RP923_0093', Standard: 'RP-9-23', Sub_Category: 'INTERIOR - HOSPITALITY', App: 'Transition Spaces', App_s1: 'Lobbies', App_s2: 'General' },
+    { code: 'RP923_0110', Standard: 'RP-9-23', Sub_Category: 'EXTERIOR - HOSPITALITY', App: 'Pools, Outdoor', App_s1: 'Deck' },
+    { code: 'RP2925_0001', Standard: 'RP-29-25', Sub_Category: 'INTERIOR - HEALTHCARE: HOSPITALS AND AMBULATORY CARE', App: 'Patient Rooms', App_s1: 'General' },
+    { code: 'RP1020E2_0076', Standard: 'RP-10-20+E2', Sub_Category: 'INTERIOR - COMMON APPLICATIONS', App: 'Transition Circulation Spaces', App_s1: 'Lobbies, Atria' },
+  ];
+  const idx = () => prepareIndex(buildApplicationNames(HOSPITALITY));
+
+  it('a word only the banner holds lists the applications under that banner, in table order', () => {
+    const got = suggestApplications(idx(), 'hospitality');
+    expect(labels(got)).toEqual([
+      'RP-9-23 Ballroom', 'RP-9-23 Gaming', 'RP-9-23 Guest Room', 'RP-9-23 Transition Spaces', 'RP-9-23 Pools, Outdoor',
+    ]);
+    expect(got[1].codes).toEqual(['RP923_0030', 'RP923_0031']);
+  });
+
+  it('shows the banner as the first level but keeps it out of the search text', () => {
+    const [desk] = suggestApplications(idx(), 'desk');
+    expect(desk.levels).toEqual(['INTERIOR - HOSPITALITY', 'Guest Room', 'Reading', 'Desk']);
+    expect(desk.query).toBe('RP-9-23 Guest Room > Reading > Desk');
+  });
+
+  it('"hotel" stands for Hospitality and "casino" for Gaming', () => {
+    expect(labels(suggestApplications(idx(), 'hotel'))).toEqual(labels(suggestApplications(idx(), 'hospitality')));
+    expect(labels(suggestApplications(idx(), 'casino'))).toEqual(['RP-9-23 Gaming']);
+    expect(labels(suggestApplications(idx(), 'hote'))).toContain('RP-9-23 Guest Room');
+  });
+
+  it('a banner word narrows a search without moving where the path is cut', () => {
+    expect(labels(suggestApplications(idx(), 'hotel lobby'))).toEqual(['RP-9-23 Transition Spaces > Lobbies']);
+    expect(labels(suggestApplications(idx(), 'exterior deck'))).toEqual(['RP-9-23 Pools, Outdoor > Deck']);
+  });
+
+  it('a whole word outranks the start of a longer one', () => {
+    const got = labels(suggestApplications(idx(), 'hospital'));
+    expect(got[0]).toBe('RP-29-25 Patient Rooms');
+    expect(got).toContain('RP-9-23 Ballroom');
+  });
+
+  it('reads a plural as its singular, both ways', () => {
+    expect(labels(suggestApplications(idx(), 'lobby'))).toEqual([
+      'RP-9-23 Transition Spaces > Lobbies',
+      'RP-10-20+E2 Transition Circulation Spaces > Lobbies, Atria',
+    ]);
+    expect(labels(suggestApplications(idx(), 'desks'))).toEqual(['RP-9-23 Guest Room > Reading > Desk']);
+  });
+
+  it('still works with a payload that carries no banners', () => {
+    const rows = prepareIndex({ standards: ['RP-9-23'], applications: [{ c: 'A_1', s: 0, p: ['Gaming', 'Slots'] }] });
+    const [got] = suggestApplications(rows, 'casino');
+    expect(got.levels).toEqual(['Gaming']);
+  });
+});
+
 describe('prepareIndex', () => {
   it('skips malformed entries instead of failing the list', () => {
     const rows = prepareIndex({
@@ -152,6 +228,12 @@ describe('highlightParts', () => {
     expect(highlightParts('Desktop', 'desk')).toEqual([
       { text: 'Desk', hit: true },
       { text: 'top', hit: false },
+    ]);
+  });
+  it('flags a plural up to where it agrees with the typed word', () => {
+    expect(highlightParts('Lobbies', 'lobby')).toEqual([
+      { text: 'Lobb', hit: true },
+      { text: 'ies', hit: false },
     ]);
   });
   it('leaves text with no match, or no typed words, whole', () => {

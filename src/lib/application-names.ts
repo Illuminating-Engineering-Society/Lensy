@@ -6,7 +6,8 @@
  * Two halves, one per end of the feature:
  *
  *   • `buildApplicationNames` — the compact payload GET /api/applications/names
- *     serves: every Active row's hierarchy, by standard. NAMES ONLY. No lux, no
+ *     serves: every Active row's hierarchy and table banner, by standard.
+ *     NAMES ONLY. No lux, no
  *     page, no note — a row's values are what the Illuminance Table card is for,
  *     and that card is where the subscription is enforced.
  *
@@ -34,6 +35,8 @@ const APPLICATION_CODE_RE = /^[A-Za-z0-9][A-Za-z0-9+._-]{2,48}$/;
 export interface ApplicationNameRow {
   code: string;
   Standard: string | null;
+  /** The table banner the row sits under ("INTERIOR - HOSPITALITY"). */
+  Sub_Category?: string | null;
   App?: string | null; App_s1?: string | null; App_s2?: string | null; App_s3?: string | null;
   App_s4?: string | null; App_s5?: string | null; App_s6?: string | null;
 }
@@ -41,8 +44,16 @@ export interface ApplicationNameRow {
 export interface ApplicationNamesPayload {
   /** Standard ids; `applications[n].s` indexes this list. */
   standards: string[];
-  /** c = row code, s = index into `standards`, p = the hierarchy path. */
-  applications: Array<{ c: string; s: number; p: string[] }>;
+  /**
+   * Table banners — the top level of the hierarchy (client 11/12/26 #4);
+   * `applications[n].g` indexes this list.
+   */
+  groups: string[];
+  /**
+   * c = row code, s = index into `standards`, p = the hierarchy path,
+   * g = index into `groups` (absent when the row has no banner).
+   */
+  applications: Array<{ c: string; s: number; p: string[]; g?: number }>;
 }
 
 /** One hierarchy label as printed: whitespace collapsed, empty → dropped by the caller. */
@@ -53,6 +64,8 @@ function cleanLabel(value: unknown): string {
 export function buildApplicationNames(rows: ApplicationNameRow[]): ApplicationNamesPayload {
   const standards: string[] = [];
   const standardIndex = new Map<string, number>();
+  const groups: string[] = [];
+  const groupIndex = new Map<string, number>();
   const applications: ApplicationNamesPayload['applications'] = [];
 
   for (const row of rows || []) {
@@ -68,9 +81,20 @@ export function buildApplicationNames(rows: ApplicationNameRow[]): ApplicationNa
       standards.push(standard);
       standardIndex.set(standard, s);
     }
-    applications.push({ c: code, s, p: path });
+    const entry: ApplicationNamesPayload['applications'][number] = { c: code, s, p: path };
+    const group = cleanLabel(row.Sub_Category);
+    if (group) {
+      let g = groupIndex.get(group);
+      if (g === undefined) {
+        g = groups.length;
+        groups.push(group);
+        groupIndex.set(group, g);
+      }
+      entry.g = g;
+    }
+    applications.push(entry);
   }
-  return { standards, applications };
+  return { standards, groups, applications };
 }
 
 /**

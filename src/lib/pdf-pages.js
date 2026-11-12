@@ -21,7 +21,10 @@
  * The output shape is the `pages` array the whole extraction stack consumes
  * (chunker, section-titles, cover-title, applications-extractor, …):
  *
- *   { number, text, lines: [{ text, y, x, fontSize, bold, marks }], width, height }
+ *   { number, text, lines: [{ text, y, x, fontSize, bold, marks, spans? }], width, height }
+ *
+ * `spans` — [{ x, text }] per text run — is present only on lines that carry
+ * an illuminance value or a criteria-table header (see SPAN_LINE_RE).
  *
  * These functions were extracted VERBATIM from src/lib/pdf-parser.js (which now
  * imports them), so the Node script and the dashboard ingest can never drift on
@@ -268,11 +271,52 @@ export function detectColumns(items, pageWidth) {
   const minSide = Math.min(leftCount, rightCount);
   if (minSide < items.length * 0.2) return SINGLE_COLUMN;
 
+  // An illuminance-criteria table is ONE column however wide the white band
+  // between its Horizontal and Vertical blocks (client 11/12/26 #3). RP-8-25+E2
+  // p. 385 was split there: every Vertical cell was read after the whole
+  // Horizontal block, as rows of its own with no application name, so the
+  // parking-lot rows lost their vertical illuminance and five phantom rows
+  // appeared. RP-2-20+E1 pp. 72 and 74 split the same way.
+  if (gapSplitsCriteriaTable(items, splitX)) return SINGLE_COLUMN;
+
   return [
     [0, splitX],
     [splitX, pageWidth + 1],
   ];
 }
+
+// The header vocabulary of the criteria grids ("Horizontal Illuminance (Eh)",
+// "Target Ev @ Height AFF", "Lux @ m (Fc @ ft)", "APPLICATION TASK/AREA").
+const CRITERIA_HEADER_RE = /\b(?:Horizontal|Vertical)\s+Illuminance\b|\bLux\s*@\s*m\b|\bTarget\s+E\s*[hv]\b|\bAPPLICATION\s+TASK\s*\/\s*AREA\b/i;
+
+/**
+ * Does a candidate column gap run through a criteria table? True when the
+ * table's own header vocabulary is printed on BOTH sides of it — two prose
+ * columns never both carry "Lux @ m" or "Vertical Illuminance".
+ *
+ * pdfjs may hand a header over as several runs ("Lux @ m", "(Fc @ ft)"), so
+ * the test reads each side baseline by baseline, not item by item.
+ */
+export function gapSplitsCriteriaTable(items, splitX) {
+  const sides = [new Map(), new Map()];
+  for (const item of items) {
+    if (!item.str) continue;
+    const rows = sides[item.x < splitX ? 0 : 1];
+    const key = Math.round(item.y / 3);
+    rows.set(key, rows.has(key) ? `${rows.get(key)} ${item.str}` : item.str);
+  }
+  const hasHeader = (rows) => {
+    for (const text of rows.values()) if (CRITERIA_HEADER_RE.test(text)) return true;
+    return false;
+  };
+  return hasHeader(sides[0]) && hasHeader(sides[1]);
+}
+
+// A line that carries an illuminance value or a criteria header keeps the x of
+// each of its text runs (`spans`): the applications extractor decides whether
+// a value sits in the Horizontal or the Vertical block by WHERE it is printed.
+// Only these lines — a whole document's runs would double its memory.
+const SPAN_LINE_RE = /\d\s*l(?:x|ux)\b|\bLux\s*@|\bIlluminance\b/i;
 
 /**
  * Group items already sorted by (y, x) into lines (same Y within 3pt) and
@@ -304,14 +348,18 @@ export function groupItemsIntoLines(sortedItems, headerFooterSet) {
 
     const avgFontSize = group.reduce((s, i) => s + i.fontSize, 0) / group.length;
     const isBold = group.some(i => i.bold);
-    lines.push({
+    const line = {
       text: lineText,
       y: group[0].y,
       x: group[0].x,
       fontSize: avgFontSize,
       bold: isBold,
       marks: detectSuperscriptMarks(group),
-    });
+    };
+    if (SPAN_LINE_RE.test(lineText)) {
+      line.spans = group.map(i => ({ x: Math.round(i.x * 10) / 10, text: i.str }));
+    }
+    lines.push(line);
   }
   return lines;
 }

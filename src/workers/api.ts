@@ -56,6 +56,7 @@ import { handleEntitlements } from './entitlements';
 import { handleAdminPurchases, handleAdminPurchasesCsv } from './purchases-admin';
 import { sendLeaseExpiryReminders } from './lease-reminders';
 import { refreshTrendingTopics } from '../lib/trending-topics';
+import { handleAdminHelpPages, runHelpIndexRefresh } from './help';
 
 // Where lens.ies.org/feedback sends the reader. The `FEEDBACK_FORM_URL` var
 // overrides it, so moving the form to another platform is a config change.
@@ -239,6 +240,9 @@ export default {
       if (path === '/api/admin/analytics' && request.method === 'GET') {
         return withCors(await handleAdminAnalytics(request, env));
       }
+      if (path === '/api/admin/help-pages' || path === '/api/admin/help-pages/refresh') {
+        return withCors(await handleAdminHelpPages(request, env, path.endsWith('/refresh')));
+      }
       if (path === '/api/admin/analytics/topics' && request.method === 'POST') {
         return withCors(await handleAdminRefreshTopics(request, env));
       }
@@ -377,6 +381,7 @@ export default {
     ctx.waitUntil(Promise.allSettled([
       refreshTrendingTopics(env).then(r => console.log('trending topics:', r ? `${r.topics.length} topics over ${r.windowDays}d` : 'not refreshed')),
       sendLeaseExpiryReminders(env).then(r => console.log('lease reminders:', JSON.stringify(r))),
+      runHelpIndexRefresh(env).then(r => console.log('help index:', JSON.stringify(r.pages.map(p => [p.page, p.ok, p.entries])))),
     ]));
   },
 };
@@ -469,7 +474,7 @@ async function handleApplications(request: Request, env: Env, url: URL): Promise
   // by the standard's status as well as by Active (the RP-4-20+E1 lesson).
   if (code === 'names' && parts.length === 3) {
     const result = await env.DB.prepare(`
-      SELECT a.code, a.Standard, a.App, a.App_s1, a.App_s2, a.App_s3, a.App_s4, a.App_s5, a.App_s6
+      SELECT a.code, a.Standard, a.Sub_Category, a.App, a.App_s1, a.App_s2, a.App_s3, a.App_s4, a.App_s5, a.App_s6
       FROM applications a
       LEFT JOIN standards s ON s.id = a.Standard
       WHERE a.Active = 1 AND (s.status IS NULL OR s.status <> 'Deprecated')
@@ -829,7 +834,7 @@ async function handleProjects(request: Request, env: Env, url: URL): Promise<Res
   // /api/projects/shared/:token  and  /api/projects/shared/:token/claim
   if (projectId === 'shared' && subResource) {
     const token = subResource;
-    if (appId === 'claim' && request.method === 'POST') return claimSharedCollection(env, token, owner);
+    if (appId === 'claim' && request.method === 'POST') return claimSharedCollection(request, env, token, owner);
     return json({ error: 'Not found' }, 404);
   }
 
@@ -1202,36 +1207,117 @@ async function resolveSharedProject(
  * can edit the other's. The source is left untouched, and the copy gets no share
  * token of its own until the new owner shares it.
  */
-async function claimSharedCollection(env: Env, token: string, owner: string): Promise<Response> {
-  const source = await env.DB.prepare('SELECT * FROM projects WHERE share_token = ?')
-    .bind(token).first<Record<string, any>>();
-  if (!source) return json({ error: 'This share link is not valid.' }, 404);
+async function claimSharedCollection(
+  request: Request, env: Env, token: string, owner: string,
+): Promise<Response> {
+  const shared = await resolveSharedProject(env, token);
+  if ('error' in shared) return json({ error: shared.error }, shared.status);
+  const source = shared.project;
 
-  const created = await env.DB.prepare(`
-    INSERT INTO projects (user_id, owner_email, name, location, client_name, client_company,
-                          collection_type, designer_name, designer_company, notes)
-    VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).bind(
-    owner, source.name, source.location, source.client_name, source.client_company,
-    source.collection_type || source.project_type, source.designer_name,
-    source.designer_company, source.notes,
-  ).run();
-  const newId = created.meta.last_row_id;
+  // What to do with it (client 11/12/26 #2): "Save as new Collection · Merge
+  // into existing Collection · Replace existing Collection". A body with no
+  // mode is the original behaviour — a new collection.
+  let body: any = {};
+  try { body = await request.json(); } catch { body = {}; }
+  const mode = claimMode(body?.mode);
+  if (!mode) return json({ error: 'Unknown save option.' }, 400);
 
   const items = await collectionItems(env, String(source.id));
-  for (const it of items) {
-    await env.DB.prepare(`
+
+  // One INSERT per saved item, in the shared collection's order.
+  const copyInto = (projectId: number | string, list: Record<string, any>[], firstOrder = 0) =>
+    list.map((it, i) => env.DB.prepare(`
       INSERT INTO project_applications
         (project_id, application_code, custom_notes, result_type, standard_id,
-         resource_title, page_number, library_url, application_name, reference_text)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         resource_title, page_number, library_url, application_name, reference_text, sort_order)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).bind(
-      newId, it.application_code, it.custom_notes, it.result_type, it.standard_id,
+      projectId, it.application_code, it.custom_notes, it.result_type, it.standard_id,
       it.resource_title, it.page_number, it.library_url, it.application_name, it.reference_text,
+      firstOrder + i,
+    ));
+
+  if (mode === 'new') {
+    const created = await env.DB.prepare(`
+      INSERT INTO projects (user_id, owner_email, name, location, client_name, client_company,
+                            collection_type, designer_name, designer_company, notes)
+      VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).bind(
+      owner, source.name, source.location, source.client_name, source.client_company,
+      source.collection_type || source.project_type, source.designer_name,
+      source.designer_company, source.notes,
     ).run();
+    const newId = created.meta.last_row_id as number;
+    await runStatementBatches(env, copyInto(newId, items));
+    return json({ mode, collection_id: newId, items: items.length, added: items.length, skipped: 0 }, 201);
   }
 
-  return json({ collection_id: newId, items: items.length }, 201);
+  // Merge and Replace act on a collection the caller already owns. The source
+  // itself is refused: sharing a collection with oneself must not empty it.
+  const targetId = String(body?.target_id ?? '').trim();
+  if (!/^\d+$/.test(targetId) || !(await ownsProject(env, targetId, owner))) {
+    return json({ error: 'Choose one of your collections.' }, 400);
+  }
+  if (targetId === String(source.id)) {
+    return json({ error: 'That is the collection this link shares — it is already in your bookmarks.' }, 400);
+  }
+
+  if (mode === 'merge') {
+    // The same rule a save applies: one row per (collection, item). What the
+    // target already holds is kept as it is — notes included — and skipped.
+    const existing = await env.DB.prepare(
+      'SELECT application_code, MAX(sort_order) AS last FROM project_applications WHERE project_id = ? GROUP BY application_code'
+    ).bind(targetId).all<{ application_code: string; last: number | null }>();
+    const have = new Set((existing.results || []).map(r => r.application_code));
+    const last = (existing.results || []).reduce((m, r) => Math.max(m, Number(r.last) || 0), 0);
+    const seen = new Set<string>();
+    const fresh = items.filter(it => {
+      const code = String(it.application_code);
+      if (have.has(code) || seen.has(code)) return false;
+      seen.add(code);
+      return true;
+    });
+    await runStatementBatches(env, copyInto(targetId, fresh, last + 1));
+    return json({
+      mode, collection_id: Number(targetId), items: items.length,
+      added: fresh.length, skipped: items.length - fresh.length,
+    });
+  }
+
+  // Replace: the caller's collection BECOMES the shared one — its saved
+  // searches and its details — and keeps its id, so its own share link (if it
+  // has one) keeps working.
+  await runStatementBatches(env, [
+    env.DB.prepare('DELETE FROM project_applications WHERE project_id = ?').bind(targetId),
+    env.DB.prepare(`
+      UPDATE projects SET name = ?, location = ?, client_name = ?, client_company = ?,
+                          collection_type = ?, designer_name = ?, designer_company = ?, notes = ?
+      WHERE id = ?
+    `).bind(
+      source.name, source.location, source.client_name, source.client_company,
+      source.collection_type || source.project_type, source.designer_name,
+      source.designer_company, source.notes, targetId,
+    ),
+    ...copyInto(targetId, items),
+  ]);
+  return json({ mode, collection_id: Number(targetId), items: items.length, added: items.length, skipped: 0 });
+}
+
+/**
+ * Run prepared statements as D1 batches of 50 — each batch is one transaction.
+ * A collection of ordinary size is therefore copied, merged or replaced
+ * atomically; only one past 48 saved searches spans more than one batch.
+ */
+async function runStatementBatches(env: Env, statements: D1PreparedStatement[], size = 50): Promise<void> {
+  for (let i = 0; i < statements.length; i += size) {
+    await env.DB.batch(statements.slice(i, i + size));
+  }
+}
+
+/** The three save options of a shared collection; anything else is refused. */
+export function claimMode(raw: unknown): 'new' | 'merge' | 'replace' | null {
+  if (raw == null || raw === '') return 'new';
+  return raw === 'new' || raw === 'merge' || raw === 'replace' ? raw : null;
 }
 
 /** CSV export in the column order the client specified (DO37). */

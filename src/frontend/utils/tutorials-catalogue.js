@@ -31,7 +31,9 @@
   const BROWSERS_DESKTOP = 'Chrome, Firefox, Edge, and Safari';
   const BROWSERS_MOBILE = 'Safari Mobile, Chrome Mobile, or Firefox Mobile';
 
-  window.LENS_TUTORIALS = [
+  // `globalThis` when there is no window: the Worker reads this same catalogue
+  // to index the tutorials as help pages (src/workers/help.ts).
+  (typeof window !== 'undefined' ? window : globalThis).LENS_TUTORIALS = [
     {
       section: 'Getting Started',
       items: [

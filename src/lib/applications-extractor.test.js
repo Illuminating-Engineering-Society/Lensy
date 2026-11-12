@@ -220,3 +220,145 @@ describe('extractApplicationsFromPages — footnote scoping', () => {
     expect(byLeaf('General').Footnotes ?? null).toBeNull();
   });
 });
+
+// ─── Client 11/12/26 #3: "RP-8 illuminance table results are missing vertical
+// illuminance data … any way to check whether this is isolated to RP-8?" ─────
+
+describe('parseDataRow — the Category letter is a token of its own', () => {
+  it('does not take the last letter of the name for a category (RP-8 "Cat. S")', () => {
+    const r = parseDataRow('All Parking Lots 2 lx @ 0.00 m 0 fc @ 0.0 ft Min 20:1 Max:Min 1 lx @ 1.50 m 0 fc @ 5.0 ft Min 20:1 Max:Min');
+    expect(r.label).toBe('All Parking Lots');
+    expect(r.horCat).toBeNull();
+    expect(r.horLux).toBe(2);
+    expect(r.verCat).toBeNull();        // "Max:Min 1 lx" is not Cat. N
+    expect(r.verLux).toBe(1);
+    expect(r.verHeightM).toBe(1.5);
+  });
+
+  it('still reads a category glued to the Area/Task marker', () => {
+    const r = parseDataRow('Outdoor substations AG 15 lx @ TS 2 fc @ TS Avg 5:1 Max:Min');
+    expect(r.areaOrTask).toBe('Area');
+    expect(r.horCat).toBe('G');
+    expect(r.label).toBe('Outdoor substations');
+  });
+
+  it('reads no category in a table that prints none: the letter is the Area marker', () => {
+    const r = parseDataRow('Active (Motion sensed) A 10 lx @ 0.00 m 1 fc @ 0.0 ft Min 10:1 Max:Min 5 lx @ 1.50 m 1 fc @ 5.0 ft Min 10:1 Max:Min', { noCategory: true });
+    expect(r.areaOrTask).toBe('Area');
+    expect(r.horCat).toBeNull();
+    expect(r.verCat).toBeNull();
+    expect(r.label).toBe('Active (Motion sensed)');
+  });
+});
+
+describe('parseDataRow — a lone value printed in the Vertical block', () => {
+  it('is the vertical illuminance when the caller says so', () => {
+    const r = parseDataRow('Pre-curfew 30 lx @ TS 3 fc @ TS', { verticalOnly: true, noCategory: true });
+    expect(r.label).toBe('Pre-curfew');
+    expect(r.horLux).toBeNull();
+    expect(r.horFc).toBeNull();
+    expect(r.verLux).toBe(30);
+    expect(r.verFc).toBe(3);
+  });
+
+  it('is the horizontal illuminance otherwise, as before', () => {
+    const r = parseDataRow('Pre-curfew 30 lx @ TS 3 fc @ TS');
+    expect(r.horLux).toBe(30);
+    expect(r.verLux).toBeNull();
+  });
+});
+
+describe('parseDataRow — targets of 1,000 lx and above printed without "lx @"', () => {
+  it('reads "T L 1,000 TS 100 fc @ TS" as 1000 lx, and the next value as vertical', () => {
+    const r = parseDataRow('Assembly (difficult process) T L 1,000 TS 100 fc @ TS Avg R 500 lx @ TS 50 fc @ TS Avg');
+    expect(r.label).toBe('Assembly (difficult process)');
+    expect(r.areaOrTask).toBe('Task');
+    expect(r.veilingRisk).toBe('L');
+    expect(r.horCat).toBeNull();        // such a row prints no category
+    expect(r.horLux).toBe(1000);
+    expect(r.horFc).toBe(100);
+    expect(r.verCat).toBe('R');
+    expect(r.verLux).toBe(500);
+  });
+
+  it('reads a height in metres the same way', () => {
+    const r = parseDataRow('Impressions T 2,000 0.91 m 200 fc @ 3.0 ft Avg 2:1 Avg:Min R 500 lx @ 1.52 m 50 fc @ 5.0 ft Avg 3:1 Avg:Min');
+    expect(r.label).toBe('Impressions');
+    expect(r.horLux).toBe(2000);
+    expect(r.horHeightM).toBe(0.91);
+    expect(r.uniformity).toBe('2:1');
+    expect(r.verLux).toBe(500);
+    expect(r.verHeightM).toBe(1.52);
+  });
+
+  it('reads a comma before the unit, and leaves other commas alone', () => {
+    expect(parseDataRow('Dazzle T T 1,000 lx @ 0.00 m 100 fc @ 0.0 ft Max').horLux).toBe(1000);
+    const r = parseDataRow('Circulation, information, lending desk A M 100 lx @ 0.76 m 10 fc @ 2.5 ft Avg');
+    expect(r.label).toBe('Circulation, information, lending desk');
+    expect(r.horLux).toBe(100);
+  });
+});
+
+describe('extractApplicationsFromPages — Horizontal or Vertical by position', () => {
+  // RP-8-25+E2 Table 17-1 in miniature: no Category column, the two blocks'
+  // header cells at x=292 and x=521, values under them.
+  const row = (text, x, spans) => ({ text, x, y: 0, fontSize: 8.2, bold: false, marks: [], ...(spans ? { spans } : {}) });
+  const lines = [
+    row('APPLICATION TASK/AREA Lux @ m (Fc @ ft) Min Ratio Basis Lux @ m (Fc @ ft) Min Ratio Basis', 71, [
+      { x: 71, text: 'APPLICATION TASK/AREA' }, { x: 292, text: 'Lux @ m (Fc @ ft)' }, { x: 418, text: 'Min Ratio Basis' },
+      { x: 521, text: 'Lux @ m (Fc @ ft)' }, { x: 642, text: 'Min Ratio Basis' },
+    ]),
+    row('EXTERIOR - PARKING LOTS (and Top Floor of Parking Garages)', 71),
+    row('Drive Aisles / Parking Areas', 80),
+    row('All Parking Lots 2 lx @ 0.00 m 0 fc @ 0.0 ft Min 20:1 Max:Min 1 lx @ 1.50 m 0 fc @ 5.0 ft Min 20:1 Max:Min', 88, [
+      { x: 88, text: 'All Parking Lots' }, { x: 292, text: '2 lx @ 0.00 m' }, { x: 350, text: '0 fc @ 0.0 ft' },
+      { x: 521, text: '1 lx @ 1.50 m' }, { x: 580, text: '0 fc @ 5.0 ft' },
+    ]),
+    row('Transaction Areas (Pedestrian & Vehicle)', 80),
+    row('General Areas', 88),
+    row('Pre-curfew 10 lx @ 0.00 m 1 fc @ 0.0 ft Min 15:1 Max:Min 5 lx @ 1.50 m 1 fc @ 5.0 ft Min 15:1 Max:Min', 97, [
+      { x: 97, text: 'Pre-curfew' }, { x: 288, text: '10 lx @ 0.00 m' }, { x: 522, text: '5 lx @ 1.50 m' },
+    ]),
+    row('Post-curfew 2 lx @ 0.00 m 0 fc @ 0.0 ft Min 15:1 Max:Min 1 lx @ 1.50 m 0 fc @ 5.0 ft Min 15:1 Max:Min', 97, [
+      { x: 97, text: 'Post-curfew' }, { x: 292, text: '2 lx @ 0.00 m' }, { x: 522, text: '1 lx @ 1.50 m' },
+    ]),
+    row('Transaction Machines', 88),
+    row('Pre-curfew 30 lx @ TS 3 fc @ TS', 97, [{ x: 97, text: 'Pre-curfew' }, { x: 517, text: '30 lx @ TS' }, { x: 560, text: '3 fc @ TS' }]),
+    row('Post-curfew 15 lx @ TS 2 fc @ TS', 97, [{ x: 97, text: 'Post-curfew' }, { x: 517, text: '15 lx @ TS' }, { x: 560, text: '2 fc @ TS' }]),
+    row('Entry Lanes', 88),
+    row('Daytime 50 lx @ 0.00 m 5 fc @ 0.0 ft Min 10:1 Max:Min', 97, [{ x: 97, text: 'Daytime' }, { x: 288, text: '50 lx @ 0.00 m' }]),
+    row('Nighttime 10 lx @ 0.00 m 1 fc @ 0.0 ft Min 10:1 Max:Min', 97, [{ x: 97, text: 'Nighttime' }, { x: 288, text: '10 lx @ 0.00 m' }]),
+  ];
+  const pages = [{ number: 385, width: 792, height: 612, text: lines.map(l => l.text).join('\n'), lines }];
+  const records = extractApplicationsFromPages(pages, 'RP-8-25+E2', {});
+  const find = (...path) => records.find(r => path.every(p => [r.App, r.App_s1, r.App_s2, r.App_s3].includes(p)));
+
+  it('reads one record per printed row', () => {
+    expect(records).toHaveLength(7);
+  });
+
+  it('keeps both planes of a row that prints both, with no category', () => {
+    const r = find('All Parking Lots');
+    expect([r.Hor_Lux, r.Hor_Height_m, r.Ver_Lux, r.Ver_Height_m]).toEqual([2, 0, 1, 1.5]);
+    expect([r.Hor_Cat, r.Ver_Cat]).toEqual([null, null]);
+  });
+
+  it('reads a value printed only under the Vertical block as vertical', () => {
+    const pre = find('Transaction Machines', 'Pre-curfew');
+    expect([pre.Hor_Lux, pre.Ver_Lux, pre.Ver_Fc]).toEqual([null, 30, 3]);
+    expect(pre.Hor_Avg_Max_Min).toBeNull();
+    expect(find('Transaction Machines', 'Post-curfew').Ver_Lux).toBe(15);
+  });
+
+  it('reads a value printed only under the Horizontal block as horizontal', () => {
+    const day = find('Entry Lanes', 'Daytime');
+    expect([day.Hor_Lux, day.Ver_Lux]).toEqual([50, null]);
+  });
+
+  it('falls back to reading order when a line carries no positions', () => {
+    const bare = lines.map(l => ({ ...l, spans: undefined }));
+    const got = extractApplicationsFromPages([{ ...pages[0], lines: bare }], 'RP-8-25+E2', {});
+    const pre = got.find(r => ['Transaction Machines', 'Pre-curfew'].every(p => [r.App, r.App_s1, r.App_s2, r.App_s3].includes(p)));
+    expect([pre.Hor_Lux, pre.Ver_Lux]).toEqual([30, null]);
+  });
+});

@@ -558,6 +558,11 @@ export interface AISummary {
   /** Which prompt produced the text — drives how the UI frames it. */
   mode?: AIMode;
   /**
+   * Help pages to send the reader to — set on the fixed answer to a question
+   * about an account, a subscription or the product itself (client 11/12/26 #5).
+   */
+  helpLinks?: Array<{ title: string; url: string; description: string }>;
+  /**
    * Version-comparison header advisory (DO25): "…[old] is deprecated and has
    * been replaced by the current [new]", with both editions hyperlinked.
    */

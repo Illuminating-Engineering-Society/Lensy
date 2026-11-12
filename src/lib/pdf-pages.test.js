@@ -132,3 +132,45 @@ describe('cleanDocMeta', () => {
     expect(cleanDocMeta(null)).toEqual({ title: '', author: '', subject: '', keywords: '', year: null });
   });
 });
+
+// Client 11/12/26 #3: RP-8-25+E2 p. 385 was read as two text columns, which
+// separated every Vertical cell from its row.
+describe('detectColumns — a criteria table is one column', () => {
+  const WIDE = [0, 0, 792, 612];
+  const cell = (str, x, y) => item(str, x, y, 8);
+  // Rows of a table whose Horizontal block ends near x=470 and whose Vertical
+  // block starts at x=520: a white band at the centre of the page.
+  const tableRows = (withHeaders) => {
+    const items = [];
+    if (withHeaders) {
+      items.push(cell('APPLICATION TASK/AREA', 70, 560), cell('Lux @ m (Fc @ ft)', 292, 560));
+      items.push(cell('Lux @ m (Fc @ ft)', 520, 560), cell('Min Ratio Basis', 640, 560));
+    }
+    for (let i = 0; i < 12; i++) {
+      const y = 540 - i * 12;
+      items.push(cell(`Application ${i}`, 88, y), cell('General area', 200, y));
+      items.push(cell('10 lx @ 0.00 m', 292, y), cell('1 fc @ 0.0 ft', 360, y), cell('Min 15:1', 420, y));
+      items.push(cell('5 lx @ 1.50 m', 520, y), cell('1 fc @ 5.0 ft', 590, y), cell('Min 15:1', 650, y));
+    }
+    return items;
+  };
+
+  it('keeps each row on one line when the header vocabulary is on both sides of the gap', () => {
+    const page = buildPageFromRaw({ number: 385, view: WIDE, items: tableRows(true) }, new Set());
+    const row = page.lines.find(l => l.text.startsWith('Application 0'));
+    expect(row.text).toBe('Application 0 General area 10 lx @ 0.00 m 1 fc @ 0.0 ft Min 15:1 5 lx @ 1.50 m 1 fc @ 5.0 ft Min 15:1');
+  });
+
+  it('still splits a page whose two sides are not one table', () => {
+    const page = buildPageFromRaw({ number: 12, view: WIDE, items: tableRows(false) }, new Set());
+    expect(page.lines.find(l => l.text.startsWith('Application 0')).text).toBe('Application 0 General area 10 lx @ 0.00 m 1 fc @ 0.0 ft Min 15:1');
+  });
+
+  it('records where each run of a value line starts, and only on such lines', () => {
+    const page = buildPageFromRaw({ number: 385, view: WIDE, items: tableRows(true) }, new Set());
+    const row = page.lines.find(l => l.text.startsWith('Application 0'));
+    expect(row.spans.filter(s => /lx/.test(s.text)).map(s => s.x)).toEqual([292, 520]);
+    const prose = buildPageFromRaw({ number: 1, view: VIEW, items: [item('Lighting quality matters.', 72, 700)] }, new Set());
+    expect(prose.lines[0].spans).toBeUndefined();
+  });
+});

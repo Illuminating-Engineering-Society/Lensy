@@ -393,6 +393,72 @@
     </div>
   </div>
 
+  <!-- ── Save a shared collection (client 11/12/26 #2) ─────────────────────────
+       "When user clicks 'Save to my Bookmarks' can you prompt for options?
+        Save as new Collection · Merge into existing Collection · Replace
+        existing Collection". Merge and Replace need one of the reader's own
+        collections, so they are disabled until there is one to choose. -->
+  <div id="claim-modal" class="hidden fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4">
+    <div class="absolute inset-0 bg-black/40 modal-backdrop" onclick="closeClaimModal()"></div>
+    <div class="relative bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 fade-in" role="dialog" aria-modal="true" aria-labelledby="claim-modal-title">
+      <div class="flex items-center justify-between mb-1">
+        <h3 id="claim-modal-title" class="text-lg font-bold text-gray-900">Save to My Bookmarks</h3>
+        <button onclick="closeClaimModal()" aria-label="Close" class="text-gray-400 hover:text-gray-600 p-1 rounded-md hover:bg-gray-100 transition">
+          <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
+          </svg>
+        </button>
+      </div>
+      <p class="text-sm text-gray-500 mb-4">
+        <span id="claim-modal-topic" class="font-medium text-gray-700"></span>
+        · <span id="claim-modal-count"></span>
+      </p>
+
+      <fieldset class="space-y-2">
+        <legend class="sr-only">How to save this shared collection</legend>
+        <label class="claim-option flex items-start gap-3 border border-gray-200 rounded-lg px-3 py-2.5 cursor-pointer">
+          <input type="radio" name="claim-mode" value="new" checked onchange="syncClaimModal()" class="mt-1 accent-ies-blue"/>
+          <span>
+            <span class="block text-sm font-semibold text-gray-900">Save as new Collection</span>
+            <span class="block text-xs text-gray-500">Adds it to your collections as its own collection.</span>
+          </span>
+        </label>
+        <label class="claim-option flex items-start gap-3 border border-gray-200 rounded-lg px-3 py-2.5 cursor-pointer">
+          <input type="radio" name="claim-mode" value="merge" onchange="syncClaimModal()" class="mt-1 accent-ies-blue"/>
+          <span>
+            <span class="block text-sm font-semibold text-gray-900">Merge into existing Collection</span>
+            <span class="block text-xs text-gray-500">Adds these saved searches to one of your collections. What it already holds is kept.</span>
+          </span>
+        </label>
+        <label class="claim-option flex items-start gap-3 border border-gray-200 rounded-lg px-3 py-2.5 cursor-pointer">
+          <input type="radio" name="claim-mode" value="replace" onchange="syncClaimModal()" class="mt-1 accent-ies-blue"/>
+          <span>
+            <span class="block text-sm font-semibold text-gray-900">Replace existing Collection</span>
+            <span class="block text-xs text-gray-500">One of your collections becomes this one: its saved searches and details are replaced.</span>
+          </span>
+        </label>
+      </fieldset>
+
+      <p id="claim-modal-none" class="hidden text-xs text-gray-500 mt-3">
+        You have no collections yet, so there is nothing to merge into or replace.
+      </p>
+      <div id="claim-modal-target-wrap" class="hidden mt-4">
+        <label for="claim-modal-target" class="block text-sm font-medium text-gray-700 mb-1">Your collection</label>
+        <select id="claim-modal-target" onchange="syncClaimModal()"
+          class="w-full px-3 py-2.5 border border-gray-200 rounded-lg text-sm bg-white focus:ring-2 focus:ring-ies-blue focus:border-transparent"></select>
+      </div>
+      <p id="claim-modal-warning" class="hidden text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mt-3"></p>
+      <p id="claim-modal-error" class="hidden text-sm text-red-600 mt-3"></p>
+
+      <div class="flex items-center justify-end gap-2 mt-6">
+        <button onclick="closeClaimModal()"
+          class="px-4 py-2.5 border border-gray-200 rounded-lg text-sm text-gray-600 hover:bg-gray-50 transition">Cancel</button>
+        <button id="claim-modal-save" onclick="confirmClaim()"
+          class="px-4 py-2.5 bg-action text-action-ink rounded-lg text-sm font-medium hover:bg-action-dark transition disabled:opacity-60">Save</button>
+      </div>
+    </div>
+  </div>
+
   <!-- ── New / Edit Project Modal ──────────────────────────────────────────── -->
   <div id="project-modal" class="hidden fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4">
     <div class="absolute inset-0 bg-black/40 modal-backdrop" onclick="closeProjectModal()"></div>
@@ -489,6 +555,7 @@
     // view is a preview, so nothing on it may write to the owner's data.
     let readOnlyCollection = false;
     let sharedToken = null;   // the ?share= token a shared view was opened with
+    let sharedCollectionInfo = null;   // { id, name, count } of the collection that link shares
 
     // ── Header menus (client DO109) ──────────────────────────────────────────
     // Recreated from the search page. The signed-in identity comes from the
@@ -544,7 +611,7 @@
       // just by being opened (client DO37: the mockup's explicit "Save Search to
       // My Bookmarks" button).
       const token = new URLSearchParams(location.search).get('share');
-      if (!token) { loadProjects(); return; }
+      if (!token) { loadProjects(); showPendingToast(); return; }
 
       // Wait for the gate's verdict first (client DO52): whether this visitor
       // has an account decides which actions the banner offers, and auth-gate.js
@@ -577,6 +644,7 @@
         const data = await LensyAPI.getSharedCollection(token);
         const collection = data.collection || data.project || {};
         const n = (data.applications || []).length;
+        sharedCollectionInfo = { id: collection.id, name: collection.name || 'Saved searches', count: n };
 
         // A visitor with no IES Lens account can READ the collection (client DO52),
         // but saving it needs one — so that is what the buttons offer instead.
@@ -630,15 +698,112 @@
       }
     }
 
+    // ── Save a shared collection: new / merge / replace (client 11/12/26 #2) ──
+    let claimToken = null;
+    let claimTargets = [];    // the reader's own collections, for merge / replace
+    const claimModeValue = () =>
+      (document.querySelector('input[name="claim-mode"]:checked') || {}).value || 'new';
+    const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+
     async function claimShared(token) {
+      claimToken = token;
+      const shared = sharedCollectionInfo || { name: 'This collection', count: 0 };
+      document.getElementById('claim-modal-topic').textContent = shared.name;
+      document.getElementById('claim-modal-count').textContent = plural(shared.count, 'saved search', 'saved searches');
+      document.getElementById('claim-modal-error').classList.add('hidden');
+      document.getElementById('claim-modal-save').disabled = false;
+      document.querySelector('input[name="claim-mode"][value="new"]').checked = true;
+      document.getElementById('claim-modal').classList.remove('hidden');
+
+      // Merge and Replace need the reader's own collections. A failed read
+      // leaves "Save as new Collection", which needs none.
+      claimTargets = [];
       try {
-        const res = await LensyAPI.claimSharedCollection(token, 1);
-        showToast(`Saved ${res.items} search${res.items === 1 ? '' : 'es'} to your collections`);
-        // Drop the token from the URL so a refresh cannot claim it twice.
+        const data = await LensyAPI.listProjects(1);
+        claimTargets = (data.projects || []).filter(p => String(p.id) !== String(shared.id));
+      } catch { claimTargets = []; }
+      const select = document.getElementById('claim-modal-target');
+      select.innerHTML = claimTargets.map(p =>
+        `<option value="${escapeHtml(String(p.id))}">${escapeHtml(p.name || 'Untitled collection')} (${plural(Number(p.application_count) || 0, 'saved search', 'saved searches')})</option>`
+      ).join('');
+      // A collection of the same name is the likeliest target — an earlier
+      // copy of this very share.
+      const same = claimTargets.find(p => String(p.name || '').trim().toLowerCase() === String(shared.name).trim().toLowerCase());
+      if (same) select.value = String(same.id);
+      for (const input of document.querySelectorAll('input[name="claim-mode"]')) {
+        const needsTarget = input.value !== 'new';
+        input.disabled = needsTarget && claimTargets.length === 0;
+        input.closest('.claim-option').classList.toggle('opacity-50', input.disabled);
+        input.closest('.claim-option').classList.toggle('cursor-not-allowed', input.disabled);
+      }
+      document.getElementById('claim-modal-none').classList.toggle('hidden', claimTargets.length > 0);
+      syncClaimModal();
+    }
+
+    function closeClaimModal() {
+      document.getElementById('claim-modal').classList.add('hidden');
+    }
+
+    /** Show the collection picker and the Replace warning for the chosen option. */
+    function syncClaimModal() {
+      const mode = claimModeValue();
+      const target = claimTargets.find(p => String(p.id) === document.getElementById('claim-modal-target').value);
+      document.getElementById('claim-modal-target-wrap').classList.toggle('hidden', mode === 'new');
+      const warning = document.getElementById('claim-modal-warning');
+      if (mode === 'replace' && target) {
+        const n = Number(target.application_count) || 0;
+        warning.textContent = `Everything in “${target.name || 'Untitled collection'}” — ${plural(n, 'saved search', 'saved searches')}, with your notes — is removed and replaced. This cannot be undone.`;
+        warning.classList.remove('hidden');
+      } else {
+        warning.classList.add('hidden');
+      }
+      document.getElementById('claim-modal-save').textContent =
+        mode === 'merge' ? 'Merge' : mode === 'replace' ? 'Replace' : 'Save';
+    }
+
+    async function confirmClaim() {
+      const mode = claimModeValue();
+      const targetId = mode === 'new' ? null : document.getElementById('claim-modal-target').value;
+      const target = claimTargets.find(p => String(p.id) === String(targetId));
+      const errorBox = document.getElementById('claim-modal-error');
+      const button = document.getElementById('claim-modal-save');
+      if (mode !== 'new' && !target) {
+        errorBox.textContent = 'Choose one of your collections.';
+        errorBox.classList.remove('hidden');
+        return;
+      }
+      errorBox.classList.add('hidden');
+      button.disabled = true;
+      try {
+        const res = await LensyAPI.claimSharedCollection(claimToken, { mode, targetId });
+        const name = target ? `“${target.name || 'Untitled collection'}”` : '';
+        const message = mode === 'merge'
+          ? (res.added
+              ? `Added ${plural(res.added, 'saved search', 'saved searches')} to ${name}${res.skipped ? ` · ${res.skipped} already there` : ''}`
+              : `Nothing to add — ${name} already holds all of these`)
+          : mode === 'replace'
+            ? `Replaced ${name} with ${plural(res.items, 'saved search', 'saved searches')}`
+            : `Saved ${plural(res.items, 'search', 'searches')} to your collections`;
+        // The page reloads without the token (a refresh must not save it
+        // twice), so the confirmation is handed to the next load.
+        try { sessionStorage.setItem('lens:bookmarks-toast', message); } catch { /* shown below instead */ }
+        showToast(message);
         location.href = '/bookmarks';
       } catch (err) {
-        showToast(err.message, 'error');
+        errorBox.textContent = err.message;
+        errorBox.classList.remove('hidden');
+        button.disabled = false;
       }
+    }
+
+    /** The confirmation a save left for this page load, shown once. */
+    function showPendingToast() {
+      try {
+        const message = sessionStorage.getItem('lens:bookmarks-toast');
+        if (!message) return;
+        sessionStorage.removeItem('lens:bookmarks-toast');
+        showToast(message);
+      } catch { /* storage unavailable: nothing to show */ }
     }
 
     async function loadProjects() {

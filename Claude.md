@@ -1899,6 +1899,83 @@ Migration **0024** (`purchases`); AuthIES branch `feat/surecart-purchase-source`
   Vitrium's `DocumentId` equals the export's Doc ID in `vitrium_doc_id` (the
   same assumption comps rest on; AuthIES logs it on every grant).
 
+### The 11/12/26 Teams notes: table links, shared-collection options, table reader, help pages (2026-11-12)
+
+No migration. No search-cache bump (flush the cache after the data step of #3).
+
+- **#1 /illuminance-tables:** the committee name links to its ies.org page
+  (`committee.url` the API already sent, same fallback rule as List Standards)
+  and the table name links where "Open in Library" does — only for a reader
+  who may open it; otherwise it stays text beside the padlocked link.
+- **#2 "Save to My Bookmarks" asks how** (bookmarks.html `claim-modal`):
+  Save as new / Merge into existing / Replace existing.
+  `POST /api/projects/shared/:token/claim {mode, target_id}` (`claimMode`;
+  no mode = new, the old behaviour). Merge skips what the target already
+  holds (same per-collection identity as a save) and appends the rest;
+  Replace swaps the target's saved searches AND details for the shared ones
+  and keeps its id. The target must be the caller's and may not be the shared
+  collection itself. Statements run as D1 batches of 50 (one transaction for
+  an ordinary collection). The claim now also honours `share_expires_at`.
+- **#3 RP-8 vertical illuminance — three reader bugs, not RP-8 only.**
+  (1) `detectColumns` split a criteria table into two text columns at the white
+  band between its Horizontal and Vertical blocks (RP-8-25+E2 p. 385): every
+  Vertical cell became a nameless row. `gapSplitsCriteriaTable` (pdf-pages.js)
+  refuses a gap with the table's header vocabulary on both sides.
+  (2) "First value = horizontal" is wrong for a row that prints a vertical
+  value only. Lines carrying a value or a criteria header now keep `spans`
+  (`[{x, text}]`), the header's two "Lux @ m" cells give the block positions
+  (`pagePlaneColumns`), and a lone value under the Vertical block is read as
+  vertical (`isVerticalOnlyLine` → `parseDataRow(…, {verticalOnly})`). No
+  positions → reading order, as before.
+  (3) The Category letter was any letter before the value: "Lots 2 lx" → Cat. S
+  and name "All Parking Lot"; "Avg:Min 30 lx" → vertical Cat. N; the Area
+  marker → Cat. A on all 226 RP-43-25 rows. It is now a capital token of its
+  own (or glued to the A/T marker), and never read where the header prints no
+  Category column (`detectCategoryColumn`: "… T Lux @ m" = has one; RP-43-25
+  and RP-8 do not).
+  Also: a target ≥ 1,000 lx is printed "1,000 TS" with no "lx @"
+  (`normalizeThousands`) — the value was lost and "T 2,000 0.91 m" stayed in
+  the name (RP-29-25 23 rows, RP-3-26 4, RP-2-20+E1 1).
+- **The check Dan asked for is `scripts/audit-illuminance-rows.js`** (read-only
+  by default): re-reads each PRODUCTION PDF (R2 — the local copies of RP-29 and
+  RP-6 are a page off) and diffs row by row with D1. 2026-11-12: 4 standards
+  identical (RP-28, RP-30, RP-37, RP-4); 192 rows in 11 standards have a value
+  on the wrong plane or missing (RP-2 76, RP-43 42, RP-29 23, RP-6 22 — "Target
+  (vertical)", façades, mirrors, screens); 525 carry a category letter that is
+  not one; 29 names change. Row counts are unchanged everywhere except RP-8
+  (37 → 34). **Not applied yet** — `--apply` patches the 10 same-count standards
+  by row code (515 rows, previous values saved first); RP-8 is re-ingested
+  (`ingest-pdfs.js --file … --id RP-8-25+E2 --applications-only`); then
+  Re-index illuminance rows + Flush search cache. RP-8 p. 394 "Elevator
+  Lobbies › Typical › Active" holds Ver 7.5 lx in D1 where the PDF prints 8.
+- **#4 Auto-suggest reads the top level.** `GET /api/applications/names` adds
+  `groups` (the table banner, `Sub_Category`) and `g` per row; the banner is
+  the first displayed level (first to be trimmed) and is matched but never
+  decides where the path is cut — a banner-only match lists that banner's
+  applications in table order. The tables print neither "hotel" nor "casino"
+  (RP-9: "INTERIOR - HOSPITALITY", "Gaming"), so `ALIASES` in
+  application-suggest.js maps everyday words to printed ones; plurals match
+  both ways ("lobby" ↔ "Lobbies"); a whole word outranks a prefix. The search
+  text of a suggestion still omits the banner (its INTERIOR/EXTERIOR would be
+  read as a location filter).
+- **#5 Help pages** (`src/lib/help-pages.ts`, `src/workers/help.ts`). A search
+  about an account, subscription, lease, membership or how to use the product
+  (`isHelpQuestion`, patterns; runs beside `isProductQuestion`, before the
+  cache, English only) gets a fixed sentence plus up to four links
+  (`helpLinks` on the Guide card) and no cards, no retrieval, no model — Lens
+  does not answer it. "What is IES Lens?" now carries the three links too.
+  The daily cron (and `POST /api/admin/help-pages/refresh`; status at
+  `GET /api/admin/help-pages`) rebuilds a KV index (`help-pages:index:v1`):
+  every tutorial from the catalogue + staff edits, and each page's sections.
+  **The two ies.org pages cannot be indexed today**: their HTML answers the
+  site's bot challenge (403 "Just a moment…") and the WordPress REST API
+  returns both with empty content (`/products/lighting-library/` is an
+  `sc_product`, the sustaining page is template-built). Until IES allows the
+  indexer (User-Agent `IES-Lens-Help-Index/1.0`, optional header
+  `X-IES-Lens-Indexer` = secret `HELP_INDEX_TOKEN`) they are routed by the
+  curated `topics` in `HELP_PAGES`. The tutorials catalogue file now assigns to
+  `globalThis` when there is no `window`, so the Worker imports it.
+
 ### Application names in the search auto-suggest (Dan, Teams 11/11/26)
 
 "Auto-filter would continue to display document titles (under the 'Standards'
@@ -1927,7 +2004,7 @@ No migration; no search-cache bump (a new filter field only adds cache keys).
   rows, and Lighting Zone / Class of Play variants do not flood the list.
   Rank: last level equals the typed text → starts with it → holds every word →
   rest; then shallower path, shorter name, document order. Up to 8.
-  `Sub_Category` ("INTERIOR - HOSPITALITY") is neither shown nor matched.
+  (`Sub_Category`, the table banner, joined the path on 11/12 — see above.)
 - **One line per row**: designation and the last level never shrink;
   `fitApplicationSuggestions` drops levels from the TOP ("… > Lobbies > …")
   until the row fits, measured after the box is laid out. The full path is the

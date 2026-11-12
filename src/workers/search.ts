@@ -98,6 +98,9 @@ import {
   AUTHORITY_NOTICE, needsAuthorityNotice, isRefusedQuery, isOutOfScope, REFUSAL_MESSAGE,
 } from '../lib/guardrails';
 import { isProductQuestion, productAnswerText } from '../lib/product';
+import {
+  isHelpQuestion, helpAnswerText, matchHelpLinks, defaultHelpLinks, loadHelpIndex,
+} from '../lib/help-pages';
 import { resolveQueryLanguage, localizeSummary } from '../lib/language';
 import { hasEnvConsiderationColumns, parseLightingZoneLabel } from '../lib/illuminance-fields.js';
 import { indexLimitPairs, limitInfo, limitPairKey, mergeLimitPairs } from '../lib/limit-ranges';
@@ -479,7 +482,20 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
   // out-of-scope check would refuse it. The answer is the client's own product
   // definitions (src/lib/product.ts), written in the third person, and costs
   // no model call.
-  if (isProductQuestion(rawQuery)) {
+  //
+  // ── A question about an account, a subscription or how to use the product
+  //    (client 11/12/26 #5) ────────────────────────────────────────────────
+  // "…a primary focus on driving users to these pages to find the answer
+  // rather than allowing Lens to answer detailed account/product questions."
+  // Same shape as the product answer: no retrieval, no model, no cards — a
+  // fixed sentence and the links (src/lib/help-pages.ts). Which links is the
+  // one thing the index decides; with no index the curated topics route it.
+  const productQuestion = isProductQuestion(rawQuery);
+  const helpQuestion = !productQuestion && isHelpQuestion(rawQuery);
+  if (productQuestion || helpQuestion) {
+    const helpLinks = helpQuestion
+      ? matchHelpLinks(rawQuery, await loadHelpIndex(env))
+      : defaultHelpLinks();
     const productPayload = {
       query: rawQuery,
       queryLanguage: null,
@@ -494,15 +510,21 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
       aiGuideRequiredNotice: null,
       results: [] as SearchResult[],
       aiSummary: {
-        text: productAnswerText(),
+        text: helpQuestion ? helpAnswerText() : productAnswerText(),
         watermark: null,
-        disclaimer: 'About IES Lens and the IES Lighting Library.',
+        disclaimer: helpQuestion
+          ? 'Accounts, subscriptions and how-to questions are answered on the pages below.'
+          : 'About IES Lens and the IES Lighting Library.',
         mode: 'guide',
+        helpLinks,
       } as AISummary,
       aiGuideSuppressed: null,
       authorityNotice: null,
       supersessionNotices: [] as string[],
+      // The page reads this as "the card above IS the answer" — no "No results".
       productAnswer: true,
+      helpAnswer: helpQuestion,
+      helpLinks,
       outOfScope: false,
       noResultsGuidance: null,
       curation: null,

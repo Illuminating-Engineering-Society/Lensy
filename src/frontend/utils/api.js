@@ -293,12 +293,19 @@ const LensyAPI = {
     return response.json();
   },
 
-  /** Copy a shared collection into the signed-in user's account (DO37). */
-  async claimSharedCollection(token, userId = 1) {
+  /**
+   * Copy a shared collection into the signed-in user's account (DO37).
+   *
+   * `mode` (client 11/12/26 #2): 'new' saves it as a new collection, 'merge'
+   * adds what `targetId` does not already hold, 'replace' turns `targetId`
+   * into the shared collection. Resolves to { mode, collection_id, items,
+   * added, skipped }.
+   */
+  async claimSharedCollection(token, { mode = 'new', targetId = null } = {}) {
     const response = await fetch(`${BASE_URL}/projects/shared/${encodeURIComponent(token)}/claim`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ user_id: userId }),
+      body: JSON.stringify({ user_id: 1, mode, target_id: targetId }),
     });
     if (!response.ok) {
       const detail = await response.json().catch(() => ({}));

@@ -981,6 +981,9 @@
             <!-- Official IES calculators for the standards the answer names
                  (client 10/27/26 (B)); see TOOLBOX_CALCULATORS. -->
             <div id="ai-toolbox-notes" class="hidden mt-3 space-y-1.5 no-print"></div>
+            <!-- Where an account / subscription / how-to question is answered
+                 (client 11/12/26 #5): links out, never an answer of our own. -->
+            <div id="ai-help-links" class="hidden mt-3 space-y-2 no-print"></div>
             <p class="print-notice text-xs text-gray-500 italic">
               The AI Guide response is omitted from printed pages. Refer to the cited standards in the IES Lighting Library.
             </p>
@@ -4150,6 +4153,18 @@
              class="text-ies-blue hover:underline font-medium">IES Standards Toolbox</a>.
         </p>`).join('');
       toolbox.classList.toggle('hidden', calculators.length === 0);
+
+      // Help pages (client 11/12/26 #5): the answer to an account, subscription
+      // or how-to question is a page IES keeps current, so the card links to it.
+      const help = document.getElementById('ai-help-links');
+      const helpLinks = Array.isArray(summary.helpLinks) ? summary.helpLinks.filter(l => l && String(l.url || '').startsWith('https://')) : [];
+      help.innerHTML = helpLinks.map(l => `
+        <a href="${escapeHtml(l.url)}" target="_blank" rel="noopener"
+           class="block bg-white border border-gray-200 rounded-lg px-3 py-2 hover:border-ies-blue hover:bg-gray-50 transition">
+          <span class="block text-sm font-semibold text-ies-blue">${escapeHtml(l.title)} ↗</span>
+          ${l.description ? `<span class="block text-xs text-gray-600 mt-0.5">${escapeHtml(l.description)}</span>` : ''}
+        </a>`).join('');
+      help.classList.toggle('hidden', helpLinks.length === 0);
 
       document.getElementById('ai-watermark').textContent = summary.watermark || '';
       document.getElementById('ai-summary-card').classList.remove('hidden');

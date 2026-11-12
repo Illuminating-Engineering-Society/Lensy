@@ -296,6 +296,11 @@ function extractFromPages(tablePages, standardId, fullDesignation) {
   // gets the mapping the table established.
   let columnRefs = null;
 
+  // Plane positions and the Category column, carried across pages the same way.
+  const documentPlaneColumns = learnedPlaneColumns(tablePages.flatMap(p => p.lines || []));
+  let planeColumns = null;
+  let hasCategoryColumn = true;
+
   for (const page of tablePages) {
     const ref = detectTableRef(page.text);
     if (ref) tableRef = ref;
@@ -315,6 +320,13 @@ function extractFromPages(tablePages, standardId, fullDesignation) {
     const pageColumnRefs = detectColumnNoteRefs(pageLines);
     if (pageColumnRefs) columnRefs = pageColumnRefs;
     const pageRecords = [];
+
+    // Where this page prints its Horizontal and Vertical blocks, and whether
+    // it prints a Category column (client 11/12/26 #3). Both come from the
+    // page's own header; a page without one keeps what the table established.
+    planeColumns = pagePlaneColumns(pageLines) || planeColumns || documentPlaneColumns;
+    const pageHasCategory = detectCategoryColumn(pageLines);
+    if (pageHasCategory != null) hasCategoryColumn = pageHasCategory;
 
     for (let li = 0; li < pageLines.length; li++) {
       const line = pageLines[li];
@@ -345,7 +357,10 @@ function extractFromPages(tablePages, standardId, fullDesignation) {
       // hierarchy or data node. Sub-category banners were already handled above.
       if (offGrid(line)) continue;
 
-      const parsed = parseDataRow(text);
+      const parsed = parseDataRow(text, {
+        noCategory: !hasCategoryColumn,
+        verticalOnly: isVerticalOnlyLine(line, normalizeThousands(text).text, planeColumns),
+      });
       const depth = depthForX(line.x ?? baseX, levels);
 
       if (!parsed.hasData) {
@@ -430,7 +445,8 @@ function extractFromPages(tablePages, standardId, fullDesignation) {
         Hor_Fc:          parsed.horFc ?? (parsed.horLux != null ? luxToFc(parsed.horLux) : null),
         Hor_Height_m:    parsed.horHeightM,
         Hor_Height_ft:   parsed.horHeightFt ?? (parsed.horHeightM != null ? mToFt(parsed.horHeightM) : null),
-        Hor_Avg_Max_Min: parsed.horBasis || 'Avg',
+        // No basis for a plane the row does not print (a vertical-only row).
+        Hor_Avg_Max_Min: (parsed.horLux != null || parsed.horFc != null) ? (parsed.horBasis || 'Avg') : null,
         Hor_Uniformity:  parsed.uniformity,
         Hor_CV:          parsed.cv,
         Hor_Ratio_Basis: parsed.ratioBasis,
@@ -506,6 +522,92 @@ function extractFromPages(tablePages, standardId, fullDesignation) {
   }
 
   return records;
+}
+
+// ─── Horizontal or Vertical: read from where the value is printed ────────────
+//
+// Client 11/12/26 #3 ("RP-8 illuminance table results are missing vertical
+// illuminance data … any way to check whether this is isolated to RP-8?").
+// A row's text says "5 lx @ 1.50 m" but not which block it sits in, and "the
+// first value is horizontal" is wrong for every row that prints a vertical
+// value only. The page builder keeps the x of each text run on these lines
+// (`line.spans`, src/lib/pdf-pages.js), and the table's own header says where
+// the two blocks are: its two "Lux @ m (Fc @ ft)" cells.
+
+const HEADER_LINE_RE = /APPLICATION\s+TASK\s*\/\s*AREA/i;
+const LUX_HEADER_CELL_RE = /\bLux\s*@/i;
+const LUX_VALUE_RE = /\d\s*l(?:x|ux)\b/i;
+const LUX_VALUE_RE_G = /\d\s*l(?:x|ux)\b/gi;
+/** The two blocks are far apart on every prototype (≈200pt); closer is not a table. */
+const MIN_PLANE_GAP = 60;
+/** How far a value may sit from its block's header cell (right-aligned numbers shift a little). */
+const PLANE_TOLERANCE = 45;
+
+const median = (values) => {
+  const sorted = [...values].sort((a, b) => a - b);
+  return sorted[Math.floor(sorted.length / 2)];
+};
+
+/** x of every illuminance VALUE run on a line, left to right ([] when unknown). */
+function luxValueXs(line) {
+  if (!line || !Array.isArray(line.spans)) return [];
+  return line.spans.filter(s => LUX_VALUE_RE.test(s.text || '')).map(s => s.x).sort((a, b) => a - b);
+}
+
+/** { hor, ver } from the page's header row — its two "Lux @ m" cells — or null. */
+function pagePlaneColumns(pageLines) {
+  for (const line of pageLines) {
+    if (!Array.isArray(line.spans) || !HEADER_LINE_RE.test(line.text || '')) continue;
+    const xs = line.spans.filter(s => LUX_HEADER_CELL_RE.test(s.text || '')).map(s => s.x).sort((a, b) => a - b);
+    if (xs.length === 2 && xs[1] - xs[0] >= MIN_PLANE_GAP) return { hor: xs[0], ver: xs[1] };
+  }
+  return learnedPlaneColumns(pageLines);
+}
+
+/** { hor, ver } learned from rows that print BOTH values — unambiguous by order. */
+function learnedPlaneColumns(lines) {
+  const hor = [];
+  const ver = [];
+  for (const line of lines) {
+    const xs = luxValueXs(line);
+    if (xs.length !== 2) continue;
+    hor.push(xs[0]);
+    ver.push(xs[1]);
+  }
+  if (hor.length < 2) return null;
+  const cols = { hor: median(hor), ver: median(ver) };
+  return cols.ver - cols.hor >= MIN_PLANE_GAP ? cols : null;
+}
+
+/**
+ * Is this row's ONE value printed in the Vertical block? False whenever it
+ * cannot be told — no positions, two values, a value between the blocks —
+ * which leaves the row read as it always was.
+ */
+function isVerticalOnlyLine(line, text, cols) {
+  if (!cols) return false;
+  if ((text.match(LUX_VALUE_RE_G) || []).length !== 1) return false;
+  const xs = luxValueXs(line);
+  if (xs.length !== 1) return false;
+  const toVer = Math.abs(xs[0] - cols.ver);
+  return toVer <= PLANE_TOLERANCE && toVer < Math.abs(xs[0] - cols.hor);
+}
+
+/**
+ * Does the page's table print a Category column? Its header says so: the
+ * vertical "C A T" heading leaves a lone "T" right before "Lux @ m"
+ * ("… Area Low T Lux @ m (Fc @ ft) …"). RP-43-25 and RP-8-25 print none
+ * ("… Area Lux @ m …"), and there the letter before a value is the Area/Task
+ * marker — which was being stored as Cat. A on every RP-43-25 row.
+ * null = the page has no header to judge by.
+ */
+function detectCategoryColumn(pageLines) {
+  for (const line of pageLines) {
+    const text = line.text || '';
+    if (!HEADER_LINE_RE.test(text) || !LUX_HEADER_CELL_RE.test(text)) continue;
+    return /\bT\s+Lux\s*@/i.test(text);
+  }
+  return null;
 }
 
 // Boilerplate / header lines the record loop skips. Module-scoped: also used
@@ -757,7 +859,38 @@ function collectPageNotes(page, bodyFont) {
  *           uniformity, cv, ratioBasis, glareMax, uplightMax, controls,
  *           spectrum, veilingRisk, classOfPlay }
  */
-export function parseDataRow(text) {
+/**
+ * A target of 1,000 lx or more is printed with a thousands comma and — the
+ * cell being too narrow — without its "lx @": "T L 1,000 TS 100 fc @ TS",
+ * "T 2,000 0.91 m 200 fc @ 3.0 ft". Read as written, the horizontal value was
+ * lost and "T 2,000 0.91 m" stayed in the application's name (28 rows of
+ * RP-29-25, RP-3-26 and RP-2-20+E1, found 2026-11-12). This writes the value
+ * the way every other row prints it, and says where each one now starts: such
+ * a row prints no Category letter, so the letter before it is not one.
+ *
+ * Only a number immediately followed by a height and then its footcandle
+ * twin qualifies — nothing else in a row has that shape.
+ */
+const BARE_THOUSANDS_RE = /(?<![\d.,])(\d{1,2}),(\d{3})\s+(TS|\d+(?:\.\d+)?\s*m)(?=\s+\d[\d,]*(?:\.\d+)?\s*fc\b)/gi;
+const COMMA_BEFORE_UNIT_RE = /(?<![\d.,])(\d{1,3}),(\d{3})(?=\s*(?:lx|lux|fc)\b)/gi;
+
+export function normalizeThousands(text) {
+  const starts = [];
+  let out = '';
+  let last = 0;
+  const source = String(text || '').replace(COMMA_BEFORE_UNIT_RE, '$1$2');
+  for (const m of source.matchAll(BARE_THOUSANDS_RE)) {
+    out += source.slice(last, m.index);
+    starts.push(out.length);
+    out += `${m[1]}${m[2]} lx @ ${m[3]}`;
+    last = m.index + m[0].length;
+  }
+  return { text: out + source.slice(last), starts };
+}
+
+export function parseDataRow(rawText, opts = {}) {
+  const normalized = normalizeThousands(rawText);
+  const text = normalized.text;
   const result = {
     hasData: false,
     label: text,
@@ -777,9 +910,29 @@ export function parseDataRow(text) {
   // The illuminance Category is the single letter glued immediately before the
   // lux value ("A M 100 lx" → Area, Cat M;  "T W 3000 lx" → Task, Cat W). The
   // height may be "TS" (task surface, no unit), "<n> m", or absent entirely.
-  // First lux match = horizontal plane, second = vertical plane.
-  const LUX_RE = /(?:([A-Y])\s+)?(\d+(?:\.\d+)?)\s*l(?:x|ux)\s*@?\s*(TS|\d+(?:\.\d+)?\s*m)?/gi;
-  const luxMatches = [...text.matchAll(LUX_RE)];
+  // First lux match = horizontal plane, second = vertical plane — unless the
+  // caller knows from the value's POSITION that a lone value sits in the
+  // Vertical block (`opts.verticalOnly`, client 11/12/26 #3).
+  //
+  // The Category letter is a CAPITAL standing as a token of its own — or glued
+  // to the Area/Task marker ("… Med AG 15 lx" = Area, Cat G). Without that
+  // condition the last letter of the label was taken for it wherever the value
+  // follows the name directly: RP-8's "All Parking Lots 2 lx" was stored as
+  // "All Parking Lot", Cat. S; "Pre-curfew 10 lx" as "Pre-curfe", Cat. W; and
+  // "… Avg:Min 30 lx" gave the vertical plane Cat. N in 200 rows. (No `i`
+  // flag for that reason — the unit and height spell their own case.)
+  const LUX_RE = /(?:(?:(?<![A-Za-z0-9])|(?<=(?<![A-Za-z0-9])[AT]))([A-Y])\s+)?(\d+(?:\.\d+)?)\s*[lL](?:[xX]|[uU][xX])\s*@?\s*([tT][sS]|\d+(?:\.\d+)?\s*[mM])?/g;
+  let luxMatches = [...text.matchAll(LUX_RE)];
+  // No Category where the table prints none (RP-43-25, RP-8-25) or on a value
+  // printed in the bare thousands form: the letter before it is the Area/Task
+  // marker, a veiling-risk level or part of the name. Leave it in the prefix,
+  // where parsePrefixMarkers reads it.
+  luxMatches = luxMatches.map(m => {
+    if (!m[1]) return m;
+    const skip = m[0].search(/\d/);
+    if (!opts.noCategory && !normalized.starts.includes(m.index + skip)) return m;
+    return { index: m.index + skip, 0: m[0].slice(skip), 1: undefined, 2: m[2], 3: m[3] };
+  });
 
   //   "<n> fc @ <TS | n ft>"  (every prototype carries both lx and fc)
   const FC_RE = /(\d+(?:\.\d+)?)\s*(?:fc|footcandles?)\s*@?\s*(TS|\d+(?:\.\d+)?\s*ft)?/gi;
@@ -794,8 +947,12 @@ export function parseDataRow(text) {
   // "# 0.76 m # 2.5 ft…" fragment leaks into the application title (client
   // feedback: "airport" search, unexpected data in title).
   const phMatch = text.match(/#\s*(?:\d+(?:\.\d+)?\s*(?:m|ft)|TS)?/);
-  const horIsPlaceholder = phMatch != null &&
-    (luxMatches.length === 0 || phMatch.index < luxMatches[0].index);
+  // The same reading applies, with no "#" printed, to a row whose only value
+  // sits in the Vertical block: RP-8's "Transaction Machines › Pre-curfew
+  // 30 lx @ TS", RP-2's façade rows. Read by order alone they were stored as
+  // HORIZONTAL illuminance.
+  const horIsPlaceholder = opts.verticalOnly === true || (phMatch != null &&
+    (luxMatches.length === 0 || phMatch.index < luxMatches[0].index));
 
   const horLuxM = horIsPlaceholder ? null : (luxMatches[0] ?? null);
   const verLuxM = horIsPlaceholder ? (luxMatches[0] ?? null) : (luxMatches[1] ?? null);
