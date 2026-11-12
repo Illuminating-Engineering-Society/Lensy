@@ -1943,11 +1943,15 @@ No migration. No search-cache bump (flush the cache after the data step of #3).
   on the wrong plane or missing (RP-2 76, RP-43 42, RP-29 23, RP-6 22 — "Target
   (vertical)", façades, mirrors, screens); 525 carry a category letter that is
   not one; 29 names change. Row counts are unchanged everywhere except RP-8
-  (37 → 34). **Not applied yet** — `--apply` patches the 10 same-count standards
-  by row code (515 rows, previous values saved first); RP-8 is re-ingested
-  (`ingest-pdfs.js --file … --id RP-8-25+E2 --applications-only`); then
-  Re-index illuminance rows + Flush search cache. RP-8 p. 394 "Elevator
-  Lobbies › Typical › Active" holds Ver 7.5 lx in D1 where the PDF prints 8.
+  (37 → 34). **Applied 2026-11-12:** `--apply` patched the 10 same-count standards
+  by row code (515 rows, previous values saved first); RP-8 was re-ingested
+  with a plain `ingest-pdfs.js --file … --id RP-8-25+E2` (34 rows, 3 pruned,
+  all 34 with a vertical value, none with a category) — **never add
+  `--applications-only` to a file ingest: that flag ignores `--file`/`--id`
+  and only re-embeds every D1 row**; then the full row re-index (2,489) and a
+  cache flush. The Elevator Lobbies row now reads Ver 8 lx, as printed. RP-8
+  prints whole footcandles, so its 2 lx / 1 lx rows carry "0 fc" — that is the
+  PDF's own text, not a reading error.
 - **#4 Auto-suggest reads the top level.** `GET /api/applications/names` adds
   `groups` (the table banner, `Sub_Category`) and `g` per row; the banner is
   the first displayed level (first to be trimmed) and is matched but never
@@ -1967,13 +1971,15 @@ No migration. No search-cache bump (flush the cache after the data step of #3).
   The daily cron (and `POST /api/admin/help-pages/refresh`; status at
   `GET /api/admin/help-pages`) rebuilds a KV index (`help-pages:index:v1`):
   every tutorial from the catalogue + staff edits, and each page's sections.
-  **The two ies.org pages cannot be indexed today**: their HTML answers the
+  **The two ies.org pages are readable from the Worker** (first refresh,
+  2026-11-12: 40 sections from the Lighting Library page, 23 from the
+  sustaining page, 25 tutorials). From a desktop the same pages answer the
   site's bot challenge (403 "Just a moment…") and the WordPress REST API
-  returns both with empty content (`/products/lighting-library/` is an
-  `sc_product`, the sustaining page is template-built). Until IES allows the
-  indexer (User-Agent `IES-Lens-Help-Index/1.0`, optional header
-  `X-IES-Lens-Indexer` = secret `HELP_INDEX_TOKEN`) they are routed by the
-  curated `topics` in `HELP_PAGES`. The tutorials catalogue file now assigns to
+  returns both with empty content, so do not test the indexer from a local
+  machine. If a refresh ever reports a page as not read, the curated `topics`
+  in `HELP_PAGES` route it, and IES can allow the indexer (User-Agent
+  `IES-Lens-Help-Index/1.0`, optional header `X-IES-Lens-Indexer` = secret
+  `HELP_INDEX_TOKEN`). The tutorials catalogue file now assigns to
   `globalThis` when there is no `window`, so the Worker imports it.
 
 ### Application names in the search auto-suggest (Dan, Teams 11/11/26)
