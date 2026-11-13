@@ -84,6 +84,11 @@ declare global {
     // The same value goes in IES HQ's IESHQ_LENSY_ENTITLEMENTS_SECRET constant.
     // Unset: the route answers 404.
     ENTITLEMENTS_API_SECRET?: string;
+    // Read-only bearer for GET /api/staff/comps (2026-11-13) — the staff tools
+    // (Light Room) list one person's Lighting Library comps with it: documents
+    // and the subscription comp, dates, note. Its own value: it opens staff
+    // notes, which the member-facing bearer above must not. Unset: 404.
+    STAFF_COMPS_API_SECRET?: string;
     // ── SureCart purchases → Lighting Library access (2026-10-26) ──────────
     // The webhook endpoint's signing secret (SureCart → Developer → Webhooks).
     // Unset: POST /api/webhooks/surecart answers 503 and records nothing.

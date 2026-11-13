@@ -290,6 +290,12 @@ SURECART_NOTIFY = "on"
 #   ENTITLEMENTS_API_SECRET   same value as IES HQ's IESHQ_LENSY_ENTITLEMENTS_SECRET
 #                             constant in wp-config.php. Unset → the route 404s.
 
+# ── One person's comps for the staff tools / Light Room (2026-11-13) ──────
+# GET /api/staff/comps?email= — read-only, server-to-server (docs/STAFF_COMPS_API.md).
+# Secret, set via `wrangler secret put`:
+#   STAFF_COMPS_API_SECRET    its own value (it opens staff notes); the caller
+#                             sends it as a Bearer. Unset → the route 404s.
+
 # Secrets set via `wrangler secret put`:
 # VITRIUM_API_KEY
 # SHAREPOINT_TOKEN

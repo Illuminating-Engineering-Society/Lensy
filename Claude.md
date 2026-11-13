@@ -2034,6 +2034,32 @@ No migration. No search-cache bump.
   The Subscribe link opens on mousedown — the input's blur closes the box
   before a click would land.
 
+### Comps for the staff tools: `GET /api/staff/comps` (Dan → Shane, 2026-11)
+
+"Pull Lighting Library comps and display them in Wicket and/or Lightroom - so
+all staff can see at a glance every product a user should have access to …
+COMP: each specific document — start date, end date, note · COMP: Subscription —
+start date, end date, note." `src/workers/staff-comps.ts`; contract for the
+caller in `docs/STAFF_COMPS_API.md`. No migration.
+
+- **Read where the comp lives, not copied into Wicket.** AuthIES's Wicket
+  client is read-only by policy, and a second copy is a second thing to keep
+  true. A staff tool (Light Room) calls Lens server-to-server with every email
+  the person has (`?email=` repeated or comma-separated, ≤10 — a comp is
+  matched by email) and prints the answer.
+- **One entry per line to display:** a document comp of N documents → N
+  entries (same `grantId`), `label` "COMP: <designation> <title>"; a `lens`
+  scope row → "COMP: Subscription". Each carries `startsAt`/`expiresAt`
+  (inclusive), `note`, `grantedBy`, `state` (active / scheduled, plus expired /
+  revoked with `history=1`; expired is derived from the window) and `applied`.
+- **Not `/api/entitlements`:** that one is the member's own "what can I open
+  today" (documents only, purchases included, applied rows only). This one is
+  comps only, includes the subscription comp and the staff note, and SHOWS a
+  row that has not reached the Library (`applied: false`) — the row staff most
+  need to see. Hence its own secret, `STAFF_COMPS_API_SECRET` (unset → 404).
+- **Not built:** the Light Room side (its repo is not ours to reach from here),
+  and purchases/membership access are not in the answer — comps only, as asked.
+
 ### Application names in the search auto-suggest (Dan, Teams 11/11/26)
 
 "Auto-filter would continue to display document titles (under the 'Standards'

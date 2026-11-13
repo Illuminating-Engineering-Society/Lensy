@@ -54,6 +54,7 @@ import { buildCiteAs, catalogueIdFor, type CiteStandard } from '../lib/cite-as';
 import { sendCollectionShareEmail, isEmailAddress, resolveAppUrl } from '../lib/email';
 import { handleSurecartWebhook } from './surecart';
 import { handleEntitlements } from './entitlements';
+import { handleStaffComps } from './staff-comps';
 import { handleAdminPurchases, handleAdminPurchasesCsv } from './purchases-admin';
 import { sendLeaseExpiryReminders } from './lease-reminders';
 import { refreshTrendingTopics } from '../lib/trending-topics';
@@ -153,6 +154,13 @@ export default {
       // workers/entitlements.ts).
       if (path === '/api/entitlements' && request.method === 'GET') {
         return withCors(await handleEntitlements(request, env, url));
+      }
+
+      // ── One person's comps, for the staff tools (Light Room) ─────────────
+      // Server-to-server: its own read-only bearer, 404 while unset (see
+      // workers/staff-comps.ts).
+      if (path === '/api/staff/comps' && request.method === 'GET') {
+        return withCors(await handleStaffComps(request, env, url));
       }
 
       // ── SureCart webhook (2026-10-26) ────────────────────────────────────
