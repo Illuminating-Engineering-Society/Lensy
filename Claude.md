@@ -1982,6 +1982,58 @@ No migration. No search-cache bump (flush the cache after the data step of #3).
   `HELP_INDEX_TOKEN`). The tutorials catalogue file now assigns to
   `globalThis` when there is no `window`, so the Worker imports it.
 
+### The 11/13–11/14/26 Teams notes: Guide-off notice, "Cite as", featured tutorials, padlocked suggestions (2026-11-13)
+
+No migration. No search-cache bump.
+
+- **#1 "AI Guide is disabled in your profile."** A small box immediately above
+  the "## Results" heading (`#guide-off-notice`, `paintGuideOffNotice` in
+  index.html) after a search the reader ran with the Guide off BY CHOICE —
+  decided when the search starts (`guideOffByChoice`), so never at the daily
+  cap (that notice is its own, and the switch cannot be turned back on) and
+  never when a Guide card is on screen anyway (a product/help answer). The
+  click is the profile switch's own press (`toggleFilter('guide')`, saved to
+  the account) and applies to the NEXT search, as asked; the box then reads
+  "AI Guide is enabled for your next search. Search again now".
+  `renderFilterPills` repaints it, so the menu switch and the box cannot disagree.
+- **#2 "Cite as" under every bookmark** (`src/lib/cite-as.ts`, attached on
+  READ by `withCiteAs` in api.ts as `cite_as: {text, url, line}`):
+  `Illuminating Engineering Society. <designation> <title>, Table A-1, p. 38.
+  New York: IES; YYYY, <page link>.` One builder for the collection page, the
+  shared view, the print-out (same DOM, not `.no-print`), the share email
+  (HTML + text), the mail-app fallback and the CSV (a new LAST column
+  "Cite As" — the client's seventeen keep their positions). Standard facts are
+  live from D1; only the locator is the item's own:
+  - table = `, Table X` in the saved citation, else the listed table's title,
+    else a legacy snapshot's `Table_Ref`; a passage / ToC bookmark cites
+    `Section N` (or `Annex A`); a reference cites the page; a whole standard
+    and a definition cite no table/page. Page = the printed label; link = the
+    item's own Library URL (PDF index), else the standard's front link.
+  - designation is the FULL one ("ANSI/IES RP-43-25"; Dan's sample reads
+    "RP-##-yy") — ids are not always printable ("ASHRAE-IES-90.1-2025", "LS-1").
+  - **year = the designation's, not `published_date`** — the portal date is the
+    Library release day (2025 for RP-6-24 and RP-1-24, 2026 for RP-29-25);
+    it is only the fallback for a designation with no year.
+  - ASHRAE/IES 90.1 is cited "ASHRAE. … Peachtree Corners, GA: ASHRAE"
+    (`JOINT_PUBLISHERS`) — **flagged to the client**, like the two choices above.
+  - a catalogue title that is not a title ("RP_2705Cover", the bare id) is
+    omitted; a definition bookmark is filed under `LS-1-25` while D1's row is
+    `LS-1` (`catalogueIdFor`); a standard D1 does not hold gets no line.
+- **#3 Featured tutorials.** `featured: true` in the catalogue (overview,
+  quick-start) → an amber (?) before the title in Contents (bold) and on the
+  card, which also wears an amber border and "Start here". By flag, not by
+  position, so reordering the list keeps the mark on the right two.
+- **#4 Application suggestions are padlocked for Non-Subscribers** (supersedes
+  "Subscribers only" below). `GET /api/applications/names` is routed apart from
+  the rest of `/api/applications` (still `full`): any reader who may search
+  gets the names, and below `full` WITHOUT row codes (`withCodes: false` →
+  every `c` is ''), so there is nothing to pin. The page greys the rows, swaps
+  the table icon for 🔒, gives them no `data-query` (a click runs no search and
+  lights the notice), and prints the client's line under them: "Illuminance
+  Table contents are only available to subscribers. Click here to subscribe."
+  The Subscribe link opens on mousedown — the input's blur closes the box
+  before a click would land.
+
 ### Application names in the search auto-suggest (Dan, Teams 11/11/26)
 
 "Auto-filter would continue to display document titles (under the 'Standards'
@@ -2000,10 +2052,9 @@ No migration; no search-cache bump (a new filter field only adds cache keys).
   `src/frontend/utils/application-suggest.js` (classic script, global
   `LensApplicationSuggest`, tested from `application-names.test.js`); a
   keystroke costs ~1 ms and no request.
-- **Subscribers only, enforced by the endpoint** (`requireCorpusAccess 'full'`,
-  like the rest of `/api/applications`): the names are the Illuminance Tables
-  content a Non-Subscriber has locked. The page does not even ask below `full`.
-  **Flagged to the client** — showing the names padlocked is a product call.
+- **Subscribers only — until 11/14/26 #4** (see the section above: the client
+  made the product call, and Non-Subscribers now see the names padlocked,
+  served without row codes). Pinning a row is still a subscriber's action.
 - **A suggestion is a hierarchy PATH, not a row**: every typed word must begin
   a word somewhere in the path, and the path is cut at the deepest level a
   word reaches. So "Information Desks" is one suggestion, not its Min and Max

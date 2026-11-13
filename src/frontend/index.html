@@ -1002,6 +1002,16 @@
         </div>
       </div>
 
+      <!-- AI Guide switched off in the profile (Dan, Teams 11/13/26 #1): "a
+           small notification box post-search (probably immediately above the
+           '## Results' field)". Filled by paintGuideOffNotice(). -->
+      <div id="guide-off-notice" class="hidden mb-3 rounded-lg border border-gray-200 bg-white px-3 py-2 flex items-center gap-2 text-sm text-gray-600 no-print" role="status">
+        <svg class="w-4 h-4 text-gray-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" aria-hidden="true">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+        </svg>
+        <p id="guide-off-text" class="min-w-0"></p>
+      </div>
+
       <!-- Results header + bulk actions -->
       <div class="flex flex-wrap items-center justify-between gap-3 mb-4 no-print">
         <div>
@@ -1835,6 +1845,9 @@
         }
       }
       paintUnitsToggle();
+      // The post-search "AI Guide is disabled" box follows the switch wherever
+      // it was flipped from (the box itself, or the profile menu).
+      paintGuideOffNotice();
 
       // Non-Subscriber: the tools a subscription unlocks stay visible, locked
       // (client DO53). Applied LAST so nothing above can re-enable them, and the
@@ -1953,6 +1966,48 @@
       // undo it. The mirror keeps this browser correct either way.
       LensyAPI.savePreferences({ ai_guide: !!value });
     }
+
+    // ── "AI Guide is disabled in your profile" (Dan, Teams 11/13/26 #1) ──────
+    // "If 'AI Guide' is disabled in profile, can you display a small
+    //  notification box post-search … to the effect of 'AI Guide is disabled in
+    //  your profile. Click to re-enable it for your next search.'"
+    //
+    // Shown for a search that ran with the Guide off BY THE READER'S CHOICE:
+    // not at the daily cap (that has its own notice, and the switch cannot be
+    // turned back on), and not when a Guide card is on screen anyway (a
+    // question about IES Lens or an account is answered without the model).
+    // The click is the same press as the profile switch — it saves to the
+    // account (DO80) — and, as asked, it applies to the NEXT search; the box
+    // then offers to run this one again.
+    // `var`: renderFilterPills paints this and may run before this line.
+    var guideOffForSearch = false;
+
+    function paintGuideOffNotice() {
+      const box = document.getElementById('guide-off-notice');
+      const text = document.getElementById('guide-off-text');
+      if (!box || !text) return;
+      if (!guideOffForSearch || guideCapActive() || lockedForTier('guide')) {
+        box.classList.add('hidden');
+        return;
+      }
+      const link = 'class="font-medium text-ies-blue underline underline-offset-2 hover:no-underline"';
+      text.innerHTML = filterState.guide
+        ? `AI Guide is enabled for your next search. <button type="button" data-guide-notice="rerun" ${link}>Search again now</button>`
+        : `AI Guide is disabled in your profile. <button type="button" data-guide-notice="enable" ${link}>Click to re-enable it for your next search.</button>`;
+      box.classList.remove('hidden');
+    }
+
+    document.getElementById('guide-off-notice').addEventListener('click', e => {
+      const btn = e.target.closest ? e.target.closest('[data-guide-notice]') : null;
+      if (!btn) return;
+      if (btn.dataset.guideNotice === 'enable') {
+        // toggleFilter saves the choice to the account and repaints this box.
+        if (!filterState.guide) toggleFilter('guide');
+      } else if (lastQuery) {
+        document.getElementById('search-input').value = lastQuery;
+        performSearch();
+      }
+    });
 
     // ── Preferred units (client DO091) ───────────────────────────────────────
     // "Add feature in user profile drop-down to toggle primary units in
@@ -2276,15 +2331,19 @@
     //
     // One fetch of every current row's hierarchy (names only, ~2,500 rows);
     // matching then runs in the page (utils/application-suggest.js), so typing
-    // costs no request. Subscribers only: the names ARE the Illuminance Tables
-    // content, the endpoint answers 403 below tier `full`, and a suggestion a
-    // Non-Subscriber clicked would lead to a card they cannot be shown. A
-    // failed fetch simply leaves the section out.
+    // costs no request. A failed fetch simply leaves the section out.
+    //
+    // Non-Subscribers see them too, padlocked (Dan, Teams 11/14/26 #4: "keep
+    // with the 'padlock' theme here as well … Allow them to see the auto-filter
+    // results, but they can … contain a padlock icon and non-clickable"): the
+    // rows are greyed, a click runs no search, and the section says why with a
+    // Subscribe link. The Worker sends such a reader the names without row
+    // codes, and strips Illuminance Table cards from their results regardless.
     let applicationNameRows = [];
     let applicationNamesRequested = false;
 
     async function loadApplicationNames() {
-      if (applicationNamesRequested || accessTier !== 'full' || !window.LensApplicationSuggest) return;
+      if (applicationNamesRequested || !window.LensApplicationSuggest) return;
       applicationNamesRequested = true;
       try {
         const res = await fetch('/api/applications/names');
@@ -3077,7 +3136,10 @@
 
       box.innerHTML =
         section('Standards', stds.map(s => row(DOC_ICON, stdLabel(s), `data-query="${escapeHtml(s.id)}"`))) +
-        section('Illuminance Recommendations', apps.map((a, i) => applicationSuggestionRow(a, i, typedRaw))) +
+        section('Illuminance Recommendations', [
+          ...apps.map((a, i) => applicationSuggestionRow(a, i, typedRaw)),
+          ...(apps.length && isLite() ? [LOCKED_APPLICATIONS_NOTICE] : []),
+        ]) +
         section('Recent', recent.map(q => row(CLOCK_ICON, q, `data-query="${escapeHtml(q)}"`))) +
         section('Try searching for', demos.map((d, i) => row(GLASS_ICON, d.query, `data-query="${escapeHtml(d.query)}" data-demo="${i}"`))) +
         '<div class="h-2"></div>';
@@ -3097,18 +3159,39 @@
     }
 
     /** The path with the typed part of each word in bold, as the old selector did. */
-    function applicationPathHtml(levels, truncated, typed) {
+    function applicationPathHtml(levels, truncated, typed, locked = false) {
       const sep = '<span class="text-gray-300"> &gt; </span>';
+      // A padlocked row keeps the typed part bold, in the row's own grey.
+      const hit = locked ? 'font-semibold text-gray-500' : 'font-semibold text-gray-900';
       const html = levels.map(level =>
         LensApplicationSuggest.highlightParts(level, typed)
-          .map(p => p.hit ? `<strong class="font-semibold text-gray-900">${escapeHtml(p.text)}</strong>` : escapeHtml(p.text))
+          .map(p => p.hit ? `<strong class="${hit}">${escapeHtml(p.text)}</strong>` : escapeHtml(p.text))
           .join('')
       ).join(sep);
       return (truncated ? `<span class="text-gray-400">…</span>${sep}` : '') + html;
     }
 
+    // Non-Subscribers (Dan, Teams 11/14/26 #4): the same rows, padlocked. Not
+    // a search — a locked row has no data-query — and the line under them is
+    // the client's own wording, with the subscription one click away.
+    const LOCKED_APPLICATION_TITLE = 'Illuminance Table contents are only available to subscribers';
+    const LOCKED_APPLICATIONS_NOTICE = `
+        <p id="locked-applications-notice" class="mx-4 mt-1 px-2 py-1.5 rounded-md text-xs text-gray-500 transition-colors">
+          🔒 Illuminance Table contents are only available to subscribers.
+          <button type="button" data-subscribe class="font-semibold text-ies-blue underline underline-offset-2 hover:no-underline">Click here to subscribe.</button>
+        </p>`;
+
     function applicationSuggestionRow(a, index, typed) {
       const full = `${a.standard} ${a.levels.join(LensApplicationSuggest.SEPARATOR)}`;
+      if (isLite()) {
+        return `
+        <button class="suggestion w-full text-left px-4 py-2 flex items-center gap-2.5 text-sm text-gray-400 cursor-not-allowed"
+                data-app="${index}" data-locked="1" aria-disabled="true"
+                title="${escapeHtml(`${LOCKED_APPLICATION_TITLE} — ${full}`)}">
+          <span class="shrink-0 text-xs" aria-hidden="true">🔒</span><span class="shrink-0 font-medium text-gray-500">${escapeHtml(a.standard)}</span>
+          <span class="app-path flex-1 min-w-0 whitespace-nowrap overflow-hidden">${applicationPathHtml(a.levels, false, typed, true)}</span>
+        </button>`;
+      }
       return `
         <button class="suggestion w-full text-left px-4 py-2 flex items-center gap-2.5 text-sm text-gray-700 hover:bg-gray-50 transition"
                 data-app="${index}" data-query="${escapeHtml(a.query)}" title="${escapeHtml(full)}">
@@ -3132,7 +3215,7 @@
         while (el.scrollWidth > el.clientWidth && dropped < a.levels.length - 1) {
           dropped++;
           const shown = LensApplicationSuggest.visibleLevels(a.levels, dropped);
-          el.innerHTML = applicationPathHtml(shown.levels, shown.truncated, typed);
+          el.innerHTML = applicationPathHtml(shown.levels, shown.truncated, typed, !!el.parentElement.dataset.locked);
         }
         if (el.scrollWidth > el.clientWidth) el.classList.add('truncate');
       }
@@ -3142,9 +3225,26 @@
     function closeSuggestions() { document.getElementById('search-suggestions').classList.add('hidden'); }
 
     document.getElementById('search-suggestions').addEventListener('mousedown', e => {
+      // "Click here to subscribe" under the padlocked rows. Opened here, on
+      // mousedown: the input's blur closes this box before a click would land.
+      if (e.target.closest('[data-subscribe]')) {
+        e.preventDefault();
+        window.open(SUBSCRIBE_URL, '_blank', 'noopener');
+        return;
+      }
       const btn = e.target.closest('.suggestion');
       if (!btn) return;
       e.preventDefault(); // keep focus off the input so blur doesn't race the click
+      // A padlocked application (Non-Subscriber): no search — the box stays
+      // open and the line that says why is lit for a moment.
+      if (btn.dataset.locked) {
+        const notice = document.getElementById('locked-applications-notice');
+        if (notice) {
+          notice.classList.add('bg-amber-50', 'text-amber-900');
+          setTimeout(() => notice.classList.remove('bg-amber-50', 'text-amber-900'), 1600);
+        }
+        return;
+      }
       document.getElementById('search-input').value = btn.dataset.query || '';
       if (btn.dataset.demo != null) {
         const demo = DEMO_SEARCHES[Number(btn.dataset.demo)];
@@ -3153,7 +3253,7 @@
       if (btn.dataset.app != null) {
         const picked = suggestedApplications[Number(btn.dataset.app)];
         if (picked) {
-          pinnedApplication = { query: picked.query, codes: picked.codes };
+          pinnedApplication = { query: picked.query, codes: picked.codes.filter(Boolean) };
           // The reader asked for an illuminance row, so its card has to be
           // displayed whatever the Contents checkboxes were left at.
           if (!filterState.tables || !filterState.interior || !filterState.exterior) {
@@ -3321,6 +3421,11 @@
       // The daily window reset while the page stayed open: the Guide comes back.
       if (guideCapUntil && !guideCapActive()) releaseGuideCap();
       const includeAI = !!filterState.guide;
+      // Decided when the search STARTS (Dan, 11/13/26 #1): renderResults may
+      // switch the Guide off itself at the daily cap, which is not the reader's
+      // choice. Painted once the response is on screen.
+      const guideOffByChoice = !includeAI && !guideCapActive() && !lockedForTier('guide');
+      guideOffForSearch = false;
 
       // ── Compare Versions is a one-shot tool (client DO79) ──────────────────
       // "'Compare Versions' tool stayed 'locked on' after intentionally using it
@@ -3332,6 +3437,9 @@
 
       try {
         const data = await LensyAPI.search(query, { filters, includeAISummary: includeAI, limit: POOL_SIZE });
+        // A Guide card that is on screen anyway (a product or account
+        // question, answered without the model) makes the notice untrue.
+        guideOffForSearch = guideOffByChoice && !data.aiSummary;
         renderResults(data);
       } catch (err) {
         renderError(err.message);
@@ -3431,6 +3539,9 @@
       }
 
       setSearchCapBanner(data.searchCap);
+      // After the cap is applied: at the daily limit the cap notice speaks, not
+      // "disabled in your profile" (Dan, 11/13/26 #1).
+      paintGuideOffNotice();
 
       // The AHJ notice stands on its own when there is no Guide card to carry it
       // (client DO084): a reader with the Guide switched off must still see it.

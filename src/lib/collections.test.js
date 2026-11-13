@@ -170,7 +170,17 @@ describe('CSV export', () => {
       'Date Added', 'User', 'Type', 'Search Note', 'Resource', 'Page', 'Open in Library',
       'Application', 'Reference', 'Collection Topic', 'Collection Note', 'Client',
       'Location', 'Designer', 'Project Type', 'Date Created', 'Date Updated',
+      // Dan, 11/13/26 #2 — appended, so the seventeen above keep their places.
+      'Cite As',
     ]);
+  });
+
+  it('prints the citation line the Worker attached, and nothing when there is none', () => {
+    const idx = CSV_COLUMNS.findIndex(([k]) => k === 'cite_as');
+    const line = 'Illuminating Engineering Society. ANSI/IES RP-2-20+E1 Recommended Practice: Lighting Retail Spaces, p. 72. New York: IES; 2020, https://lighting.ies.org/abc#page=81.';
+    const cited = csvRowFor({ result_type: 'body', resource_title: 'x', cite_as: { text: 't', url: 'u', line } }, collection);
+    expect(cited[idx]).toBe(`"${line}"`);
+    expect(csvRowFor({ result_type: 'body', resource_title: 'x' }, collection)[idx]).toBe('""');
   });
 
   it('prints the application only for illuminance rows and the reference only for references', () => {

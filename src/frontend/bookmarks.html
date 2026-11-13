@@ -1250,9 +1250,27 @@
             >${escapeHtml(appEntry.custom_notes || '')}</textarea>
           </div>`}
 
+          ${citeAsHtml(appEntry.cite_as)}
+
           <p class="text-[10px] text-gray-300 mt-1">Saved ${escapeHtml(formatDate(appEntry.added_at))}</p>
         </div>
       `;
+    }
+
+    /**
+     * "Cite as" below every bookmark (Dan, Teams 11/13/26 #2): small, grey,
+     * single-spaced, and selectable so it can be copied into a report. The
+     * line is built by the Worker (src/lib/cite-as.ts) — the same one the share
+     * email and the CSV print; the page here is the printed one and the link
+     * opens that page in the Library. Printed with the card (not .no-print).
+     */
+    function citeAsHtml(cite) {
+      if (!cite || !cite.text) return '';
+      const url = typeof cite.url === 'string' && /^https?:\/\//i.test(cite.url) ? cite.url : null;
+      const link = url
+        ? `, <a href="${escapeHtml(url)}" target="_blank" rel="noopener" class="underline decoration-gray-300 hover:text-gray-700 break-all">${escapeHtml(url)}</a>`
+        : '';
+      return `<p class="cite-as mt-2 text-[11px] leading-tight text-gray-500 select-text"><span class="font-semibold">Cite as:</span> ${escapeHtml(cite.text)}${link}.</p>`;
     }
 
     // Per-item notes save on blur — no explicit save button to forget.
@@ -1416,7 +1434,8 @@
         const app = a.result_type === 'tables' && a.application_name ? `\n    ${a.application_name}` : '';
         const note = a.custom_notes ? `\n    Note: ${a.custom_notes}` : '';
         const link = a.library_url ? `\n    ${a.library_url}` : '';
-        return `• [${ITEM_TYPE_LABELS[a.result_type || 'tables']}] ${a.resource_title || a.application_code}${page}${app}${ref}${note}${link}`;
+        const cite = a.cite_as && a.cite_as.line ? `\n    Cite as: ${a.cite_as.line}` : '';
+        return `• [${ITEM_TYPE_LABELS[a.result_type || 'tables']}] ${a.resource_title || a.application_code}${page}${app}${ref}${note}${link}${cite}`;
       }).join('\n\n');
 
       const body = [

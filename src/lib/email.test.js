@@ -204,6 +204,20 @@ describe('buildCollectionShareEmail', () => {
     expect(mail.text).toContain('Save to My Bookmarks: https://lensy.ies.org/bookmarks?share=abc123');
   });
 
+  // Dan, Teams 11/13/26 #2: a small "Cite as" line below each item.
+  it('prints the Cite as line under an item that carries one, in both parts', () => {
+    const ctx = shareCtx();
+    const text = 'Illuminating Engineering Society. ANSI/IES RP-1-22 Recommended Practice: Lighting Office Spaces, Table A-1, p. 5. New York: IES; 2022';
+    const url = 'https://lighting.ies.org/rp1#page=14';
+    ctx.items[0].cite_as = { text, url, line: `${text}, ${url}.` };
+    const mail = buildCollectionShareEmail(ctx);
+    expect(mail.html).toContain(`Cite as:</strong> ${text}, <a href="${url}"`);
+    expect(mail.text).toContain(`    Cite as: ${text}, ${url}.`);
+    // Items without one print nothing.
+    expect(mail.html.match(/Cite as:/g).length).toBe(1);
+    expect(mail.text.match(/Cite as:/g).length).toBe(1);
+  });
+
   it('omits the claim button entirely when no token could be minted', () => {
     const mail = buildCollectionShareEmail(shareCtx({ claimUrl: null }));
     expect(mail.html).not.toContain('Save Search to My Lensy');

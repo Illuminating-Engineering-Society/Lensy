@@ -193,6 +193,9 @@ export const CSV_COLUMNS = [
   ['collection_type', 'Project Type'],
   ['created_at', 'Date Created'],
   ['updated_at', 'Date Updated'],
+  // Appended, never inserted (Dan, 11/13/26 #2): the client's seventeen
+  // columns keep their positions for anyone already reading this file.
+  ['cite_as', 'Cite As'],
 ];
 
 /** One CSV row for a saved item, in CSV_COLUMNS order. */
@@ -216,6 +219,9 @@ export function csvRowFor(item, collection) {
     collection_type: collection.collection_type || collection.project_type || '',
     created_at: collection.created_at || '',
     updated_at: collection.modified_at || collection.updated_at || '',
+    // Built by the Worker on read (src/lib/cite-as.ts); empty when the item's
+    // standard is not in the catalogue.
+    cite_as: (item.cite_as && item.cite_as.line) || '',
   };
   return CSV_COLUMNS.map(([key]) => csvCell(values[key]));
 }

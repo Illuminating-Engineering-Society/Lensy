@@ -97,6 +97,32 @@ describe('saved item rows', () => {
     expect(html).toContain('Illuminance Table');
   });
 
+  // Dan, Teams 11/13/26 #2: "a small-font … 'Cite as' element below each item".
+  it('prints the "Cite as" line the Worker attached, with the page link', () => {
+    const cite = {
+      text: 'Illuminating Engineering Society. ANSI/IES RP-2-20+E1 Recommended Practice: Lighting Retail Spaces, Table A-1, p. 63. New York: IES; 2020',
+      url: 'https://lighting.ies.org/x#page=72',
+      line: 'unused here',
+    };
+    const html = run(`renderApplicationRow(${item({ cite_as: cite })}, 1)`);
+    expect(html).toContain('Cite as:');
+    expect(html).toContain('Table A-1, p. 63. New York: IES; 2020, <a href="https://lighting.ies.org/x#page=72"');
+    // Copy-enabled and printed with the card.
+    const line = /<p class="cite-as[^"]*"/.exec(html)[0];
+    expect(line).toContain('select-text');
+    expect(line).not.toContain('no-print');
+  });
+
+  it('prints no "Cite as" line for an item that carries none', () => {
+    expect(run(`renderApplicationRow(${item()}, 1)`)).not.toContain('Cite as:');
+  });
+
+  it('escapes the citation and refuses a link that is not http(s)', () => {
+    const html = run(`citeAsHtml(${JSON.stringify({ text: 'A <b>title</b>', url: 'javascript:alert(1)' })})`);
+    expect(html).toContain('A &lt;b&gt;title&lt;/b&gt;.');
+    expect(html).not.toContain('<a ');
+  });
+
   it('prints the application name for an illuminance row', () => {
     expect(run(`renderApplicationRow(${item()}, 1)`)).toContain('Ramps, Stairs, and Steps');
   });

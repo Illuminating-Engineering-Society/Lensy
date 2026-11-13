@@ -26,6 +26,9 @@
  *              self-hosted video. A point is a string (**bold** allowed) or
  *              { text, items: [...] } for a nested list. The guides' screenshots
  *              are not reproduced — the timestamp plays that moment instead.
+ *   featured — true on the tutorials to watch first (Dan, Teams 11/13/26 #3:
+ *              "if you only view one tutorial, make it one of these"). The page
+ *              marks them with a (?) in Contents and "Start here" on the card.
  */
 (function () {
   const BROWSERS_DESKTOP = 'Chrome, Firefox, Edge, and Safari';
@@ -39,6 +42,7 @@
       items: [
         {
           slug: 'overview',
+          featured: true,
           title: 'Lighting Library + IES Lens: Overview',
           summary: 'A short tour of the IES Lighting Library and IES Lens: reading, asking and learning with IES resources.',
           loom: 'https://www.loom.com/share/7fc113be55b04f3588d0f549809c3028',
@@ -46,6 +50,7 @@
         },
         {
           slug: 'quick-start',
+          featured: true,
           title: 'Quick Start Guide: Lighting Library with IES Lens',
           summary: null,
           loom: 'https://www.loom.com/share/6a58d18f299a46f39404ac5389fd5583',

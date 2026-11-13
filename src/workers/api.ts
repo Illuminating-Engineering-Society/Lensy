@@ -50,6 +50,7 @@ import { parseIlluminanceTables, presentIlluminanceTable } from '../lib/illumina
 import type { OutlineEntry } from '../types';
 import { buildApplicationNames, type ApplicationNameRow } from '../lib/application-names';
 import { toLibraryUrlOrNull } from '../lib/library-url.js';
+import { buildCiteAs, catalogueIdFor, type CiteStandard } from '../lib/cite-as';
 import { sendCollectionShareEmail, isEmailAddress, resolveAppUrl } from '../lib/email';
 import { handleSurecartWebhook } from './surecart';
 import { handleEntitlements } from './entitlements';
@@ -326,6 +327,19 @@ export default {
         if (denied) return withCors(denied);
       }
 
+      // The application NAMES behind the search box's "Illuminance
+      // Recommendations" suggestions. Since Dan, Teams 11/14/26 #4 ("keep with
+      // the 'padlock' theme here as well for non-subscribers. Allow them to see
+      // the auto-filter results") any reader who may search may read them — the
+      // page shows them padlocked. Names only: a reader below `full` does not
+      // even get the row codes, which are what pins a row in a search.
+      if (path === '/api/applications/names' && request.method === 'GET') {
+        const denied = await requireCorpusAccess(request, env);
+        if (denied) return withCors(denied);
+        const tier = await resolveRequestTier(request, env);
+        return withCors(await handleApplicationNames(env, { withCodes: tier === 'full' }));
+      }
+
       if (path.startsWith('/api/applications')) {
         // The raw illuminance dataset — this IS the Illuminance Tables content,
         // which LensyLite excludes and a 'none' visitor has no claim to. No
@@ -462,32 +476,35 @@ function decodePathSegment(segment: string | undefined): string | undefined {
 
 // ─── Applications Handlers ────────────────────────────────────────────────────
 
+/**
+ * GET /api/applications/names — every current row's hierarchy, for the search
+ * box's "Illuminance Recommendations" suggestions (Dan, Teams 11/11/26).
+ * Names only, never a value. Routed apart from the rest of /api/applications
+ * (which stays `full`-only): a Non-Subscriber sees the names padlocked (Dan,
+ * 11/14/26 #4) and receives them without row codes. A demoted edition's rows
+ * are excluded by the standard's status as well as by Active (the RP-4-20+E1
+ * lesson).
+ */
+async function handleApplicationNames(env: Env, opts: { withCodes: boolean }): Promise<Response> {
+  const result = await env.DB.prepare(`
+    SELECT a.code, a.Standard, a.Sub_Category, a.App, a.App_s1, a.App_s2, a.App_s3, a.App_s4, a.App_s5, a.App_s6
+    FROM applications a
+    LEFT JOIN standards s ON s.id = a.Standard
+    WHERE a.Active = 1 AND (s.status IS NULL OR s.status <> 'Deprecated')
+    ORDER BY a.Standard, a.code
+  `).all<ApplicationNameRow>();
+  return new Response(JSON.stringify(buildApplicationNames(result.results || [], opts)), {
+    headers: {
+      'Content-Type': 'application/json',
+      // Per-reader (the codes depend on the tier), and stable between ingests.
+      'Cache-Control': 'private, max-age=600',
+    },
+  });
+}
+
 async function handleApplications(request: Request, env: Env, url: URL): Promise<Response> {
   const parts = url.pathname.split('/').filter(Boolean); // ['api', 'applications', ':code']
   const code = decodePathSegment(parts[2]);
-
-  // GET /api/applications/names — every current row's hierarchy, for the search
-  // box's "Illuminance Recommendations" suggestions (Dan, Teams 11/11/26).
-  // Names only, never a value; and behind the same `full` gate as the rest of
-  // this handler, because the application list IS the Illuminance Tables
-  // content a Non-Subscriber has locked. A demoted edition's rows are excluded
-  // by the standard's status as well as by Active (the RP-4-20+E1 lesson).
-  if (code === 'names' && parts.length === 3) {
-    const result = await env.DB.prepare(`
-      SELECT a.code, a.Standard, a.Sub_Category, a.App, a.App_s1, a.App_s2, a.App_s3, a.App_s4, a.App_s5, a.App_s6
-      FROM applications a
-      LEFT JOIN standards s ON s.id = a.Standard
-      WHERE a.Active = 1 AND (s.status IS NULL OR s.status <> 'Deprecated')
-      ORDER BY a.Standard, a.code
-    `).all<ApplicationNameRow>();
-    return new Response(JSON.stringify(buildApplicationNames(result.results || [])), {
-      headers: {
-        'Content-Type': 'application/json',
-        // Per-reader (it is tier-gated), and stable between ingests.
-        'Cache-Control': 'private, max-age=600',
-      },
-    });
-  }
 
   if (!code) {
     // GET /api/applications — list all (with optional filters)
@@ -927,7 +944,10 @@ async function getProject(env: Env, projectId: string): Promise<Response> {
     return { ...row, ...fromSnapshot, removedFromCorpus: removed, reindexed: moved };
   });
 
-  return json({ project, applications: await withStandardFacts(env, await withSavedPageLabels(env, applications)) });
+  return json({
+    project,
+    applications: await withStandardFacts(env, await withCiteAs(env, await withSavedPageLabels(env, applications))),
+  });
 }
 
 /** project_applications.snapshot_data → the 68-column row saved at add time. */
@@ -1028,8 +1048,38 @@ async function collectionItems(env: Env, projectId: string) {
   // link; correcting on read fixes them everywhere a saved item is shown — the
   // collection view, the CSV export, the share email and a claimed copy — with
   // no data migration.
-  return withSavedPageLabels(env, (rows.results || []).map((r): Record<string, any> =>
-    ({ ...r, library_url: toLibraryUrlOrNull(r.library_url) })));
+  return withCiteAs(env, await withSavedPageLabels(env, (rows.results || []).map((r): Record<string, any> =>
+    ({ ...r, library_url: toLibraryUrlOrNull(r.library_url) }))));
+}
+
+/**
+ * The "Cite as" line of every saved item (Dan, 11/13/26 #2), attached on READ
+ * as `cite_as: { text, url, line }` — after the printed page labels, which it
+ * prints. One place for every bookmark listing: the collection page, the shared
+ * view, the share email, the CSV and the print-out all read this field. The
+ * standard's designation, title and year come live from the catalogue
+ * (src/lib/cite-as.ts). Fail-soft: an item whose standard is unknown, or any
+ * error, simply carries no citation.
+ */
+async function withCiteAs(env: Env, items: Record<string, any>[]): Promise<Record<string, any>[]> {
+  const idOf = (it: Record<string, any>): string | null =>
+    catalogueIdFor(it.standard_id || (/^(.+)_\d+$/.exec(String(it.application_code || ''))?.[1] ?? null));
+  const ids = [...new Set(items.map(idOf).filter((v): v is string => !!v))];
+  if (ids.length === 0) return items;
+  try {
+    const rows = await env.DB.prepare(
+      `SELECT id, full_designation, title, published_date, vitrium_web_url
+       FROM standards WHERE id IN (${ids.map(() => '?').join(',')})`
+    ).bind(...ids).all<CiteStandard>();
+    const byId = new Map((rows.results || []).map(r => [r.id, r]));
+    return items.map(it => {
+      const cite = buildCiteAs(byId.get(idOf(it) || ''), it);
+      return cite ? { ...it, cite_as: cite } : it;
+    });
+  } catch (err) {
+    console.error('saved-item citations failed (non-fatal):', err instanceof Error ? err.message : String(err));
+    return items;
+  }
 }
 
 /**

@@ -2202,3 +2202,101 @@ describe('IES Standards Toolbox calculator notes', () => {
     expect(notes.classList.contains('hidden')).toBe(true);
   });
 });
+
+// ─── 11/13/26 #1: "AI Guide is disabled in your profile" after a search ───────
+
+describe('AI Guide disabled notice (11/13/26 #1)', () => {
+  const notice = () => elements.get('guide-off-notice');
+  const text = () => elements.get('guide-off-text').innerHTML;
+  const search = (guide) => run(`applyTier('full'); resetFilters(); filterState.guide = ${guide};
+    document.getElementById('search-input').value = 'parking garages'; performSearch()`);
+
+  it('appears after a search the reader ran with the Guide switched off', async () => {
+    await search(false);
+    expect(notice().classList.contains('hidden')).toBe(false);
+    expect(text()).toContain('AI Guide is disabled in your profile.');
+    expect(text()).toContain('Click to re-enable it for your next search.');
+    run('resetFilters()');
+  });
+
+  it('stays away when the Guide was on', async () => {
+    await search(true);
+    expect(notice().classList.contains('hidden')).toBe(true);
+  });
+
+  it('re-enables the Guide for the NEXT search, saved to the account', async () => {
+    await search(false);
+    delete savedPreferences.ai_guide;
+    // The click handler's own step: the same press as the profile switch.
+    run(`toggleFilter('guide')`);
+    expect(savedPreferences.ai_guide).toBe(true);
+    expect(JSON.parse(run('JSON.stringify(filterState.guide)'))).toBe(true);
+    expect(notice().classList.contains('hidden')).toBe(false);
+    expect(text()).toContain('AI Guide is enabled for your next search.');
+    expect(text()).toContain('Search again now');
+    // …and switching it back off in the profile menu puts the first line back.
+    run(`toggleFilter('guide')`);
+    expect(text()).toContain('AI Guide is disabled in your profile.');
+    run('resetFilters()');
+  });
+
+  it("says nothing at the daily cap — that notice is the cap's own", async () => {
+    await search(false);
+    run(`guideCapUntil = Date.now() + 3600000; paintGuideOffNotice()`);
+    expect(notice().classList.contains('hidden')).toBe(true);
+    run(`guideCapUntil = 0; resetFilters()`);
+  });
+
+  it('says nothing when a Guide card is on screen anyway (a product question)', async () => {
+    run(`LensyAPI.search = async () => ({ results: [], productAnswer: true,
+      aiSummary: { text: 'IES Lens is…', disclaimer: '', watermark: '' } })`);
+    await search(false);
+    expect(notice().classList.contains('hidden')).toBe(true);
+    run(`LensyAPI.search = async () => ({ results: [] }); resetFilters()`);
+  });
+});
+
+// ─── 11/14/26 #4: application suggestions are padlocked for Non-Subscribers ───
+
+describe('padlocked application suggestions (11/14/26 #4)', () => {
+  const suggestion = `{ standard: 'RP-9-23', levels: ['INTERIOR - HOSPITALITY', 'Lobbies', 'Desktop'],
+    query: 'RP-9-23 Lobbies > Desktop', codes: [], rowCount: 1 }`;
+  const stubUtil = `globalThis.LensApplicationSuggest = { SEPARATOR: ' > ',
+    highlightParts: (level) => [{ text: level, hit: false }],
+    visibleLevels: (levels) => ({ levels, truncated: false }),
+    suggestApplications: () => [${suggestion}], prepareIndex: (p) => p }; window.LensApplicationSuggest = LensApplicationSuggest;`;
+
+  it('shows a Non-Subscriber the row greyed, with a padlock and nothing to run', () => {
+    run(`${stubUtil} applyTier('guest')`);
+    const row = run(`applicationSuggestionRow(${suggestion}, 0, 'desk')`);
+    expect(row).toContain('data-locked="1"');
+    expect(row).toContain('aria-disabled="true"');
+    expect(row).toContain('🔒');
+    expect(row).toContain('Desktop');
+    expect(row).not.toContain('data-query');
+    expect(row).toContain('Illuminance Table contents are only available to subscribers');
+    run(`applyTier('full')`);
+  });
+
+  it("leaves a subscriber's row clickable, as before", () => {
+    run(`${stubUtil} applyTier('full')`);
+    const row = run(`applicationSuggestionRow(${suggestion}, 0, 'desk')`);
+    expect(row).toContain('data-query="RP-9-23 Lobbies &gt; Desktop"');
+    expect(row).not.toContain('data-locked');
+    expect(row).not.toContain('🔒');
+  });
+
+  it("prints the client's notice with the Subscribe link under the locked rows only", () => {
+    run(`${stubUtil} applicationNameRows = [{}]; applyTier('lite');
+         document.getElementById('search-input').value = 'desk'; renderSuggestions()`);
+    let box = elements.get('search-suggestions').innerHTML;
+    expect(box).toContain('Illuminance Recommendations');
+    expect(box).toContain('Illuminance Table contents are only available to subscribers.');
+    expect(box).toContain('Click here to subscribe.');
+    run(`applyTier('full'); renderSuggestions()`);
+    box = elements.get('search-suggestions').innerHTML;
+    expect(box).toContain('Illuminance Recommendations');
+    expect(box).not.toContain('Click here to subscribe.');
+    run(`applicationNameRows = []; document.getElementById('search-input').value = ''`);
+  });
+});

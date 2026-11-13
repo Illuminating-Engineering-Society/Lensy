@@ -40,6 +40,18 @@ describe('buildApplicationNames', () => {
     });
   });
 
+  // Dan, Teams 11/14/26 #4: Non-Subscribers see the names padlocked.
+  it('withholds the row codes from a reader below full, and so pins nothing', () => {
+    const payload = buildApplicationNames(ROWS, { withCodes: false });
+    expect(payload.applications.length).toBe(buildApplicationNames(ROWS).applications.length);
+    expect(payload.applications.every(a => a.c === '')).toBe(true);
+    const everything = payload.applications.length;
+    const found = suggestApplications(prepareIndex(payload), ROWS[0].App.slice(0, 4));
+    expect(prepareIndex(payload).length).toBe(everything);
+    expect(found.length).toBeGreaterThan(0);
+    expect(found.every(s => s.codes.length === 0)).toBe(true);
+  });
+
   it('carries each table banner once, indexed by the rows under it', () => {
     const payload = buildApplicationNames([
       { code: 'RP923_0048', Standard: 'RP-9-23', Sub_Category: 'INTERIOR - HOSPITALITY', App: 'Guest Room' },

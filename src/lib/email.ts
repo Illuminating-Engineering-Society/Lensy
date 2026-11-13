@@ -282,6 +282,8 @@ export interface ShareEmailItem {
   application_name?: string | null;
   reference_text?: string | null;
   custom_notes?: string | null;
+  /** The "Cite as" line (Dan, 11/13/26 #2), built on read by src/lib/cite-as.ts. */
+  cite_as?: { text: string; url: string | null; line: string } | null;
 }
 
 export interface CollectionShareEmailContext {
@@ -352,6 +354,14 @@ export function buildCollectionShareEmail(ctx: CollectionShareEmailContext): Inv
     const itemNote = plainNote(it.custom_notes);
     const link = typeof it.library_url === 'string' && /^https?:\/\//i.test(it.library_url)
       ? it.library_url : null;
+    // "Cite as", small and grey below the item (Dan, 11/13/26 #2). The link is
+    // printed as its own address so the citation survives being copied.
+    const cite = it.cite_as && it.cite_as.text ? it.cite_as : null;
+    const citeUrl = cite && typeof cite.url === 'string' && /^https?:\/\//i.test(cite.url) ? cite.url : null;
+    const citeHtml = cite
+      ? `<div style="font-size:11px;color:#8a949e;line-height:1.35;padding-top:8px"><strong style="font-weight:600">Cite as:</strong> ${escapeHtml(cite.text)}${citeUrl
+        ? `, <a href="${escapeHtml(citeUrl)}" style="color:#8a949e;text-decoration:underline">${escapeHtml(citeUrl)}</a>` : ''}.</div>`
+      : '';
 
     return `<tr><td style="padding:0 0 18px;border-bottom:1px solid #eef1f4">
         <div style="font-size:11px;letter-spacing:.04em;text-transform:uppercase;color:#7a8794;padding:14px 0 4px">${escapeHtml(label)}</div>
@@ -360,6 +370,7 @@ export function buildCollectionShareEmail(ctx: CollectionShareEmailContext): Inv
         ${page ? `<div style="font-size:13px;color:#666;padding-top:4px">${escapeHtml(page)}</div>` : ''}
         ${itemNote ? `<div style="font-size:13px;color:#666;font-style:italic;padding-top:4px">Note: ${escapeHtml(itemNote)}</div>` : ''}
         ${link ? `<div style="padding-top:6px"><a href="${escapeHtml(link)}" style="color:${BRAND_PRIMARY};font-size:13px;text-decoration:none">Open in the IES Lighting Library →</a></div>` : ''}
+        ${citeHtml}
       </td></tr>`;
   }).join('\n      ');
 
@@ -375,6 +386,7 @@ export function buildCollectionShareEmail(ctx: CollectionShareEmailContext): Inv
       detail ? `    ${detail}` : '',
       itemNote ? `    Note: ${itemNote}` : '',
       it.library_url ? `    ${it.library_url}` : '',
+      it.cite_as && it.cite_as.line ? `    Cite as: ${it.cite_as.line}` : '',
     ].filter(Boolean).join('\n');
   }).join('\n\n');
 

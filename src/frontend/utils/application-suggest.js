@@ -241,7 +241,9 @@
         byPath.set(key, entry);
       }
       entry.rowCount++;
-      if (entry.codes.length < MAX_PINNED_CODES) entry.codes.push(row.code);
+      // A Non-Subscriber's payload carries no codes (the names are shown
+      // padlocked — Dan, 11/14/26 #4), so there is nothing to pin.
+      if (row.code && entry.codes.length < MAX_PINNED_CODES) entry.codes.push(row.code);
     }
 
     // A path also owns the rows BELOW it that matched deeper (typing "lobb"

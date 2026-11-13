@@ -357,6 +357,17 @@
       </details>`;
     }
 
+    // ── The tutorials to watch first (Dan, Teams 11/13/26 #3) ────────────────
+    // "Could you make the first two tutorials in the 'Getting Started' section
+    //  more prominent? It could be something as simple as a (?) symbol in-line
+    //  before the text. The goal: if you only view one tutorial, make it one of
+    //  these." Marked `featured` in the catalogue, so the mark follows the
+    //  tutorial if the list is ever reordered.
+    function featuredMark(item, size = 'w-4 h-4 text-[10px]') {
+      if (!item.featured) return '';
+      return `<span class="featured-mark inline-flex items-center justify-center ${size} rounded-full bg-lens-amber text-lens-ink font-bold shrink-0" title="Start here" aria-label="Start here:">?</span>`;
+    }
+
     function renderItem(item, match) {
       const ready = isReady(item);
       const terms = match ? match.terms : [];
@@ -365,10 +376,11 @@
         ? '<p class="text-xs text-gray-500 mt-1.5">Matches in the step-by-step guide</p>'
         : '';
       return `
-        <article id="${escapeHtml(item.slug)}" class="bg-white rounded-xl border border-gray-100 p-4 sm:p-5">
+        <article id="${escapeHtml(item.slug)}" class="bg-white rounded-xl border p-4 sm:p-5 ${item.featured ? 'border-lens-amber ring-1 ring-lens-amber/40' : 'border-gray-100'}">
           <div class="flex items-start justify-between gap-3 flex-wrap mb-4">
             <div class="min-w-0">
-              <h3 class="text-base font-bold text-gray-900"><a href="/tutorials/${escapeHtml(item.slug)}" class="hover:text-ies-blue hover:underline">${highlight(item.title, terms)}</a></h3>
+              ${item.featured ? '<p class="text-[11px] font-semibold uppercase tracking-wide text-lens-ink mb-1">Start here</p>' : ''}
+              <h3 class="flex items-start gap-2 text-base font-bold text-gray-900">${item.featured ? `<span class="mt-0.5">${featuredMark(item, 'w-5 h-5 text-xs')}</span>` : ''}<a href="/tutorials/${escapeHtml(item.slug)}" class="hover:text-ies-blue hover:underline">${highlight(item.title, terms)}</a></h3>
               ${item.summary ? `<p class="text-sm text-gray-600 mt-1 line-clamp-3" title="${escapeHtml(item.summary)}">${highlight(item.summary, terms)}</p>` : ''}
               ${foundIn}
             </div>
@@ -570,7 +582,9 @@
           ${TUTORIALS.map(s => `
             <li><a href="#${escapeHtml(slug(s.section))}" class="inline-flex items-center gap-1.5 font-semibold text-gray-800 hover:text-ies-blue hover:underline">${sectionIcon(s.section, 'w-4 h-4')}${escapeHtml(s.section)}</a>
               <ol class="ml-4 mt-0.5 space-y-0.5">
-                ${s.items.map(it => `<li><a href="#${escapeHtml(it.slug)}" class="text-gray-600 hover:text-ies-blue hover:underline">${escapeHtml(it.title)}</a>${isReady(it) ? '' : ' <span class="text-[10px] text-gray-400">(soon)</span>'}</li>`).join('')}
+                ${s.items.map(it => `<li><a href="#${escapeHtml(it.slug)}" class="${it.featured
+                  ? 'inline-flex items-center gap-1.5 font-semibold text-gray-900'
+                  : 'text-gray-600'} hover:text-ies-blue hover:underline">${featuredMark(it)}${escapeHtml(it.title)}</a>${isReady(it) ? '' : ' <span class="text-[10px] text-gray-400">(soon)</span>'}</li>`).join('')}
               </ol>
             </li>`).join('')}
         </ol>`;

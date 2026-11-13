@@ -61,7 +61,16 @@ function cleanLabel(value: unknown): string {
   return typeof value === 'string' ? value.replace(/\s+/g, ' ').trim() : '';
 }
 
-export function buildApplicationNames(rows: ApplicationNameRow[]): ApplicationNamesPayload {
+/**
+ * @param opts.withCodes false for a reader below `full` (Dan, Teams 11/14/26
+ *   #4: Non-Subscribers see the names padlocked). Every `c` is then '' — the
+ *   names, and no handle on the rows behind them.
+ */
+export function buildApplicationNames(
+  rows: ApplicationNameRow[],
+  opts: { withCodes?: boolean } = {},
+): ApplicationNamesPayload {
+  const withCodes = opts.withCodes !== false;
   const standards: string[] = [];
   const standardIndex = new Map<string, number>();
   const groups: string[] = [];
@@ -81,7 +90,7 @@ export function buildApplicationNames(rows: ApplicationNameRow[]): ApplicationNa
       standards.push(standard);
       standardIndex.set(standard, s);
     }
-    const entry: ApplicationNamesPayload['applications'][number] = { c: code, s, p: path };
+    const entry: ApplicationNamesPayload['applications'][number] = { c: withCodes ? code : '', s, p: path };
     const group = cleanLabel(row.Sub_Category);
     if (group) {
       let g = groupIndex.get(group);
