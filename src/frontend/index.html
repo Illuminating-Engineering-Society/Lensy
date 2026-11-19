@@ -2272,8 +2272,26 @@
       return stripped || null;
     }
 
+    /**
+     * A reaffirmed standard's year is its REAFFIRMATION year (Dan, Teams
+     * 11/19/26 #2): "ANSI/IES LM-63-19(R25)" → 2025, "LP-4-20+R2026" → 2026.
+     * Same rule as `reaffirmationYear` in src/lib/cite-as.ts.
+     */
+    function reaffirmationYearOf(designation) {
+      const ids = [standardsFullDesignationMap[designation], designation];
+      for (const d of ids) {
+        const v = String(d || '');
+        const m = /\(\s*R\s*(\d{4}|\d{2})\s*\)/i.exec(v) || /\d\+?R(\d{4}|\d{2})(?=\+E\d+\s*$|\s*$)/i.exec(v);
+        if (m) return m[1].length === 4 ? Number(m[1]) : 2000 + Number(m[1]);
+      }
+      return null;
+    }
+
     function sortValue(r, key) {
-      if (key === 'date') return editionYearOf(resultDesignation(r));
+      if (key === 'date') {
+        const std = resultDesignation(r);
+        return reaffirmationYearOf(std) ?? editionYearOf(std);
+      }
       if (key === 'title') { const t = titleOf(r); return t ? t.toLowerCase() : null; }
       if (key === 'designation') return resultDesignation(r);
       if (key === 'committee') { const c = r.committee?.name; return c ? c.toLowerCase() : null; }
@@ -2309,6 +2327,9 @@
     // suggestions. If it fails, the lists fill from each search's own results.
     let standardsIndex = [];
     let standardsTitleMap = {};
+    // id → printed designation ("LM-63-19" → "ANSI/IES LM-63-19(R25)"): the
+    // reaffirmation marker the Date sort reads lives only in the printed form.
+    let standardsFullDesignationMap = {};
 
     async function loadStandardsIndex() {
       if (standardsIndex.length) return;
@@ -2318,8 +2339,10 @@
         const data = await res.json();
         standardsIndex = (data.standards || []).filter(s => s && s.id);
         standardsTitleMap = {};
+        standardsFullDesignationMap = {};
         for (const s of standardsIndex) {
           if (s.title && s.title !== s.id) standardsTitleMap[s.id] = s.title;
+          if (s.full_designation) standardsFullDesignationMap[s.id] = s.full_designation;
         }
         seedDocFilterUniverse();
       } catch { /* the sidebar lists then fill from search results instead */ }

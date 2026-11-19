@@ -2011,11 +2011,18 @@ No migration. No search-cache bump.
     item's own Library URL (PDF index), else the standard's front link.
   - designation is the FULL one ("ANSI/IES RP-43-25"; Dan's sample reads
     "RP-##-yy") — ids are not always printable ("ASHRAE-IES-90.1-2025", "LS-1").
-  - **year = the designation's, not `published_date`** — the portal date is the
-    Library release day (2025 for RP-6-24 and RP-1-24, 2026 for RP-29-25);
-    it is only the fallback for a designation with no year.
-  - ASHRAE/IES 90.1 is cited "ASHRAE. … Peachtree Corners, GA: ASHRAE"
-    (`JOINT_PUBLISHERS`) — **flagged to the client**, like the two choices above.
+    Confirmed by Dan 11/19/26: "ANSI/IES" stays unless space/legibility suffers.
+  - **year = the REAFFIRMATION year when the designation prints one** (Dan,
+    11/19/26: "…00(R##) or …00(R####)" → that year, "for citations (and List
+    Standards, etc)"; `reaffirmationYear` reads "(R25)", "(R2023)", and the id
+    forms "+R2026" / "+R2023+E1"; 31 standards on the day), **else the
+    designation's edition year, never `published_date`** — the portal date is the
+    Library release day (2025 for RP-6-24 and RP-1-24, 2026 for RP-29-25); it is
+    only the fallback for a designation with no year. List Standards
+    (`reaffirmationYearOf` in contents.html) ignores a portal date older than the
+    reaffirmation, and the search page's Date sort uses the same rule.
+  - every standard is cited in the IES format, ASHRAE/IES 90.1 included (Dan,
+    11/19/26: "IES actually publishes that portion of the standard").
   - a catalogue title that is not a title ("RP_2705Cover", the bare id) is
     omitted; a definition bookmark is filed under `LS-1-25` while D1's row is
     `LS-1` (`catalogueIdFor`); a standard D1 does not hold gets no line.

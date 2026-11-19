@@ -10,7 +10,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { buildCiteAs, catalogueIdFor, citeLocator, designationYear } from './cite-as';
+import { buildCiteAs, catalogueIdFor, citeLocator, designationYear, reaffirmationYear } from './cite-as';
 
 const RP43 = {
   id: 'RP-43-25',
@@ -96,11 +96,19 @@ describe('buildCiteAs', () => {
       id: 'RP-6-24', full_designation: 'ANSI/IES RP-6-24', title: 'Recommended Practice: Lighting Sports and Recreational Areas',
       published_date: '2025-02-11',
     }, { result_type: 'body' }).text).toMatch(/IES; 2024$/);
-    // A reaffirmed printing keeps its edition year.
-    expect(buildCiteAs({
+    // A reaffirmed standard is cited by its REAFFIRMATION year (Dan, 11/19/26 #2),
+    // and the designation still prints in full.
+    const lm63 = buildCiteAs({
       id: 'LM-63-19', full_designation: 'ANSI/IES LM-63-19(R25)', title: 'Approved Method: IES Standard File Format',
       published_date: '2025-08-14',
-    }, { result_type: 'body' }).text).toMatch(/IES; 2019$/);
+    }, { result_type: 'body' }).text;
+    expect(lm63).toMatch(/^Illuminating Engineering Society\. ANSI\/IES LM-63-19\(R25\) /);
+    expect(lm63).toMatch(/IES; 2025$/);
+    // …even when the catalogue's release date says otherwise, and from the id alone.
+    expect(buildCiteAs({ id: 'LM-10-20', full_designation: 'ANSI/IES LM-10-20(R2023)', title: 'Approved Method: Photometric Testing', published_date: '2021-01-01' },
+      { result_type: 'body' }).text).toMatch(/IES; 2023$/);
+    expect(buildCiteAs({ id: 'LP-4-20+R2026', title: 'Lighting Practice: Light Pollution' }, { result_type: 'body' }).text)
+      .toMatch(/IES; 2026$/);
     // A designation with no year falls back to the catalogue date…
     expect(buildCiteAs({ id: 'LS-1', title: 'Lighting Science: Nomenclature', published_date: '2025-12-17' },
       { result_type: 'definitions' }).text).toMatch(/IES; 2025$/);
@@ -130,12 +138,12 @@ describe('buildCiteAs', () => {
     expect(junk.text).toBe('Illuminating Engineering Society. ANSI/IES RP-27.3-07. New York: IES; 2007');
   });
 
-  it('names ASHRAE as the publisher of the joint 90.1 standard', () => {
+  it('cites the joint 90.1 standard in the IES format (Dan, 11/19/26 #3: IES publishes that portion)', () => {
     const cite = buildCiteAs({
       id: 'ASHRAE-IES-90.1-2025', full_designation: 'ANSI/ASHRAE/IES 90.1-2025', title: 'ASHRAE-IES-90.1-2025',
       published_date: '2025-10-31', vitrium_web_url: 'https://lighting.ies.org/2AfKJz',
     }, { result_type: 'body', page_number: 12, library_url: 'https://lighting.ies.org/2AfKJz#page=12' });
-    expect(cite.line).toBe('ASHRAE. ANSI/ASHRAE/IES 90.1-2025, p. 12. Peachtree Corners, GA: ASHRAE; 2025, https://lighting.ies.org/2AfKJz#page=12.');
+    expect(cite.line).toBe('Illuminating Engineering Society. ANSI/ASHRAE/IES 90.1-2025, p. 12. New York: IES; 2025, https://lighting.ies.org/2AfKJz#page=12.');
   });
 
   it('rewrites a stored Vitrium viewer host onto the branded Library host', () => {
@@ -164,5 +172,24 @@ describe('designationYear', () => {
     expect(designationYear('ASHRAE-IES-90.1-2025')).toBe(2025);
     expect(designationYear('LS-1')).toBeNull();
     expect(designationYear(null)).toBeNull();
+  });
+});
+
+describe('reaffirmationYear', () => {
+  it('reads every reaffirmation shape in the catalogue', () => {
+    expect(reaffirmationYear('ANSI/IES LM-63-19(R25)')).toBe(2025);
+    expect(reaffirmationYear('ANSI/IES LM-10-20(R2023)')).toBe(2023);
+    expect(reaffirmationYear('ANSI/IES LM-73-04(R18)')).toBe(2018);
+    expect(reaffirmationYear('ANSI/IES/AVIXA RP-38-17(R2022)')).toBe(2022);
+    expect(reaffirmationYear('LS-6-20+E1 (R2025)')).toBe(2025);
+    expect(reaffirmationYear('LP-4-20+R2026')).toBe(2026);
+    expect(reaffirmationYear('LS-4-20+R2023+E1')).toBe(2023);
+    expect(reaffirmationYear('LM-63-19R25')).toBe(2025);
+  });
+
+  it('is null for a designation never reaffirmed', () => {
+    for (const d of ['ANSI/IES RP-43-25', 'RP-8-25+E2', 'RP-27.3-07', 'ASHRAE-IES-90.1-2025', 'LS-1', null]) {
+      expect(reaffirmationYear(d)).toBeNull();
+    }
   });
 });

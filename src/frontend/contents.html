@@ -505,22 +505,52 @@
       return yy + (yy >= 80 ? 1900 : 2000);
     }
 
+    /**
+     * A reaffirmed standard's year is its REAFFIRMATION year (Dan, Teams
+     * 11/19/26 #2 — "…00(R##) or …00(R####)", for citations and List Standards
+     * alike): "ANSI/IES LM-63-19(R25)" → 2025, "LP-4-20+R2026" → 2026. Same
+     * rule as `reaffirmationYear` in src/lib/cite-as.ts.
+     */
+    function reaffirmationYearOf(s) {
+      for (const d of [s.full_designation, s.id]) {
+        const v = String(d || '');
+        const m = /\(\s*R\s*(\d{4}|\d{2})\s*\)/i.exec(v) || /\d\+?R(\d{4}|\d{2})(?=\+E\d+\s*$|\s*$)/i.exec(v);
+        if (m) return m[1].length === 4 ? Number(m[1]) : 2000 + Number(m[1]);
+      }
+      return null;
+    }
+
+    /**
+     * The portal date, unless it predates the reaffirmation the designation
+     * prints — then it is the original edition's release, and the
+     * reaffirmation year stands in for it.
+     */
+    function currentPublishedIso(s) {
+      const iso = publishedIso(s);
+      const reaffirmed = reaffirmationYearOf(s);
+      return iso && (!reaffirmed || Number(iso.slice(0, 4)) >= reaffirmed) ? iso : null;
+    }
+
+    function fallbackYearOf(s) {
+      return reaffirmationYearOf(s) ?? editionYearOf(s.id);
+    }
+
     /** What the Publication Date sort orders on; null when neither is knowable. */
     function publishedSortKey(s) {
-      const iso = publishedIso(s);
+      const iso = currentPublishedIso(s);
       if (iso) return iso;
-      const year = editionYearOf(s.id);
+      const year = fallbackYearOf(s);
       return year ? `${year}-07-01` : null;
     }
 
     /** @returns {{label: string, exact: boolean}|null} */
     function publishedDisplay(s) {
-      const iso = publishedIso(s);
+      const iso = currentPublishedIso(s);
       if (iso) {
         const [y, m, d] = iso.split('-').map(Number);
         return { label: `${MONTHS[m - 1]} ${d}, ${y}`, exact: true };
       }
-      const year = editionYearOf(s.id);
+      const year = fallbackYearOf(s);
       return year ? { label: String(year), exact: false } : null;
     }
 
@@ -539,7 +569,7 @@
 
     /** Eligible for the "Most Recent" band: a REAL date, inside the window. */
     function isRecentlyPublished(s, from, to) {
-      const iso = publishedIso(s);
+      const iso = currentPublishedIso(s);
       return !!iso && iso >= from && iso <= to;
     }
 

@@ -58,26 +58,16 @@ export interface CiteAs {
   line: string;
 }
 
-interface Publisher { author: string; imprint: string }
-
-const IES: Publisher = { author: 'Illuminating Engineering Society', imprint: 'New York: IES' };
 /**
- * A joint standard is published by its lead sponsor, not by IES: ASHRAE/IES
- * 90.1 is an ASHRAE publication, and "New York: IES" on it would be wrong.
+ * Every standard, joint ones included, is cited as an IES publication (Dan,
+ * Teams 11/19/26 #3: "IES actually publishes that portion of the standard, so
+ * keep the IES format" — ANSI/ASHRAE/IES 90.1 too).
  */
-const JOINT_PUBLISHERS: Array<[RegExp, Publisher]> = [
-  [/^ASHRAE\b/i, { author: 'ASHRAE', imprint: 'Peachtree Corners, GA: ASHRAE' }],
-];
-
-function publisherFor(standard: CiteStandard): Publisher {
-  for (const [re, publisher] of JOINT_PUBLISHERS) {
-    if (re.test(standard.id)) return publisher;
-  }
-  return IES;
-}
+const AUTHOR = 'Illuminating Engineering Society';
+const IMPRINT = 'New York: IES';
 
 /**
- * The year a designation carries: "RP-43-25" → 2025, "LM-63-19(R25)" → 2019,
+ * The EDITION year a designation carries: "RP-43-25" → 2025, "LM-63-19(R25)" → 2019,
  * "RP-27.3-07" → 2007, "ASHRAE-IES-90.1-2025" → 2025. Null when it has none
  * ("LS-1").
  */
@@ -96,14 +86,37 @@ export function designationYear(designation: string | null | undefined): number 
 }
 
 /**
- * The year printed after the imprint. The DESIGNATION's year comes first: it
- * is the edition a reader cites ("RP-##-yy … IES; YYYY" in the client's own
- * pattern), and it is how IES standards cite each other. The catalogue's
- * publication date is the day the file was released in the Library — measured
- * on production it reads 2025 for RP-6-24 and RP-1-24 and 2026 for RP-29-25 —
- * so it is only the fallback for a designation that carries no year.
+ * The year a REAFFIRMATION marker carries: "ANSI/IES LM-63-19(R25)" → 2025,
+ * "LM-10-20(R2023)" → 2023, "LS-6-20+E1 (R2025)" → 2025, and the catalogue-id
+ * forms "LP-4-20+R2026" → 2026, "LS-4-20+R2023+E1" → 2023, "LM-63-19R25" → 2025.
+ * Null when the designation was never reaffirmed.
  */
-function citationYear(standard: CiteStandard): number | null {
+export function reaffirmationYear(designation: string | null | undefined): number | null {
+  const d = String(designation || '');
+  const m = /\(\s*R\s*(\d{4}|\d{2})\s*\)/i.exec(d)
+    || /\d\+?R(\d{4}|\d{2})(?=\+E\d+\s*$|\s*$)/i.exec(d);
+  if (!m) return null;
+  const n = Number(m[1]);
+  if (m[1].length === 4) return n;
+  return n >= 50 ? 1900 + n : 2000 + n;
+}
+
+/**
+ * The year printed after the imprint.
+ *
+ * 1. A reaffirmed standard is cited by its REAFFIRMATION year (Dan, Teams
+ *    11/19/26 #2: "for anything with …00(R##) or …00(R####) we should use that
+ *    #### date as the year for citations … instead of the original publication
+ *    year") — ANSI/IES LM-63-19(R25) cites 2025.
+ * 2. Otherwise the DESIGNATION's year: the edition a reader cites ("RP-##-yy …
+ *    IES; YYYY" in the client's own pattern). The catalogue's publication date
+ *    is the day the file was released in the Library — measured on production
+ *    it reads 2025 for RP-6-24 and RP-1-24 and 2026 for RP-29-25 — so it is
+ *    only the fallback for a designation that carries no year.
+ */
+export function citationYear(standard: CiteStandard): number | null {
+  const reaffirmed = reaffirmationYear(standard.full_designation) ?? reaffirmationYear(standard.id);
+  if (reaffirmed) return reaffirmed;
   const edition = designationYear(standard.full_designation) ?? designationYear(standard.id);
   if (edition) return edition;
   const published = /^(\d{4})-\d{2}-\d{2}/.exec(String(standard.published_date || ''));
@@ -196,11 +209,10 @@ export function buildCiteAs(standard: CiteStandard | null | undefined, item: Cit
   const name = composeStandardName(designation, printableTitle(standard)).replace(/[.\s]+$/, '');
   if (!name) return null;
 
-  const { author, imprint } = publisherFor(standard);
   const locator = citeLocator(item);
   const year = citationYear(standard);
 
-  const text = `${author}. ${name}${locator ? `, ${locator}` : ''}. ${imprint}${year ? `; ${year}` : ''}`;
+  const text = `${AUTHOR}. ${name}${locator ? `, ${locator}` : ''}. ${IMPRINT}${year ? `; ${year}` : ''}`;
   const own = typeof item.library_url === 'string' && /^https?:\/\//i.test(item.library_url) ? item.library_url : null;
   const url = own || toLibraryUrlOrNull(standard.vitrium_web_url) || null;
   return { text, url, line: url ? `${text}, ${url}.` : `${text}.` };
