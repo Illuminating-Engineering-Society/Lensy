@@ -238,7 +238,7 @@ const NOT_A_THEME_RE = /^(?:(?:the\s+)?(?:offices?|roadways?|streets?|healthcare
 const LOOKUP_THEME_RE = /\b(?:illuminance|light(?:ing)?)\s+(?:levels?|values?|targets?|recommendations?|requirements?|tables?|lookups?)\b|^recommended\s+(?:illuminance|light)/i;
 
 /** A catch-all is not a theme either ("Lighting For Specific Applications" took 94 queries). */
-const CATCH_ALL_THEME_RE = /\b(?:specific|special|various|general|miscellaneous|other|different|multiple)\s+(?:applications?|spaces?|topics?|questions?|areas?|lighting)\b|^(?:general|other|miscellaneous)\b|\bstandards?\s+(?:and|&)\s+regulations?\b/i;
+const CATCH_ALL_THEME_RE = /\b(?:specific|special|various|general|miscellaneous|other|different|multiple)\s+(?:applications?|spaces?|topics?|questions?|areas?|lighting|tasks?|uses?|needs?|requirements?|situations?|cases?|scenarios?|purposes?)\b|^(?:general|other|miscellaneous)\b|\bstandards?\s+(?:and|&)\s+regulations?\b/i;
 
 /**
  * Words that name a place to be lit, and the filler a model wraps around

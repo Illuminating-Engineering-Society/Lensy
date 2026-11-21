@@ -79,7 +79,7 @@ describe('pass 1 — the themes', () => {
   // Every name below came back from the 70B model on the production log (11/20/26).
   it('refuses the catch-alls and the spaces-with-extra-words the model writes anyway', () => {
     const names = ['Lighting For Specific Applications', 'Lighting For Special Applications', 'Pedestrian And Roadway Lighting',
-      'Lighting For Healthcare And Wellness', 'Pedestrian Walkways', 'Lighting For Outdoor Spaces', 'Lighting Standards And Regulations'];
+      'Lighting For Healthcare And Wellness', 'Lighting For Specific Tasks', 'Pedestrian Walkways', 'Lighting For Outdoor Spaces', 'Lighting Standards And Regulations'];
     const themes = parseThemes(JSON.stringify({ themes: names.map(name => ({ name, type: 'design', signal: 's' })) }));
     expect(themes).toEqual([]);
     // …and keeps the real ones from the same runs.

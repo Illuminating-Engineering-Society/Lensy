@@ -1981,7 +1981,12 @@ after the Statement backfill. **Order: migrate → deploy → `node scripts/back
   rephrased" table; trending topics count first attempts only.
 - **#5 `ies_id` blank in search_usage.csv:** `PEOPLE_LOOKUP_API_SECRET` was never set on
   EITHER Worker (Lens returns an empty map; AuthIES answers 404). All 276 accounts in the
-  export do hold a member number in AuthIES. Fix = one value, `wrangler secret put` on both.
+  export do hold a member number in AuthIES. Fix = one value, `wrangler secret put` on both
+  — done 2026-11-21 (AuthIES production + Lens); the export then carried an id on 417 of 417 rows.
+- **Live since 2026-11-21:** migrations 0031/0032 applied, Worker deployed, TM-15-20's
+  Statement backfilled, search cache flushed, help index and trending topics regenerated.
+  Checked on production: Dan's BUG question opens with the Statement; "TM-30-22" lists
+  TM-30-24, -20, -18; the three tool questions answer with the tool and its tutorials.
 - **#6 Custom date range** — `GET /api/admin/analytics?from=YYYY-MM-DD&to=YYYY-MM-DD`
   (whole UTC days, inclusive, ≤366; `lib/analytics-scope.ts`), and "Group this date range"
   runs the trending topics for it without replacing the stored daily ranking.
