@@ -139,6 +139,20 @@ describe('resolveWindow', () => {
     expect(resolveWindow({ start_date: '2026-09-18', days: 0 })).toHaveProperty('error');
     expect(resolveWindow({ start_date: '2026-09-18', days: 5000 })).toHaveProperty('error');
   });
+
+  // Client, Teams 11/20/26: a 3-year "lease" comp for the 12/3 Symposium
+  // registrants. The ceiling is a purchased lease's own length (1096 days).
+  it('allows a comp as long as a 3-year lease, by days or by end date', () => {
+    expect(resolveWindow({ start_date: '2026-12-03', days: 1095 }))
+      .toEqual({ startDate: '2026-12-03', endDate: '2029-12-02', days: 1095 });
+    expect(resolveWindow({ start_date: '2026-12-03', end_date: '2029-12-03' }))
+      .toEqual({ startDate: '2026-12-03', endDate: '2029-12-03', days: 1096 });
+  });
+
+  it('refuses a window longer than a lease', () => {
+    expect(resolveWindow({ start_date: '2026-12-03', days: 1097 })).toHaveProperty('error');
+    expect(resolveWindow({ start_date: '2026-12-03', end_date: '2029-12-04' })).toHaveProperty('error');
+  });
 });
 
 describe('parseRecipients', () => {

@@ -74,8 +74,14 @@ const DEFAULT_LENS_DAYS = 7;
 /** What a row grants — see migration 0023. */
 type CompScope = 'documents' | 'lens';
 
-/** A comp window measured in years is a subscription; refuse it as a typo. */
-const MAX_DAYS = 730;
+/**
+ * A typo guard, not a policy. It was 730 until the 12/3/26 Symposium needed a
+ * 3-year "lease" comp for its registrants (client, Teams 11/20/26); it is now a
+ * purchased lease's own length (SURECART_LEASE_DAYS: three years incl. a leap
+ * day). AuthIES holds the matching ceiling (MAX_COMP_DAYS) and counts our
+ * inclusive end date as one more day — keep its cap above this one.
+ */
+const MAX_DAYS = 1096;
 
 /** A grant is "one or more documents", not the whole library. */
 const MAX_DOCUMENTS = 50;
@@ -777,7 +783,7 @@ export function resolveWindow(
     if (!isDateOnly(endRaw)) return { error: 'end_date must be YYYY-MM-DD' };
     const days = daysBetween(startDate, endRaw);
     if (days < 1) return { error: 'end_date must be after start_date' };
-    if (days > MAX_DAYS) return { error: `A complimentary window longer than ${MAX_DAYS} days is not a comp — check the dates.` };
+    if (days > MAX_DAYS) return { error: `A complimentary window may run at most ${MAX_DAYS} days (a 3-year lease) — check the dates.` };
     return { startDate, endDate: endRaw, days };
   }
 

@@ -2162,6 +2162,25 @@ No migration. No search-cache bump.
   The Subscribe link opens on mousedown — the input's blur closes the box
   before a click would land.
 
+### A comp may run as long as a lease: 1096 days (Dan, Teams 11/20/26)
+
+"For the 12/3 Symposium we need to provide 3-year 'lease' comp access to a
+single document, limited to registrants … any reason we can't extend the 'comp'
+max duration to 1095 days?" None: 730 was a typo guard. `MAX_DAYS` in
+comp-access.ts and the form's `max` are now **1096** (a purchased lease's
+length). No migration.
+
+- **AuthIES must be deployed first.** Its `MAX_COMP_DAYS` was also 730 and now
+  equals `MAX_PURCHASE_DAYS` (1200). Lens sends an INCLUSIVE end date, so N days
+  arrive there as N + 1 — which is also why a 730-day comp was always refused
+  at the old cap. Until AuthIES is live, a comp over 729 days is recorded and
+  emailed but stays "awaiting Vitrium" (`window_too_long`); Retry applies it.
+- **A comp is not a lease in two ways:** it grants the standard's own Vitrium
+  document only (no `lease_addon_doc_ids` — the copy/paste files of the eight
+  add-on standards), and it gets no 30-day expiry reminder (lease-reminders.ts
+  reads `purchases`).
+- 200 recipients per request (`MAX_RECIPIENTS`); a larger roster is split.
+
 ### Comps for the staff tools: `GET /api/staff/comps` (Dan → Shane, 2026-11)
 
 "Pull Lighting Library comps and display them in Wicket and/or Lightroom - so
