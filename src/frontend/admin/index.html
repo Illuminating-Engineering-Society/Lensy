@@ -288,17 +288,43 @@
     <section id="panel-analytics" class="hidden fade-in">
       <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
         <h2 class="font-display text-xl font-bold">Search analytics</h2>
-        <div class="flex items-center gap-2">
-          <select id="an-days" onchange="loadAnalytics()" class="px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white">
+        <div class="flex flex-wrap items-center gap-2">
+          <select id="an-days" onchange="onAnalyticsWindowChange()" class="px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white">
             <option value="7">Last 7 days</option>
             <option value="30" selected>Last 30 days</option>
             <option value="90">Last 90 days</option>
             <option value="365">Last 365 days</option>
+            <option value="custom">Custom date range…</option>
           </select>
+          <!-- A custom range (Dan, 11/19/26 #6: "useful for gaining insights
+               during our virtual symposia"). Whole days, UTC — the log's clock. -->
+          <span id="an-range" class="hidden items-center gap-1.5 text-sm">
+            <label class="sr-only" for="an-from">From</label>
+            <input id="an-from" type="date" class="px-2 py-1.5 border border-gray-300 rounded-lg bg-white">
+            <span class="text-gray-400">to</span>
+            <label class="sr-only" for="an-to">To</label>
+            <input id="an-to" type="date" class="px-2 py-1.5 border border-gray-300 rounded-lg bg-white">
+            <button onclick="loadAnalytics()" class="px-3 py-1.5 rounded-lg bg-brand-primary hover:bg-brand-primary-dark text-white font-medium transition">Apply</button>
+          </span>
           <button onclick="loadAnalytics()" class="px-3 py-2 text-sm rounded-lg border border-gray-300 bg-white hover:bg-gray-50 transition">Refresh</button>
         </div>
       </div>
-      <p class="text-xs text-gray-400 mb-4">The logs are anonymous by design — no user identity is stored, so nothing here is per-person. Raw rows: <a id="an-csv-log" href="/api/admin/search-log.csv" class="text-brand-secondary hover:underline">search-log.csv</a> · <a id="an-csv-events" href="/api/admin/search-events.csv" class="text-brand-secondary hover:underline">search-events.csv</a></p>
+      <p class="text-xs text-gray-400 mb-2">The logs are anonymous by design — no user identity is stored, so nothing here is per-person. Days are UTC. Raw rows: <a id="an-csv-log" href="/api/admin/search-log.csv" class="text-brand-secondary hover:underline">search-log.csv</a> · <a id="an-csv-events" href="/api/admin/search-events.csv" class="text-brand-secondary hover:underline">search-events.csv</a></p>
+
+      <!-- What the figures leave out (Dan, 11/19/26 #7): IES staff searches —
+           "we are often using Lens only to test a query someone else attempted"
+           — and exact copies of the "Try searching for" demo searches. -->
+      <div class="flex flex-wrap items-center gap-x-5 gap-y-1 text-xs text-gray-600 mb-4">
+        <label class="inline-flex items-center gap-1.5 cursor-pointer">
+          <input id="an-staff" type="checkbox" onchange="loadAnalytics()" class="rounded border-gray-300">
+          Include IES staff searches
+        </label>
+        <label class="inline-flex items-center gap-1.5 cursor-pointer">
+          <input id="an-demo" type="checkbox" onchange="loadAnalytics()" class="rounded border-gray-300">
+          Include “Try searching for” demo searches
+        </label>
+        <span id="an-excluded" class="text-gray-400"></span>
+      </div>
 
       <div id="an-note" class="hidden text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-4"></div>
 
@@ -318,19 +344,45 @@
         <div id="an-chart-labels" class="flex justify-between text-xs text-gray-400 mt-1"></div>
       </div>
 
-      <!-- AI-grouped trending topics (client 10/27/26 (D)). The model only
-           groups the queries; the counts are search_log's. Refreshed daily by
-           the cron, so it does not follow the window selector above. -->
+      <!-- AI-grouped trending topics (client 10/27/26 (D); themes instead of
+           building types since 11/19/26 #8). The model only names the themes
+           and groups the queries; the counts are search_log's. Refreshed daily
+           by the cron for the last week — a custom date range above can be
+           grouped on demand with its own button, without replacing it. -->
       <div class="bg-white rounded-xl shadow p-4 mb-6">
-        <div class="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 mb-3">
-          <h3 class="font-display font-bold">Trending topics <span class="text-xs font-sans font-normal text-gray-400">(AI-grouped, top 20)</span></h3>
-          <div class="flex items-center gap-3">
+        <div class="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 mb-1">
+          <h3 class="font-display font-bold">Trending topics <span class="text-xs font-sans font-normal text-gray-400">(AI-grouped themes, top 20)</span></h3>
+          <div class="flex flex-wrap items-center gap-2">
             <span id="an-topics-meta" class="text-xs text-gray-400"></span>
-            <button id="an-topics-refresh" onclick="refreshTopics()" class="px-2.5 py-1 text-xs rounded-lg border border-gray-300 bg-white hover:bg-gray-50 transition">Regenerate now</button>
+            <button id="an-topics-range" onclick="refreshTopics(true)" class="hidden px-2.5 py-1 text-xs rounded-lg border border-gray-300 bg-white hover:bg-gray-50 transition">Group this date range</button>
+            <button id="an-topics-refresh" onclick="refreshTopics(false)" class="px-2.5 py-1 text-xs rounded-lg border border-gray-300 bg-white hover:bg-gray-50 transition">Regenerate now</button>
           </div>
         </div>
+        <p class="text-xs text-gray-400 mb-3">Subjects and problems readers are working on. Searches that only look up a space’s light level, a designation or the platform are counted below the list instead of competing with it; staff searches, demo searches and a reader’s rephrasings of their own question are left out.</p>
         <ol id="an-topics" class="grid sm:grid-cols-2 gap-x-6 text-sm"></ol>
         <p id="an-topics-empty" class="hidden text-center text-gray-400 text-sm py-6">Not generated yet — it runs daily at 06:00 ET, or use “Regenerate now”.</p>
+        <p id="an-topics-routine" class="hidden text-xs text-gray-500 mt-3 pt-3 border-t border-gray-100"></p>
+      </div>
+
+      <!-- Rephrased questions (Dan, 11/19/26 #4): the same reader trying the
+           same question again within ten minutes. A counter on each row, not a
+           session id — no two rows are linked. -->
+      <div class="mb-6">
+        <h3 class="font-display font-bold mb-2">Questions readers rephrased <span class="text-xs font-sans font-normal text-gray-400">(a retry of their previous search within 10 minutes — a sign the first answer missed)</span></h3>
+        <div class="bg-white rounded-xl shadow overflow-hidden">
+          <table class="w-full text-sm">
+            <thead>
+              <tr class="text-left text-xs uppercase tracking-wide text-gray-500 border-b border-gray-200">
+                <th class="px-4 py-2.5">Rephrased as</th>
+                <th class="px-4 py-2.5 text-right">Times</th>
+                <th class="px-4 py-2.5 text-right">Deepest attempt</th>
+                <th class="px-4 py-2.5">Last seen</th>
+              </tr>
+            </thead>
+            <tbody id="an-retries"></tbody>
+          </table>
+          <p id="an-retries-empty" class="hidden text-center text-gray-400 text-sm py-8"></p>
+        </div>
       </div>
 
       <div class="grid lg:grid-cols-2 gap-6 mb-6">
@@ -1647,19 +1699,77 @@
     }
 
     // ── Search analytics ──────────────────────────────────────────────────
+    // The window selector: a rolling N days, or "Custom date range…", which
+    // reveals the two date inputs (pre-filled with the last 7 days) and waits
+    // for Apply rather than loading on every keystroke of a date.
+    function onAnalyticsWindowChange() {
+      const custom = document.getElementById('an-days').value === 'custom';
+      const range = document.getElementById('an-range');
+      range.classList.toggle('hidden', !custom);
+      range.classList.toggle('inline-flex', custom);
+      if (!custom) return loadAnalytics();
+      const fromEl = document.getElementById('an-from');
+      const toEl = document.getElementById('an-to');
+      const today = new Date().toISOString().slice(0, 10);
+      if (!toEl.value) toEl.value = today;
+      if (!fromEl.value) fromEl.value = new Date(Date.now() - 6 * 86400e3).toISOString().slice(0, 10);
+      fromEl.max = toEl.max = today;
+      return loadAnalytics();
+    }
+
+    /** The analytics query for the controls as they stand: window + what to count. */
+    function analyticsParams() {
+      const p = new URLSearchParams();
+      const sel = document.getElementById('an-days').value;
+      if (sel === 'custom') {
+        const from = document.getElementById('an-from').value;
+        const to = document.getElementById('an-to').value;
+        if (from) p.set('from', from);
+        if (to) p.set('to', to);
+        if (!from && !to) p.set('days', '30');
+      } else {
+        p.set('days', sel);
+      }
+      if (document.getElementById('an-staff').checked) p.set('staff', '1');
+      if (document.getElementById('an-demo').checked) p.set('demo', '1');
+      return p;
+    }
+
+    let analyticsWindow = null;
+
     async function loadAnalytics() {
-      const days = document.getElementById('an-days').value;
-      const { data } = await api(`/api/admin/analytics?days=${encodeURIComponent(days)}`);
+      const { status, data } = await api(`/api/admin/analytics?${analyticsParams()}`);
+      const noteEl = document.getElementById('an-note');
+      if (status >= 400) {
+        // A range the server refused ("from must not be after to"): say so and
+        // leave the figures of the last good window on screen.
+        noteEl.classList.remove('hidden');
+        noteEl.textContent = data.error || 'Could not load analytics for that window.';
+        return;
+      }
       const s = data.searches || {};
       const e = data.events || {};
+      const w = data.window || {};
+      const f = data.filters || {};
+      analyticsWindow = w;
 
       // CSV links follow the selected window (dates are UTC, like the log).
-      const from = new Date(Date.now() - (Number(days) - 1) * 86400e3).toISOString().slice(0, 10);
-      document.getElementById('an-csv-log').href = `/api/admin/search-log.csv?from=${from}`;
-      document.getElementById('an-csv-events').href = `/api/admin/search-events.csv?from=${from}`;
+      // `to` is exclusive of nothing there: the export compares created_at
+      // with the text, so the end of the last day is spelled out.
+      const csvRange = `from=${encodeURIComponent(w.from || '')}${w.custom ? `&to=${encodeURIComponent(`${w.to} 23:59:59`)}` : ''}`;
+      document.getElementById('an-csv-log').href = `/api/admin/search-log.csv?${csvRange}`;
+      document.getElementById('an-csv-events').href = `/api/admin/search-events.csv?${csvRange}`;
+
+      // What the figures leave out, and how much that is in this window.
+      const ex = s.excluded || {};
+      const left = [];
+      if (!f.staffRecorded) left.push('staff searches are told apart from the next database update on');
+      else left.push(`${fmt(ex.staff)} staff search${ex.staff === 1 ? '' : 'es'} ${f.includeStaff ? 'included' : 'left out'}`);
+      left.push(`${fmt(ex.demo)} demo search${ex.demo === 1 ? '' : 'es'} ${f.includeDemos ? 'included' : 'left out'}`);
+      document.getElementById('an-excluded').textContent = left.join(' · ');
+      document.getElementById('an-topics-range').classList.toggle('hidden', !w.custom);
 
       const g = data.aiGuide || {};
-      const noteEl = document.getElementById('an-note');
       const notes = [s.note, e.note, g.note].filter(Boolean);
       noteEl.classList.toggle('hidden', notes.length === 0);
       noteEl.textContent = notes.join(' · ');
@@ -1669,6 +1779,10 @@
         statCard('Served from cache', pct(s.cached, s.total), { sub: `${fmt(s.cached)} responses` }),
         statCard('Low-confidence', pct(s.noStrongMatch, s.total), { sub: `${fmt(s.noStrongMatch)} searches`, tone: s.total && s.noStrongMatch / s.total > 0.3 ? 'warn' : undefined }),
         statCard('Zero results', fmt(s.zeroResults), { tone: s.zeroResults > 0 ? 'warn' : undefined }),
+        // Of the searches that recorded it (11/19/26 #4), how many were a
+        // reader rephrasing their own previous question.
+        statCard('Rephrased', pct((s.retries || {}).rephrased, (s.retries || {}).recorded),
+          { sub: f.attemptsRecorded ? `${fmt((s.retries || {}).rephrased)} of ${fmt((s.retries || {}).recorded)} searches` : 'recorded from the next database update' }),
         statCard('Cards opened', fmt(e.total), { sub: 'interaction events' }),
         // Share of the searches that recorded the toggle; older rows say nothing.
         statCard('AI Guide on', pct(g.searchesOn, (g.searchesOn || 0) + (g.searchesOff || 0)),
@@ -1677,8 +1791,22 @@
           { sub: `${fmt(g.accountsOff)} of ${fmt(g.accounts)} accounts` }),
       ].join('');
 
-      renderChart(s.perDay || [], Number(days));
+      renderChart(s.perDay || [], w);
       renderTopics(data.trendingTopics);
+
+      const retries = ((s.retries || {}).topRephrased || []).map(q => `
+        <tr class="border-b border-gray-100">
+          <td class="px-4 py-2.5">${esc(q.query)}</td>
+          <td class="px-4 py-2.5 text-right">${fmt(q.searches)}</td>
+          <td class="px-4 py-2.5 text-right ${q.maxAttempt >= 3 ? 'text-amber-700 font-medium' : ''}">${fmt(q.maxAttempt)}</td>
+          <td class="px-4 py-2.5 text-xs text-gray-500 whitespace-nowrap">${esc(day(q.lastSeen))}</td>
+        </tr>`);
+      document.getElementById('an-retries').innerHTML = retries.join('');
+      const retriesEmpty = document.getElementById('an-retries-empty');
+      retriesEmpty.classList.toggle('hidden', retries.length > 0);
+      retriesEmpty.textContent = f.attemptsRecorded
+        ? 'No rephrased questions in this window.'
+        : 'Recorded from the next database update on — nothing to show for earlier searches.';
 
       const topQ = (s.topQueries || []).map(q => `
         <tr class="border-b border-gray-100">
@@ -1720,33 +1848,53 @@
 
     function renderTopics(t) {
       const topics = (t && t.topics) || [];
+      // Which days the ranking covers: a range grouped on demand names its
+      // days; the daily one says "last N days".
+      const span = t && t.custom && t.from ? `${t.from} to ${t.to}` : (t ? `last ${t.windowDays} days` : '');
       document.getElementById('an-topics-meta').textContent = t
-        ? `last ${t.windowDays} days · ${fmt(t.coveredSearches)} of ${fmt(t.totalSearches)} searches grouped · ${day(t.generatedAt)}`
+        ? `${span} · ${fmt(t.coveredSearches)} of ${fmt(t.totalSearches)} searches grouped · ${day(t.generatedAt)}`
         : '';
       const max = Math.max(1, ...topics.map(x => x.searches));
       document.getElementById('an-topics').innerHTML = topics.map((x, i) => `
-        <li class="py-1.5 border-b border-gray-100" title="${esc(x.examples.join(' · '))}">
+        <li class="py-1.5 border-b border-gray-100" title="${esc((x.examples || []).join(' · '))}">
           <div class="flex items-baseline justify-between gap-3">
             <span><span class="text-gray-400 tabular-nums mr-1.5">${i + 1}.</span>${esc(x.topic)}</span>
             <span class="font-medium tabular-nums">${fmt(x.searches)}</span>
           </div>
           <div class="h-1 mt-1 rounded bg-gray-100"><div class="h-1 rounded" style="width:${Math.round(x.searches / max * 100)}%;background:#3A5068"></div></div>
-          <p class="text-xs text-gray-400 truncate mt-0.5">${esc(x.examples.slice(0, 3).join(' · '))}</p>
+          ${x.signal ? `<p class="text-xs text-gray-600 mt-1">${esc(x.signal)}</p>` : ''}
+          <p class="text-xs text-gray-400 truncate mt-0.5">${esc((x.examples || []).slice(0, 3).join(' · '))}</p>
         </li>`).join('');
-      document.getElementById('an-topics-empty').classList.toggle('hidden', topics.length > 0);
+      const empty = document.getElementById('an-topics-empty');
+      empty.classList.toggle('hidden', topics.length > 0);
+      empty.textContent = t
+        ? 'No theme had enough searches behind it in this window — the searches were routine lookups (below).'
+        : 'Not generated yet — it runs daily at 06:00 ET, or use “Regenerate now”.';
+      // Routine searches: counted, never ranked against the themes.
+      const routine = (t && t.routine) || [];
+      const routineEl = document.getElementById('an-topics-routine');
+      routineEl.classList.toggle('hidden', routine.length === 0);
+      routineEl.innerHTML = routine.length
+        ? 'Routine searches, not ranked: ' + routine.map(r =>
+            `<span title="${esc((r.examples || []).join(' · '))}">${esc(r.topic)} <span class="font-semibold text-gray-700">${fmt(r.searches)}</span></span>`).join(' · ')
+        : '';
     }
 
-    async function refreshTopics() {
-      const btn = document.getElementById('an-topics-refresh');
+    /** Regenerate the daily ranking, or (forRange) group the custom range on screen. */
+    async function refreshTopics(forRange) {
+      const btn = document.getElementById(forRange ? 'an-topics-range' : 'an-topics-refresh');
+      const label = btn.textContent;
       btn.disabled = true;
       btn.textContent = 'Grouping…';
       try {
-        const { status, data } = await api('/api/admin/analytics/topics', { method: 'POST' });
+        const w = analyticsWindow || {};
+        const qs = forRange && w.custom ? `?from=${encodeURIComponent(w.from)}&to=${encodeURIComponent(w.to)}` : '';
+        const { status, data } = await api(`/api/admin/analytics/topics${qs}`, { method: 'POST' });
         if (status >= 400) document.getElementById('an-topics-meta').textContent = data.error || 'Could not regenerate.';
         else renderTopics(data.trendingTopics);
       } finally {
         btn.disabled = false;
-        btn.textContent = 'Regenerate now';
+        btn.textContent = label;
       }
     }
 
@@ -1761,12 +1909,16 @@
       { key: 'unknown', label: 'Unknown (before tiers were logged)', color: '#d1d5db' },
     ];
 
-    function renderChart(perDay, days) {
+    function renderChart(perDay, win) {
       const byDay = Object.fromEntries(perDay.map(d => [d.day, d]));
       const bars = [];
-      const today = new Date();
+      // The server says which days the window covers (a rolling one ends
+      // today, a custom range wherever it was set), both inclusive, UTC.
+      const end = new Date(`${(win && win.to) || new Date().toISOString().slice(0, 10)}T00:00:00Z`);
+      const start = win && win.from ? new Date(`${win.from}T00:00:00Z`) : end;
+      const days = Math.min(366, Math.max(1, Math.round((end - start) / 86400e3) + 1));
       for (let i = days - 1; i >= 0; i--) {
-        const d = new Date(today.getTime() - i * 86400e3).toISOString().slice(0, 10);
+        const d = new Date(end.getTime() - i * 86400e3).toISOString().slice(0, 10);
         const row = byDay[d] || {};
         const n = Number(row.searches) || 0;
         const sub = Number(row.subscribers) || 0;

@@ -1899,6 +1899,122 @@ Migration **0024** (`purchases`); AuthIES branch `feat/surecart-purchase-source`
   Vitrium's `DocumentId` equals the export's Doc ID in `vitrium_doc_id` (the
   same assumption comps rest on; AuthIES logs it on every grant).
 
+### The 11/19/26 Teams notes: IES Statements, unknown editions, tool questions, analytics scope (2026-11-20)
+
+Migrations **0031** (`search_log.audience`, `search_log.attempt`, `search_events.audience`)
+and **0032** (`standards.statements_json`). No search-cache schema bump — flush the cache
+after the Statement backfill. **Order: migrate → deploy → `node scripts/backfill-ies-statements.js --apply` → flush.**
+
+- **#1 "the bug rating is a measure of the attractiveness of a luminaire to insects".**
+  Reproduced on production (`"Is the bug rating still applicable`, 11/19). Three causes, each measured:
+  (1) the "IES Statement on TM-15 Zonal Lumen Classification and BUG Ratings" is PDF page 2
+  of TM-15-20 and shares chunk 0 with the cover; a vector's excerpt is 500 characters, the
+  cover's boilerplate takes 150 and the Guide prompt takes 320, so the model saw the
+  Statement's TITLE and none of its text; (2) lower-case "bug" embeds beside insects — an
+  "Insect Attractant Lamps" passage was retrieved; (3) the FRAMING rule asked for a
+  definition the results did not contain, and "In simplified terms" dressed the guess up.
+  - **IES Statements are read whole and stored** (`src/lib/ies-statements.js`,
+    `statements_json` = `[{title, page, date, text}]`, page = PDF index). Detected by the
+    two phrases the client named, at the TOP of a page only: a heading "IES Statement on …"
+    (or "IES Position Statement …") or a first sentence "The Illuminating Engineering
+    Society (IES) recognizes …". Both ingest paths send `statements` (the dashboard always
+    from the PDF, manuscript or not); `runDocumentIngest` stores it in its own UPDATE so a
+    database without 0032 loses only that. Existing corpus: `scripts/backfill-ies-statements.js`
+    (dry run by default; reads the PRODUCTION PDF from R2 — the local TM-15-20 has a blank
+    page 2 — and only writes standards where one is found).
+  - **A search reaches a Statement** (`pickStatements`, `collectIesStatements` in search.ts)
+    when the query names its subject — a family in the title ("TM-15"), an acronym as
+    printed ("BUG"), or TWO of the title's words ("bug rating"; one is not enough: "bug"
+    alone is an insect, "rating" alone is an IP rating) — or when its standard is among
+    the first 8 results. The reader gets a banner line (first of `supersessionNotices`,
+    with a link to the page; also `iesStatements` in the payload, never the text), Guide on or off.
+  - **The Guide receives the full text and may not sum it up.** Measured on Dan's question
+    with the production results: "paraphrase closely" → 3/3 runs opened "the BUG rating is
+    no longer being pursued as a comprehensive means…" (two positions melted into a third);
+    adding "one sentence each, keep the qualifiers" fixed the body but 1 run in 4 opened
+    "its use is no longer recommended", which the Statement does not say. The verdict came
+    from the guide's own FIRST SENTENCE rule. Now the opening sentence is composed by code
+    (`statementOpening`: "The Illuminating Engineering Society addresses this in the "…"
+    (date), printed inside the front cover of …"), the model copies it, then restates at
+    most three sentences one-for-one, then "The Statement itself gives the full wording."
+    `ensureStatementOpening` puts the opening back when the model opens with something
+    else (query-matched Statements only, `lead`). After that: 4/4 runs correct.
+    **Trade-off to know:** the restated sentences are close to verbatim (about 60 words,
+    unquoted, attributed) — faithful beat paraphrased here.
+  - **Without the stored Statement the model answers "the bug rating is still
+    applicable"** (measured). The backfill is not optional for this fix.
+  - `ACRONYM_GLOSSARY` (query-expander.ts): BUG = Backlight, Uplight, Glare — expands the
+    query and hands the Guide a catalogue fact. Applies to "BUG" as printed, or "bug"
+    beside rating/classification/uplight/TM-15; "lighting that attracts fewer bugs" stays
+    an insect question. New prompt rule NEVER DEFINE WHAT THE SOURCES DO NOT DEFINE.
+    `cleanQuery` drops a quotation mark opening or closing the whole query.
+- **#2 An edition that does not exist ("TM-30-22")** lists every edition the catalogue
+  holds: current first (the family's own, or the standard it was merged into), then the
+  deprecated ones newest → oldest, up to 8 (`findStandardLookupResults`,
+  `document.requestedEdition`). `unknownEditionNote` is the catalogue note in the Guide
+  card ("The Lighting Library does not hold a standard designated TM-30-22…").
+  - Found on the way: ids carrying `+R2026`, `+R2023+E1`, `+E1+E2` were read as families of
+    their own (`standardFamily`, `editionYear`, `baseEdition` now share `PRINTING_MARKERS`).
+    That is what printed "LP-4-20(R2026) now includes the content of the deprecated
+    LP-4-20" on unrelated searches, and a lookup of "LP-4-20" now answers with the
+    reaffirmed document instead of calling it a deprecated edition of itself.
+- **#3 Questions about the platform's own tools.** The tutorials WERE indexed (25, daily);
+  the gate did not recognize "where are the illuminance tables?", "what is the compare
+  versions tool", "where is the illuminance selector tool?" — none names an account or a
+  subscription. `featureQuestion` (help-pages.ts, `PRODUCT_FEATURES`) recognizes a tool by
+  NAME and only when nothing else is left in the query and no standard is named, so
+  "ELECTRICAL ROOM illuminance selector" and "illuminance tables for hospitals" (both in
+  the log) stay searches. The answer says what the tool is and where (`featureAnswerText`),
+  links the tool first, then its tutorials. A RETIRED tool (Illuminance Selector, Reference
+  Retriever) named inside an ordinary search adds a banner (`retiredToolNotice`). The
+  bare name "Illuminance Tables" is a tool question (searched 6 times in a month, 3 as
+  "Illuminace"). The help index now also reads each tutorial's How-To guide (`more`, half
+  weight). "Can I download a PDF…" is a help question.
+- **#4 A retry counter, not a session id** (`src/lib/search-attempt.ts`,
+  `search_log.attempt`): 1 for a fresh question; 2, 3… when the same reader rephrased
+  their previous question within 10 minutes (shared content words ≥ half of the shorter
+  query; identical words = the same attempt). The previous query is held in KV for 11
+  minutes as 32-bit word hashes keyed by account (`search-attempt:<scope>:<sub>`), never
+  in D1. **Why not an id:** rows sharing any id can be counted, and `search_usage_daily`
+  has each account's count per day — the join 0028 was built to prevent. Kill switch
+  `LENSY_SEARCH_ATTEMPTS="off"`. Dashboard: "Rephrased" card and a "Questions readers
+  rephrased" table; trending topics count first attempts only.
+- **#5 `ies_id` blank in search_usage.csv:** `PEOPLE_LOOKUP_API_SECRET` was never set on
+  EITHER Worker (Lens returns an empty map; AuthIES answers 404). All 276 accounts in the
+  export do hold a member number in AuthIES. Fix = one value, `wrangler secret put` on both.
+- **#6 Custom date range** — `GET /api/admin/analytics?from=YYYY-MM-DD&to=YYYY-MM-DD`
+  (whole UTC days, inclusive, ≤366; `lib/analytics-scope.ts`), and "Group this date range"
+  runs the trending topics for it without replacing the stored daily ranking.
+- **#7 Staff and demo searches are left out of analytics** (toggles to include them;
+  the counts left out are shown). Staff = `isStaffSession` (session.ts): admin rights, a
+  `staff`/`admin` invitation, an IdP role in `LENSY_STAFF_ROLES` (default
+  `administrator,ies-staff`), or the bearer. Recorded as `audience = 'staff'` — a class,
+  never an identity — from migration 0031 on; earlier rows cannot be classified. Demo
+  searches are matched on the text of `src/frontend/utils/demo-searches.js`, which the
+  search page and the Worker both read (so this covers past rows too).
+- **#8 Trending topics are themes, with routine lookups counted apart**
+  (`lib/trending-topics.ts`). The log is what made the old list bland: of 1,124 searches
+  in 30 days about 840 are plain light-level lookups ("Desk", "OFFICE", "how should I light
+  a classroom"). Now: rules file the routine ones first (`routineGroupOf`: designation,
+  suggestion-launched row, platform question, lookup wording or ≤3 words with no
+  `THEME_CUE_RE` word); pass 1 proposes themes from the rest, each with ≥2 query numbers
+  as EVIDENCE (without that the model recited the prompt's example names) and a `type`
+  it must label "space" honestly; pass 2 labels the open queries one line each
+  ("12=T3") in batches of 50, in parallel. Code drops building types, catch-alls and
+  names made only of space words, and tolerates a trailing comma (one real run in three
+  had one, which used to cost the whole answer). Real log, 3 runs: Exterior Lighting
+  Zones, Lighting Controls, Luminance, Light Trespass, Light Loss Factor, Glare/UGR,
+  Color Temperature, Emergency Lighting, Circadian Rhythm — 9–12 themes of 3–19 searches
+  each, ~30 s. The themes are small because the thematic searches ARE few.
+- **Corpus scan, 2026-11-20 (dry run, first 12 pages of each current standard):** one
+  Statement in the whole corpus — TM-15-20's — and no false positives. RP-8-25+E2 was not
+  scanned (its R2 download hung for 20+ minutes; run `--id RP-8-25+E2` on its own).
+- **Found, not fixed:** 46 current standards have no object in R2 under their `r2_key`
+  ("The specified key does not exist") — 40 of the LM series and TM-21-21, TM-26-20,
+  TM-28-20, TM-31-20, TM-35-19, TM-38-21. Search is unaffected; the backfill scripts read
+  the local copy for them, where a Statement added to the published PDF later would be
+  missing.
+
 ### The 11/12/26 Teams notes: table links, shared-collection options, table reader, help pages (2026-11-12)
 
 No migration. No search-cache bump (flush the cache after the data step of #3).

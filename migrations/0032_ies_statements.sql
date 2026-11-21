@@ -1,0 +1,22 @@
+-- Migration 0032 (Dan, Teams 2026-11-19 #1)
+--
+-- standards.statements_json — the IES Statements printed inside a standard.
+--
+-- "AI Guide provided an erroneous statement 'the bug rating is a measure of
+--  the attractiveness of a luminaire to insects' and it did not ever reference
+--  the 'IES Statement' on the inside cover of TM-15-20 … Perhaps we can train
+--  more broadly for bold direct phrases like 'IES Statement on...' and 'The
+--  Illuminating Engineering Society recognizes' to indicate critical contextual
+--  guidance?"
+--
+-- The Statement shares a chunk with the cover page, and a vector carries only a
+-- 500-character excerpt, so the AI Guide was shown its title and none of its
+-- text. A Statement is therefore read WHOLE at ingest (src/lib/ies-statements.js)
+-- and stored here: a JSON array of { title, page, date, text } — page is the PDF
+-- index — or NULL when the document prints none. Search hands it to the Guide
+-- in full and names it to the reader whenever a search touches its subject.
+--
+-- Filled by both ingest paths, and for the corpus already indexed by
+-- scripts/backfill-ies-statements.js. Before this migration the code fails
+-- open: no column, no Statements, everything else as before.
+ALTER TABLE standards ADD COLUMN statements_json TEXT;

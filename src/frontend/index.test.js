@@ -144,6 +144,10 @@ beforeAll(() => {
   sandbox.globalThis = sandbox;
 
   ctx = vm.createContext(sandbox);
+  // The demo searches live in their own script, shared with the Worker (the
+  // analytics leave exact copies of them out — Dan, 11/19/26 #7); the page
+  // loads it before the app script, and so does this.
+  vm.runInContext(readFileSync(join(here, 'utils', 'demo-searches.js'), 'utf8'), ctx, { filename: 'utils/demo-searches.js' });
   vm.runInContext(app, ctx, { filename: 'index.html:app' });
   run = (expr) => vm.runInContext(expr, ctx);
 });

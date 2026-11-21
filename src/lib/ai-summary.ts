@@ -247,6 +247,62 @@ export interface AIRequestOptions {
    * measurement / vision-science committees' standards first.
    */
   conceptQuery?: boolean;
+  /**
+   * IES Statements that bear on this search (Dan, 11/19/26 #1) — a position of
+   * the Society printed inside a standard, handed over WHOLE because a vector's
+   * excerpt never held more than its title (src/lib/ies-statements.js). The
+   * model is told to lead with it and never to contradict it.
+   */
+  statements?: GuideStatement[];
+}
+
+/** One IES Statement as the Guide is shown it. */
+export interface GuideStatement {
+  title: string;
+  /** Full designation of the standard it is printed in ("ANSI/IES TM-15-20"). */
+  printedIn: string;
+  /** "inside the front cover" / "on p. 5". */
+  location: string;
+  date: string | null;
+  text: string;
+  /**
+   * True when the QUERY itself reached the Statement ("is the bug rating still
+   * applicable"), as opposed to its standard merely being among the results:
+   * the answer is then held to open with it (`ensureStatementOpening`).
+   */
+  lead?: boolean;
+}
+
+/** How much of one Statement reaches the prompt. TM-15's is 2,400 characters. */
+const STATEMENT_PROMPT_CHARS = 3600;
+
+/**
+ * The sentence an answer about an IES Statement opens with — composed here,
+ * copied by the model, and put back by `ensureStatementOpening` when the model
+ * writes its own instead. It says where the position is printed and nothing
+ * about what the position IS, which is the part that must not be improvised.
+ */
+export function statementOpening(s: GuideStatement): string {
+  // The title is quoted, so it is held to the 15-word quotation limit like
+  // everything else between quotation marks; a longer one is not named.
+  const quotable = /^IES\s+(?:Position\s+)?Statement\b/i.test(s.title) && s.title.trim().split(/\s+/).length <= 14;
+  const named = quotable ? `the "${s.title}"` : 'an IES Statement';
+  return `The Illuminating Engineering Society addresses this in ${named}${s.date ? ` (${s.date})` : ''}, printed ${s.location} of ${s.printedIn}.`;
+}
+
+/**
+ * Hold the opening for a Statement the QUERY itself reached (`lead`): when the
+ * answer does not name that Statement in its first paragraph, the opening
+ * sentence is put in front of it as a paragraph of its own. Conservative — it
+ * adds a sentence that is true whatever the model wrote, and removes nothing.
+ */
+export function ensureStatementOpening(text: string, statements: GuideStatement[] | undefined): string {
+  const lead = (statements || []).find(s => s.lead);
+  if (!lead || !text.trim()) return text;
+  const firstParagraph = text.trim().split(/\n\s*\n/)[0] || '';
+  const fold = (v: string) => v.toLowerCase().replace(/[^a-z0-9]+/g, ' ');
+  if (fold(firstParagraph).includes(fold(lead.title))) return text;
+  return `${statementOpening(lead)}\n\n${text.trim()}`;
 }
 
 /**
@@ -265,7 +321,7 @@ export async function generateResponse(
 ): Promise<AISummary> {
   const mode: AIMode = opts.mode || 'guide';
   const answerStyle: AnswerStyle = opts.answerStyle || 'auto';
-  const userPrompt = buildPrompt(query, searchResults, mode, opts.comparison, answerStyle, opts.authorityNotice, opts.facts, opts.conceptQuery);
+  const userPrompt = buildPrompt(query, searchResults, mode, opts.comparison, answerStyle, opts.authorityNotice, opts.facts, opts.conceptQuery, opts.statements);
 
   // Invoke through `ai` — NEVER a detached reference.
   //
@@ -349,7 +405,12 @@ export async function generateResponse(
   // The framing rule (client, 2026-10-14) acts last, on the sentence that
   // actually opens the answer once the filler is gone.
   const cleaned = stripOpeningFluff(stripFormulasFromAnswer(sanitizeQuotes(text)));
-  const sanitized = (mode === 'guide' ? frameOpeningDefinition(cleaned) : cleaned).trim();
+  // An IES Statement the query reached opens the answer (Dan, 11/19/26 #1) —
+  // put back here when the model opened with something of its own. After the
+  // framing step, so "In simplified terms," is never set in front of it.
+  const sanitized = ensureStatementOpening(
+    (mode === 'guide' ? frameOpeningDefinition(cleaned) : cleaned).trim(), opts.statements,
+  ).trim();
   const violations = checkCopyrightViolations(sanitized);
   if (violations.length > 0) {
     console.warn('Copyright violations survived sanitization, using safe fallback:', violations);
@@ -589,6 +650,7 @@ function buildPrompt(
   authorityNotice?: string | null,
   facts?: string[],
   conceptQuery = false,
+  statements?: GuideStatement[],
 ): string {
   const picked = pickResults(searchResults, mode, comparison);
   const resultsSummary = picked.map((r, idx) => describeResult(r, idx, mode)).join('\n\n');
@@ -610,9 +672,47 @@ function buildPrompt(
       + facts.map(f => `- ${f}`).join('\n') + '\n'
     : '';
 
-  if (mode === 'comparison') return header + notice + factsBlock + comparisonInstructions(comparison);
-  if (mode === 'references') return header + notice + factsBlock + referencesInstructions();
-  return header + notice + factsBlock + guideInstructions(answerStyle, conceptQuery);
+  // Dan, 11/19/26 #1: an IES Statement is the Society's own position, and the
+  // excerpts never carried more than its title. It goes in whole, ahead of the
+  // instructions, with its own rules — it outranks the body text around it.
+  const statementsBlock = statements && statements.length > 0
+    ? '\nIES STATEMENTS (official positions of the Illuminating Engineering Society, printed in the standards named. '
+      + 'They are authoritative and MORE RECENT than the body text of those standards):\n'
+      + statements.map((s, i) =>
+          `[IES Statement ${i + 1}] "${s.title}" — printed ${s.location} of ${s.printedIn}${s.date ? `, dated ${s.date}` : ''}.\n`
+          + `  Full text: "${s.text.substring(0, STATEMENT_PROMPT_CHARS)}"\n`
+          + `  Opening sentence to copy: ${statementOpening(s)}`).join('\n')
+      // The reporting rules are strict on purpose, and were arrived at by
+      // measurement (11/20/26, Dan's own question, the production results):
+      //   "paraphrase closely"            → 3 of 3 runs opened "the BUG rating
+      //     is no longer being pursued as a comprehensive means of evaluating…":
+      //     two positions of the Statement (IES is no longer pursuing REVISIONS
+      //     to the system; IES does not CONSIDER it a comprehensive means)
+      //     melted into a third it does not state.
+      //   + "one sentence each, keep the qualifiers" → the body came right, but
+      //     the answer still OPENED with a verdict of the model's own, and one
+      //     run in four wrote "its use is no longer recommended", which the
+      //     Statement does not say.
+      // The verdict comes from the guide's own FIRST SENTENCE rule ("answer the
+      // question"). So the opening is no longer the model's to write: it copies
+      // a sentence composed here, and summing the Statement up is forbidden.
+      // On a subject the client calls politically sensitive, a confident
+      // one-line summary is the most dangerous sentence in the answer.
+      + '\nHow to use an IES Statement:\n'
+      + '- If it bears on the question, your answer BEGINS with a paragraph about it, built exactly like this:\n'
+      + '    1. Its "Opening sentence to copy", word for word.\n'
+      + '    2. Then AT MOST THREE sentences reporting what it says about the question. Each restates ONE sentence of the Statement and keeps its subject, its verb and its qualifiers exactly as the Statement has them ("is no longer pursuing revisions to …", "does not consider … to be a comprehensive means of …", "recommends continued reference to … until …"). When the question asks whether something still applies, is still valid or is still recommended, report FIRST what the Statement recommends for present practice.\n'
+      + '    3. Then this sentence: "The Statement itself gives the full wording."\n'
+      + '- That paragraph REPLACES the "FIRST SENTENCE" rule below. Do not open with a conclusion of your own, and never sum the Statement up in a verdict: write "obsolete", "deprecated", "withdrawn", "replaced", "discontinued", "no longer recommended", "no longer valid", "no longer applicable" or "still valid" only if the Statement itself uses those words.\n'
+      + '- Never merge two of its positions into one sentence, and never make a position stronger, weaker or broader than the Statement makes it.\n'
+      + '- After that paragraph add, briefly, what the results contribute. Never contradict the Statement, never present as current guidance something it says IES no longer pursues, maintains or recommends, and never say the standards do not cover a question the Statement answers.\n'
+      + '- Quote at most 15 words of it, and add no interpretation of your own.\n'
+      + '- If it does not bear on the question, do not mention it and ignore these rules.\n'
+    : '';
+
+  if (mode === 'comparison') return header + notice + factsBlock + statementsBlock + comparisonInstructions(comparison);
+  if (mode === 'references') return header + notice + factsBlock + statementsBlock + referencesInstructions();
+  return header + notice + factsBlock + statementsBlock + guideInstructions(answerStyle, conceptQuery);
 }
 
 /**
@@ -804,7 +904,18 @@ const FRAMING_INSTRUCTION = `- FRAMING OF DEFINITIONS AND STATEMENTS OF FACT: wh
     • "A practical way to understand it is …"
     • "… might be summarized as …; see [designation, section] for the precise definition."
     • "[designation] provides a detailed explanation of how …"
-  Never present your own paraphrase as the standard's definition. Where a DEFINITION result is listed above, point to it for the precise wording.`;
+  Never present your own paraphrase as the standard's definition. Where a DEFINITION result is listed above, point to it for the precise wording.
+  These phrases mark a simplification OF WHAT THE SOURCES ABOVE SAY. They never license an explanation the sources do not contain — see the next rule.`;
+
+/**
+ * Dan, 11/19/26 #1: "the bug rating is a measure of the attractiveness of a
+ * luminaire to insects". The results USED the term (one passage carried the
+ * title of the IES Statement on BUG Ratings) and none defined it; the framing
+ * rule above asked for a definition anyway, and the model supplied one from
+ * the everyday word. Framing a guess as "in simplified terms" made it read as
+ * the standard's own meaning.
+ */
+const NO_UNSOURCED_DEFINITION_INSTRUCTION = `- NEVER DEFINE WHAT THE SOURCES DO NOT DEFINE. Explain a term, expand an acronym, or say what a rating, index or metric "measures" ONLY when a result, a catalogue fact or an IES Statement above says so. A term the results merely USE is not defined by them — in that case name the standard that covers it and stop; do not supply a meaning. Never infer the meaning of an acronym from an everyday word it happens to spell. An invented definition is the most damaging thing you can write here.`;
 
 /** Concept questions lead with the foundational committees (client, 2026-10-14). */
 const CONCEPT_INSTRUCTION = `- THIS QUESTION ASKS WHAT A TERM OR CONCEPT MEANS, OR HOW CONCEPTS DIFFER. Build the answer from the standards whose authoring committee's scope is terminology, measurement or the science of light and vision (marked above), and lead with them. Application standards (retail, office, roadway, museum …) may follow only as brief examples of how the concept is used, never as the primary source.`;
@@ -828,6 +939,7 @@ Instructions — write a GUIDE, not a list (client requirement):
   both forbidden openings: they carry no information. Open with the substance —
   a framed explanation (see FRAMING below), or the standard that answers it.
 ${FRAMING_INSTRUCTION}
+${NO_UNSOURCED_DEFINITION_INSTRUCTION}
 ${conceptQuery ? `${CONCEPT_INSTRUCTION}\n` : `${APPLICATION_LEAD_INSTRUCTION}\n`}${shapeInstruction(style)}
 - Explain, standard by standard, WHAT the relevant guidance covers and WHY that section matters. Use the excerpts above as your only source.
 - Where the results include illuminance-table rows, explain how to read and apply them (Task vs Area, maintained targets, uniformity/ratio basis, measurement height) and point the user to the result cards for the values themselves.
@@ -835,7 +947,7 @@ ${conceptQuery ? `${CONCEPT_INSTRUCTION}\n` : `${APPLICATION_LEAD_INSTRUCTION}\n
 - Every paragraph must add new information. Do not restate in paragraph 3 what paragraph 2 already said, and say "refer to the result cards for the values" once at most.
 - "Further reading": add ONE additional IES standard only where it genuinely deepens the answer, with a sentence on what it adds — chosen from the results above whenever one fits. Omit the heading entirely when it would not — a further-reading line that exists to fill a template is padding.
 - Name each standard by its exact designation as printed above (e.g. ANSI/IES RP-2-20+E1) every time you refer to it.
-- Name ONLY standards that appear in the Search Results above (or in the catalogue facts, when any are given). NEVER name a standard, edition, section or page from your own memory, even one you are sure existed: IES withdraws and renumbers editions, and a designation you remember may be decades out of date. A designation that is not in the IES catalogue is removed from your answer, together with the paragraph that relies on it. If the results do not cover the question, use the "cannot answer" rule below instead.
+- Name ONLY standards that appear in the Search Results above (or in the catalogue facts or IES Statements, when any are given). NEVER name a standard, edition, section or page from your own memory, even one you are sure existed: IES withdraws and renumbers editions, and a designation you remember may be decades out of date. A designation that is not in the IES catalogue is removed from your answer, together with the paragraph that relies on it. If the results do not cover the question, use the "cannot answer" rule below instead.
 - Never quote more than 15 words from any single source; never repeat a quote from the same source.
 - Do NOT state specific lux / footcandle values — refer the user to the result cards and PDF excerpts.
 - NEVER write a formula, equation or symbolic expression, even one shown in an excerpt. Say what it computes and where it is printed, and refer the reader to that page.

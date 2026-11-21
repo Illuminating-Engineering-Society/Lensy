@@ -426,6 +426,11 @@ export interface DocumentCard {
   collection: string | null;
   /** How the query matched: the designation (exact or a close variant), or the title. */
   matchedOn: 'designation' | 'title';
+  /**
+   * The designation the reader typed, when the catalogue holds no such edition
+   * ("TM-30-22") and the cards list every edition that does exist (11/19/26 #2).
+   */
+  requestedEdition?: string;
 }
 
 /** One ANSI/IES LS-1 definition on a Definition result card (client DO33). */

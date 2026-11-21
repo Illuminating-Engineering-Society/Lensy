@@ -76,6 +76,7 @@ import { extractDocumentAssets } from '../src/lib/document-assets.js';
 import { extractCoverMetadata, extractCoverCommittee } from '../src/lib/cover-title.js';
 import { extractReferenceMarkers } from '../src/lib/reference-markers.js';
 import { deriveStandardId, inferFullDesignation } from '../src/lib/standard-id.js';
+import { detectIesStatements } from '../src/lib/ies-statements.js';
 import {
   extractApplicationsFromPages,
   reportExtractionQuality,
@@ -533,6 +534,13 @@ async function ingestFile(filePath, standardId, status = 'current') {
   // contents the List Standards page offers — and the section-title map is
   // derived from it, so the two can never disagree.
   const outline = extractOutline(pages);
+  // An "IES Statement on …" page (TM-15-20 prints one inside its front cover)
+  // is the Society's position and goes to the AI Guide whole, not as a
+  // 500-character excerpt that shares its chunk with the cover.
+  const statements = detectIesStatements(pages);
+  if (statements.length > 0) {
+    console.log(`  IES Statements: ${statements.map(s => `"${s.title}" (p. ${s.page})`).join('; ')}`);
+  }
   const sections = {};
   for (const entry of outline) if (!sections[entry.number]) sections[entry.number] = entry.title;
   const sectionCount = outline.length;
@@ -585,6 +593,8 @@ async function ingestFile(filePath, standardId, status = 'current') {
     assets,
     // Printed folios (Dan, 11/06/26); the Worker validates and stores them.
     pageLabels: pageLabels ?? null,
+    // IES Statements printed in the document (Dan, 11/19/26 #1), read whole.
+    statements,
     r2Key,
   });
 

@@ -258,7 +258,12 @@ export function stripQueryLabel(query: string): string {
 }
 
 export function cleanQuery(query: string): string {
-  const original = stripQueryLabel(query).trim();
+  // A quotation mark opening or closing the whole query is a paste artefact —
+  // the search that produced the "insects" answer was logged as
+  // `"Is the bug rating still applicable` (11/19/26) — and it kept every
+  // question pattern below, all anchored on the first word, from matching.
+  const labelled = stripQueryLabel(query).trim();
+  const original = labelled.replace(/^["'“”‘’]+|["'“”‘’]+$/g, '').trim() || labelled;
   let q = original;
 
   for (const pattern of QUESTION_PATTERNS) {
@@ -305,6 +310,51 @@ export const SYMBOL_GLOSSARY: Array<{ re: RegExp; symbol: string; meaning: strin
   { re: /(?<![A-Za-z])T_?cp(?![A-Za-z])/, symbol: 'Tcp', meaning: 'correlated color temperature', expand: 'correlated color temperature CCT' },
 ];
 
+/**
+ * ACRONYMS that are also everyday words (Dan, Teams 11/19/26 #1).
+ *
+ * "Is the bug rating still applicable" was answered: "the bug rating is a
+ * measure of the attractiveness of a luminaire to insects". Typed in lower
+ * case, "bug" embeds next to insects — the search retrieved a passage on
+ * "Insect Attractant Lamps" — and nothing told the model otherwise. BUG is
+ * Backlight, Uplight, Glare: the outdoor luminaire rating system of ANSI/IES
+ * TM-15, and "incredibly sensitive at the moment, 'politically'".
+ *
+ * Each entry does two things when its test matches: it EXPANDS the query, so
+ * retrieval looks where the acronym lives, and it hands the AI Guide a FACT
+ * saying what the letters stand for, so the model is never left to guess a
+ * meaning from the everyday word. The test accepts the acronym as printed
+ * (case-sensitive) or the everyday spelling beside a word that settles it
+ * ("bug rating") — "lighting that attracts fewer bugs" stays an insect
+ * question.
+ */
+export const ACRONYM_GLOSSARY: Array<{ acronym: string; applies: (query: string) => boolean; expand: string; fact: string }> = [
+  {
+    acronym: 'BUG',
+    applies: (q) =>
+      /(?<![A-Za-z])BUG(?![A-Za-z])/.test(q)
+      || /\bb\.u\.g\b/i.test(q)
+      || /\bbug[\s-]+(?:rat(?:ing|ings|ed)|classifications?|values?|system|limits?|requirements?)\b/i.test(q)
+      || (/\bbugs?\b/i.test(q) && /\b(?:backlight|uplight|tm-?15|luminaire\s+classification|zonal\s+lumens?)\b/i.test(q)),
+    expand: 'BUG rating backlight uplight glare outdoor luminaire classification system zonal lumen TM-15',
+    fact: 'In IES standards "BUG" is an ACRONYM: Backlight, Uplight and Glare. A BUG rating describes the optical '
+      + 'performance and stray light of an outdoor luminaire, and belongs to the luminaire classification system of '
+      + 'ANSI/IES TM-15. It has nothing to do with insects. Never explain a BUG rating in any other terms, and never '
+      + 'say what it "measures" beyond what the results or an IES Statement below say.',
+  },
+];
+
+/** The glossary entries a query calls for. */
+export function acronymMatches(query: string): typeof ACRONYM_GLOSSARY {
+  const q = normalizeTypography(String(query || ''));
+  return ACRONYM_GLOSSARY.filter(entry => entry.applies(q));
+}
+
+/** What the AI Guide is told about the acronyms in a query (catalogue facts). */
+export function acronymFacts(query: string): string[] {
+  return acronymMatches(query).map(entry => entry.fact);
+}
+
 /** The expansion words for every symbol the (cased) query contains. */
 export function symbolExpansions(query: string): string[] {
   const out: string[] = [];
@@ -331,6 +381,10 @@ export function expandQuery(query: string): string {
   // Matched on the CASED text: "Ev" is vertical illuminance, "EV" is an
   // electric vehicle; "Rf" is the TM-30 Fidelity Index, not radio frequency.
   for (const word of symbolExpansions(cleaned)) expansions.add(word.toLowerCase());
+  // Acronyms that are also everyday words — "bug rating" (11/19/26 #1).
+  for (const entry of acronymMatches(cleaned)) {
+    for (const word of entry.expand.split(/\s+/)) expansions.add(word.toLowerCase());
+  }
 
   for (const [term, synonymText] of Object.entries(SYNONYMS)) {
     // Match on whole-word boundary to avoid "spa" matching "space"

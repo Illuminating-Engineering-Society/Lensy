@@ -32,6 +32,12 @@ declare global {
     // the entitlement is not in the cookie yet; when it is, set it here rather
     // than editing code.
     LENSY_SUBSCRIBER_ROLES?: string;
+    // Comma-separated IdP role slugs that mark IES staff, whose searches the
+    // analytics leave out (Dan, 11/19/26 #7). Unset → administrator,ies-staff.
+    LENSY_STAFF_ROLES?: string;
+    // "off" stops recording the anonymous retry counter on search_log rows
+    // (Dan, 11/19/26 #4 — src/lib/search-attempt.ts). Anything else → on.
+    LENSY_SEARCH_ATTEMPTS?: string;
     // ── 1-concurrent-session cap (client, 2026-09-04) ───────────────────────
     // "off" disables it; anything else (including unset) enforces one Lensy
     // seat per account, newest sign-in wins (src/lib/session-cap.ts).

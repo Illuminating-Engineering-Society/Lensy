@@ -1341,6 +1341,7 @@
 
   <script src="/utils/api.js"></script>
   <script src="/utils/application-suggest.js"></script>
+  <script src="/utils/demo-searches.js"></script>
   <script>
     // ── Feature flags ────────────────────────────────────────────────────────
     // compareVersions gates the "Compare Versions" filter checkbox and the
@@ -3082,22 +3083,11 @@
     const RECENT_MAX = 5;
 
     // "Try searching for" — the four demo queries from the client's wireframe,
-    // each carrying the filter state that makes it a good demonstration.
-    // Each state names EVERY content kind rather than the ones it wants on: the
-    // defaults now have all four selected (DO57), so a partial state would leave
-    // Definitions and References switched on in a demo that means to exclude them.
-    // Every demo leaves the AI Guide ON, matching the new default: a demo that
-    // silently un-pressed the toggle would read as the control breaking.
-    const DEMO_SEARCHES = [
-      { query: 'What are considerations for lighting parking garages?',
-        state: { body: true, tables: true, definitions: false, references: false, guide: true } },
-      { query: 'Provide a list of references in IES standards related to human vision.',
-        state: { body: false, tables: false, definitions: false, references: true, guide: true } },
-      { query: 'What is new in the current version of ANSI/IES RP-43?',
-        state: { body: true, tables: true, definitions: false, references: false, compare: true, guide: true } },
-      { query: 'Show me recommended illuminance levels for lighting walkways',
-        state: { tables: true, body: false, definitions: false, references: false, guide: true } },
-    ];
+    // each carrying the filter state that makes it a good demonstration. The
+    // list itself lives in /utils/demo-searches.js, which the Worker reads too:
+    // search analytics leave exact copies of these out (Dan, 11/19/26 #7), so
+    // the page and the analytics must be looking at the same wording.
+    const DEMO_SEARCHES = Array.isArray(window.LENS_DEMO_SEARCHES) ? window.LENS_DEMO_SEARCHES : [];
 
     function recentSearches() {
       try {

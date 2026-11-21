@@ -65,7 +65,9 @@
 import {
   prepareQueryForEmbedding, splitMultiQuery, cleanQuery, stripQueryLabel,
   isVersionComparisonQuery, isReferenceQuery, isDefinitionQuery, isConceptQuery, normalizeTypography,
+  acronymFacts,
 } from '../lib/query-expander';
+import { parseStatements, pickStatements, statementLocation } from '../lib/ies-statements.js';
 import {
   DEFINITIONS_STANDARD_FULL, DEFINITIONS_STANDARD_TITLE,
 } from '../lib/definitions.js';
@@ -77,6 +79,7 @@ import {
 import { resolveSearchGrant } from './session';
 import { dailySearchCap, enforceDailySearchCap } from '../lib/search-cap';
 import { recordSearchUsage } from '../lib/search-usage';
+import { nextSearchAttempt } from '../lib/search-attempt';
 import { generateResponse } from '../lib/ai-summary';
 import { rerankResults, extractGuideCitations, curateResults, conceptOrderForGuide } from '../lib/curation';
 import { generateRefinePrompt } from '../lib/refine';
@@ -100,6 +103,7 @@ import {
 import { isProductQuestion, productAnswerText } from '../lib/product';
 import {
   isHelpQuestion, helpAnswerText, matchHelpLinks, defaultHelpLinks, loadHelpIndex,
+  featureQuestion, featureAnswerText, featureHelpLinks, retiredToolMentioned, retiredToolNotice,
 } from '../lib/help-pages';
 import { resolveQueryLanguage, localizeSummary } from '../lib/language';
 import { hasEnvConsiderationColumns, parseLightingZoneLabel } from '../lib/illuminance-fields.js';
@@ -379,6 +383,19 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
     if (ctx?.waitUntil) ctx.waitUntil(usageWrite); else await usageWrite;
   }
 
+  // What the anonymous search log records beside the query (Dan, 11/19/26):
+  //   audience — 'staff' for IES staff and the staff bearer, so analytics can
+  //     leave their test searches out (#7). A class, never an identity.
+  //   attempt  — 1 for a fresh question, 2+ when this reader rephrased their
+  //     previous one within ten minutes (#4). A counter, deliberately not a
+  //     session id: lib/search-attempt.ts says why.
+  const logMeta: SearchLogMeta = { audience: grant.staff ? 'staff' : null, attempt: null };
+  if (grant.user) {
+    const tracked = await nextSearchAttempt(env, grant.scope, grant.user.sub, query);
+    logMeta.attempt = tracked.attempt;
+    if (ctx?.waitUntil) ctx.waitUntil(tracked.write); else await tracked.write;
+  }
+
   // ── Daily search cap for non-subscribers (client Teams update, 2026-09-08) ──
   // "Subscribers: No daily cap … Non-Subscribers: Enforce 20x daily search cap."
   // Counted AFTER validation (a 400 spends nothing) and BEFORE the cache lookup
@@ -470,7 +487,7 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
       sectionLinks: {},
       timestamp: new Date().toISOString(),
     };
-    const logWrite = logSearch(env, refusedPayload, false, guideRequested);
+    const logWrite = logSearch(env, refusedPayload, false, guideRequested, logMeta);
     if (ctx?.waitUntil) ctx.waitUntil(logWrite); else await logWrite;
     return jsonResponse({ ...refusedPayload, cached: false });
   };
@@ -490,12 +507,21 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
   // Same shape as the product answer: no retrieval, no model, no cards — a
   // fixed sentence and the links (src/lib/help-pages.ts). Which links is the
   // one thing the index decides; with no index the curated topics route it.
+  //
+  // ── A question about one of the product's own TOOLS (Dan, 11/19/26 #3) ──────
+  // "where are the illuminance tables?", "what is the compare versions tool",
+  // "where is the illuminance selector tool?" — recognized by the tool's name
+  // (featureQuestion). The answer says what the tool is and where it is found,
+  // and the links lead with the tool itself, then its tutorials.
   const productQuestion = isProductQuestion(rawQuery);
   const helpQuestion = !productQuestion && isHelpQuestion(rawQuery);
+  const toolQuestion = helpQuestion ? featureQuestion(rawQuery) : null;
   if (productQuestion || helpQuestion) {
-    const helpLinks = helpQuestion
-      ? matchHelpLinks(rawQuery, await loadHelpIndex(env))
-      : defaultHelpLinks();
+    const helpLinks = toolQuestion
+      ? featureHelpLinks(toolQuestion, rawQuery, await loadHelpIndex(env))
+      : helpQuestion
+        ? matchHelpLinks(rawQuery, await loadHelpIndex(env))
+        : defaultHelpLinks();
     const productPayload = {
       query: rawQuery,
       queryLanguage: null,
@@ -510,11 +536,14 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
       aiGuideRequiredNotice: null,
       results: [] as SearchResult[],
       aiSummary: {
-        text: helpQuestion ? helpAnswerText() : productAnswerText(),
+        text: toolQuestion ? featureAnswerText(toolQuestion)
+          : helpQuestion ? helpAnswerText() : productAnswerText(),
         watermark: null,
-        disclaimer: helpQuestion
-          ? 'Accounts, subscriptions and how-to questions are answered on the pages below.'
-          : 'About IES Lens and the IES Lighting Library.',
+        disclaimer: toolQuestion
+          ? 'About the tools of IES Lens and the Lighting Library.'
+          : helpQuestion
+            ? 'Accounts, subscriptions and how-to questions are answered on the pages below.'
+            : 'About IES Lens and the IES Lighting Library.',
         mode: 'guide',
         helpLinks,
       } as AISummary,
@@ -534,7 +563,7 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
       sectionLinks: {},
       timestamp: new Date().toISOString(),
     };
-    const logWrite = logSearch(env, productPayload, false, guideRequested);
+    const logWrite = logSearch(env, productPayload, false, guideRequested, logMeta);
     if (ctx?.waitUntil) ctx.waitUntil(logWrite); else await logWrite;
     return jsonResponse({ ...productPayload, cached: false });
   }
@@ -569,7 +598,7 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
   if (cachedPayload) {
     // Cache hits are logged too — staff analytics must see every query, not
     // only the ones that missed the cache.
-    const logWrite = logSearch(env, cachedPayload, true, guideRequested);
+    const logWrite = logSearch(env, cachedPayload, true, guideRequested, logMeta);
     if (ctx?.waitUntil) ctx.waitUntil(logWrite); else await logWrite;
     // searchCap is PERSONAL state (this reader's daily-window count) attached
     // outside the shared cached payload — a cached answer still spent a search.
@@ -708,7 +737,9 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
   // an AI Guide note indicating it is deprecated and what the current standard
   // is"). Not a model answer — a catalogue fact, worded as the Compare Versions
   // advisory words it — so it is shown even with the Guide off or capped.
-  const deprecatedNote = deprecatedLookupNote(documentCards);
+  // …or an edition IES never published ("TM-30-22", Dan 11/19/26 #2): the note
+  // says so and names the editions that do exist, which are the cards.
+  const deprecatedNote = unknownEditionNote(documentCards) ?? deprecatedLookupNote(documentCards);
 
   // ── Deprecated content (version-comparison queries ONLY) ─────────────────────
   // "what's new in RP-6?" may cite the deprecated edition alongside the
@@ -920,6 +951,43 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
     }
   }
 
+  // ── Acronyms that are also everyday words (Dan, 11/19/26 #1) ─────────────────
+  // "Is the bug rating still applicable" → "a measure of the attractiveness of
+  // a luminaire to insects". The Guide is told what the letters stand for, as a
+  // catalogue fact, so it never has to guess from the everyday word.
+  if (!outOfScope) supersession.facts.push(...acronymFacts(searchQuery));
+
+  // ── IES Statements (Dan, 11/19/26 #1) ───────────────────────────────────────
+  // A position of the Society printed inside a standard — TM-15-20 carries the
+  // "IES Statement on TM-15 Zonal Lumen Classification and BUG Ratings" inside
+  // its front cover. The Guide receives it WHOLE and is told to lead with it;
+  // the reader gets a notice naming it, with the Guide on or off.
+  const iesStatements = outOfScope
+    ? []
+    : await collectIesStatements(env, searchQuery, allResults.results, pageLabelIndex);
+  if (iesStatements.length > 0) {
+    supersession.notices.unshift(...iesStatements.map(statementNotice));
+  }
+
+  // ── A retired tool named inside an ordinary search (Dan, 11/19/26 #3) ───────
+  // "ELECTRICAL ROOM illuminance selector" wants the illuminance of an
+  // electrical room — the search runs as it is — and the reader is told the
+  // Illuminance Selector is going away. (The bare question, "where is the
+  // illuminance selector tool?", never reaches this point: it was answered
+  // above as a tool question.)
+  const retiredTool = outOfScope ? null : retiredToolMentioned(searchQuery);
+  if (retiredTool) {
+    supersession.notices.push(retiredToolNotice(retiredTool));
+    // The Guide used to answer "the illuminance selector tool is not explicitly
+    // mentioned in the provided search results" — true, and useless. It is told
+    // what the words refer to, and to answer the lighting question beside them.
+    supersession.facts.push(
+      `"${retiredTool.title}" is the name of a tool of the original IES Lighting Library platform, which IES is retiring — `
+      + 'it is not an IES standard and not a lighting term. Do not describe it or say the results do not mention it; '
+      + 'a notice about it is already displayed above your answer. Answer the lighting question in the query.',
+    );
+  }
+
   // ── Related applications + optional AI summary (run concurrently) ────────────
   // Related apps: top result only, and only for true application rows — chunk
   // results have no D1 identity to find siblings for. Exclude only the seed
@@ -991,6 +1059,11 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
             authorityNotice,
             facts: supersession.facts,
             conceptQuery,
+            statements: iesStatements.map(s => ({
+              title: s.title, printedIn: s.designation, location: s.location, date: s.date, text: s.text,
+              // The query itself reached this Statement: the answer opens with it.
+              lead: s.matched === 'query',
+            })),
           });
           // Nothing the Guide names may come from its own memory (Dan,
           // 2026-10-16: "RP-33-99, Section 5, p. 12" — a 1999 edition no index
@@ -1000,7 +1073,9 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
               const grounding = dropUngroundedDesignations(
                 generated.text,
                 await fetchStandardsIndex(env.DB),
-                [searchQuery, rawQuery, ...supersession.facts, ...guideGroundingSources(guideInput)],
+                [searchQuery, rawQuery, ...supersession.facts, ...guideGroundingSources(guideInput),
+                  // An IES Statement is shown to the model whole, so what it names is grounded.
+                  ...iesStatements.map(s => `${s.designation} ${s.title} ${s.text}`)],
                 { allowDeprecated: aiMode === 'comparison' },
               );
               if (grounding.removed.length > 0) {
@@ -1296,6 +1371,9 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
     // in these results absorbed others (client, 2026-09-23). Empty when nothing
     // in the catalogue bears on this search.
     supersessionNotices: supersession.notices,
+    // The IES Statements that bear on this search (Dan, 11/19/26 #1): where
+    // each is printed and its link — never its text, which is the standard's.
+    iesStatements: iesStatements.map(({ text: _text, ...rest }) => rest),
     outOfScope,
     // Ways out of an empty result set (client DO077).
     noResultsGuidance,
@@ -1336,7 +1414,7 @@ export async function handleSearch(request: Request, env: Env, ctx: ExecutionCon
     || (includeAISummary && queryLang.translated && aiSummary != null
         && (aiSummary as { language?: string }).language !== queryLang.language);
   const cacheWrite = skipCache ? Promise.resolve() : putCachedSearch(kv, cacheKey, payload);
-  const logWrite = logSearch(env, payload, false, guideRequested);
+  const logWrite = logSearch(env, payload, false, guideRequested, logMeta);
   if (ctx?.waitUntil) {
     ctx.waitUntil(cacheWrite);
     ctx.waitUntil(logWrite);
@@ -1572,11 +1650,23 @@ export function matchesStandardScope(filters: SearchFilters, id: string | null |
   return upper === family || upper.startsWith(`${family}-`);
 }
 
+/**
+ * What may follow the two-digit edition year in an id: a reaffirmation
+ * ("R25", "+R2026", "(R2023)") and any number of errata ("+E1", "+E1+E2"), in
+ * any order. One pattern for the family, the year and the base edition —
+ * "LP-4-20+R2026" used to be read as a family of its own, which made the
+ * catalogue announce that LP-4-20(R2026) "now includes the content of the
+ * deprecated LP-4-20" (found 11/19/26).
+ */
+const PRINTING_MARKERS = String.raw`(?:\+?R\d{2,4}|\(R\d{2,4}\)|\+E\d+)*`;
+const FAMILY_OF_ID_RE = new RegExp(String.raw`^(.+?)-\d{2}${PRINTING_MARKERS}$`);
+const YEAR_OF_ID_RE = new RegExp(String.raw`-(\d{2})${PRINTING_MARKERS}$`);
+
 /** The family prefix of a standard id: "RP-8-25" → "RP-8", "TM-30-18" → "TM-30". */
 function standardFamily(id: string | null | undefined): string {
   if (!id) return '';
   const upper = String(id).toUpperCase();
-  const m = /^(.+?)-\d{2}(?:R\d{2})?(?:\+E\d+)?$/.exec(upper);
+  const m = FAMILY_OF_ID_RE.exec(upper);
   return m ? m[1] : upper;
 }
 
@@ -1591,7 +1681,7 @@ function standardFamily(id: string | null | undefined): string {
  */
 export function editionYear(id: string | null | undefined): number {
   if (!id) return -1;
-  const m = /-(\d{2})(?:R\d{2})?(?:\+E\d+)?$/.exec(String(id).toUpperCase());
+  const m = YEAR_OF_ID_RE.exec(String(id).toUpperCase());
   if (!m) return -1;
   const yy = Number(m[1]);
   // 00–49 → 2000s, 50–99 → 1900s. No IES standard in this corpus predates 1950
@@ -2125,6 +2215,88 @@ export async function loadMergedPredecessors(
   }
 }
 
+// ─── IES Statements (Dan, 11/19/26 #1) ───────────────────────────────────────
+
+/** How many leading results count as "what the answer will be written from". */
+const STATEMENT_LEADING_RESULTS = 8;
+
+export interface IesStatementMatch {
+  standard: string;
+  designation: string;
+  title: string;
+  date: string | null;
+  /** PDF page index (what the Library link opens) and the printed label. */
+  page: number;
+  pageLabel: string | null;
+  /** "inside the front cover" / "on p. 5". */
+  location: string;
+  url: string | null;
+  /** Why it applies: the query names its subject, or its standard leads the results. */
+  matched: 'query' | 'results';
+  text: string;
+}
+
+/**
+ * The IES Statements that bear on a search: every CURRENT standard that prints
+ * one (standards.statements_json — a handful of rows at most) tested against
+ * the query and the standards the first results come from
+ * (lib/ies-statements.js `pickStatements`). Fail-open: any error, or a database
+ * without migration 0032, answers none.
+ */
+export async function collectIesStatements(
+  env: Env, query: string, results: SearchResult[], pageLabels?: PageLabelIndex,
+): Promise<IesStatementMatch[]> {
+  try {
+    const rows = await env.DB.prepare(
+      "SELECT id, full_designation, vitrium_web_url, statements_json FROM standards "
+      + "WHERE statements_json IS NOT NULL AND status = 'Active'"
+    ).all<{ id: string; full_designation: string | null; vitrium_web_url: string | null; statements_json: string | null }>();
+    const byId = new Map((rows.results || []).map(r => [r.id, r]));
+    const catalogue = (rows.results || [])
+      .map(r => ({ standardId: r.id, statements: parseStatements(r.statements_json) }))
+      .filter(c => c.statements.length > 0);
+    if (catalogue.length === 0) return [];
+
+    const leadingStandards = results
+      .filter(r => !r.isDeprecated)
+      .slice(0, STATEMENT_LEADING_RESULTS)
+      .map(r => r.application?.standard)
+      .filter((id): id is string => !!id);
+    const picked = pickStatements({ query, leadingStandards, catalogue });
+    if (picked.length === 0) return [];
+
+    const labels = await loadPageLabels(env, picked.map(p => p.standardId), pageLabels);
+    return picked.map(p => {
+      const row = byId.get(p.standardId)!;
+      const pageLabel = pageLabelFor(labels.get(p.standardId) || null, p.page);
+      const front = toLibraryUrlOrNull(row.vitrium_web_url);
+      return {
+        standard: p.standardId,
+        designation: row.full_designation || `ANSI/IES ${p.standardId}`,
+        title: p.title,
+        date: p.date,
+        page: p.page,
+        pageLabel,
+        location: statementLocation(p.page, pageLabel),
+        url: front ? `${front.split('#')[0]}#page=${p.page}` : null,
+        matched: p.matched as 'query' | 'results',
+        text: p.text,
+      };
+    });
+  } catch (err) {
+    console.error('IES statement lookup failed (non-fatal):', errMsg(err));
+    return [];
+  }
+}
+
+/** The line the reader sees for one Statement — its banner, Guide on or off. */
+export function statementNotice(s: IesStatementMatch): string {
+  const named = /^IES\s+(?:Position\s+)?Statement\b/i.test(s.title) ? `the “${s.title}”` : 'an IES Statement';
+  return `${s.designation} carries ${named}${s.date ? ` (${s.date})` : ''}, printed ${s.location}: `
+    + 'the position of the Illuminating Engineering Society on this subject.'
+    + (s.url ? ` [Open the Statement in the Library](${s.url})` : '');
+}
+
 /** "handbook", "lighting handbook", "10th edition handbook", "IES Handbook 10th edition". */
 export function isHandbookQuery(query: string): boolean {
   const q = normalizeTypography(query || '');
@@ -2374,6 +2546,35 @@ export function deprecatedLookupNote(cards: SearchResult[]): AISummary | null {
   };
 }
 
+/**
+ * The catalogue note for a lookup of an edition IES never published (Dan,
+ * 11/19/26 #2 — "TM-30-22"): what was typed, and the editions that exist. Like
+ * the deprecated-edition note it is a catalogue fact, not a model answer, so it
+ * is shown with the AI Guide off or capped. Null for every other lookup.
+ */
+export function unknownEditionNote(cards: SearchResult[]): AISummary | null {
+  const asked = cards.find(c => c.document?.requestedEdition)?.document?.requestedEdition;
+  if (!asked) return null;
+  const nameOf = (c: SearchResult) => c.document?.designation || c.application?.standard || '';
+  const current = cards.filter(c => c.resultType === 'standard' && !c.isDeprecated).map(nameOf).filter(Boolean);
+  const deprecated = cards.filter(c => c.resultType === 'standard' && c.isDeprecated).map(nameOf).filter(Boolean);
+  if (current.length + deprecated.length === 0) return null;
+  const parts = [
+    `The Lighting Library does not hold a standard designated ${asked}.`,
+    current.length > 0 ? `The current edition is ${joinNames(current)}.` : '',
+    deprecated.length > 0
+      ? `${deprecated.length === 1 ? 'An earlier edition' : 'Earlier editions'} — ${joinNames(deprecated)} — ${deprecated.length === 1 ? 'is' : 'are'} deprecated`
+        + `${current.length > 0 ? '; for the most accurate and up-to-date information, readers should consult the current edition.' : '.'}`
+      : '',
+  ].filter(Boolean);
+  return {
+    text: parts.join(' '),
+    watermark: null,
+    disclaimer: 'Lighting Library catalogue note.',
+    mode: 'guide',
+  };
+}
+
 /** A whole-document card for a DEPRECATED edition: flagged, and says what replaced it. */
 export function markDeprecatedCard(card: SearchResult, e: FamilyEdition): SearchResult {
   const name = card.citationName || e.id;
@@ -2423,40 +2624,59 @@ async function embedQueryText(env: Env, text: string): Promise<number[]> {
  * response referenced, and the TIER that answered it (migration 0022, client
  * 10/16/26 #5: searches per day by Subscribers vs Non-Subscribers). Staff
  * export it via GET /api/admin/search-log.csv.
+ * Since migration 0031 a row also says whether it came from IES STAFF (a
+ * class — which of a few dozen accounts is not recorded) and which ATTEMPT at
+ * the question it was (a counter, not an identifier; lib/search-attempt.ts).
+ * Neither links two rows to each other or to an account.
  * Fail-open: a missing table or a D1 hiccup never breaks search, and a database
- * without the 0022 column still gets the row, without its tier.
+ * behind on migrations still gets the row, with the columns it has.
  */
-async function logSearch(env: Env, payload: { query: string; results?: SearchResult[]; noStrongMatch?: boolean; tier?: string }, cached: boolean, aiGuide?: boolean): Promise<void> {
+export interface SearchLogMeta {
+  audience: 'staff' | null;
+  attempt: number | null;
+}
+
+async function logSearch(
+  env: Env,
+  payload: { query: string; results?: SearchResult[]; noStrongMatch?: boolean; tier?: string },
+  cached: boolean,
+  aiGuide?: boolean,
+  meta: SearchLogMeta = { audience: null, attempt: null },
+): Promise<void> {
   const standards = [
     ...new Set((payload.results || [])
       .map(r => r.application?.standard)
       .filter(Boolean)),
   ];
-  const values = [
-    payload.query,
-    (payload.results || []).length,
-    JSON.stringify(standards),
-    payload.noStrongMatch ? 1 : 0,
-    cached ? 1 : 0,
+  const base: Array<[string, unknown]> = [
+    ['query', payload.query],
+    ['result_count', (payload.results || []).length],
+    ['standards_referenced', JSON.stringify(standards)],
+    ['no_strong_match', payload.noStrongMatch ? 1 : 0],
+    ['cached', cached ? 1 : 0],
   ];
-  try {
-    await env.DB.prepare(`
-      INSERT INTO search_log (query, result_count, standards_referenced, no_strong_match, cached, tier, ai_guide)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).bind(...values, payload.tier ?? null, aiGuide == null ? null : (aiGuide ? 1 : 0)).run();
-  } catch (err) {
-    // Before migrations 0022/0025: retry with the original columns only.
-    if (!/no column named (?:tier|ai_guide)|has no column/i.test(errMsg(err))) {
-      console.error('search log write failed (non-fatal):', errMsg(err));
-      return;
-    }
+  const since0025: Array<[string, unknown]> = [
+    ['tier', payload.tier ?? null],
+    ['ai_guide', aiGuide == null ? null : (aiGuide ? 1 : 0)],
+  ];
+  const since0031: Array<[string, unknown]> = [
+    ['audience', meta.audience],
+    ['attempt', meta.attempt],
+  ];
+  // Newest schema first; a database behind on migrations falls back one step
+  // at a time, so missing 0031 costs the two new columns and nothing else.
+  const shapes = [[...base, ...since0025, ...since0031], [...base, ...since0025], base];
+  for (const [i, columns] of shapes.entries()) {
     try {
-      await env.DB.prepare(`
-        INSERT INTO search_log (query, result_count, standards_referenced, no_strong_match, cached)
-        VALUES (?, ?, ?, ?, ?)
-      `).bind(...values).run();
-    } catch (retryErr) {
-      console.error('search log write failed (non-fatal):', errMsg(retryErr));
+      await env.DB.prepare(
+        `INSERT INTO search_log (${columns.map(c => c[0]).join(', ')}) VALUES (${columns.map(() => '?').join(', ')})`
+      ).bind(...columns.map(c => c[1])).run();
+      return;
+    } catch (err) {
+      if (i === shapes.length - 1 || !/has no column|no column named/i.test(errMsg(err))) {
+        console.error('search log write failed (non-fatal):', errMsg(err));
+        return;
+      }
     }
   }
 }
@@ -4895,15 +5115,32 @@ export function parseDesignationQuery(raw: string): { id: string | null; family:
  * a document and itself.
  */
 export function baseEdition(id: string | null | undefined): string {
+  // Every marker after the year, however many and in whatever order:
+  // "LP-4-20+R2026", "LS-4-20+R2023+E1", "TM-39-25+E1+E2". Anchored on the
+  // digit before it, so a letter that belongs to the family is never eaten.
   return String(id || '')
     .toUpperCase()
-    .replace(/\+\s*E\s*\d+$/, '')
-    .replace(/\(?\s*R\s*\d{2,4}\s*\)?$/, '')
+    .replace(/(?<=\d)(?:\s*\+?\s*E\s*\d+|\s*\+?\s*\(?\s*R\s*\d{2,4}\s*\)?)+$/, '')
     .trim();
 }
 
-/** A standard id with its errata suffix removed: "RP-3-20+E1" → "RP-3-20". */
-const baseEditionId = (id: string) => String(id || '').toUpperCase().replace(/\+E\d+$/, '');
+/** How many edition cards a lookup of a non-existent edition lists (11/19/26 #2). */
+const MAX_EDITION_CARDS = 8;
+
+/**
+ * One row per EDITION, in the order given: a reaffirmed printing, an errata
+ * reprint and the printing they replace are the same document (client DO083),
+ * so only the first of each is kept — callers put the current one first.
+ */
+function distinctEditions(editions: FamilyEdition[]): FamilyEdition[] {
+  const seen = new Set<string>();
+  return editions.filter(e => {
+    const base = baseEdition(e.id);
+    if (seen.has(base)) return false;
+    seen.add(base);
+    return true;
+  });
+}
 
 /** Fold a title for comparison: lowercase, no punctuation, no series preamble. */
 export function normalizeTitleForMatch(title: string | null | undefined): string {
@@ -4952,9 +5189,9 @@ export async function findStandardLookupResults(env: Env, rawQuery: string, limi
       // names. The AI Guide note that goes with these cards is built in
       // handleSearch from the same pair (deprecatedLookupNote).
       if (parsed.id) {
-        const wanted = baseEditionId(parsed.id);
-        const namedDeprecated = family.find(e => e.status === 'Deprecated' && baseEditionId(e.id) === wanted);
-        const exactActive = editions.some(e => baseEditionId(e.id) === wanted);
+        const wanted = baseEdition(parsed.id);
+        const namedDeprecated = family.find(e => e.status === 'Deprecated' && baseEdition(e.id) === wanted);
+        const exactActive = editions.some(e => baseEdition(e.id) === wanted);
         if (namedDeprecated && !exactActive) {
           const current = editions[0] || await resolveSuccessorEdition(env, family)
             || (namedDeprecated.supersededBy
@@ -4969,6 +5206,29 @@ export async function findStandardLookupResults(env: Env, rawQuery: string, limi
             ? [buildDocumentResult(current, 1, 'designation'), deprecatedCard]
             : [deprecatedCard];
         }
+      }
+
+      // An edition IES never published (Dan, 11/19/26 #2: "Users are
+      // frequently typing a specific (but non-existent) designation, like
+      // 'TM-30-22'. We have a 'TM-30-20' and a 'TM-30-24' but not a '22 …
+      // provide search results displaying all published versions as document
+      // cards (show the deprecated versions, with the current version at the
+      // top)"). The reader has an edition in mind and we cannot tell which one
+      // they meant, so they get every edition the catalogue holds: the current
+      // one first — the family's own, or the standard the family was merged
+      // into — then the deprecated ones, newest to oldest.
+      const askedBase = parsed.id ? baseEdition(parsed.id) : null;
+      if (askedBase && family.length > 0 && !family.some(e => baseEdition(e.id) === askedBase)) {
+        const current = editions[0] || await resolveSuccessorEdition(env, family);
+        const older = distinctEditions([...(current ? [current] : []), ...family.filter(e => e.status === 'Deprecated')])
+          .filter(e => e !== current);
+        const cards = [
+          ...(current ? [buildDocumentResult(current, 0.85, 'designation')] : []),
+          ...older.map(e => markDeprecatedCard(buildDocumentResult(e, 0.8, 'designation'),
+            { ...e, supersededBy: current?.id || e.supersededBy })),
+        ].slice(0, MAX_EDITION_CARDS);
+        for (const card of cards) if (card.document) card.document.requestedEdition = parsed.id || undefined;
+        return cards;
       }
 
       // A family with no current edition was merged into another standard:
@@ -4989,8 +5249,8 @@ export async function findStandardLookupResults(env: Env, rawQuery: string, limi
       if (editions.length === 0) return [];
 
       if (parsed.id) {
-        const wanted = baseEditionId(parsed.id);
-        const exact = editions.filter(e => baseEditionId(e.id) === wanted);
+        const wanted = baseEdition(parsed.id);
+        const exact = editions.filter(e => baseEdition(e.id) === wanted);
         // An exact edition match is the answer; a named edition we do not hold
         // (an older one, or a typo'd year) still resolves to the current edition
         // of that family — "close match", which is what the client asked for.

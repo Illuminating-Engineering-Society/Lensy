@@ -96,6 +96,7 @@ import { chunkIESDocument, extractOutline } from '../lib/chunker.js';
 import { extractDocumentAssets } from '../lib/document-assets.js';
 import { extractCoverMetadata, extractCoverCommittee } from '../lib/cover-title.js';
 import { extractReferenceMarkers } from '../lib/reference-markers.js';
+import { detectIesStatements } from '../lib/ies-statements.js';
 import {
   extractApplicationsFromPages, detectNewTableStructure,
 } from '../lib/applications-extractor.js';
@@ -673,6 +674,10 @@ async function processJob(request: Request, env: Env, job: IngestJobRow): Promis
       outline,
       assets,
       pageLabels: Array.isArray(progress.pageLabels) ? progress.pageLabels : null,
+      // IES Statements printed in the PDF (Dan, 11/19/26 #1) — always from the
+      // PDF's own pages, manuscript or not: a Statement is inserted into the
+      // published file, not written into the manuscript.
+      statements: detectIesStatements(pages),
       r2Key: finalKey,
     }, env, setStep);
 

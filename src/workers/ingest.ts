@@ -54,6 +54,7 @@
 import { bumpDataVersion } from '../lib/cache';
 import { looksLikeCommittee } from '../lib/committees.js';
 import { cleanPageLabels } from '../lib/page-labels.js';
+import { parseStatements } from '../lib/ies-statements.js';
 import { requireAdminAccess } from './session';
 import {
   DEFINITIONS_STANDARD_ID, buildDefinitionEmbedText, definitionVectorId,
@@ -459,6 +460,7 @@ export async function runDocumentIngest(
     outline = null,          // [{number,title,page}] in document order — DO082
     assets = null,           // [{kind,label,caption,page}] captions — DO086
     pageLabels = undefined,  // pdfjs getPageLabels() — printed folios (Dan, 11/06/26)
+    statements = undefined,  // IES Statements printed in the document (Dan, 11/19/26 #1)
     r2Key = null,
   } = body;
 
@@ -776,6 +778,24 @@ export async function runDocumentIngest(
     pageLabelsJson,
     pageLabelsSent ? 1 : 0,
   ).run();
+
+  // ── 4b. IES Statements printed in the document (Dan, 11/19/26 #1) ─────────
+  // A position of the Society printed inside a standard — TM-15-20 carries one
+  // inside its front cover — read whole by the caller (lib/ies-statements.js).
+  // Replaced only when the caller SENT the field (an empty list clears it: a
+  // re-uploaded PDF without the Statement must not keep the old one). A
+  // statement of its own so that a database without migration 0032 loses the
+  // Statement and nothing else.
+  if (statements !== undefined && chunks.length > 0) {
+    const clean = parseStatements(statements);
+    try {
+      await env.DB.prepare('UPDATE standards SET statements_json = ? WHERE id = ?')
+        .bind(clean.length > 0 ? JSON.stringify(clean) : null, standardId).run();
+    } catch (err) {
+      console.error('could not store IES statements (migration 0032 applied?):',
+        err instanceof Error ? err.message : String(err));
+    }
+  }
 
   // ── 5. Upsert extracted application records into D1 ──────────────────────
   // This is the "PDFs as source of truth" step: application data comes FROM

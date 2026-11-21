@@ -40,9 +40,11 @@ import {
 /**
  * Parse a PDF buffer into metadata and structured page data.
  * @param {Buffer|ArrayBuffer|Uint8Array} pdfBytes
+ * @param {{ maxPages?: number }} [options]  read only the first N pages (a
+ *   front-matter scan — scripts/backfill-ies-statements.js); omit for all.
  * @returns {Promise<{ metadata: Object, pages: Array }>}
  */
-export async function parsePDFNode(pdfBytes) {
+export async function parsePDFNode(pdfBytes, options = {}) {
   const pdfjsLib = await loadPdfjs();
 
   const uint8 = pdfBytes instanceof Uint8Array
@@ -77,7 +79,10 @@ export async function parsePDFNode(pdfBytes) {
   // sampled pages costs nothing) — raw items for the whole document are never
   // held at once, which matters for the 500 MB outliers in this corpus.
   const pages = [];
-  for (let pageNum = 1; pageNum <= pageCount; pageNum++) {
+  const lastPage = Number.isInteger(options.maxPages) && options.maxPages > 0
+    ? Math.min(pageCount, options.maxPages)
+    : pageCount;
+  for (let pageNum = 1; pageNum <= lastPage; pageNum++) {
     pages.push(buildPageFromRaw(await rawPage(pdf, pageNum), headerFooterCandidates));
   }
 

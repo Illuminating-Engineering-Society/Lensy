@@ -49,12 +49,13 @@ import { readAccessMode, writeAccessMode, parseAccessMode } from '../lib/access-
 import { getSsoState, isStagingRequest } from '../lib/sso';
 import { sendDeviceResetDecisionEmail } from '../lib/email';
 import { readTrendingTopics, refreshTrendingTopics } from '../lib/trending-topics';
+import { parseAnalyticsWindow, logScope, hasColumn, type AnalyticsWindow, type SqlScope } from '../lib/analytics-scope';
 import { REFERENCES_HEADING_RE } from '../lib/chunker.js';
 import { toLibraryUrlOrNull } from '../lib/library-url.js';
 import { lookupMemberNumbers } from '../lib/people-lookup';
 import { parseIlluminanceTables, presentIlluminanceTable, unlistedTableRefs } from '../lib/illuminance-tables.js';
 import { parsePageLabels } from '../lib/page-labels.js';
-import type { StandardRow, SearchLogRow } from '../types';
+import type { StandardRow } from '../types';
 
 interface IndexStatusRow {
   id: string; title: string; status: string; indexedAt: string | null;
@@ -288,8 +289,13 @@ export async function handleAdminDeleteOrphans(request: Request, env: Env): Prom
  *   GET /api/admin/search-log.csv?from=2026-07-01&to=2026-07-08&limit=10000
  *
  * Columns: created_at, query, result_count, standards_referenced,
- * no_strong_match, cached. The table carries no user-identifying data by
- * design (privacy requirement) — there is nothing personal to export.
+ * no_strong_match, cached, then — appended, so existing spreadsheets keep
+ * their column positions — tier, ai_guide, audience and attempt:
+ *   audience  'staff' for a search by IES staff (11/19/26 #7), else blank
+ *   attempt   1 for a fresh question; 2, 3, … when the same reader rephrased
+ *             their previous question within ten minutes (11/19/26 #4)
+ * The table carries no user-identifying data by design (privacy requirement):
+ * attempt is a counter, not an identifier, and no two rows can be linked.
  */
 export async function handleAdminSearchLog(request: Request, env: Env): Promise<Response> {
   const denied = await requireAuth(request, env);
@@ -300,26 +306,37 @@ export async function handleAdminSearchLog(request: Request, env: Env): Promise<
   const to = url.searchParams.get('to');
   const limit = Math.min(50000, Math.max(1, parseInt(url.searchParams.get('limit') || '10000', 10) || 10000));
 
-  let sql = `
-    SELECT created_at, query, result_count, standards_referenced, no_strong_match, cached
-    FROM search_log WHERE 1=1
-  `;
+  const baseColumns = ['created_at', 'query', 'result_count', 'standards_referenced', 'no_strong_match', 'cached'];
+  // Newest schema first: a database behind on migrations exports what it has.
+  const columnSets = [
+    [...baseColumns, 'tier', 'ai_guide', 'audience', 'attempt'],
+    [...baseColumns, 'tier', 'ai_guide'],
+    baseColumns,
+  ];
   const bindings: (string | number)[] = [];
-  if (from) { sql += ' AND created_at >= ?'; bindings.push(from); }
-  if (to) { sql += ' AND created_at <= ?'; bindings.push(to); }
-  sql += ' ORDER BY created_at DESC LIMIT ?';
+  let where = ' WHERE 1=1';
+  if (from) { where += ' AND created_at >= ?'; bindings.push(from); }
+  if (to) { where += ' AND created_at <= ?'; bindings.push(to); }
   bindings.push(limit);
 
-  const result = await env.DB.prepare(sql).bind(...bindings).all<SearchLogRow>();
-  const rows = result.results || [];
+  let columns = baseColumns;
+  let rows: Record<string, unknown>[] = [];
+  for (const [i, set] of columnSets.entries()) {
+    try {
+      const result = await env.DB.prepare(
+        `SELECT ${set.join(', ')} FROM search_log${where} ORDER BY created_at DESC LIMIT ?`
+      ).bind(...bindings).all<Record<string, unknown>>();
+      rows = result.results || [];
+      columns = set;
+      break;
+    } catch (err) {
+      if (i === columnSets.length - 1 || !/no such column/i.test(err instanceof Error ? err.message : String(err))) throw err;
+    }
+  }
 
-  const header = 'created_at,query,result_count,standards_referenced,no_strong_match,cached';
   const csv = [
-    header,
-    ...rows.map(r => [
-      r.created_at, r.query, r.result_count, r.standards_referenced,
-      r.no_strong_match, r.cached,
-    ].map(csvCell).join(',')),
+    columns.join(','),
+    ...rows.map(r => columns.map(c => csvCell(r[c])).join(',')),
   ].join('\r\n');
 
   return new Response(csv, {
@@ -858,90 +875,154 @@ export async function handleAdminR2Multipart(request: Request, env: Env): Promis
  * neither — the dashboard shows them as Unknown. A database without the column
  * still gets the plain per-day counts.
  */
-async function searchesPerDay(env: Env, since: string): Promise<{ results?: Record<string, unknown>[] }> {
+async function searchesPerDay(env: Env, scope: SqlScope): Promise<{ results?: Record<string, unknown>[] }> {
   try {
     return await env.DB.prepare(`
       SELECT date(created_at) AS day, COUNT(*) AS searches,
              COALESCE(SUM(CASE WHEN tier = 'full' THEN 1 ELSE 0 END), 0) AS subscribers,
              COALESCE(SUM(CASE WHEN tier IN ('lite', 'guest', 'none') THEN 1 ELSE 0 END), 0) AS nonSubscribers
-      FROM search_log WHERE created_at >= datetime('now', ?)
+      FROM search_log WHERE ${scope.where}
       GROUP BY day ORDER BY day
-    `).bind(since).all<Record<string, unknown>>();
+    `).bind(...scope.binds).all<Record<string, unknown>>();
   } catch (err) {
     if (!/no such column: tier/i.test(err instanceof Error ? err.message : String(err))) throw err;
     return env.DB.prepare(`
       SELECT date(created_at) AS day, COUNT(*) AS searches
-      FROM search_log WHERE created_at >= datetime('now', ?)
+      FROM search_log WHERE ${scope.where}
       GROUP BY day ORDER BY day
-    `).bind(since).all<Record<string, unknown>>();
+    `).bind(...scope.binds).all<Record<string, unknown>>();
   }
 }
 
+/**
+ * GET /api/admin/analytics — the window and what it counts (Dan, 11/19/26):
+ *
+ *   ?days=30                              the last N days (1–365), or
+ *   ?from=2026-11-04&to=2026-11-06        a custom range of whole UTC days (#6)
+ *   ?staff=1                              count IES staff searches too (#7)
+ *   ?demo=1                               count the "Try searching for" demos too (#7)
+ *
+ * By default staff searches and exact copies of the demo searches are left
+ * out of every figure, and `searches.excluded` says how many that was. The
+ * window and both exclusions are one definition (lib/analytics-scope.ts),
+ * shared with the trending topics.
+ */
 export async function handleAdminAnalytics(request: Request, env: Env): Promise<Response> {
   const denied = await requireAuth(request, env);
   if (denied) return denied;
 
   const url = new URL(request.url);
-  const days = Math.min(365, Math.max(1, parseInt(url.searchParams.get('days') || '30', 10) || 30));
-  // Bound as a datetime() modifier — SQLite accepts parameters in function
-  // arguments, so the window never reaches the SQL as text.
-  const since = `-${days} days`;
+  const window = parseAnalyticsWindow(url.searchParams);
+  if ('error' in window) return jsonResponse({ error: window.error }, 400);
+  const includeStaff = url.searchParams.get('staff') === '1';
+  const includeDemos = url.searchParams.get('demo') === '1';
+  const [logHasAudience, logHasAttempt, eventsHaveAudience] = await Promise.all([
+    hasColumn(env.DB, 'search_log', 'audience'),
+    hasColumn(env.DB, 'search_log', 'attempt'),
+    hasColumn(env.DB, 'search_events', 'audience'),
+  ]);
+  const scope = logScope(window, { includeStaff, includeDemos, hasAudience: logHasAudience });
+  // Everything in the window, for the "N left out" figures.
+  const everything = logScope(window, { includeStaff: true, includeDemos: true, hasAudience: logHasAudience });
+  const withoutStaffOnly = logScope(window, { includeStaff: false, includeDemos: true, hasAudience: logHasAudience });
 
   const searches: Record<string, unknown> = {
     total: 0, cached: 0, noStrongMatch: 0, zeroResults: 0,
     perDay: [], topQueries: [], zeroResultQueries: [],
+    excluded: { staff: 0, demo: 0 },
+    // Rephrasings of a reader's own previous question (11/19/26 #4).
+    retries: { recorded: 0, rephrased: 0, topRephrased: [] },
   };
   try {
-    const [totals, perDay, topQueries, zeroResultQueries] = await Promise.all([
+    const [totals, perDay, topQueries, zeroResultQueries, allRows, nonStaffRows] = await Promise.all([
       env.DB.prepare(`
         SELECT COUNT(*) AS total,
                COALESCE(SUM(cached), 0) AS cached,
                COALESCE(SUM(CASE WHEN no_strong_match = 1 THEN 1 ELSE 0 END), 0) AS noStrongMatch,
                COALESCE(SUM(CASE WHEN result_count = 0 THEN 1 ELSE 0 END), 0) AS zeroResults
-        FROM search_log WHERE created_at >= datetime('now', ?)
-      `).bind(since).first<Record<string, number>>(),
-      searchesPerDay(env, since),
+        FROM search_log WHERE ${scope.where}
+      `).bind(...scope.binds).first<Record<string, number>>(),
+      searchesPerDay(env, scope),
       // Grouped case-insensitively so "RP-6" and "rp-6" read as one query;
       // MIN(query) picks a deterministic representative spelling.
       env.DB.prepare(`
         SELECT MIN(query) AS query, COUNT(*) AS searches,
                COALESCE(SUM(CASE WHEN no_strong_match = 1 THEN 1 ELSE 0 END), 0) AS noStrongMatch,
                MAX(created_at) AS lastSeen
-        FROM search_log WHERE created_at >= datetime('now', ?)
+        FROM search_log WHERE ${scope.where}
         GROUP BY LOWER(TRIM(query))
         ORDER BY searches DESC, lastSeen DESC LIMIT 25
-      `).bind(since).all<Record<string, unknown>>(),
+      `).bind(...scope.binds).all<Record<string, unknown>>(),
       // What people looked for and did NOT find — the corpus-gap signal.
       env.DB.prepare(`
         SELECT MIN(query) AS query, COUNT(*) AS searches, MAX(created_at) AS lastSeen
         FROM search_log
-        WHERE created_at >= datetime('now', ?) AND result_count = 0
+        WHERE ${scope.where} AND result_count = 0
         GROUP BY LOWER(TRIM(query))
         ORDER BY searches DESC, lastSeen DESC LIMIT 15
-      `).bind(since).all<Record<string, unknown>>(),
+      `).bind(...scope.binds).all<Record<string, unknown>>(),
+      env.DB.prepare(`SELECT COUNT(*) AS n FROM search_log WHERE ${everything.where}`)
+        .bind(...everything.binds).first<{ n: number }>(),
+      env.DB.prepare(`SELECT COUNT(*) AS n FROM search_log WHERE ${withoutStaffOnly.where}`)
+        .bind(...withoutStaffOnly.binds).first<{ n: number }>(),
     ]);
     Object.assign(searches, totals ?? {});
     searches.perDay = perDay.results || [];
     searches.topQueries = topQueries.results || [];
     searches.zeroResultQueries = zeroResultQueries.results || [];
+    // How many searches each exclusion would remove from this window — shown
+    // whether or not it is switched on, so the toggle's effect is known.
+    const all = allRows?.n || 0;
+    const nonStaff = nonStaffRows?.n ?? all;
+    const scopedWithDemos = includeStaff ? all : nonStaff;
+    const withoutDemos = logScope(window, { includeStaff, includeDemos: false, hasAudience: logHasAudience });
+    const kept = await env.DB.prepare(`SELECT COUNT(*) AS n FROM search_log WHERE ${withoutDemos.where}`)
+      .bind(...withoutDemos.binds).first<{ n: number }>();
+    searches.excluded = { staff: all - nonStaff, demo: scopedWithDemos - (kept?.n ?? scopedWithDemos) };
+
+    if (logHasAttempt) {
+      const [counts, rephrased] = await Promise.all([
+        env.DB.prepare(`
+          SELECT COALESCE(SUM(CASE WHEN attempt IS NOT NULL THEN 1 ELSE 0 END), 0) AS recorded,
+                 COALESCE(SUM(CASE WHEN attempt >= 2 THEN 1 ELSE 0 END), 0) AS rephrased
+          FROM search_log WHERE ${scope.where}
+        `).bind(...scope.binds).first<Record<string, number>>(),
+        // The questions readers could not get answered at the first try: the
+        // text of each rephrasing, and how far into the retrying it came.
+        env.DB.prepare(`
+          SELECT MIN(query) AS query, COUNT(*) AS searches, MAX(attempt) AS maxAttempt, MAX(created_at) AS lastSeen
+          FROM search_log WHERE ${scope.where} AND attempt >= 2
+          GROUP BY LOWER(TRIM(query))
+          ORDER BY maxAttempt DESC, searches DESC, lastSeen DESC LIMIT 15
+        `).bind(...scope.binds).all<Record<string, unknown>>(),
+      ]);
+      searches.retries = {
+        recorded: counts?.recorded || 0,
+        rephrased: counts?.rephrased || 0,
+        topRephrased: rephrased.results || [],
+      };
+    }
   } catch (err) {
     searches.note = `search_log unavailable: ${err instanceof Error ? err.message : String(err)}`;
   }
 
+  const eventScope = logScope(window, {
+    includeStaff, hasAudience: eventsHaveAudience, hasQuery: false,
+  });
   const events: Record<string, unknown> = { total: 0, byEvent: [], topStandards: [] };
   try {
     const [byEvent, topStandards] = await Promise.all([
       env.DB.prepare(`
         SELECT event, COUNT(*) AS n
-        FROM search_events WHERE created_at >= datetime('now', ?)
+        FROM search_events WHERE ${eventScope.where}
         GROUP BY event ORDER BY n DESC
-      `).bind(since).all<{ event: string; n: number }>(),
+      `).bind(...eventScope.binds).all<{ event: string; n: number }>(),
       env.DB.prepare(`
         SELECT standard_id AS standardId, COUNT(*) AS n
         FROM search_events
-        WHERE created_at >= datetime('now', ?) AND standard_id IS NOT NULL AND standard_id <> ''
+        WHERE ${eventScope.where} AND standard_id IS NOT NULL AND standard_id <> ''
         GROUP BY standard_id ORDER BY n DESC LIMIT 15
-      `).bind(since).all<{ standardId: string; n: number }>(),
+      `).bind(...eventScope.binds).all<{ standardId: string; n: number }>(),
     ]);
     events.byEvent = byEvent.results || [];
     events.topStandards = topStandards.results || [];
@@ -967,8 +1048,8 @@ export async function handleAdminAnalytics(request: Request, env: Env): Promise<
         SELECT COALESCE(SUM(CASE WHEN ai_guide = 1 THEN 1 ELSE 0 END), 0) AS searchesOn,
                COALESCE(SUM(CASE WHEN ai_guide = 0 THEN 1 ELSE 0 END), 0) AS searchesOff,
                COALESCE(SUM(CASE WHEN ai_guide IS NULL THEN 1 ELSE 0 END), 0) AS searchesUnrecorded
-        FROM search_log WHERE created_at >= datetime('now', ?)
-      `).bind(since).first<Record<string, number>>(),
+        FROM search_log WHERE ${scope.where}
+      `).bind(...scope.binds).first<Record<string, number>>(),
       env.DB.prepare(`
         SELECT COUNT(*) AS accounts,
                COALESCE(SUM(CASE WHEN json_extract(preferences_json, '$.ai_guide') = 0 THEN 1 ELSE 0 END), 0) AS accountsOff
@@ -983,7 +1064,19 @@ export async function handleAdminAnalytics(request: Request, env: Env): Promise<
   // Refreshed by the daily cron, not per request — it costs a 70B call.
   const trendingTopics = await readTrendingTopics(env);
 
-  return jsonResponse({ days, searches, events, aiGuide, trendingTopics });
+  return jsonResponse({
+    days: window.days,
+    // The days counted, both inclusive (UTC), so the page can label and
+    // zero-fill the chart for a custom range as well as a rolling one.
+    window: { from: window.from, to: window.to, days: window.days, custom: window.custom },
+    filters: {
+      includeStaff, includeDemos,
+      // False until migration 0031: no row can be told apart as staff yet.
+      staffRecorded: logHasAudience,
+      attemptsRecorded: logHasAttempt,
+    },
+    searches, events, aiGuide, trendingTopics,
+  });
 }
 
 /**
@@ -993,8 +1086,23 @@ export async function handleAdminAnalytics(request: Request, env: Env): Promise<
 export async function handleAdminRefreshTopics(request: Request, env: Env): Promise<Response> {
   const denied = await requireAuth(request, env);
   if (denied) return denied;
-  const topics = await refreshTrendingTopics(env);
-  if (!topics) return jsonResponse({ error: 'Could not group the searches (no searches in the last 30 days, or the model gave no usable answer).' }, 502);
+  // ?from=&to= groups ONE date range — a symposium's days — and returns it
+  // without replacing the stored daily ranking (11/19/26 #6).
+  const url = new URL(request.url);
+  let window: AnalyticsWindow | undefined;
+  if (url.searchParams.get('from') || url.searchParams.get('to')) {
+    const parsed = parseAnalyticsWindow(url.searchParams);
+    if ('error' in parsed) return jsonResponse({ error: parsed.error }, 400);
+    window = parsed;
+  }
+  const topics = await refreshTrendingTopics(env, window);
+  if (!topics) {
+    return jsonResponse({
+      error: window
+        ? 'Could not group the searches (no searches in that range, or the model gave no usable answer).'
+        : 'Could not group the searches (no searches in the last 30 days, or the model gave no usable answer).',
+    }, 502);
+  }
   return jsonResponse({ trendingTopics: topics });
 }
 

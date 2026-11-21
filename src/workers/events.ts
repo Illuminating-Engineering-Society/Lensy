@@ -25,7 +25,7 @@
  * never be visible to the reader who triggered it.
  */
 
-import { requireReadAccess } from './session';
+import { requireReadAccess, requestAudience } from './session';
 
 function errMsg(err: unknown): string { return err instanceof Error ? err.message : String(err); }
 
@@ -103,11 +103,7 @@ export async function handleEvent(request: Request, env: Env): Promise<Response>
     : null;
 
   try {
-    await env.DB.prepare(`
-      INSERT INTO search_events
-        (event, query, standard_id, result_type, position, section, page_number, content_types, extra)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).bind(
+    const values = [
       event,
       text(body.query, 500),
       text(body.standard_id, 40),
@@ -117,7 +113,22 @@ export async function handleEvent(request: Request, env: Env): Promise<Response>
       int(body.page_number, 1, 20000),
       contentTypes,
       extraJson(body.extra),
-    ).run();
+    ];
+    const columns = 'event, query, standard_id, result_type, position, section, page_number, content_types, extra';
+    // 'staff' beside a click from IES staff, so analytics can leave it out with
+    // their searches (Dan, 11/19/26 #7) — a class, never an identity.
+    const audience = await requestAudience(request, env);
+    try {
+      await env.DB.prepare(
+        `INSERT INTO search_events (${columns}, audience) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).bind(...values, audience).run();
+    } catch (err) {
+      // Before migration 0031: the row, without its audience.
+      if (!/has no column|no column named/i.test(errMsg(err))) throw err;
+      await env.DB.prepare(
+        `INSERT INTO search_events (${columns}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).bind(...values).run();
+    }
   } catch (err) {
     // Includes "no such table" until migration 0013 has been applied.
     console.error('event log write failed (non-fatal):', errMsg(err));

@@ -1,0 +1,36 @@
+-- Migration 0031 (Dan, Teams 2026-11-19 #4 and #7)
+--
+-- search_log.audience / search_events.audience — 'staff' when the search (or
+-- the click) came from IES staff, NULL otherwise.
+--
+--   "Would it be easy to block any 'staff' role searches from appearing in
+--    search analytics? We are often using Lens only to test a query someone
+--    else attempted, or for administrative purposes."
+--
+-- A CLASS, not an identity: it says the row came from one of a few dozen staff
+-- accounts (an administrator, an ies-staff role, a staff/admin invitation, or
+-- the staff bearer), never which one. The analytics exclude those rows; the
+-- CSV export carries the column so they can be filtered there too. Rows logged
+-- before this migration have no audience and cannot be classified after the
+-- fact — the log never recorded who searched — so the exclusion starts here.
+--
+-- search_log.attempt — 1 for a first search; 2, 3, … when the SAME reader
+-- rephrased their previous question within ten minutes; NULL when unknown
+-- (the staff bearer, or a row logged before this migration).
+--
+--   "is there anything like a 'session ID' that does not cross-reference in
+--    search-usage (so it remains anonymous) but could help us distinguish
+--    popular topics/questions from a user who keeps re-trying a search with
+--    slightly different phrasing (a sign of frustration or not finding the
+--    'right' answer)?"
+--
+-- Deliberately NOT a session id. An identifier shared by a reader's rows —
+-- even a random one — lets the rows of one visit be counted, and
+-- search_usage_daily (0028) holds each account's count per day: a visit of 25
+-- searches would name the one account that searched 25 times that day. A
+-- counter answers the question that was asked — was this a retry, and how many
+-- tries did it take — and links no two rows to each other. How it is computed,
+-- and what is held for ten minutes to compute it: src/lib/search-attempt.ts.
+ALTER TABLE search_log ADD COLUMN audience TEXT;
+ALTER TABLE search_log ADD COLUMN attempt INTEGER;
+ALTER TABLE search_events ADD COLUMN audience TEXT;

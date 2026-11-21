@@ -200,6 +200,15 @@ LENSY_LITE = "on"
 # Library (Sustaining)" tier, a seat assigned out of a sustaining
 # organization's user cap. AuthIES's Vitrium gate admits the same slug.
 LENSY_SUBSCRIBER_ROLES = "lighting-library-full-access,lighting-library-sustaining,tc-chair"
+# ── Search analytics (Dan, 2026-11-19) ────────────────────────────────────────
+# Two optional vars, both unset on purpose (the defaults are what is wanted):
+#
+# LENSY_STAFF_ROLES — comma-separated IdP role slugs that mark IES staff, whose
+#   searches the analytics leave out (#7). Unset = "administrator,ies-staff",
+#   the two AuthIES itself treats as staff. A staff/admin INVITATION and the
+#   staff bearer always count as staff, whatever this says.
+# LENSY_SEARCH_ATTEMPTS — "off" stops recording the anonymous retry counter on
+#   search_log rows (#4, src/lib/search-attempt.ts). Anything else = on.
 # ── Lighting Library error page (2026-09-04) ──────────────────────────────────
 # Staff inbox for device-limit reset requests submitted from
 # /library-error.html (the page Vitrium's WebViewer redirects refused readers

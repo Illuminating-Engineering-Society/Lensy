@@ -38,7 +38,7 @@ import {
   type SsoUser,
 } from '../lib/sso';
 import { sessionCapEnabled, enforceSessionCap } from '../lib/session-cap';
-import { readAccessMode } from '../lib/access-mode';
+import { readAccessMode, STAFF_INVITE_ROLES } from '../lib/access-mode';
 import { hasActiveLensComp, hasActivePurchasedSubscription } from '../lib/comp-grants';
 import type { InvitedUserRow } from '../types';
 
@@ -290,18 +290,66 @@ export interface SearchGrant {
   user: { sub: string; email: string } | null;
   /** Staging traffic is metered apart from production, like session seats. */
   scope: 'prod' | 'stg';
+  /**
+   * The caller is IES staff — search analytics leave these searches out (Dan,
+   * 11/19/26 #7). A class, never an identity: see `isStaffSession`.
+   */
+  staff: boolean;
+}
+
+/** IdP role slugs that mark IES staff, unless LENSY_STAFF_ROLES says otherwise. */
+const DEFAULT_STAFF_ROLES = ['administrator', 'ies-staff'];
+
+/**
+ * Is this session IES staff? (Dan, 11/19/26 #7: "block any 'staff' role
+ * searches from appearing in search analytics. We are often using Lens only to
+ * test a query someone else attempted, or for administrative purposes.")
+ *
+ * Any of: administrator rights here (the IdP's `administrator` role, or an
+ * `admin` invitation), a `staff` invitation, or an IdP staff role
+ * (LENSY_STAFF_ROLES, comma-separated; default `administrator,ies-staff` — the
+ * same two AuthIES treats as staff). An administrator previewing as a
+ * Non-Subscriber is still staff: the preview changes the tier, not the person.
+ */
+export function isStaffSession(
+  user: Pick<SsoUser, 'roles'>, decision: Pick<AccessDecision, 'admin' | 'role'>, env: { LENSY_STAFF_ROLES?: string },
+): boolean {
+  if (decision.admin) return true;
+  if (decision.role && STAFF_INVITE_ROLES.includes(decision.role)) return true;
+  const configured = String(env?.LENSY_STAFF_ROLES ?? '').split(',').map(r => r.trim().toLowerCase()).filter(Boolean);
+  const staffRoles = configured.length > 0 ? configured : DEFAULT_STAFF_ROLES;
+  return (user.roles || []).some(r => staffRoles.includes(String(r).toLowerCase()));
 }
 
 export async function resolveSearchGrant(request: Request, env: Env): Promise<SearchGrant> {
   const scope = isStagingRequest(request.url) ? 'stg' : 'prod';
-  if (!liteEnabled(env)) return { tier: 'full', user: null, scope };
   if (request.headers.get('authorization')) {
     const viaSecret = await checkAuth(request, env);
-    if (viaSecret.ok) return { tier: 'full', user: null, scope };
+    // The bearer is the staff secret: scripts, the verification harness, cron.
+    if (viaSecret.ok) return { tier: 'full', user: null, scope, staff: true };
   }
+  if (!liteEnabled(env)) return { tier: 'full', user: null, scope, staff: false };
   const gate = await evaluateSession(request, env);
-  if (!gate.ok) return { tier: 'none', user: null, scope };
-  return { tier: tierFor(gate.user, gate.decision, env, request), user: { sub: gate.user.sub, email: gate.user.email }, scope };
+  if (!gate.ok) return { tier: 'none', user: null, scope, staff: false };
+  return {
+    tier: tierFor(gate.user, gate.decision, env, request),
+    user: { sub: gate.user.sub, email: gate.user.email },
+    scope,
+    staff: isStaffSession(gate.user, gate.decision, env),
+  };
+}
+
+/**
+ * 'staff' or null for a request that already passed a gate — what the
+ * interaction log records beside a click (same class as search_log.audience).
+ * Fail-soft: anything unreadable is "not staff".
+ */
+export async function requestAudience(request: Request, env: Env): Promise<'staff' | null> {
+  try {
+    return (await resolveSearchGrant(request, env)).staff ? 'staff' : null;
+  } catch {
+    return null;
+  }
 }
 
 // ─── Shared gate plumbing ─────────────────────────────────────────────────────

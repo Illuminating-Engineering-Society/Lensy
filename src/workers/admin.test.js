@@ -68,6 +68,18 @@ describe('gate', () => {
 // ─── Analytics ─────────────────────────────────────────────────────────────────
 
 function analyticsRoute(sql) {
+  // Column probes (lib/analytics-scope.ts hasColumn): this database is current.
+  if (/^SELECT (?:audience|attempt) FROM search_(?:log|events) LIMIT 1$/.test(sql)) return { audience: null };
+  // The "N left out" counts: 14 in the window, 12 without staff, 10 without demos too.
+  if (/SELECT COUNT\(\*\) AS n FROM search_log/.test(sql)) {
+    const noStaff = /audience <> 'staff'/.test(sql);
+    const noDemos = /NOT IN/.test(sql);
+    return { n: noStaff && noDemos ? 10 : noStaff ? 12 : noDemos ? 11 : 14 };
+  }
+  if (/AS recorded/.test(sql)) return { recorded: 8, rephrased: 3 };
+  if (/attempt >= 2/.test(sql) && /GROUP BY LOWER/.test(sql)) {
+    return [{ query: 'illuminance selector tool', searches: 2, maxAttempt: 3, lastSeen: '2026-09-11 09:30:00' }];
+  }
   if (/COUNT\(\*\) AS total/.test(sql)) {
     return { total: 10, cached: 4, noStrongMatch: 2, zeroResults: 1 };
   }
@@ -128,16 +140,92 @@ describe('GET /api/admin/analytics', () => {
     expect(res.body.searches.note).toBeUndefined();
   });
 
-  it('clamps the days window and binds it as a modifier, never as SQL text', async () => {
+  it('clamps the days window and binds it, never as SQL text', async () => {
     const env = makeEnv(analyticsRoute);
     const big = await call(handleAdminAnalytics, env, '/api/admin/analytics?days=9999');
     expect(big.body.days).toBe(365);
     const junk = await call(handleAdminAnalytics, env, "/api/admin/analytics?days=1');DROP TABLE search_log;--");
     expect(junk.body.days).toBe(1);
-    // Every window reached the DB as a bound '-N days' parameter.
-    for (const c of env.DB.calls.filter(c => /datetime\('now', \?\)/.test(c.sql))) {
-      expect(c.bindings[0]).toMatch(/^-\d+ days$/);
+    // Every window reached the DB as a bound UTC datetime, and no statement
+    // carries a date, a query or anything else from the request as text.
+    const windowed = env.DB.calls.filter(c => /created_at >= \?/.test(c.sql));
+    expect(windowed.length).toBeGreaterThan(8);
+    for (const c of windowed) {
+      expect(c.bindings[0]).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/);
+      expect(c.sql).not.toMatch(/DROP|\d{4}-\d{2}-\d{2}/);
     }
+  });
+
+  // Dan, 11/19/26 #6: a custom date range, e.g. the days of a virtual symposium.
+  it('counts a custom range of whole UTC days, both inclusive', async () => {
+    const env = makeEnv(analyticsRoute);
+    const { status, body } = await call(handleAdminAnalytics, env, '/api/admin/analytics?from=2026-11-04&to=2026-11-06');
+    expect(status).toBe(200);
+    expect(body.window).toEqual({ from: '2026-11-04', to: '2026-11-06', days: 3, custom: true });
+    const totals = env.DB.calls.find(c => /COUNT\(\*\) AS total/.test(c.sql));
+    expect(totals.sql).toMatch(/created_at >= \? AND created_at < \?/);
+    expect(totals.bindings.slice(0, 2)).toEqual(['2026-11-04 00:00:00', '2026-11-07 00:00:00']);
+    // The click log is cut to the same days.
+    const events = env.DB.calls.find(c => /GROUP BY event/.test(c.sql));
+    expect(events.bindings).toEqual(['2026-11-04 00:00:00', '2026-11-07 00:00:00']);
+  });
+
+  it('refuses a range that is not one', async () => {
+    const env = makeEnv(analyticsRoute);
+    const bad = await call(handleAdminAnalytics, env, '/api/admin/analytics?from=2026-11-06&to=2026-11-04');
+    expect(bad.status).toBe(400);
+    expect(bad.body.error).toMatch(/from must not be after to/);
+    expect((await call(handleAdminAnalytics, env, '/api/admin/analytics?from=yesterday')).status).toBe(400);
+    expect(env.DB.calls).toHaveLength(0);
+  });
+
+  // Dan, 11/19/26 #7: staff searches and the "Try searching for" demos.
+  it('leaves staff and demo searches out of every figure, and says how many', async () => {
+    const env = makeEnv(analyticsRoute);
+    const { body } = await call(handleAdminAnalytics, env, '/api/admin/analytics');
+    expect(body.filters).toEqual({ includeStaff: false, includeDemos: false, staffRecorded: true, attemptsRecorded: true });
+    expect(body.searches.excluded).toEqual({ staff: 2, demo: 2 });
+    for (const c of env.DB.calls.filter(c => /FROM search_log/.test(c.sql) && /GROUP BY|AS total|AS searchesOn|AS recorded/.test(c.sql))) {
+      expect(c.sql, c.sql).toMatch(/audience IS NULL OR audience <> 'staff'/);
+      expect(c.sql, c.sql).toMatch(/LOWER\(TRIM\(query\)\) NOT IN \(\?, \?, \?, \?\)/);
+      expect(c.bindings).toContain('what are considerations for lighting parking garages?');
+    }
+    // Staff clicks leave the click log's figures too (it has no demo queries to drop).
+    const events = env.DB.calls.find(c => /GROUP BY event/.test(c.sql));
+    expect(events.sql).toMatch(/audience <> 'staff'/);
+    expect(events.sql).not.toMatch(/NOT IN/);
+  });
+
+  it('counts them when asked', async () => {
+    const env = makeEnv(analyticsRoute);
+    const { body } = await call(handleAdminAnalytics, env, '/api/admin/analytics?staff=1&demo=1');
+    expect(body.filters).toMatchObject({ includeStaff: true, includeDemos: true });
+    const totals = env.DB.calls.find(c => /COUNT\(\*\) AS total/.test(c.sql));
+    expect(totals.sql).not.toMatch(/audience|NOT IN/);
+    // Still reported, so the toggle's effect is known before it is flipped back.
+    expect(body.searches.excluded).toEqual({ staff: 2, demo: 3 });
+  });
+
+  it('before migration 0031 nothing can be told apart as staff, and it says so', async () => {
+    const env = makeEnv(sql => {
+      if (/^SELECT (?:audience|attempt) FROM/.test(sql)) throw new Error('no such column');
+      return analyticsRoute(sql);
+    });
+    const { status, body } = await call(handleAdminAnalytics, env, '/api/admin/analytics');
+    expect(status).toBe(200);
+    expect(body.filters).toMatchObject({ staffRecorded: false, attemptsRecorded: false });
+    expect(body.searches.total).toBe(10);
+    expect(body.searches.retries).toEqual({ recorded: 0, rephrased: 0, topRephrased: [] });
+    expect(env.DB.calls.every(c => !/audience <> 'staff'/.test(c.sql))).toBe(true);
+  });
+
+  // Dan, 11/19/26 #4: rephrasings of a reader's own question.
+  it('reports how often readers had to rephrase, and what', async () => {
+    const env = makeEnv(analyticsRoute);
+    const { body } = await call(handleAdminAnalytics, env, '/api/admin/analytics');
+    expect(body.searches.retries.recorded).toBe(8);
+    expect(body.searches.retries.rephrased).toBe(3);
+    expect(body.searches.retries.topRephrased[0]).toMatchObject({ query: 'illuminance selector tool', maxAttempt: 3 });
   });
 
   it('fails soft per table: a missing search_events answers zeros plus a note', async () => {

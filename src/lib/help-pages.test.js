@@ -38,6 +38,7 @@ describe('isHelpQuestion', () => {
       'how to share a collection',
       'offline access',
       'daily search limit',
+      'Can I download a PDF of the lighting standards',
       'refund',
     ]) {
       expect(isHelpQuestion(q), q).toBe(true);
